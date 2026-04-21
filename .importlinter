@@ -1,0 +1,31 @@
+[importlinter]
+root_packages =
+    deckr.core
+    deckr.hardware
+    deckr.plugin
+
+include_external_packages = True
+
+[importlinter:contract:core_must_not_import_hardware]
+name = Core must not import hardware
+type = forbidden
+source_modules =
+    deckr.core
+forbidden_modules =
+    deckr.hardware
+
+[importlinter:contract:core_must_not_import_plugin]
+name = Core must not import plugin
+type = forbidden
+source_modules =
+    deckr.core
+forbidden_modules =
+    deckr.plugin
+
+[importlinter:contract:hardware_must_not_import_plugin]
+name = Hardware must not import plugin
+type = forbidden
+source_modules =
+    deckr.hardware
+forbidden_modules =
+    deckr.plugin
