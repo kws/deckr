@@ -1,48 +1,85 @@
 # deckr
 
-A Python library for controlling deck devices (Elgato Stream Deck, MiraBox etc)
+`deckr` is the home of the stable Python packages that define the Deckr runtime
+boundary.
 
-## Overview
+This repo currently contains:
 
-deckr is a Python library designed to provide a unified interface for controlling various dock-like devices such as the Elgato Stream Deck, MiraBox, and other similar hardware.
+- `deckr`: shared contracts and runtime primitives for hardware events, plugin
+  messaging, manifests, component lifecycle, and MQTT transport.
+- `deckr-controller`: the controller/orchestrator that owns config, device
+  state, routing, rendering, and controller-side services.
 
-The library abstracts away the differences between various device manufacturers and provides a consistent API for button management, display control, and event handling across supported devices.
+The repository is managed as a `uv` workspace so both packages can evolve
+together while still being built and released independently.
 
-## Installation
+## Repository Layout
 
-### Using Poetry
-
-This project uses [Poetry](https://python-poetry.org/) for dependency management and packaging.
-
-**Install dependencies:**
-```bash
-poetry install
-```
-
-**Build the package:**
-```bash
-poetry build
-```
-
-This will create both a source distribution (`.tar.gz`) and a wheel (`.whl`) in the `dist/` directory.
-
-**Install the package in development mode:**
-```bash
-poetry install
-```
-
-**Run tests:**
-```bash
-poetry run pytest
-```
-
-**Run linting:**
-```bash
-poetry run ruff check .
+```text
+packages/
+  deckr/              Core contracts and shared runtime utilities
+  deckr-controller/   Controller runtime and CLI entry points
 ```
 
 ## Requirements
 
-- Python >= 3.11
-- Poetry >= 2.0.0
+- Python 3.11+
+- `uv`
 
+## Quick Start
+
+Install the workspace and development tooling:
+
+```bash
+uv sync --all-packages
+```
+
+Run the test suite:
+
+```bash
+uv run pytest
+```
+
+Run Ruff:
+
+```bash
+uv run ruff check .
+```
+
+Run import-linter:
+
+```bash
+uv run lint-imports
+```
+
+Build distributables:
+
+```bash
+uv build --package deckr
+uv build --package deckr-controller
+```
+
+## Package Notes
+
+### `deckr`
+
+The `deckr` package is intended to stay small and stable. It carries the
+cross-package contracts that downstream drivers, plugin hosts, and plugins can
+depend on without inheriting controller internals.
+
+### `deckr-controller`
+
+The `deckr-controller` package depends on `deckr` and provides the runtime that
+ties devices, config, and plugin-facing behavior together. It exposes the
+`deckr` and `deckr-device-manager` console entry points.
+
+## Development
+
+This repo is a workspace, not a single publishable root package. Build and
+release the individual packages from `packages/` via `uv build --package ...`.
+
+Import boundaries are enforced with `.importlinter` so `deckr-controller` can
+depend on `deckr`, but the core `deckr` layers cannot depend back on
+`deckr.controller`.
+
+`uv.lock` is committed to keep the development environment reproducible.

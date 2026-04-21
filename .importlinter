@@ -1,0 +1,52 @@
+[importlinter]
+root_packages =
+    deckr.core
+    deckr.hw
+    deckr.plugin
+    deckr.controller
+
+include_external_packages = True
+
+[importlinter:contract:core_must_not_import_hw]
+name = Core must not import hw
+type = forbidden
+source_modules =
+    deckr.core
+forbidden_modules =
+    deckr.hw
+
+[importlinter:contract:core_must_not_import_plugin]
+name = Core must not import plugin
+type = forbidden
+source_modules =
+    deckr.core
+forbidden_modules =
+    deckr.plugin
+
+[importlinter:contract:hw_must_not_import_plugin_or_controller]
+name = hw must not import plugin or controller
+type = forbidden
+source_modules =
+    deckr.hw
+forbidden_modules =
+    deckr.plugin
+    deckr.controller
+
+[importlinter:contract:plugin_must_not_import_hw_or_controller]
+name = plugin must not import hw or controller
+type = forbidden
+source_modules =
+    deckr.plugin
+forbidden_modules =
+    deckr.hw
+    deckr.controller
+
+[importlinter:contract:deckr_core_packages_must_not_import_controller]
+name = deckr core packages must not import controller
+type = forbidden
+source_modules =
+    deckr.core
+    deckr.hw
+    deckr.plugin
+forbidden_modules =
+    deckr.controller

@@ -1,56 +1,68 @@
-
 [project]
-name = "deckr"
-version = "0.0.0"
-description = "A Pyodide-based library for controlling multiple 'dock' devices"
+name = "deckr-workspace"
+version = "0.1.0"
+description = "Workspace for deckr core contracts and deckr-controller"
 readme = "README.md"
-license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<4.0.0"
+license = { text = "MIT" }
 authors = [
     { name = "Kaj Siebert", email = "kaj@k-si.com" }
 ]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Multimedia",
-    "Topic :: System :: Hardware",
+dependencies = [
+    "deckr",
+    "deckr-controller",
 ]
-dependencies = ["pydantic (>=2.12.5,<3.0.0)"]
 
-[project.urls]
-Repository = "https://github.com/kws/deckr.git"
+[dependency-groups]
+dev = [
+    "import-linter>=2.11,<3.0.0",
+    "pytest>=9.0.2,<10.0.0",
+    "pytest-asyncio>=1.3.0,<2.0.0",
+    "pytest-cov>=6.0.0,<7.0.0",
+    "ruff>=0.14.14,<0.15.0",
+]
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^9.0.2"
-ruff = "^0.14.14"
+[tool.uv]
+package = false
 
+[tool.uv.workspace]
+members = [
+    "packages/deckr",
+    "packages/deckr-controller",
+]
+
+[tool.uv.sources]
+deckr = { workspace = true }
+deckr-controller = { workspace = true }
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 88
 
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
-
-
-[lint]
+[tool.ruff.lint]
 select = [
-    "F",   # Pyflakes
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "I",   # import sorting
-    "B",   # bugbear
-    "UP",  # pyupgrade
-    "SIM", # simplifications
+    "F",
+    "E",
+    "W",
+    "I",
+    "B",
+    "UP",
+    "SIM",
+]
+ignore = [
+    "E203",
+    "E501",
+    "SIM102",
+    "SIM105",
 ]
 
-ignore = [
-    "E203", # whitespace before ':' (Black compatibility)
+[tool.pytest.ini_options]
+addopts = [
+    "--cov=packages/deckr/src/deckr",
+    "--cov=packages/deckr-controller/src/deckr",
+    "--cov-report=term-missing",
+]
+testpaths = [
+    "packages/deckr/tests",
+    "packages/deckr-controller/tests",
 ]
