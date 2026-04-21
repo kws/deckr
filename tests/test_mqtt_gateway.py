@@ -5,7 +5,7 @@ import anyio
 import pytest
 
 from deckr.core.mqtt import _gateway
-from deckr.core.mqtt._gateway import QOS, MqttGateway
+from deckr.core.mqtt._gateway import QOS, MqttGateway, MqttGatewayConfig
 
 
 class _RecordingClient:
@@ -84,6 +84,13 @@ class _SessionClient:
 async def test_bus_to_mqtt_loop_raises_if_event_bus_subscription_closes():
     gateway = MqttGateway(
         event_bus=_ClosingBus(),
+        config=MqttGatewayConfig(
+            hostname="broker.example",
+            port=1883,
+            topic="deckr/test",
+            username=None,
+            password=None,
+        ),
         serialize=lambda event: event,
         deserialize=lambda payload: payload,
     )
@@ -104,6 +111,13 @@ async def test_run_reconnects_after_bus_subscription_closes(monkeypatch):
     bus = _ReconnectBus()
     gateway = MqttGateway(
         event_bus=bus,
+        config=MqttGatewayConfig(
+            hostname="broker.example",
+            port=1883,
+            topic="deckr/test",
+            username=None,
+            password=None,
+        ),
         serialize=lambda event: event,
         deserialize=lambda payload: payload,
     )

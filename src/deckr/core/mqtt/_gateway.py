@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 import aiomqtt
 import anyio
 from anyio import get_cancelled_exc_class
-from decouple import config as decouple_config
 
 from deckr.core.component import BaseComponent, RunContext
 
@@ -38,28 +37,6 @@ class MqttGatewayConfig:
         return bool(self.hostname and self.topic)
 
 
-def load_mqtt_gateway_config() -> MqttGatewayConfig:
-    hostname = decouple_config("MQTT_HOSTNAME", default="").strip()
-    topic = decouple_config("MQTT_TOPIC", default="").strip()
-    port = decouple_config("MQTT_PORT", default=1883, cast=int)
-    username = decouple_config("MQTT_USERNAME", default="").strip() or None
-    password = (
-        decouple_config("MQTT_PASSWORD", default="").strip() if username else None
-    )
-    return MqttGatewayConfig(
-        hostname=hostname,
-        port=port,
-        topic=topic,
-        username=username,
-        password=password,
-    )
-
-
-def is_enabled() -> bool:
-    """True if MQTT_HOSTNAME and MQTT_TOPIC are set (gateway should run)."""
-    return load_mqtt_gateway_config().enabled
-
-
 class MqttGateway(BaseComponent):
     """Bidirectional bridge: EventBus <-> MQTT. Uses serialize/deserialize for message format."""
 
@@ -67,6 +44,7 @@ class MqttGateway(BaseComponent):
         self,
         event_bus: EventBus,
         *,
+        config: MqttGatewayConfig,
         serialize: Callable[[Any], dict],
         deserialize: Callable[[dict], Any],
         deserialize_from_mqtt: Callable[[dict], Any] | None = None,
@@ -76,6 +54,7 @@ class MqttGateway(BaseComponent):
     ) -> None:
         super().__init__(name="mqtt_gateway")
         self._event_bus = event_bus
+        self._config = config
         self._serialize = serialize
         self._deserialize = deserialize
         self._deserialize_from_mqtt = deserialize_from_mqtt or deserialize
@@ -102,28 +81,21 @@ class MqttGateway(BaseComponent):
             await self._ready.wait()
         return not scope.cancel_called
 
-    @classmethod
-    def is_enabled(cls) -> bool:
-        """True if MQTT_HOSTNAME and MQTT_TOPIC are set (gateway should run)."""
-        return is_enabled()
-
     async def start(self, ctx: RunContext) -> None:
-        config = load_mqtt_gateway_config()
-
         ctx.tg.start_soon(
             self._run,
-            config.hostname,
-            config.port,
-            config.topic,
-            config.username,
-            config.password,
+            self._config.hostname,
+            self._config.port,
+            self._config.topic,
+            self._config.username,
+            self._config.password,
             name="mqtt_gateway_run",
         )
         logger.info(
             "MqttGateway connected to %s:%s, topic %s",
-            config.hostname,
-            config.port,
-            config.topic,
+            self._config.hostname,
+            self._config.port,
+            self._config.topic,
         )
 
     async def _run(
