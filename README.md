@@ -1,24 +1,31 @@
 # deckr
 
-`deckr` is the home of the stable Python packages that define the Deckr runtime
-boundary.
+`deckr` is the stable Python core for the Deckr ecosystem.
 
-This repo currently contains:
+It holds the shared contracts and runtime primitives that other components can
+build on without pulling in controller-specific behavior. In practice that
+means:
 
-- `deckr`: shared contracts and runtime primitives for hardware events, plugin
-  messaging, manifests, component lifecycle, and MQTT transport.
-- `deckr-controller`: the controller/orchestrator that owns config, device
-  state, routing, rendering, and controller-side services.
+- hardware event models and wire formats
+- plugin manifests, events, and message types
+- shared runtime utilities such as MQTT helpers and component lifecycle support
 
-The repository is managed as a `uv` workspace so both packages can evolve
-together while still being built and released independently.
+Python-specific invariant recipe helpers now live with the controller-side
+runtime, not in `deckr` core.
+
+The controller now lives in its own sibling repository:
+
+- `https://github.com/kws/deckr-controller`
 
 ## Repository Layout
 
 ```text
-packages/
-  deckr/              Core contracts and shared runtime utilities
-  deckr-controller/   Controller runtime and CLI entry points
+src/deckr/
+  core/        Generic runtime utilities and messaging primitives
+  hardware/    Hardware-facing shared contracts and wire models
+  hw/          Compatibility shim for older imports
+  plugin/      Plugin-facing contracts and manifests
+tests/
 ```
 
 ## Requirements
@@ -28,219 +35,130 @@ packages/
 
 ## Quick Start
 
-Install the workspace and development tooling:
+Install the project and development tooling:
 
 ```bash
-uv sync --all-packages
+uv sync
 ```
 
-Run the test suite:
-
-```bash
-uv run pytest
-```
-
-Run Ruff:
+Run the default validation suite:
 
 ```bash
 uv run ruff check .
-```
-
-Run import-linter:
-
-```bash
 uv run lint-imports
+uv run pytest
 ```
 
 Build distributables:
 
 ```bash
-uv build --package deckr
-uv build --package deckr-controller
+uv build
 ```
 
-## Package Notes
+## Package Boundaries
 
-### `deckr`
+The core architectural rule is that `deckr` stays reusable and controller-free.
+If code is specific to orchestration, rendering policy, device lifecycle
+management, or controller configuration, it belongs in `deckr-controller`, not
+here.
 
-The `deckr` package is intended to stay small and stable. It carries the
-cross-package contracts that downstream drivers, plugin hosts, and plugins can
-depend on without inheriting controller internals.
+Internal boundaries are enforced with `.importlinter`:
 
-### `deckr-controller`
+- `deckr.core` must not import `deckr.hardware`
+- `deckr.core` must not import `deckr.plugin`
+- `deckr.hardware` must not import `deckr.plugin`
 
-The `deckr-controller` package depends on `deckr` and provides the runtime that
-ties devices, config, and plugin-facing behavior together. It exposes the
-`deckr` and `deckr-device-manager` console entry points.
-
-## Development
-
-This repo is a workspace, not a single publishable root package. Build and
-release the individual packages from `packages/` via `uv build --package ...`.
-
-Import boundaries are enforced with `.importlinter` so `deckr-controller` can
-depend on `deckr`, but the core `deckr` layers cannot depend back on
-`deckr.controller`.
-
-`uv.lock` is committed to keep the development environment reproducible.
-
-## Release Strategy
-
-This is a dual-package monorepo, so releases should be tracked per package, not
-per repository.
-
-- `deckr` and `deckr-controller` are independent distributions.
-- The root `pyproject.toml` is workspace metadata only. It is not the source of
-  truth for published package versions.
-- The version source of truth for each distribution is its own package
-  `pyproject.toml`:
-  - `packages/deckr/pyproject.toml`
-  - `packages/deckr-controller/pyproject.toml`
-- Use package-scoped git tags so tags are unambiguous:
-  - `deckr-vX.Y.Z`
-  - `deckr-controller-vA.B.C`
-- Do not use a repo-wide tag like `v0.2.0`; in a multi-package repo it is not
-  clear which distribution it refers to.
-
-### Versioning Convention
-
-- Stable releases use plain PEP 440 semver, e.g. `0.3.0`.
-- Ongoing development uses the next minor line with `.dev0`, e.g.
-  `0.4.0.dev0`.
-- The normal cadence should be:
-  - release `X.Y.0`
-  - immediately bump to `X.(Y+1).0.dev0` in a separate follow-up commit
-- Only bump the package you actually released. If `deckr-controller` ships and
-  `deckr` did not change, leave `deckr` alone.
-
-### Tracking Releases
-
-To inspect release history by package:
+Run the contract checks with:
 
 ```bash
-git tag -l 'deckr-v*' --sort=-creatordate
-git tag -l 'deckr-controller-v*' --sort=-creatordate
-```
-
-To inspect unreleased changes for one package, scope the log to that package's
-directory:
-
-```bash
-git log --oneline <last-deckr-tag>..HEAD -- packages/deckr
-git log --oneline <last-controller-tag>..HEAD -- packages/deckr-controller
-```
-
-## Release Process
-
-This follows the same overall style used in `invariant`, adapted for a
-package-scoped monorepo.
-
-### 1. Decide What Is Releasing
-
-- Release `deckr` when shared contracts or reusable runtime primitives change.
-- Release `deckr-controller` when controller behavior changes but the public
-  `deckr` contract does not need a new release.
-- Release both when controller work depends on a newly released `deckr`
-  version.
-
-If `deckr-controller` must depend on a new `deckr` release, release `deckr`
-first, then update the `deckr` dependency range in
-`packages/deckr-controller/pyproject.toml`, then release `deckr-controller`.
-
-### 2. Prepare the Release
-
-Before changing versions, make sure the workspace is clean and validation
-passes:
-
-```bash
-uv run ruff check .
 uv run lint-imports
-uv run pytest
 ```
 
-### 3. Cut the Stable Release
+## Plugin Protocol Layers
 
-For the package being released:
+The plugin contract is intentionally split into an Elgato-aligned core plus
+Deckr-specific extensions:
 
-1. Update that package's version in its package `pyproject.toml` to the stable
-   release number, e.g. `0.3.0`.
-2. If releasing `deckr-controller` against a newly released `deckr`, update the
-   dependency constraint as well, e.g. `deckr>=0.3.0,<0.4.0`.
+- `deckr.plugin.core_api`
+  - The minimum surface a controller-lite implementation should support.
+  - Keeps `set_title`, `set_image`, `set_state`, `show_alert`, `show_ok`,
+    settings, `open_url`, and `switch_to_profile` close to Stream Deck
+    semantics.
+- `deckr.plugin.extensions`
+  - Deckr-only features such as dynamic pages, screen power control, and graph
+    image capability advertisement.
+
+The key image rule is:
+
+- core `set_image`: Stream Deck-style image reference, typically a plugin-local
+  path or a data URI / base64 image string
+- Deckr graph image extension: still uses `set_image`, but the string can be a
+  Deckr graph-image data URI with media type
+  `application/vnd.deckr.graph+json`
+
+## `deckr.hw` Rename
+
+The shared hardware package has been renamed from `deckr.hw` to
+`deckr.hardware`.
+
+New code should import `deckr.hardware`. A lightweight compatibility shim is
+kept in place for older `deckr.hw` imports while downstream packages migrate.
+
+## Releases
+
+This repository now releases a single distribution: `deckr`.
+
+- The source of truth for the published version is the root `pyproject.toml`.
+- Use package tags in the form `deckr-vX.Y.Z`.
+- Stable releases use normal PEP 440 versions such as `0.3.0`.
+- After each stable release, bump immediately to the next development line,
+  e.g. `0.4.0.dev0`, in a separate follow-up commit.
+
+### Release Flow
+
+1. Update `version` in `pyproject.toml` to the stable release number.
+2. Run the validation suite:
+
+   ```bash
+   uv run ruff check .
+   uv run lint-imports
+   uv run pytest
+   ```
+
 3. Refresh the lockfile:
 
    ```bash
    uv lock --refresh
    ```
 
-4. Commit the versioned release as a package-scoped commit. Recommended commit
-   titles:
-   - `chore(deckr): release v0.3.0`
-   - `chore(deckr-controller): release v0.3.0`
+4. Commit the release, for example:
 
-### 4. Tag the Release
+   ```bash
+   git commit -am "chore(deckr): release v0.3.0"
+   ```
 
-Create a package-scoped tag on the release commit:
+5. Tag the release commit:
 
-```bash
-git tag deckr-v0.3.0
-git tag deckr-controller-v0.3.0
-```
+   ```bash
+   git tag deckr-v0.3.0
+   ```
 
-Use the tag that matches the package you actually released. If both packages are
-released on the same day, prefer separate release commits and separate tags so
-each package's history stays easy to follow.
+6. Build from the tag so the artifacts match the stable version exactly:
 
-### 5. Build Artifacts From the Tag
+   ```bash
+   git checkout deckr-v0.3.0
+   uv build
+   git checkout -
+   ```
 
-Build from the release tag, not from `main` after the development bump, or you
-will get `.dev0` artifacts.
-
-Examples:
-
-```bash
-git checkout deckr-v0.3.0
-uv build --package deckr
-git checkout -
-```
-
-```bash
-git checkout deckr-controller-v0.3.0
-uv build --package deckr-controller
-git checkout -
-```
-
-### 6. Publish
-
-Upload the wheel and sdist built from the release tag using your normal PyPI
-publishing process.
-
-### 7. Immediately Bump Back to Development
-
-After tagging the stable release, create a separate follow-up commit that bumps
-the released package to the next development version:
-
-1. Change the released package from `X.Y.0` to `X.(Y+1).0.dev0`.
-2. Run:
+7. Publish the wheel and sdist using your usual PyPI workflow.
+8. Immediately bump `pyproject.toml` to the next development version, refresh
+   the lockfile, and commit that separately:
 
    ```bash
    uv lock --refresh
+   git commit -am "chore(deckr): bump to development release 0.4.0.dev0"
    ```
 
-3. Commit with a package-scoped message, for example:
-   - `chore(deckr): bump to development release 0.4.0.dev0`
-   - `chore(deckr-controller): bump to development release 0.4.0.dev0`
-
-The stable tag should point to the stable release commit, not to the subsequent
-development bump commit.
-
-## Release Checklist
-
-For each package release, confirm:
-
-- The package version in its package `pyproject.toml` matches the intended
-  stable or development version.
-- `uv lock --refresh` has been run after every version edit.
-- The tag name is package-scoped and unambiguous.
-- Artifacts were built from the release tag, not from a later `.dev0` commit.
-- `deckr-controller`'s `deckr` dependency range matches the intended minimum
-  supported `deckr` release.
+The stable tag should always point at the stable release commit, not the later
+`.dev0` commit.

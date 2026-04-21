@@ -1,17 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "deckr-workspace"
+name = "deckr"
 version = "0.1.0"
-description = "Workspace for deckr core contracts and deckr-controller"
+description = "Deckr core contracts and runtime primitives for hardware, plugins, and controllers"
 readme = "README.md"
-requires-python = ">=3.11,<4.0.0"
 license = { text = "MIT" }
 authors = [
     { name = "Kaj Siebert", email = "kaj@k-si.com" }
 ]
-dependencies = [
-    "deckr",
-    "deckr-controller",
+requires-python = ">=3.11,<4.0.0"
+keywords = ["deckr", "stream-deck", "hardware", "plugins", "controller"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Hardware",
 ]
+dependencies = [
+    "aiomqtt>=2.0.0,<3.0.0",
+    "anyio>=4.12.1,<5.0.0",
+    "invariant-core==0.3.0",
+    "pydantic>=2.12.5,<3.0.0",
+    "python-decouple>=3.8,<4.0",
+]
+
+[project.urls]
+Documentation = "https://github.com/kws/deckr#readme"
+Homepage = "https://github.com/kws/deckr"
+Repository = "https://github.com/kws/deckr"
+"Bug Tracker" = "https://github.com/kws/deckr/issues"
+"Changelog" = "https://github.com/kws/deckr/releases"
 
 [dependency-groups]
 dev = [
@@ -22,18 +49,8 @@ dev = [
     "ruff>=0.14.14,<0.15.0",
 ]
 
-[tool.uv]
-package = false
-
-[tool.uv.workspace]
-members = [
-    "packages/deckr",
-    "packages/deckr-controller",
-]
-
-[tool.uv.sources]
-deckr = { workspace = true }
-deckr-controller = { workspace = true }
+[tool.hatch.build.targets.wheel]
+packages = ["src/deckr"]
 
 [tool.ruff]
 target-version = "py311"
@@ -41,13 +58,13 @@ line-length = 88
 
 [tool.ruff.lint]
 select = [
-    "F",
-    "E",
-    "W",
-    "I",
     "B",
-    "UP",
+    "E",
+    "F",
+    "I",
     "SIM",
+    "UP",
+    "W",
 ]
 ignore = [
     "E203",
@@ -58,11 +75,7 @@ ignore = [
 
 [tool.pytest.ini_options]
 addopts = [
-    "--cov=packages/deckr/src/deckr",
-    "--cov=packages/deckr-controller/src/deckr",
+    "--cov=src/deckr",
     "--cov-report=term-missing",
 ]
-testpaths = [
-    "packages/deckr/tests",
-    "packages/deckr-controller/tests",
-]
+testpaths = ["tests"]
