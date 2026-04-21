@@ -368,8 +368,8 @@ requires-dist = [
     { name = "deckr", editable = "packages/deckr" },
     { name = "deckr-fonts", specifier = ">=0.2.0" },
     { name = "httpx", specifier = ">=0.28.1,<0.29.0" },
-    { name = "invariant-core", git = "https://github.com/kws/invariant.git?rev=a02a084" },
-    { name = "invariant-gfx", git = "https://github.com/kws/invariant-gfx?rev=ccf3e25" },
+    { name = "invariant-core", specifier = "==0.3.0" },
+    { name = "invariant-gfx", specifier = "==0.2.0" },
     { name = "justmyresource", extras = ["icons"], specifier = ">=1.1.1,<2.0.0" },
     { name = "justmyresource-lucide", specifier = ">=0.575.0" },
     { name = "justmytype", specifier = ">=0.3.0,<0.4.0" },
@@ -712,24 +712,32 @@ wheels = [
 
 [[package]]
 name = "invariant-core"
-version = "0.3.0.dev0"
-source = { git = "https://github.com/kws/invariant.git?rev=a02a084#a02a0848d992bc96574d33e8b9a9b453cd6e9dc7" }
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cachetools" },
     { name = "cel-python" },
     { name = "diskcache" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/39/bf/77a4c5362ac387210dea45c57fa69bbe058e7d860a46aff48aca3e6ba1ee/invariant_core-0.3.0.tar.gz", hash = "sha256:04dbd30fafc7062feb44f86822e29e98a0255ddee07654317962e6bf2aa35a6b", size = 237082, upload-time = "2026-04-21T08:58:32.386Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/65/e08b0e3df1e06fe6890d10acc10e7122d78226b6c3e92f501a706a3baf9b/invariant_core-0.3.0-py3-none-any.whl", hash = "sha256:ab392e916393bee4d5cca9b0fb7fe803803dac5bab8c61915c9c9f1274fd4fe2", size = 37542, upload-time = "2026-04-21T08:58:30.547Z" },
+]
 
 [[package]]
 name = "invariant-gfx"
-version = "0.2.0.dev0"
-source = { git = "https://github.com/kws/invariant-gfx?rev=ccf3e25#ccf3e25002227ea8aacbeee7aa41a14500d0f8cf" }
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cairosvg" },
     { name = "invariant-core" },
     { name = "justmyresource" },
     { name = "justmytype" },
     { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/94/3b/47e282a42935abfda23a6bf36a1a48f3e44976b83706d8d2160714aac31f/invariant_gfx-0.2.0.tar.gz", hash = "sha256:f147e5b43cb789ef3460b53fc162bd6f02bca8f60d5842439d2ff79e5c890a6e", size = 155549, upload-time = "2026-04-21T09:05:37.148Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/d0/372a05c1836e359061426a54a6eb509d713d2ded9cb337809071f26f3698/invariant_gfx-0.2.0-py3-none-any.whl", hash = "sha256:be7495a1d8791c9b702d615a92fc26966cff5eabcc24e145a0fc1f52aff42a9d", size = 56194, upload-time = "2026-04-21T09:05:38.42Z" },
 ]
 
 [[package]]

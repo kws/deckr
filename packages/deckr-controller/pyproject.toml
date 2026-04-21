@@ -26,8 +26,8 @@ dependencies = [
     "justmytype>=0.3.0,<0.4.0",
     "justmyresource[icons]>=1.1.1,<2.0.0",
     "justmyresource-lucide>=0.575.0",
-    "invariant-core",
-    "invariant-gfx",
+    "invariant-core==0.3.0",
+    "invariant-gfx==0.2.0",
     "watchfiles>=1.1.1,<2.0.0",
     "websockets>=12.0,<16.0",
 ]
@@ -41,8 +41,6 @@ Repository = "https://github.com/kws/deckr"
 
 [tool.uv.sources]
 deckr = { workspace = true }
-invariant-core = { git = "https://github.com/kws/invariant.git", rev = "a02a084" }
-invariant-gfx = { git = "https://github.com/kws/invariant-gfx", rev = "ccf3e25" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deckr"]
