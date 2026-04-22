@@ -8,7 +8,8 @@ means:
 
 - hardware event models and wire formats
 - plugin manifests, events, and message types
-- shared runtime utilities such as MQTT helpers and component lifecycle support
+- shared runtime utilities such as MQTT and WebSocket bridge helpers and
+  component lifecycle support
 
 Python-specific invariant recipe helpers now live with the controller-side
 runtime, not in `deckr` core.
@@ -26,6 +27,35 @@ src/deckr/
   hw/          Compatibility shim for older imports
   plugin/      Plugin-facing contracts and manifests
 tests/
+```
+
+## Bridge Transports
+
+`deckr.core.messaging.EventBus` is the native in-process message bus for Python
+components.
+
+Optional bridge transports let external processes participate without changing
+the local event model. They can be enabled independently or together:
+
+- `deckr.core.mqtt.MqttGateway`
+  - bidirectional `EventBus <-> MQTT` bridge
+- `deckr.core.websocket.WebSocketServerGateway`
+  - exposes a WebSocket endpoint for inbound clients
+- `deckr.core.websocket.WebSocketClientGateway`
+  - connects outward to a remote WebSocket server
+
+This supports three common deployment shapes:
+
+- `EventBus` only for local in-process communication
+- `EventBus + MQTT` for broker-based external integration
+- `EventBus + WebSocket` for direct client/server integration
+
+Install optional transport dependencies as needed:
+
+```bash
+uv sync --extra mqtt
+uv sync --extra websocket
+uv sync --extra all
 ```
 
 ## Requirements

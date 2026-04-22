@@ -13,6 +13,12 @@ import aiomqtt
 import anyio
 from anyio import get_cancelled_exc_class
 
+from deckr.core._bridge import (
+    build_bridge_envelope,
+    event_originated_from_bridge,
+    mark_event_from_bridge,
+    parse_bridge_envelope,
+)
 from deckr.core.component import BaseComponent, RunContext
 
 if TYPE_CHECKING:
@@ -21,7 +27,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 QOS = 2  # Exactly once; used for both publish and subscribe
-KEY_FROM_MQTT = "x-from-mqtt"
 
 
 @dataclass(frozen=True)
@@ -115,10 +120,9 @@ class MqttGateway(BaseComponent):
                     will = aiomqtt.Will(
                         topic,
                         json.dumps(
-                            {
-                                "_g": self._gateway_id,
-                                "m": self._serialize(self._offline_event),
-                            }
+                            build_bridge_envelope(
+                                self._gateway_id, self._serialize(self._offline_event)
+                            )
                         ),
                         qos=QOS,
                     )
@@ -132,10 +136,9 @@ class MqttGateway(BaseComponent):
                     await client.subscribe(topic, qos=QOS)
                     if self._online_event is not None:
                         payload = json.dumps(
-                            {
-                                "_g": self._gateway_id,
-                                "m": self._serialize(self._online_event),
-                            }
+                            build_bridge_envelope(
+                                self._gateway_id, self._serialize(self._online_event)
+                            )
                         )
                         await client.publish(topic, payload, qos=QOS)
                     backoff = 1.0
@@ -158,13 +161,13 @@ class MqttGateway(BaseComponent):
         async with self._event_bus.subscribe() as stream:
             self._ready.set()
             async for event in stream:
-                if (getattr(event, "internal_metadata", None) or {}).get(KEY_FROM_MQTT):
-                    continue  # From MQTT; do not re-publish
+                if event_originated_from_bridge(event, self._gateway_id):
+                    continue
                 if not self._is_event(event):
                     continue
                 try:
                     msg_dict = self._serialize(event)
-                    payload = json.dumps({"_g": self._gateway_id, "m": msg_dict})
+                    payload = json.dumps(build_bridge_envelope(self._gateway_id, msg_dict))
                     await client.publish(topic, payload, qos=QOS)
                 except Exception:
                     logger.exception("Error publishing to MQTT")
@@ -178,11 +181,12 @@ class MqttGateway(BaseComponent):
                 raw = message.payload
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
-                data = json.loads(raw)
-                gateway_id = data.get("_g")
+                gateway_id, payload = parse_bridge_envelope(json.loads(raw))
                 if gateway_id == self._gateway_id:
-                    continue  # Our own message; avoid loop
-                msg = self._deserialize_from_mqtt(data["m"])
+                    continue
+                msg = mark_event_from_bridge(
+                    self._deserialize_from_mqtt(payload), self._gateway_id
+                )
                 await self._event_bus.send(msg)
             except Exception:
                 logger.exception("Error forwarding MQTT message to bus")
