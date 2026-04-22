@@ -23,7 +23,6 @@ The controller now lives in its own sibling repository:
 src/deckr/
   core/        Generic runtime utilities and messaging primitives
   hardware/    Hardware-facing shared contracts and wire models
-  hw/          Compatibility shim for older imports
   plugin/      Plugin-facing contracts and manifests
 tests/
 ```
@@ -96,13 +95,11 @@ The key image rule is:
   Deckr graph-image data URI with media type
   `application/vnd.deckr.graph+json`
 
-## `deckr.hw` Rename
+## Hardware Package
 
-The shared hardware package has been renamed from `deckr.hw` to
-`deckr.hardware`.
+The shared hardware package lives at `deckr.hardware`.
 
-New code should import `deckr.hardware`. A lightweight compatibility shim is
-kept in place for older `deckr.hw` imports while downstream packages migrate.
+Import `deckr.hardware` directly in all code and docs.
 
 ## Releases
 

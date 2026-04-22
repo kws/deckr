@@ -28,9 +28,6 @@ device-manager-specific behavior here. That belongs in the sibling
 - `src/deckr/hardware`
   - Shared hardware-facing contracts.
   - Must not depend on `deckr.plugin`.
-- `src/deckr/hw`
-  - Compatibility shim for the old import path.
-  - Do not add new functionality here.
 - `src/deckr/plugin`
   - Plugin-facing shared contracts and manifests.
 - `tests`
@@ -83,7 +80,6 @@ Short version:
 - after a stable release, bump immediately to the next `X.(Y+1).0.dev0`
 - refresh `uv.lock` after every version change
 
-## Migration Note
+## Hardware Imports
 
-The old `deckr.hw` path now forwards to `deckr.hardware`. Keep that shim thin
-and temporary. New code should always use `deckr.hardware`.
+Use `deckr.hardware` directly in code, tests, and documentation.
