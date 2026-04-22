@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from deckr.hardware import events as hw_events
 
 
@@ -80,3 +83,21 @@ def test_remote_device_id_round_trip():
         "manager_id": "bedroom-pi",
         "device_id": "virtual-1",
     }
+
+
+def test_legacy_hello_messages_are_rejected():
+    with pytest.raises(ValidationError):
+        hw_events.hardware_message_from_wire(
+            {
+                "type": "managerHello",
+                "managerId": "bedroom-pi",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        hw_events.hardware_message_from_wire(
+            {
+                "type": "controllerHello",
+                "controllerId": "controller-main",
+            }
+        )

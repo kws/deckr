@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from deckr.core.util.pydantic import CamelModel, JsonObject
+from deckr.core.util.pydantic import CamelModel
 
 
 class Size(BaseModel):
@@ -41,6 +41,14 @@ class Layout(BaseModel):
     controls: list[Control]
 
 
+class SlotInfo(CamelModel):
+    slot_id: str
+    slot_type: str
+    coordinates: Coordinates | None = None
+    gestures: list[str] = Field(default_factory=list)
+    image_format: ImageFormat | None = None
+
+
 class PluginEvent(BaseModel):
     pass
 
@@ -57,97 +65,59 @@ class DeviceDidDisconnect(BaseModel):
     device: str
 
 
-class MultiActionPayload(CamelModel):
-    controller: Literal["Keypad"]
-    is_in_multi_action: Literal[True] = True
-    resources: dict[str, str]
-    settings: JsonObject
-    state: int | None = None
-
-
-class SingleActionPayload(CamelModel):
-    controller: Literal["Encoder", "Keypad"]
-    is_in_multi_action: Literal[False] = False
-    coordinates: Coordinates
-    resources: dict[str, str]
-    settings: JsonObject
-    state: int | None = None
-
-
-WillAppearPayload = Annotated[
-    MultiActionPayload | SingleActionPayload,
-    Field(discriminator="is_in_multi_action"),
-]
-
-
-class WillAppear(BaseModel):
+class WillAppear(CamelModel):
     event: Literal["willAppear"] = "willAppear"
-    action: str
     context: str
-    device: str
-    payload: WillAppearPayload
+    slot: SlotInfo
 
 
-class WillDisappear(BaseModel):
+class WillDisappear(CamelModel):
     event: Literal["willDisappear"] = "willDisappear"
-    action: str
     context: str
-    device: str
+    slot_id: str
 
 
-class KeyUp(BaseModel):
+class KeyUp(CamelModel):
     event: Literal["keyUp"] = "keyUp"
     context: str
-    key: str
-    coordinates: Coordinates | None = None
+    slot_id: str
 
 
-class KeyDown(BaseModel):
+class KeyDown(CamelModel):
     event: Literal["keyDown"] = "keyDown"
     context: str
-    key: str
-    coordinates: Coordinates | None = None
+    slot_id: str
 
 
-class DialRotate(BaseModel):
+class DialRotate(CamelModel):
     event: Literal["dialRotate"] = "dialRotate"
     context: str
-    dial: str
-    coordinates: Coordinates | None = None
+    slot_id: str
     direction: Literal["clockwise", "counterclockwise"]
 
 
-class TouchTap(BaseModel):
+class TouchTap(CamelModel):
     event: Literal["touchTap"] = "touchTap"
     context: str
-    touch: str
-    coordinates: Coordinates | None = None
+    slot_id: str
 
 
-class TouchSwipe(BaseModel):
+class TouchSwipe(CamelModel):
     event: Literal["touchSwipe"] = "touchSwipe"
     context: str
-    touch: str
+    slot_id: str
     direction: Literal["left", "right"]
-    coordinates: Coordinates | None = None
 
 
 class PageAppear(CamelModel):
     event: Literal["pageAppear"] = "pageAppear"
-    action: str
     context: str
-    device: str
     page_id: str
-    owner_profile: str | None = None
-    owner_page: int | None = None
     timeout_ms: int | None = None
-    settings: JsonObject | None = None
 
 
 class PageDisappear(CamelModel):
     event: Literal["pageDisappear"] = "pageDisappear"
-    action: str
     context: str
-    device: str
     page_id: str
     reason: str | None = None

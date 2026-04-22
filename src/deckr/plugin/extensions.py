@@ -1,4 +1,4 @@
-"""Deckr-specific plugin extensions beyond the Elgato-aligned core contract."""
+"""Deckr-specific plugin extensions beyond the core contract."""
 
 from __future__ import annotations
 
@@ -11,13 +11,11 @@ if TYPE_CHECKING:
     from deckr.plugin.types import DynamicPageDescriptor
 
 CAPABILITY_PAGES = "deckr.pages"
-CAPABILITY_IMAGE_GRAPH = "deckr.image-graph"
 CAPABILITY_SCREEN_POWER = "deckr.screen-power"
 
 DECKR_EXTENSION_CAPABILITIES = frozenset(
     {
         CAPABILITY_PAGES,
-        CAPABILITY_IMAGE_GRAPH,
         CAPABILITY_SCREEN_POWER,
     }
 )
@@ -26,6 +24,12 @@ DECKR_EXTENSION_CAPABILITIES = frozenset(
 class DeckrPluginContextExtensions(Protocol):
     """Optional Deckr controller features a richer controller may expose."""
 
+    async def set_page(
+        self,
+        *,
+        profile: str = "default",
+        page: int = 0,
+    ) -> None: ...
     async def open_page(self, descriptor: DynamicPageDescriptor) -> None: ...
     async def close_page(self) -> None: ...
     async def sleep_screen(self) -> None: ...

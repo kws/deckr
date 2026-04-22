@@ -1,9 +1,4 @@
-"""Elgato-aligned plugin contracts.
-
-This module defines the minimum action/runtime surface that a "controller-lite"
-implementation should expose. The intent is to stay close to the Stream Deck
-plugin protocol rather than Deckr-specific controller features.
-"""
+"""Core plugin contracts."""
 
 from __future__ import annotations
 
@@ -19,48 +14,35 @@ from deckr.plugin.events import (
     WillAppear,
     WillDisappear,
 )
+from deckr.plugin.rendering import TitleOptions
 
 
 class CorePluginContext(Protocol):
-    """Elgato-like action context for a controller-lite runtime.
-
-    `set_image` intentionally follows the Stream Deck `setImage` model: the
-    supplied string is an image reference for the action instance, typically a
-    local plugin-relative path or a data URI / base64-encoded image string.
-    """
+    """Action context for a controller runtime."""
 
     async def set_title(
         self,
         text: str,
-        state: int | None = None,
         *,
+        title_options: TitleOptions | None = None,
         slot: str | None = None,
     ) -> None: ...
     async def set_image(
         self,
         image: str,
-        state: int | None = None,
         *,
         slot: str | None = None,
     ) -> None: ...
-    async def set_state(self, state: int) -> None: ...
     async def show_alert(self, *, slot: str | None = None) -> None: ...
     async def show_ok(self, *, slot: str | None = None) -> None: ...
     async def get_settings(self) -> SimpleNamespace: ...
-    async def set_settings(self, settings: dict) -> None: ...
+    async def set_settings(self, settings: dict) -> SimpleNamespace: ...
     async def get_global_settings(self) -> SimpleNamespace: ...
     async def set_global_settings(self, settings: dict) -> None: ...
-    async def open_url(self, url: str) -> None: ...
-    async def switch_to_profile(
-        self,
-        *,
-        profile: str = "default",
-        page: int = 0,
-    ) -> None: ...
 
 
 class CorePluginAction(Protocol):
-    """Core action protocol aligned with the standard Stream Deck lifecycle."""
+    """Core action lifecycle protocol."""
 
     uuid: str
 
@@ -75,7 +57,7 @@ class CorePluginAction(Protocol):
 
 
 class CoreDialAndTouchAction(Protocol):
-    """Optional Stream Deck dial/touch hooks supported by richer devices."""
+    """Optional dial/touch hooks supported by richer devices."""
 
     async def on_dial_rotate(
         self, event: DialRotate, context: CorePluginContext

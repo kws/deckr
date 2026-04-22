@@ -1,17 +1,23 @@
 # deckr
 
-`deckr` is the stable Python core for the Deckr ecosystem.
+`deckr` is the shared core for the Deckr ecosystem.
 
-It holds the shared contracts and runtime primitives that other components can
-build on without pulling in controller-specific behavior. In practice that
-means:
+It owns the reusable runtime model, lane contracts, and wire contracts that
+other Deckr components build on without pulling in controller-specific policy.
+That includes:
 
-- hardware event models and wire formats
-- plugin manifests, events, and message types
-- shared runtime utilities such as MQTT helpers and component lifecycle support
+- the `Component` runtime abstraction
+- named event lanes such as `plugin_messages` and `hardware_events`
+- core wire message specifications and transport-neutral contracts
+- shared runtime utilities such as component lifecycle support and MQTT helpers
+- hardware-facing and plugin-facing shared models
 
-Python-specific invariant recipe helpers now live with the controller-side
-runtime, not in `deckr` core.
+The normative architecture reference now lives in:
+
+- [docs/runtime-architecture.md](docs/runtime-architecture.md)
+
+That document is the source of truth for the current architecture. It is
+explicitly normative, alpha-stage, and intentionally non-backward-compatible.
 
 The controller now lives in its own sibling repository:
 
@@ -21,10 +27,11 @@ The controller now lives in its own sibling repository:
 
 ```text
 src/deckr/
-  core/        Generic runtime utilities and messaging primitives
+  core/        Generic runtime primitives, lanes, lifecycle, and transport helpers
   hardware/    Hardware-facing shared contracts and wire models
-  hw/          Compatibility shim for older imports
-  plugin/      Plugin-facing contracts and manifests
+  plugin/      Plugin-facing contracts, rendering types, and protocol types
+docs/
+  runtime-architecture.md
 tests/
 ```
 
@@ -55,12 +62,29 @@ Build distributables:
 uv build
 ```
 
+## Architecture
+
+Deckr’s target architecture is:
+
+- one runtime abstraction: `Component`
+- one discovery model
+- named event lanes as the only generic wiring primitive
+- bridges modeled as ordinary components
+- core wire contracts defined in `deckr`
+
+Controllers, drivers, plugin hosts, and bridges are semantic roles, not
+different architectural kinds.
+
+If you are looking for the design rules around discovery, lane ownership,
+bridge configuration, wire contracts, configuration namespacing, and alpha
+policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
+
 ## Package Boundaries
 
 The core architectural rule is that `deckr` stays reusable and controller-free.
 If code is specific to orchestration, rendering policy, device lifecycle
-management, or controller configuration, it belongs in `deckr-controller`, not
-here.
+management, controller configuration, or controller-owned state, it belongs in
+`deckr-controller`, not here.
 
 Internal boundaries are enforced with `.importlinter`:
 
@@ -76,33 +100,27 @@ uv run lint-imports
 
 ## Plugin Protocol Layers
 
-The plugin contract is intentionally split into an Elgato-aligned core plus
-Deckr-specific extensions:
+The plugin contract is intentionally split into a small core plus Deckr-specific
+extensions:
 
 - `deckr.plugin.core_api`
   - The minimum surface a controller-lite implementation should support.
-  - Keeps `set_title`, `set_image`, `set_state`, `show_alert`, `show_ok`,
-    settings, `open_url`, and `switch_to_profile` close to Stream Deck
-    semantics.
+  - Keeps `set_title`, `set_image`, `show_alert`, `show_ok`, and settings
+    focused on the shared controller/plugin semantics.
 - `deckr.plugin.extensions`
-  - Deckr-only features such as dynamic pages, screen power control, and graph
-    image capability advertisement.
+  - Deckr-only features such as static page navigation, dynamic pages, and
+    screen power control.
 
 The key image rule is:
 
-- core `set_image`: Stream Deck-style image reference, typically a plugin-local
-  path or a data URI / base64 image string
-- Deckr graph image extension: still uses `set_image`, but the string can be a
-  Deckr graph-image data URI with media type
-  `application/vnd.deckr.graph+json`
+- core `set_image`: image reference, typically a plugin-local path or a data
+  URI / base64 image string
 
-## `deckr.hw` Rename
+## Hardware Package
 
-The shared hardware package has been renamed from `deckr.hw` to
-`deckr.hardware`.
+The shared hardware package lives at `deckr.hardware`.
 
-New code should import `deckr.hardware`. A lightweight compatibility shim is
-kept in place for older `deckr.hw` imports while downstream packages migrate.
+Import `deckr.hardware` directly in all code and docs.
 
 ## Releases
 

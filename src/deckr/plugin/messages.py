@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, unquote
+
+from pydantic import ConfigDict, Field
+
+from deckr.core.util.pydantic import CamelModel
 
 
 def _new_message_id() -> str:
@@ -24,10 +28,9 @@ def host_address(host_id: str) -> str:
 
 def parse_controller_address(address: str) -> str | None:
     """Return controller_id when address is a controller endpoint."""
-    if address == "controller":
-        return ""
     if address.startswith("controller:"):
-        return address.split(":", 1)[1]
+        controller_id = address.split(":", 1)[1]
+        return controller_id or None
     return None
 
 
@@ -58,90 +61,85 @@ def build_context_id(controller_id: str, device_id: str, slot_id: str) -> str:
 
 
 def parse_context_id(context_id: str) -> dict[str, str | None]:
-    """Parse controller-scoped or legacy context IDs."""
-    if context_id.startswith("controller="):
-        parts: dict[str, str | None] = {
-            "controller_id": None,
-            "device_id": None,
-            "slot_id": None,
-        }
-        for item in context_id.split("|"):
-            key, sep, value = item.partition("=")
-            if not sep:
-                continue
-            decoded = _decode_context_value(value)
-            if key == "controller":
-                parts["controller_id"] = decoded
-            elif key == "device":
-                parts["device_id"] = decoded
-            elif key == "slot":
-                parts["slot_id"] = decoded
-        return parts
-    if "." in context_id:
-        device_id, slot_id = context_id.split(".", 1)
-        return {
-            "controller_id": None,
-            "device_id": device_id,
-            "slot_id": slot_id,
-        }
-    return {
+    """Parse canonical controller-scoped context IDs."""
+    parts: dict[str, str | None] = {
         "controller_id": None,
-        "device_id": context_id or None,
+        "device_id": None,
         "slot_id": None,
     }
+    for item in context_id.split("|"):
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise ValueError(f"Invalid contextId {context_id!r}")
+        decoded = _decode_context_value(value)
+        if not decoded:
+            raise ValueError(f"Invalid contextId {context_id!r}")
+        if key == "controller":
+            parts["controller_id"] = decoded
+        elif key == "device":
+            parts["device_id"] = decoded
+        elif key == "slot":
+            parts["slot_id"] = decoded
+        else:
+            raise ValueError(f"Invalid contextId {context_id!r}")
+    if None in parts.values():
+        raise ValueError(f"Invalid contextId {context_id!r}")
+    return parts
 
 
-@dataclass(frozen=True)
-class HostMessage:
+class HostMessage(CamelModel):
     """Message envelope for plugin host protocol. All messages carry from/to for routing."""
 
-    from_id: str
-    to_id: str
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+    from_id: str = Field(alias="from")
+    to_id: str = Field(alias="to")
     type: str
     payload: dict[str, Any]
-    message_id: str = field(default_factory=_new_message_id)
-    in_reply_to: str | None = None
-    internal_metadata: dict[str, Any] | None = None  # In-memory only; not serialized
+    message_id: str = Field(default_factory=_new_message_id, alias="messageId")
+    in_reply_to: str | None = Field(default=None, alias="inReplyTo")
+    internal_metadata: dict[str, Any] | None = Field(
+        default=None,
+        exclude=True,
+    )  # In-memory only; not serialized
 
     def for_host(self, host_id: str) -> bool:
         """True if this message is intended for the given host."""
-        return self.to_id in {host_address(host_id), host_id, "all_hosts"}
+        return self.to_id in {host_address(host_id), "all_hosts"}
 
     def for_controller(self, controller_id: str | None = None) -> bool:
         """True if this message is intended for the given controller or all controllers."""
         if self.to_id == "all_controllers":
             return True
         if controller_id is None:
-            return self.to_id == "controller" or self.to_id.startswith("controller:")
-        return self.to_id in {controller_address(controller_id), "controller"}
+            return parse_controller_address(self.to_id) is not None
+        return self.to_id == controller_address(controller_id)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSON (e.g. MQTT, WebSocket)."""
-        payload = {
-            "messageId": self.message_id,
-            "from": self.from_id,
-            "to": self.to_id,
-            "type": self.type,
-            "payload": self.payload,
-        }
-        if self.in_reply_to is not None:
-            payload["inReplyTo"] = self.in_reply_to
-        return payload
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
     @classmethod
     def from_dict(
         cls, d: dict[str, Any], *, internal_metadata: dict[str, Any] | None = None
     ) -> HostMessage:
         """Deserialize from JSON. internal_metadata is only set via kwarg when receiver knows source."""
-        return cls(
-            message_id=d.get("messageId", _new_message_id()),
-            from_id=d["from"],
-            to_id=d["to"],
-            type=d["type"],
-            payload=d["payload"],
-            in_reply_to=d.get("inReplyTo"),
-            internal_metadata=internal_metadata,
+        data = dict(d)
+        if "messageId" not in data:
+            raise ValueError("messageId is required")
+        message = cls.model_validate(data)
+        if internal_metadata is None:
+            return message
+        return message.model_copy(
+            update={"internal_metadata": dict(internal_metadata)}
         )
+
+    @classmethod
+    def schema_dict(cls) -> dict[str, Any]:
+        return cls.model_json_schema(by_alias=True)
 
 
 # Message type constants
@@ -152,7 +150,6 @@ ALL_CONTROLLERS = "all_controllers"
 ACTIONS_UNREGISTERED = "actionsUnregistered"
 HOST_ONLINE = "hostOnline"
 HOST_OFFLINE = "hostOffline"
-CONTROLLER_CAPABILITIES = "controllerCapabilities"
 WILL_APPEAR = "willAppear"
 WILL_DISAPPEAR = "willDisappear"
 KEY_UP = "keyUp"
@@ -164,8 +161,6 @@ PAGE_APPEAR = "pageAppear"
 PAGE_DISAPPEAR = "pageDisappear"
 SET_TITLE = "setTitle"
 SET_IMAGE = "setImage"
-SWITCH_TO_PROFILE = "switchToProfile"
-SET_STATE = "setState"
 SHOW_ALERT = "showAlert"
 SHOW_OK = "showOk"
 REQUEST_SETTINGS = "requestSettings"
@@ -177,7 +172,6 @@ SET_GLOBAL_SETTINGS = "setGlobalSettings"
 SET_PAGE = "setPage"
 OPEN_PAGE = "openPage"
 CLOSE_PAGE = "closePage"
-OPEN_URL = "openUrl"
 SLEEP_SCREEN = "sleepScreen"
 WAKE_SCREEN = "wakeScreen"
 
@@ -192,39 +186,30 @@ class ActionsChangedEvent:
 
 def extract_device_id(context_id: str) -> str:
     """Extract device_id from contextId."""
-    return parse_context_id(context_id).get("device_id") or ""
+    return parse_context_id(context_id)["device_id"] or ""
 
 
 def extract_slot_id(context_id: str) -> str:
     """Extract slot_id from contextId."""
-    parsed = parse_context_id(context_id)
-    slot_id = parsed.get("slot_id")
-    if slot_id:
-        return slot_id
-    if "." in context_id:
-        return context_id.split(".", 1)[1]
-    return context_id
+    return parse_context_id(context_id)["slot_id"] or ""
 
 
 def extract_controller_id(context_id: str) -> str | None:
     """Extract controller_id from contextId when present."""
-    return parse_context_id(context_id).get("controller_id")
+    return parse_context_id(context_id)["controller_id"]
 
 
-# Elgato-aligned host -> controller commands a controller-lite should implement.
+# Host -> controller commands a controller-lite should implement.
 CORE_COMMAND_MESSAGE_TYPES = frozenset(
     {
         SET_TITLE,
         SET_IMAGE,
-        SET_STATE,
         SHOW_ALERT,
         SHOW_OK,
         REQUEST_SETTINGS,
         SET_SETTINGS,
         REQUEST_GLOBAL_SETTINGS,
         SET_GLOBAL_SETTINGS,
-        OPEN_URL,
-        SWITCH_TO_PROFILE,
     }
 )
 
@@ -236,7 +221,7 @@ GLOBAL_SETTINGS_MESSAGE_TYPES = frozenset(
     }
 )
 
-# Deckr-specific controller extensions beyond the Elgato-aligned core.
+# Deckr-specific controller extensions beyond the core command set.
 DECKR_EXTENSION_COMMAND_MESSAGE_TYPES = frozenset(
     {
         SET_PAGE,
