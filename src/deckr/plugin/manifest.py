@@ -72,11 +72,18 @@ class Action(CamelModel):
 
     name: str
     uuid: str = Field(
-        validation_alias=AliasChoices("UUID", "uuid")
+        alias="UUID",
+        validation_alias=AliasChoices("UUID", "uuid"),
     )  # Elgato "UUID", Python "uuid"
     icon: str | None = None
     tooltip: str | None = None
     controllers: list[Literal["Keypad", "Encoder"]]
+    property_inspector_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PropertyInspectorPath", "property_inspector_path"
+        ),
+    )
     states: list[State]
 
 
@@ -85,6 +92,19 @@ class CoreManifest(CamelModel):
 
     model_config = _PASCAL_CONFIG
     actions: list[Action] = Field(alias="Actions")
+    name: str | None = None
+    uuid: str | None = Field(
+        default=None,
+        alias="UUID",
+        validation_alias=AliasChoices("UUID", "uuid"),
+    )
+    version: str | None = None
+    property_inspector_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PropertyInspectorPath", "property_inspector_path"
+        ),
+    )
 
 
 class Manifest(CoreManifest):
@@ -139,6 +159,15 @@ def get_manifest_defaults_for_action(
     return None
 
 
+def get_manifest_action(manifest: CoreManifest, action_uuid: str) -> Action | None:
+    """Find an action definition by UUID."""
+
+    for action in manifest.actions:
+        if action.uuid == action_uuid:
+            return action
+    return None
+
+
 def _state_override_to_wire(override: StateOverride) -> dict[str, Any]:
     """Convert StateOverride to wire format (dict) for manifest_defaults.
     Compatible with _parse_manifest_defaults in context.py."""
@@ -164,9 +193,30 @@ def serialize_manifest_defaults(
 
 
 def build_action_metadata(action: Any) -> dict[str, Any]:
-    """Build action metadata dict (uuid, manifestDefaults) for wire protocol."""
+    """Build action metadata dict for wire protocol registration."""
+
+    manifest: CoreManifest | None = getattr(action, "manifest", None)
+    manifest_action = None
+    if manifest is not None:
+        manifest_action = get_manifest_action(manifest, action.uuid)
     manifest_defaults = getattr(action, "manifest_state_defaults", None)
+    action_name = getattr(action, "name", None)
+    if action_name is None and manifest_action is not None:
+        action_name = manifest_action.name
+    controllers = getattr(action, "controllers", None)
+    if controllers is None and manifest_action is not None:
+        controllers = manifest_action.controllers
+    plugin_uuid = getattr(action, "plugin_uuid", None)
+    if plugin_uuid is None and manifest is not None:
+        plugin_uuid = manifest.uuid
+    property_inspector_path = getattr(action, "property_inspector_path", None)
+    if property_inspector_path is None and manifest_action is not None:
+        property_inspector_path = manifest_action.property_inspector_path
     return {
         "uuid": action.uuid,
+        "name": action_name,
+        "pluginUuid": plugin_uuid,
+        "controllers": controllers,
+        "propertyInspectorPath": property_inspector_path,
         "manifestDefaults": serialize_manifest_defaults(manifest_defaults),
     }
