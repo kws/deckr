@@ -229,6 +229,10 @@ The shared runtime context may provide generic launcher metadata such as:
 That runtime context must not become a second general-purpose dependency
 injection system.
 
+In particular, the runtime context must not expose the full configuration
+document to components. Components receive only their own resolved exact-prefix
+mapping.
+
 If a cross-component interaction is dynamic, it belongs on a lane.
 
 If a shared runtime artifact is truly generic and static, it must be defined
@@ -353,6 +357,12 @@ This means:
 - dotted names are exact binding prefixes, not inheritance paths
 
 Implicit parent-scope inheritance is forbidden.
+
+`deckr.plugins` is not a configuration namespace. It remains an entry-point
+group for Python plugin discovery only.
+
+Python plugins are configured through the plugin settings and global-settings
+message flow. Plugin TOML configuration is unsupported.
 
 ### Component-Owned Parsing and Enablement
 

@@ -56,6 +56,26 @@ class ConfigDocument:
         return self.namespace("deckr") or _EMPTY_MAPPING
 
 
+def _validate_document_payload(payload: Mapping[str, Any]) -> None:
+    deckr_payload = payload.get("deckr")
+    if not isinstance(deckr_payload, Mapping):
+        return
+
+    plugins_payload = deckr_payload.get("plugins")
+    if plugins_payload is None:
+        return
+
+    raise ValueError(
+        "Plugin TOML configuration is no longer supported. "
+        "Remove [deckr.plugins.*] sections and use the settings/global-settings "
+        "infrastructure instead."
+    )
+
+
+def validate_config_document(document: ConfigDocument) -> None:
+    _validate_document_payload(document.raw)
+
+
 def _load_payload(
     path: Path | None,
     *,
@@ -101,8 +121,10 @@ def load_config_document(
         raise ValueError("[deckr] must be a table")
 
     base_dir = source_path.parent if source_path is not None else Path.cwd()
-    return ConfigDocument(
+    document = ConfigDocument(
         raw=_freeze(payload),
         source_path=source_path,
         base_dir=base_dir,
     )
+    validate_config_document(document)
+    return document

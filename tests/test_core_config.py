@@ -42,9 +42,6 @@ log_level = "debug"
 
 [deckr.plugin_hosts.python.instances.main]
 enabled = false
-
-[deckr.plugins.openhab]
-url = "http://openhab.local:8080"
 """.strip()
     )
 
@@ -56,9 +53,22 @@ url = "http://openhab.local:8080"
     assert document.children("deckr.plugin_hosts") == {
         "python": {"instances": {"main": {"enabled": False}}}
     }
-    assert document.namespace("deckr.plugins.openhab") == {
-        "url": "http://openhab.local:8080"
-    }
+
+
+def test_load_config_document_rejects_plugin_toml_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "deckr.toml"
+    config_path.write_text(
+        """
+[deckr.controller]
+log_level = "debug"
+
+[deckr.plugins.openhab]
+url = "http://openhab.local:8080"
+""".strip()
+    )
+
+    with pytest.raises(ValueError, match="Plugin TOML configuration is no longer supported"):
+        load_config_document(config_path)
 
 
 def test_config_document_resolves_relative_paths(tmp_path: Path) -> None:

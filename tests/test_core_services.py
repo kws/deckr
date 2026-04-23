@@ -162,12 +162,14 @@ async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
 
     def controller_factory(context):
         seen["controller_config"] = dict(context.raw_config)
+        seen["controller_has_document"] = hasattr(context, "document")
         seen["plugin_lane"] = context.require_lane("plugin_messages")
         seen["hardware_lane"] = context.require_lane("hardware_events")
         return _DummyComponent(name=context.runtime_name)
 
     def host_factory(context):
         seen["host_config"] = dict(context.raw_config)
+        seen["host_has_document"] = hasattr(context, "document")
         seen["host_lane"] = context.require_lane("plugin_messages")
         return _DummyComponent(name=context.runtime_name)
 
@@ -232,6 +234,8 @@ async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
         assert result.lane_names == ("hardware_events", "plugin_messages")
         assert seen["controller_config"] == {"log_level": "debug"}
         assert seen["host_config"] == {"host_id": "python"}
+        assert seen["controller_has_document"] is False
+        assert seen["host_has_document"] is False
         assert seen["plugin_lane"] is seen["host_lane"]
         assert seen["plugin_lane"] is not None
         assert seen["hardware_lane"] is not None

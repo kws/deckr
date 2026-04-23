@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from deckr.plugin.events import (
     Coordinates,
     MultiActionPayload,
     SingleActionPayload,
     WillAppear,
-    WillAppearPayload,
 )
 
 
@@ -203,56 +202,80 @@ class TestWillAppearPayload:
 
     def test_will_appear_payload_multi_action(self):
         """Test that WillAppearPayload correctly discriminates MultiActionPayload."""
-        data = {
+        payload_data = {
             "controller": "Keypad",
             "isInMultiAction": True,
             "resources": {"icon": "path/to/icon.png"},
             "settings": {"key": "value"},
         }
-        adapter = TypeAdapter(WillAppearPayload)
-        payload = adapter.validate_python(data)
+        payload = WillAppear.model_validate(
+            {
+                "action": "com.example.action",
+                "context": "context123",
+                "device": "device456",
+                "payload": payload_data,
+            }
+        ).payload
         assert isinstance(payload, MultiActionPayload)
         assert payload.is_in_multi_action is True
 
     def test_will_appear_payload_single_action(self):
         """Test that WillAppearPayload correctly discriminates SingleActionPayload."""
-        data = {
+        payload_data = {
             "controller": "Keypad",
             "isInMultiAction": False,
             "coordinates": {"column": 1, "row": 2},
             "resources": {"icon": "path/to/icon.png"},
             "settings": {"key": "value"},
         }
-        adapter = TypeAdapter(WillAppearPayload)
-        payload = adapter.validate_python(data)
+        payload = WillAppear.model_validate(
+            {
+                "action": "com.example.action",
+                "context": "context123",
+                "device": "device456",
+                "payload": payload_data,
+            }
+        ).payload
         assert isinstance(payload, SingleActionPayload)
         assert payload.is_in_multi_action is False
 
     def test_will_appear_payload_single_action_encoder(self):
         """Test that WillAppearPayload works with Encoder controller."""
-        data = {
+        payload_data = {
             "controller": "Encoder",
             "isInMultiAction": False,
             "coordinates": {"column": 0, "row": 0},
             "resources": {"icon": "path/to/icon.png"},
             "settings": {"key": "value"},
         }
-        adapter = TypeAdapter(WillAppearPayload)
-        payload = adapter.validate_python(data)
+        payload = WillAppear.model_validate(
+            {
+                "action": "com.example.action",
+                "context": "context123",
+                "device": "device456",
+                "payload": payload_data,
+            }
+        ).payload
         assert isinstance(payload, SingleActionPayload)
         assert payload.controller == "Encoder"
 
     def test_will_appear_payload_discriminator_required(self):
         """Test that is_in_multi_action is required for discrimination."""
-        data = {
+        payload_data = {
             "controller": "Keypad",
             "resources": {"icon": "path/to/icon.png"},
             "settings": {"key": "value"},
         }
         # Without discriminator, validation should fail
-        adapter = TypeAdapter(WillAppearPayload)
         with pytest.raises(ValidationError):
-            adapter.validate_python(data)
+            WillAppear.model_validate(
+                {
+                    "action": "com.example.action",
+                    "context": "context123",
+                    "device": "device456",
+                    "payload": payload_data,
+                }
+            )
 
 
 class TestWillAppear:

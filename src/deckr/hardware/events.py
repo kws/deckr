@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Protocol
 from urllib.parse import quote, unquote
 
-from pydantic import ConfigDict, Field, TypeAdapter
+from pydantic import ConfigDict, Field, RootModel
 
 from deckr.core.util.pydantic import CamelModel, to_camel
 
@@ -327,7 +327,9 @@ HardwareTransportMessage = Annotated[
     Field(discriminator="type"),
 ]
 
-_transport_message_adapter = TypeAdapter(HardwareTransportMessage)
+
+class HardwareTransportEnvelope(RootModel[HardwareTransportMessage]):
+    root: HardwareTransportMessage
 
 
 def _slot_to_wire(slot: HWSlot) -> WireHWSlot:
@@ -400,15 +402,18 @@ def device_info_from_wire(device: WireHWDevice) -> HWDeviceInfo:
 
 
 def hardware_message_to_wire(message: HardwareTransportMessage) -> dict[str, Any]:
-    return _transport_message_adapter.dump_python(message, by_alias=True, mode="json")
+    return HardwareTransportEnvelope(root=message).model_dump(
+        by_alias=True,
+        mode="json",
+    )
 
 
 def hardware_message_from_wire(data: dict[str, Any]) -> HardwareTransportMessage:
-    return _transport_message_adapter.validate_python(data)
+    return HardwareTransportEnvelope.model_validate(data).root
 
 
 def hardware_transport_message_schema() -> dict[str, Any]:
-    return _transport_message_adapter.json_schema(
+    return HardwareTransportEnvelope.model_json_schema(
         by_alias=True,
     )
 

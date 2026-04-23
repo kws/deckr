@@ -10,7 +10,7 @@ from typing import Any, Protocol
 import anyio
 
 from deckr.core.component import BaseComponent, Component, ComponentManager
-from deckr.core.config import ConfigDocument
+from deckr.core.config import ConfigDocument, validate_config_document
 from deckr.core.messaging import EventBus
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
@@ -44,7 +44,6 @@ class ComponentContext:
     runtime_name: str
     manifest: ComponentManifest
     raw_config: Mapping[str, Any]
-    document: ConfigDocument
     base_dir: Path
     lanes: LaneRegistry
 
@@ -253,6 +252,7 @@ async def activate_components(
     *,
     component_filter: Callable[[str], bool] | None = None,
 ) -> ComponentActivationResult:
+    validate_config_document(document)
     specs = resolve_component_instance_specs(
         document,
         discovered_component_ids=available_component_ids(),
@@ -268,7 +268,6 @@ async def activate_components(
             runtime_name=spec.runtime_name,
             manifest=spec.definition.manifest,
             raw_config=spec.raw_config,
-            document=document,
             base_dir=document.base_dir,
             lanes=lanes,
         )
