@@ -318,7 +318,6 @@ Examples:
 
 - `deckr.controller`
 - `deckr.plugin_hosts.python`
-- `deckr.plugin_hosts.python.mqtt`
 - `deckr.bridges.mqtt`
 - `deckr.bridges.websocket`
 - `deckr.drivers.mqtt`
@@ -327,8 +326,8 @@ The launcher must use the manifest's declared `config_prefix`. It must not try
 to infer meaning from path segments such as `plugin_hosts`, `drivers`, or
 `controller`.
 
-`deckr.plugin_hosts.python` and `deckr.plugin_hosts.python.mqtt` are therefore
-two separate component types, not a parent component and a child component.
+`deckr.plugin_hosts.python` and `deckr.bridges.mqtt` are therefore two separate
+component types, not a parent component and a child component.
 
 ### Exact Prefix Binding
 
@@ -352,8 +351,8 @@ This means:
 
 - `deckr.plugin_hosts.python` does not automatically receive configuration from
   `deckr.plugin_hosts`
-- `deckr.plugin_hosts.python.mqtt` does not automatically receive configuration
-  from `deckr.plugin_hosts.python`
+- `deckr.bridges.mqtt` does not automatically receive configuration from
+  `deckr.plugin_hosts.python`
 - dotted names are exact binding prefixes, not inheritance paths
 
 Implicit parent-scope inheritance is forbidden.
@@ -386,9 +385,9 @@ enabled/disabled convention.
 
 Component type identity and component instance identity are different concepts.
 
-`deckr.plugin_hosts.python.mqtt` is not an instance of
-`deckr.plugin_hosts.python`; it is a distinct component type with its own
-manifest and its own exact `config_prefix`.
+`deckr.bridges.mqtt` is not an instance of `deckr.plugin_hosts.python`; it is a
+distinct component type with its own manifest and its own exact
+`config_prefix`.
 
 If a component type is `singleton`, there is at most one configured instance of
 that component type, and its configuration lives exactly at its declared

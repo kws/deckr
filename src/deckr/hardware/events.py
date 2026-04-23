@@ -234,16 +234,6 @@ class WireHWDevice(HardwareWireModel):
     name: str | None = None
 
 
-class ManagerHelloMessage(HardwareWireModel):
-    type: Literal["managerHello"] = "managerHello"
-    manager_id: str
-
-
-class ControllerHelloMessage(HardwareWireModel):
-    type: Literal["controllerHello"] = "controllerHello"
-    controller_id: str
-
-
 class DeviceConnectedMessage(HardwareWireModel):
     type: Literal["deviceConnected"] = "deviceConnected"
     device_id: str
@@ -311,9 +301,7 @@ class WakeScreenMessage(HardwareWireModel):
 
 
 HardwareTransportMessage = Annotated[
-    ManagerHelloMessage
-    | ControllerHelloMessage
-    | DeviceConnectedMessage
+    DeviceConnectedMessage
     | DeviceDisconnectedMessage
     | KeyDownMessage
     | KeyUpMessage
