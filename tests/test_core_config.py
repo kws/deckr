@@ -40,7 +40,7 @@ def test_load_config_document_preserves_namespaced_children(tmp_path: Path) -> N
 [deckr.controller]
 log_level = "debug"
 
-[deckr.plugin_hosts.python]
+[deckr.plugin_hosts.python.instances.main]
 enabled = false
 
 [deckr.plugins.openhab]
@@ -54,7 +54,7 @@ url = "http://openhab.local:8080"
     assert document.base_dir == tmp_path.resolve()
     assert document.namespace("deckr.controller") == {"log_level": "debug"}
     assert document.children("deckr.plugin_hosts") == {
-        "python": {"enabled": False}
+        "python": {"instances": {"main": {"enabled": False}}}
     }
     assert document.namespace("deckr.plugins.openhab") == {
         "url": "http://openhab.local:8080"

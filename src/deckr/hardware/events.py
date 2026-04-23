@@ -407,6 +407,12 @@ def hardware_message_from_wire(data: dict[str, Any]) -> HardwareTransportMessage
     return _transport_message_adapter.validate_python(data)
 
 
+def hardware_transport_message_schema() -> dict[str, Any]:
+    return _transport_message_adapter.json_schema(
+        by_alias=True,
+    )
+
+
 def event_to_transport_message(event: HardwareInputEvent) -> HardwareTransportMessage:
     if isinstance(event, DeviceConnectedEvent):
         return DeviceConnectedMessage(

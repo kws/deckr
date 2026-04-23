@@ -6,16 +6,24 @@ import anyio
 import pytest
 
 from deckr.core.component import BaseComponent, ComponentManager
-from deckr.core.config import ConfigDocument
-from deckr.core.hardware_events import DeviceConnectedEvent
-from deckr.core.plugin_messages import HostMessage
-from deckr.core.services import (
-    ServiceNotConfigured,
-    activate_services,
-    resolve_service_instance_specs,
+from deckr.core.components import (
+    ComponentActivationResult,
+    ComponentCardinality,
+    ComponentDefinition,
+    ComponentManifest,
+    activate_components,
+    resolve_component_instance_specs,
 )
-from deckr.hardware.events import DeviceConnectedEvent as LegacyDeviceConnectedEvent
-from deckr.plugin.messages import HostMessage as LegacyHostMessage
+from deckr.core.config import ConfigDocument
+from deckr.hardware.events import hardware_transport_message_schema
+from deckr.plugin.messages import HostMessage
+
+
+def _core_wire_schemas() -> dict[str, dict]:
+    return {
+        "plugin.host_message": HostMessage.schema_dict(),
+        "hardware.transport_message": hardware_transport_message_schema(),
+    }
 
 
 class _DummyComponent(BaseComponent):
@@ -30,85 +38,179 @@ def _document(raw: dict) -> ConfigDocument:
     return ConfigDocument(raw=raw, source_path=None, base_dir=Path.cwd())
 
 
-def test_resolve_service_specs_includes_discovered_services_without_config() -> None:
-    document = _document({"deckr": {"services": {}}})
-
-    specs = resolve_service_instance_specs(
-        document,
-        discovered_service_ids=["deckr.controller", "deckr.plugin_hosts.python"],
+def test_resolve_component_specs_includes_singleton_and_multi_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.controller",
+            config_prefix="deckr.controller",
+            consumes=("hardware_events", "plugin_messages"),
+            publishes=("plugin_messages",),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    host = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.plugin_hosts.python",
+            config_prefix="deckr.plugin_hosts.python",
+            consumes=("plugin_messages",),
+            publishes=("plugin_messages",),
+            cardinality=ComponentCardinality.MULTI_INSTANCE,
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
 
-    assert [(spec.service_id, dict(spec.raw_config)) for spec in specs] == [
-        ("deckr.controller", {}),
-        ("deckr.plugin_hosts.python", {}),
-    ]
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: {
+            "deckr.controller": controller,
+            "deckr.plugin_hosts.python": host,
+        }[component_id],
+    )
 
-
-def test_resolve_service_specs_uses_legacy_plugin_host_namespace() -> None:
     document = _document(
         {
             "deckr": {
+                "controller": {"log_level": "debug"},
                 "plugin_hosts": {
-                    "python": {"host_id": "python"},
-                    "python_mqtt": {"hostname": "mqtt.example.net", "topic": "deckr/v1"},
-                }
+                    "python": {
+                        "enabled": False,
+                        "instances": {
+                            "main": {"host_id": "python"},
+                            "remote": {"host_id": "remote"},
+                        },
+                    }
+                },
             }
         }
     )
 
-    specs = resolve_service_instance_specs(
+    specs = resolve_component_instance_specs(
         document,
-        discovered_service_ids=[
-            "deckr.plugin_hosts.python",
-            "deckr.plugin_hosts.python.mqtt",
-        ],
+        discovered_component_ids=["deckr.controller", "deckr.plugin_hosts.python"],
     )
 
-    assert [(spec.service_id, dict(spec.raw_config)) for spec in specs] == [
-        ("deckr.plugin_hosts.python", {"host_id": "python"}),
+    assert [
+        (spec.component_id, spec.instance_id, dict(spec.raw_config), spec.runtime_name)
+        for spec in specs
+    ] == [
+        ("deckr.controller", "default", {"log_level": "debug"}, "deckr.controller"),
         (
-            "deckr.plugin_hosts.python.mqtt",
-            {"hostname": "mqtt.example.net", "topic": "deckr/v1"},
+            "deckr.plugin_hosts.python",
+            "main",
+            {"host_id": "python"},
+            "deckr.plugin_hosts.python:main",
+        ),
+        (
+            "deckr.plugin_hosts.python",
+            "remote",
+            {"host_id": "remote"},
+            "deckr.plugin_hosts.python:remote",
         ),
     ]
 
 
-@pytest.mark.asyncio
-async def test_activate_services_passes_only_own_config_and_supports_endpoints(
+def test_resolve_component_specs_do_not_inherit_parent_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen: dict[str, object] = {}
-
-    def controller_factory(*, context):
-        assert context.raw_config == {"log_level": "debug"}
-        context.export_endpoint("plugin_messages", "plugin-bus")
-        seen["controller_document"] = context.document
-        return _DummyComponent(name="controller")
-
-    def host_factory(*, context):
-        seen["host_config"] = dict(context.raw_config)
-        seen["endpoint"] = context.require_endpoint("plugin_messages")
-        return _DummyComponent(name="python-host")
-
-    monkeypatch.setattr(
-        "deckr.core.services.available_service_names",
-        lambda: ["deckr.controller", "deckr.plugin_hosts.python"],
+    host = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.plugin_hosts.python",
+            config_prefix="deckr.plugin_hosts.python",
+            consumes=("plugin_messages",),
+            publishes=("plugin_messages",),
+            cardinality=ComponentCardinality.MULTI_INSTANCE,
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
+
     monkeypatch.setattr(
-        "deckr.core.services.load_service_factory",
-        lambda service_id: {
-            "deckr.controller": controller_factory,
-            "deckr.plugin_hosts.python": host_factory,
-        }.get(service_id),
+        "deckr.core.components.load_component_definition",
+        lambda component_id: host,
     )
 
     document = _document(
         {
             "deckr": {
-                "services": {
-                    "deckr.controller": {"log_level": "debug"},
-                    "deckr.plugin_hosts.python": {"enabled": True},
+                "plugin_hosts": {
+                    "python": {
+                        "enabled": False,
+                        "instances": {
+                            "main": {},
+                        },
+                    }
                 }
+            }
+        }
+    )
+
+    specs = resolve_component_instance_specs(
+        document,
+        discovered_component_ids=["deckr.plugin_hosts.python"],
+    )
+
+    assert len(specs) == 1
+    assert dict(specs[0].raw_config) == {}
+
+
+@pytest.mark.asyncio
+async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def controller_factory(context):
+        seen["controller_config"] = dict(context.raw_config)
+        seen["plugin_lane"] = context.require_lane("plugin_messages")
+        seen["hardware_lane"] = context.require_lane("hardware_events")
+        return _DummyComponent(name=context.runtime_name)
+
+    def host_factory(context):
+        seen["host_config"] = dict(context.raw_config)
+        seen["host_lane"] = context.require_lane("plugin_messages")
+        return _DummyComponent(name=context.runtime_name)
+
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.controller", "deckr.plugin_hosts.python"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: {
+            "deckr.controller": ComponentDefinition(
+                manifest=ComponentManifest(
+                    component_id="deckr.controller",
+                    config_prefix="deckr.controller",
+                    consumes=("hardware_events", "plugin_messages"),
+                    publishes=("plugin_messages",),
+                ),
+                factory=controller_factory,
+            ),
+            "deckr.plugin_hosts.python": ComponentDefinition(
+                manifest=ComponentManifest(
+                    component_id="deckr.plugin_hosts.python",
+                    config_prefix="deckr.plugin_hosts.python",
+                    consumes=("plugin_messages",),
+                    publishes=("plugin_messages",),
+                    cardinality=ComponentCardinality.MULTI_INSTANCE,
+                ),
+                factory=host_factory,
+            ),
+        }[component_id],
+    )
+
+    document = _document(
+        {
+            "deckr": {
+                "controller": {"log_level": "debug"},
+                "plugin_hosts": {
+                    "python": {
+                        "instances": {
+                            "main": {"host_id": "python"},
+                        }
+                    }
+                },
             }
         }
     )
@@ -118,53 +220,40 @@ async def test_activate_services_passes_only_own_config_and_supports_endpoints(
         tg.start_soon(component_manager.run)
         await anyio.sleep(0.01)
 
-        result = await activate_services(document, component_manager)
+        result: ComponentActivationResult = await activate_components(
+            document,
+            component_manager,
+        )
 
         assert [component.name for component in result.components] == [
-            "python-host",
-            "controller",
+            "deckr.controller",
+            "deckr.plugin_hosts.python:main",
         ]
-        assert seen["host_config"] == {"enabled": True}
-        assert seen["endpoint"] == "plugin-bus"
-        assert seen["controller_document"] is document
+        assert result.lane_names == ("hardware_events", "plugin_messages")
+        assert seen["controller_config"] == {"log_level": "debug"}
+        assert seen["host_config"] == {"host_id": "python"}
+        assert seen["plugin_lane"] is seen["host_lane"]
+        assert seen["plugin_lane"] is not None
+        assert seen["hardware_lane"] is not None
 
         tg.cancel_scope.cancel()
 
 
-@pytest.mark.asyncio
-async def test_activate_services_skips_service_that_declines_activation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def inactive_factory(*, context):
-        raise ServiceNotConfigured("inactive")
-
-    monkeypatch.setattr(
-        "deckr.core.services.available_service_names",
-        lambda: ["deckr.plugin_hosts.python.mqtt"],
-    )
-    monkeypatch.setattr(
-        "deckr.core.services.load_service_factory",
-        lambda service_id: inactive_factory,
+def test_host_message_is_pydantic_and_schema_exportable() -> None:
+    message = HostMessage(
+        from_id="host:python",
+        to_id="all_controllers",
+        type="hostOnline",
+        payload={"hostId": "python"},
     )
 
-    document = _document({"deckr": {"services": {}}})
-    component_manager = ComponentManager()
+    payload = message.to_dict()
 
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
+    assert payload["from"] == "host:python"
+    assert payload["to"] == "all_controllers"
+    assert payload["messageId"]
+    assert HostMessage.from_dict(payload) == message
 
-        result = await activate_services(document, component_manager)
-
-        assert result.components == ()
-        assert component_manager.list_components() == []
-
-        tg.cancel_scope.cancel()
-
-
-def test_core_plugin_messages_alias_matches_legacy_contracts() -> None:
-    assert HostMessage is LegacyHostMessage
-
-
-def test_core_hardware_events_alias_matches_legacy_contracts() -> None:
-    assert DeviceConnectedEvent is LegacyDeviceConnectedEvent
+    schemas = _core_wire_schemas()
+    assert "plugin.host_message" in schemas
+    assert "hardware.transport_message" in schemas

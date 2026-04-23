@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, unquote
+
+from pydantic import ConfigDict, Field
+
+from deckr.core.util.pydantic import CamelModel
 
 
 def _new_message_id() -> str:
@@ -91,17 +95,24 @@ def parse_context_id(context_id: str) -> dict[str, str | None]:
     }
 
 
-@dataclass(frozen=True)
-class HostMessage:
+class HostMessage(CamelModel):
     """Message envelope for plugin host protocol. All messages carry from/to for routing."""
 
-    from_id: str
-    to_id: str
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+    from_id: str = Field(alias="from")
+    to_id: str = Field(alias="to")
     type: str
     payload: dict[str, Any]
-    message_id: str = field(default_factory=_new_message_id)
-    in_reply_to: str | None = None
-    internal_metadata: dict[str, Any] | None = None  # In-memory only; not serialized
+    message_id: str = Field(default_factory=_new_message_id, alias="messageId")
+    in_reply_to: str | None = Field(default=None, alias="inReplyTo")
+    internal_metadata: dict[str, Any] | None = Field(
+        default=None,
+        exclude=True,
+    )  # In-memory only; not serialized
 
     def for_host(self, host_id: str) -> bool:
         """True if this message is intended for the given host."""
@@ -117,31 +128,26 @@ class HostMessage:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSON (e.g. MQTT, WebSocket)."""
-        payload = {
-            "messageId": self.message_id,
-            "from": self.from_id,
-            "to": self.to_id,
-            "type": self.type,
-            "payload": self.payload,
-        }
-        if self.in_reply_to is not None:
-            payload["inReplyTo"] = self.in_reply_to
-        return payload
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
     @classmethod
     def from_dict(
         cls, d: dict[str, Any], *, internal_metadata: dict[str, Any] | None = None
     ) -> HostMessage:
         """Deserialize from JSON. internal_metadata is only set via kwarg when receiver knows source."""
-        return cls(
-            message_id=d.get("messageId", _new_message_id()),
-            from_id=d["from"],
-            to_id=d["to"],
-            type=d["type"],
-            payload=d["payload"],
-            in_reply_to=d.get("inReplyTo"),
-            internal_metadata=internal_metadata,
+        data = dict(d)
+        if "messageId" not in data:
+            data["messageId"] = _new_message_id()
+        message = cls.model_validate(data)
+        if internal_metadata is None:
+            return message
+        return message.model_copy(
+            update={"internal_metadata": dict(internal_metadata)}
         )
+
+    @classmethod
+    def schema_dict(cls) -> dict[str, Any]:
+        return cls.model_json_schema(by_alias=True)
 
 
 # Message type constants
