@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -5,6 +6,8 @@ from functools import cache
 from typing import Any, TypeVar
 
 import anyio
+
+logger = logging.getLogger(__name__)
 
 
 class EventBus:
@@ -37,6 +40,11 @@ class EventBus:
 
         # evict slow subscribers
         if to_drop:
+            logger.warning(
+                "EventBus dropped %d slow subscriber(s) while delivering %s",
+                len(to_drop),
+                type(event).__name__,
+            )
             async with self._lock:
                 for sid in to_drop:
                     s = self._subscribers.pop(sid, None)

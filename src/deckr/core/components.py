@@ -10,7 +10,7 @@ from typing import Any, Protocol
 import anyio
 
 from deckr.core.component import BaseComponent, Component, ComponentManager
-from deckr.core.config import ConfigDocument, validate_config_document
+from deckr.core.config import ConfigDocument
 from deckr.core.messaging import EventBus
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
@@ -252,7 +252,6 @@ async def activate_components(
     *,
     component_filter: Callable[[str], bool] | None = None,
 ) -> ComponentActivationResult:
-    validate_config_document(document)
     specs = resolve_component_instance_specs(
         document,
         discovered_component_ids=available_component_ids(),

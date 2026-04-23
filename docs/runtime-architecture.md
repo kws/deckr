@@ -358,12 +358,6 @@ This means:
 
 Implicit parent-scope inheritance is forbidden.
 
-`deckr.plugins` is not a configuration namespace. It remains an entry-point
-group for Python plugin discovery only.
-
-Python plugins are configured through the plugin settings and global-settings
-message flow. Plugin TOML configuration is unsupported.
-
 ### Component-Owned Parsing and Enablement
 
 Each component:
