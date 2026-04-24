@@ -147,3 +147,52 @@ def test_cli_delegates_to_launcher(
     assert result.exit_code == 0
     assert captured["config_path"] == str((tmp_path / "deckr.toml").resolve())
     assert captured["spec"] is spec
+
+
+def test_cli_reports_leaf_exception_from_exception_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_launch(config_path, *, spec: LauncherSpec | None = None) -> None:
+        raise ExceptionGroup(
+            "unhandled errors in a TaskGroup",
+            [ValueError("Controller ID is required.")],
+        )
+
+    monkeypatch.setattr(cli_mod, "launch", fake_launch)
+
+    runner = CliRunner()
+    command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))
+
+    result = runner.invoke(command, [])
+
+    assert result.exit_code != 0
+    assert "Controller ID is required." in result.output
+    assert "TaskGroup" not in result.output
+
+
+def test_cli_reports_multiple_leaf_exceptions_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_launch(config_path, *, spec: LauncherSpec | None = None) -> None:
+        raise ExceptionGroup(
+            "outer",
+            [
+                ExceptionGroup(
+                    "inner",
+                    [ValueError("first problem"), RuntimeError("second problem")],
+                ),
+                ValueError("first problem"),
+            ],
+        )
+
+    monkeypatch.setattr(cli_mod, "launch", fake_launch)
+
+    runner = CliRunner()
+    command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))
+
+    result = runner.invoke(command, [])
+
+    assert result.exit_code != 0
+    assert "Multiple errors occurred:" in result.output
+    assert result.output.count("first problem") == 1
+    assert result.output.count("second problem") == 1

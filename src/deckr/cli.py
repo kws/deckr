@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from deckr.launcher import LauncherSpec, default_config_document_text, launch
@@ -14,6 +15,29 @@ def _require_click() -> Any:
             "Install `deckr[cli]`."
         ) from exc
     return click
+
+
+def _iter_leaf_exceptions(exc: BaseException) -> Iterator[BaseException]:
+    if isinstance(exc, BaseExceptionGroup):
+        for child in exc.exceptions:
+            yield from _iter_leaf_exceptions(child)
+        return
+    yield exc
+
+
+def _format_cli_error(exc: BaseException) -> str:
+    messages: list[str] = []
+    for leaf in _iter_leaf_exceptions(exc):
+        message = str(leaf).strip()
+        rendered = message or leaf.__class__.__name__
+        if rendered not in messages:
+            messages.append(rendered)
+
+    if not messages:
+        return str(exc)
+    if len(messages) == 1:
+        return messages[0]
+    return "Multiple errors occurred:\n" + "\n".join(f"- {message}" for message in messages)
 
 
 def build_cli(*, spec: LauncherSpec | None = None):
@@ -47,7 +71,7 @@ def build_cli(*, spec: LauncherSpec | None = None):
         try:
             launch(config_path, spec=resolved_spec)
         except Exception as exc:
-            raise click.ClickException(str(exc)) from exc
+            raise click.ClickException(_format_cli_error(exc)) from exc
 
     return command
 
