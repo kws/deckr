@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from deckr.plugin.manifest import TitleOptions
+from deckr.plugin.rendering import TitleOptions
 
 
 @dataclass(frozen=True)

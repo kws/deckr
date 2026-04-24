@@ -150,7 +150,6 @@ ALL_CONTROLLERS = "all_controllers"
 ACTIONS_UNREGISTERED = "actionsUnregistered"
 HOST_ONLINE = "hostOnline"
 HOST_OFFLINE = "hostOffline"
-CONTROLLER_CAPABILITIES = "controllerCapabilities"
 WILL_APPEAR = "willAppear"
 WILL_DISAPPEAR = "willDisappear"
 KEY_UP = "keyUp"
@@ -162,8 +161,6 @@ PAGE_APPEAR = "pageAppear"
 PAGE_DISAPPEAR = "pageDisappear"
 SET_TITLE = "setTitle"
 SET_IMAGE = "setImage"
-SWITCH_TO_PROFILE = "switchToProfile"
-SET_STATE = "setState"
 SHOW_ALERT = "showAlert"
 SHOW_OK = "showOk"
 REQUEST_SETTINGS = "requestSettings"
@@ -175,7 +172,6 @@ SET_GLOBAL_SETTINGS = "setGlobalSettings"
 SET_PAGE = "setPage"
 OPEN_PAGE = "openPage"
 CLOSE_PAGE = "closePage"
-OPEN_URL = "openUrl"
 SLEEP_SCREEN = "sleepScreen"
 WAKE_SCREEN = "wakeScreen"
 
@@ -203,20 +199,17 @@ def extract_controller_id(context_id: str) -> str | None:
     return parse_context_id(context_id)["controller_id"]
 
 
-# Elgato-aligned host -> controller commands a controller-lite should implement.
+# Host -> controller commands a controller-lite should implement.
 CORE_COMMAND_MESSAGE_TYPES = frozenset(
     {
         SET_TITLE,
         SET_IMAGE,
-        SET_STATE,
         SHOW_ALERT,
         SHOW_OK,
         REQUEST_SETTINGS,
         SET_SETTINGS,
         REQUEST_GLOBAL_SETTINGS,
         SET_GLOBAL_SETTINGS,
-        OPEN_URL,
-        SWITCH_TO_PROFILE,
     }
 )
 
@@ -228,7 +221,7 @@ GLOBAL_SETTINGS_MESSAGE_TYPES = frozenset(
     }
 )
 
-# Deckr-specific controller extensions beyond the Elgato-aligned core.
+# Deckr-specific controller extensions beyond the core command set.
 DECKR_EXTENSION_COMMAND_MESSAGE_TYPES = frozenset(
     {
         SET_PAGE,

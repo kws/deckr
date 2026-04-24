@@ -26,11 +26,7 @@ class PluginContext(CorePluginContext, DeckrPluginContextExtensions, Protocol):
 
 
 class PluginAction(CorePluginAction, Protocol):
-    """Compatibility aggregate for actions used by the current controller.
-
-    Actions may have manifest_state_defaults (dict[int, StateOverride] | None) set by
-    the plugin provider for render resolution. Use getattr(action, "manifest_state_defaults", None).
-    """
+    """Compatibility aggregate for actions used by the current controller."""
 
     # Optional: on_touch_tap(event: TouchTap, context: PluginContext)
     # Optional: on_touch_swipe(event: TouchSwipe, context: PluginContext)

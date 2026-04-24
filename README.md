@@ -29,7 +29,7 @@ The controller now lives in its own sibling repository:
 src/deckr/
   core/        Generic runtime primitives, lanes, lifecycle, and transport helpers
   hardware/    Hardware-facing shared contracts and wire models
-  plugin/      Plugin-facing contracts, manifests, and protocol types
+  plugin/      Plugin-facing contracts, rendering types, and protocol types
 docs/
   runtime-architecture.md
 tests/
@@ -100,21 +100,21 @@ uv run lint-imports
 
 ## Plugin Protocol Layers
 
-The plugin contract is intentionally split into an Elgato-aligned core plus
-Deckr-specific extensions:
+The plugin contract is intentionally split into a small core plus Deckr-specific
+extensions:
 
 - `deckr.plugin.core_api`
   - The minimum surface a controller-lite implementation should support.
-  - Keeps `set_title`, `set_image`, `set_state`, `show_alert`, `show_ok`,
-    settings, `open_url`, and `switch_to_profile` close to Stream Deck
-    semantics.
+  - Keeps `set_title`, `set_image`, `show_alert`, `show_ok`, and settings
+    focused on the shared controller/plugin semantics.
 - `deckr.plugin.extensions`
-  - Deckr-only features such as dynamic pages and screen power control.
+  - Deckr-only features such as static page navigation, dynamic pages, and
+    screen power control.
 
 The key image rule is:
 
-- core `set_image`: Stream Deck-style image reference, typically a plugin-local
-  path or a data URI / base64 image string
+- core `set_image`: image reference, typically a plugin-local path or a data
+  URI / base64 image string
 
 ## Hardware Package
 
