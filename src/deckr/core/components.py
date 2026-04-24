@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib.metadata import entry_points
@@ -170,8 +170,10 @@ def load_component_definition(component_id: str) -> ComponentDefinition | None:
 def _singleton_spec(
     document: ConfigDocument,
     definition: ComponentDefinition,
-) -> ComponentInstanceSpec:
-    raw_config = document.namespace(definition.manifest.config_prefix) or {}
+) -> ComponentInstanceSpec | None:
+    raw_config = document.namespace(definition.manifest.config_prefix)
+    if raw_config is None:
+        return None
     instance_id = "default"
     return ComponentInstanceSpec(
         component_id=definition.manifest.component_id,
@@ -214,26 +216,28 @@ def resolve_component_instance_specs(
     document: ConfigDocument,
     *,
     discovered_component_ids: list[str] | tuple[str, ...],
-    component_filter: Callable[[str], bool] | None = None,
 ) -> list[ComponentInstanceSpec]:
-    component_ids = set(discovered_component_ids)
-    if component_filter is not None:
-        component_ids = {
-            component_id
-            for component_id in component_ids
-            if component_filter(component_id)
-        }
-
     specs: list[ComponentInstanceSpec] = []
-    for component_id in sorted(component_ids):
+    for component_id in sorted(set(discovered_component_ids)):
         definition = load_component_definition(component_id)
         if definition is None:
             continue
         if definition.manifest.cardinality == ComponentCardinality.SINGLETON:
-            specs.append(_singleton_spec(document, definition))
+            spec = _singleton_spec(document, definition)
+            if spec is not None:
+                specs.append(spec)
             continue
         specs.extend(_multi_instance_specs(document, definition))
     return specs
+
+
+def configured_component_instance_specs(
+    document: ConfigDocument,
+) -> list[ComponentInstanceSpec]:
+    return resolve_component_instance_specs(
+        document,
+        discovered_component_ids=available_component_ids(),
+    )
 
 
 def build_lane_registry(
@@ -249,14 +253,8 @@ def build_lane_registry(
 async def activate_components(
     document: ConfigDocument,
     component_manager: ComponentManager,
-    *,
-    component_filter: Callable[[str], bool] | None = None,
 ) -> ComponentActivationResult:
-    specs = resolve_component_instance_specs(
-        document,
-        discovered_component_ids=available_component_ids(),
-        component_filter=component_filter,
-    )
+    specs = configured_component_instance_specs(document)
     lanes = build_lane_registry(specs)
 
     created: list[Component] = []
@@ -291,8 +289,6 @@ async def activate_components(
 
 async def run_components(
     document: ConfigDocument,
-    *,
-    component_filter: Callable[[str], bool] | None = None,
 ) -> None:
     component_manager = ComponentManager()
     async with anyio.create_task_group() as tg:
@@ -300,6 +296,5 @@ async def run_components(
         await activate_components(
             document,
             component_manager,
-            component_filter=component_filter,
         )
         await anyio.sleep_forever()

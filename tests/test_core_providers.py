@@ -54,6 +54,31 @@ def test_singleton_component_uses_exact_prefix_mapping(
     }
 
 
+def test_singleton_component_without_exact_prefix_is_not_created(
+    monkeypatch,
+) -> None:
+    controller = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.controller",
+            config_prefix="deckr.controller",
+        ),
+        factory=lambda context: None,
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: controller,
+    )
+
+    document = _document({"deckr": {}})
+
+    specs = resolve_component_instance_specs(
+        document,
+        discovered_component_ids=["deckr.controller"],
+    )
+
+    assert specs == []
+
+
 def test_multi_instance_component_only_creates_declared_instances(
     monkeypatch,
 ) -> None:

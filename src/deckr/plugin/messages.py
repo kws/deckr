@@ -28,10 +28,9 @@ def host_address(host_id: str) -> str:
 
 def parse_controller_address(address: str) -> str | None:
     """Return controller_id when address is a controller endpoint."""
-    if address == "controller":
-        return ""
     if address.startswith("controller:"):
-        return address.split(":", 1)[1]
+        controller_id = address.split(":", 1)[1]
+        return controller_id or None
     return None
 
 
@@ -62,37 +61,30 @@ def build_context_id(controller_id: str, device_id: str, slot_id: str) -> str:
 
 
 def parse_context_id(context_id: str) -> dict[str, str | None]:
-    """Parse controller-scoped or legacy context IDs."""
-    if context_id.startswith("controller="):
-        parts: dict[str, str | None] = {
-            "controller_id": None,
-            "device_id": None,
-            "slot_id": None,
-        }
-        for item in context_id.split("|"):
-            key, sep, value = item.partition("=")
-            if not sep:
-                continue
-            decoded = _decode_context_value(value)
-            if key == "controller":
-                parts["controller_id"] = decoded
-            elif key == "device":
-                parts["device_id"] = decoded
-            elif key == "slot":
-                parts["slot_id"] = decoded
-        return parts
-    if "." in context_id:
-        device_id, slot_id = context_id.split(".", 1)
-        return {
-            "controller_id": None,
-            "device_id": device_id,
-            "slot_id": slot_id,
-        }
-    return {
+    """Parse canonical controller-scoped context IDs."""
+    parts: dict[str, str | None] = {
         "controller_id": None,
-        "device_id": context_id or None,
+        "device_id": None,
         "slot_id": None,
     }
+    for item in context_id.split("|"):
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise ValueError(f"Invalid contextId {context_id!r}")
+        decoded = _decode_context_value(value)
+        if not decoded:
+            raise ValueError(f"Invalid contextId {context_id!r}")
+        if key == "controller":
+            parts["controller_id"] = decoded
+        elif key == "device":
+            parts["device_id"] = decoded
+        elif key == "slot":
+            parts["slot_id"] = decoded
+        else:
+            raise ValueError(f"Invalid contextId {context_id!r}")
+    if None in parts.values():
+        raise ValueError(f"Invalid contextId {context_id!r}")
+    return parts
 
 
 class HostMessage(CamelModel):
@@ -116,15 +108,15 @@ class HostMessage(CamelModel):
 
     def for_host(self, host_id: str) -> bool:
         """True if this message is intended for the given host."""
-        return self.to_id in {host_address(host_id), host_id, "all_hosts"}
+        return self.to_id in {host_address(host_id), "all_hosts"}
 
     def for_controller(self, controller_id: str | None = None) -> bool:
         """True if this message is intended for the given controller or all controllers."""
         if self.to_id == "all_controllers":
             return True
         if controller_id is None:
-            return self.to_id == "controller" or self.to_id.startswith("controller:")
-        return self.to_id in {controller_address(controller_id), "controller"}
+            return parse_controller_address(self.to_id) is not None
+        return self.to_id == controller_address(controller_id)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSON (e.g. MQTT, WebSocket)."""
@@ -137,7 +129,7 @@ class HostMessage(CamelModel):
         """Deserialize from JSON. internal_metadata is only set via kwarg when receiver knows source."""
         data = dict(d)
         if "messageId" not in data:
-            data["messageId"] = _new_message_id()
+            raise ValueError("messageId is required")
         message = cls.model_validate(data)
         if internal_metadata is None:
             return message
@@ -198,23 +190,17 @@ class ActionsChangedEvent:
 
 def extract_device_id(context_id: str) -> str:
     """Extract device_id from contextId."""
-    return parse_context_id(context_id).get("device_id") or ""
+    return parse_context_id(context_id)["device_id"] or ""
 
 
 def extract_slot_id(context_id: str) -> str:
     """Extract slot_id from contextId."""
-    parsed = parse_context_id(context_id)
-    slot_id = parsed.get("slot_id")
-    if slot_id:
-        return slot_id
-    if "." in context_id:
-        return context_id.split(".", 1)[1]
-    return context_id
+    return parse_context_id(context_id)["slot_id"] or ""
 
 
 def extract_controller_id(context_id: str) -> str | None:
     """Extract controller_id from contextId when present."""
-    return parse_context_id(context_id).get("controller_id")
+    return parse_context_id(context_id)["controller_id"]
 
 
 # Elgato-aligned host -> controller commands a controller-lite should implement.

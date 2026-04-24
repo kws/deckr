@@ -44,7 +44,7 @@ class StateOverride:
     """Per-state render override: title or image reference."""
 
     title: str | None = None
-    image: str | None = None  # URL, image data URI, or Deckr graph-image data URI
+    image: str | None = None  # URL or image data URI
     title_options: TitleOptions | None = None
 
 

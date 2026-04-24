@@ -11,13 +11,11 @@ if TYPE_CHECKING:
     from deckr.plugin.types import DynamicPageDescriptor
 
 CAPABILITY_PAGES = "deckr.pages"
-CAPABILITY_IMAGE_GRAPH = "deckr.image-graph"
 CAPABILITY_SCREEN_POWER = "deckr.screen-power"
 
 DECKR_EXTENSION_CAPABILITIES = frozenset(
     {
         CAPABILITY_PAGES,
-        CAPABILITY_IMAGE_GRAPH,
         CAPABILITY_SCREEN_POWER,
     }
 )

@@ -154,6 +154,32 @@ def test_resolve_component_specs_do_not_inherit_parent_prefix(
     assert dict(specs[0].raw_config) == {}
 
 
+def test_resolve_component_specs_skip_unconfigured_singletons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.controller",
+            config_prefix="deckr.controller",
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: controller,
+    )
+
+    document = _document({"deckr": {}})
+
+    specs = resolve_component_instance_specs(
+        document,
+        discovered_component_ids=["deckr.controller"],
+    )
+
+    assert specs == []
+
+
 @pytest.mark.asyncio
 async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
     monkeypatch: pytest.MonkeyPatch,
@@ -261,3 +287,57 @@ def test_host_message_is_pydantic_and_schema_exportable() -> None:
     schemas = _core_wire_schemas()
     assert "plugin.host_message" in schemas
     assert "hardware.transport_message" in schemas
+
+
+def test_host_message_from_dict_requires_message_id() -> None:
+    with pytest.raises(ValueError, match="messageId is required"):
+        HostMessage.from_dict(
+            {
+                "from": "host:python",
+                "to": "controller:controller-main",
+                "type": "hostOnline",
+                "payload": {"hostId": "python"},
+            }
+        )
+
+
+def test_host_message_routing_requires_canonical_addresses() -> None:
+    controller_message = HostMessage(
+        from_id="host:python",
+        to_id="controller:controller-main",
+        type="hostOnline",
+        payload={"hostId": "python"},
+    )
+    assert controller_message.for_controller("controller-main") is True
+    assert controller_message.for_controller("controller-other") is False
+
+    bare_controller = HostMessage(
+        from_id="host:python",
+        to_id="controller",
+        type="hostOnline",
+        payload={"hostId": "python"},
+    )
+    assert bare_controller.for_controller("controller-main") is False
+
+    host_message = HostMessage(
+        from_id="controller:controller-main",
+        to_id="host:python",
+        type="requestActions",
+        payload={},
+    )
+    assert host_message.for_host("python") is True
+
+    bare_host = HostMessage(
+        from_id="controller:controller-main",
+        to_id="python",
+        type="requestActions",
+        payload={},
+    )
+    assert bare_host.for_host("python") is False
+
+
+def test_extract_device_id_rejects_legacy_context_shape() -> None:
+    with pytest.raises(ValueError, match="Invalid contextId"):
+        from deckr.plugin.messages import extract_device_id
+
+        extract_device_id("device-1.0,0")

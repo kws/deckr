@@ -109,16 +109,12 @@ Deckr-specific extensions:
     settings, `open_url`, and `switch_to_profile` close to Stream Deck
     semantics.
 - `deckr.plugin.extensions`
-  - Deckr-only features such as dynamic pages, screen power control, and graph
-    image capability advertisement.
+  - Deckr-only features such as dynamic pages and screen power control.
 
 The key image rule is:
 
 - core `set_image`: Stream Deck-style image reference, typically a plugin-local
   path or a data URI / base64 image string
-- Deckr graph image extension: still uses `set_image`, but the string can be a
-  Deckr graph-image data URI with media type
-  `application/vnd.deckr.graph+json`
 
 ## Hardware Package
 
