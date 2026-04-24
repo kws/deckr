@@ -22,11 +22,11 @@ class ControlContext(Protocol):
 
 
 class PluginContext(CorePluginContext, DeckrPluginContextExtensions, Protocol):
-    """Compatibility aggregate of the core contract plus Deckr extensions."""
+    """Deckr plugin context: core controller API plus Deckr-native extensions."""
 
 
 class PluginAction(CorePluginAction, Protocol):
-    """Compatibility aggregate for actions used by the current controller."""
+    """Deckr action protocol used by the current controller runtime."""
 
     # Optional: on_touch_tap(event: TouchTap, context: PluginContext)
     # Optional: on_touch_swipe(event: TouchSwipe, context: PluginContext)
@@ -35,4 +35,4 @@ class PluginAction(CorePluginAction, Protocol):
 
 
 class Plugin(CorePlugin, Protocol):
-    """Compatibility aggregate for plugin providers used by the current controller."""
+    """Deckr plugin provider protocol."""

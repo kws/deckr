@@ -24,10 +24,9 @@ deployment shape.
 
 The two external realities shaping this architecture are:
 
-- Hardware devices such as Elgato units, MiraBox-style devices, and any future
-  device class.
-- Plugin infrastructure in the Elgato sense: actions bound to controls such as
-  keys, dials, and touch surfaces.
+- Hardware devices with addressable controls, displays, and input gestures.
+- Plugin runtimes that bind actions to those controls and react to lifecycle
+  and input events.
 
 The shared APIs and runtime primitives for this architecture belong in `deckr`.
 That includes the core message specifications that move across event lanes and
