@@ -136,6 +136,18 @@ class HostMessage(DeckrModel):
         return cls.model_json_schema(by_alias=True)
 
 
+class ActionDescriptor(DeckrModel):
+    """Action identity advertised by a plugin host."""
+
+    uuid: str
+    name: str | None = None
+    plugin_uuid: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for action registration payloads."""
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
 class TitleOptions(DeckrModel):
     """Font and styling options for controller-rendered titles."""
 

@@ -3,13 +3,13 @@
 from deckr.plugin.messages import (
     CORE_COMMAND_MESSAGE_TYPES,
     DECKR_EXTENSION_COMMAND_MESSAGE_TYPES,
-    DynamicPageDescriptor,
     SET_IMAGE,
     SET_PAGE,
+    ActionDescriptor,
+    DynamicPageDescriptor,
     SlotBinding,
     TitleOptions,
 )
-from deckr.plugin.metadata import build_action_metadata
 
 
 def test_core_and_extension_command_sets_are_explicit():
@@ -70,18 +70,16 @@ def test_dynamic_page_descriptor_round_trip_on_wire():
     assert DynamicPageDescriptor.model_validate(wire) == descriptor
 
 
-def test_build_action_metadata_uses_explicit_action_fields():
-    action = type(
-        "Action",
-        (),
-        {
-            "uuid": "com.example.plugin.action",
-            "name": "Example Action",
-            "plugin_uuid": "com.example.plugin",
-        },
-    )()
-    assert build_action_metadata(action) == {
+def test_action_descriptor_round_trip_on_wire():
+    descriptor = ActionDescriptor(
+        uuid="com.example.plugin.action",
+        name="Example Action",
+        plugin_uuid="com.example.plugin",
+    )
+    wire = descriptor.to_dict()
+    assert wire == {
         "uuid": "com.example.plugin.action",
         "name": "Example Action",
         "pluginUuid": "com.example.plugin",
     }
+    assert ActionDescriptor.model_validate(wire) == descriptor
