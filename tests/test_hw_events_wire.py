@@ -6,16 +6,16 @@ from pydantic import ValidationError
 from deckr.hardware import events as hw_events
 
 
-def _stub_device_info() -> hw_events.WireHWDevice:
-    return hw_events.WireHWDevice(
+def _stub_device_info() -> hw_events.HardwareDevice:
+    return hw_events.HardwareDevice(
         id="local-device",
         hid="hid:local-device",
         name="Stub Device",
         slots=[
-            hw_events.WireHWSlot(
+            hw_events.HardwareSlot(
                 id="0,0",
-                coordinates=hw_events.WireCoordinates(column=0, row=0),
-                image_format=hw_events.WireHWSImageFormat(width=72, height=72),
+                coordinates=hw_events.HardwareCoordinates(column=0, row=0),
+                image_format=hw_events.HardwareImageFormat(width=72, height=72),
                 gestures=["key_down", "key_up"],
             )
         ],

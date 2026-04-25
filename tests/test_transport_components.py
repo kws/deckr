@@ -73,10 +73,10 @@ class StubDevice:
         self.hid = f"virtual:{device_id}"
         self.name = "Virtual Device"
         self.slots = [
-            hw_events.WireHWSlot(
+            hw_events.HardwareSlot(
                 id="0,0",
-                coordinates=hw_events.WireCoordinates(column=0, row=0),
-                image_format=hw_events.WireHWSImageFormat(width=72, height=72),
+                coordinates=hw_events.HardwareCoordinates(column=0, row=0),
+                image_format=hw_events.HardwareImageFormat(width=72, height=72),
                 gestures=["key_down", "key_up"],
             )
         ]
@@ -95,8 +95,8 @@ class StubDevice:
         self.commands.append(("wake_screen",))
 
 
-def _device_info(device: StubDevice) -> hw_events.WireHWDevice:
-    return hw_events.WireHWDevice(
+def _device_info(device: StubDevice) -> hw_events.HardwareDevice:
+    return hw_events.HardwareDevice(
         id=device.id,
         hid=device.hid,
         slots=list(device.slots),

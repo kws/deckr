@@ -43,12 +43,12 @@ def parse_remote_device_id(remote_device_id: str) -> dict[str, str | None]:
     return parsed
 
 
-class WireCoordinates(DeckrModel):
+class HardwareCoordinates(DeckrModel):
     column: int
     row: int
 
 
-class WireHWSImageFormat(DeckrModel):
+class HardwareImageFormat(DeckrModel):
     width: int
     height: int
     format: str = "JPEG"
@@ -58,25 +58,25 @@ class WireHWSImageFormat(DeckrModel):
     format_options: dict[str, Any] = Field(default_factory=dict)
 
 
-class WireHWSlot(DeckrModel):
+class HardwareSlot(DeckrModel):
     id: str
-    coordinates: WireCoordinates
-    image_format: WireHWSImageFormat | None = None
+    coordinates: HardwareCoordinates
+    image_format: HardwareImageFormat | None = None
     slot_type: str = "key"
     gestures: tuple[str, ...] = Field(default_factory=tuple)
 
 
-class WireHWDevice(DeckrModel):
+class HardwareDevice(DeckrModel):
     id: str
     hid: str
-    slots: tuple[WireHWSlot, ...]
+    slots: tuple[HardwareSlot, ...]
     name: str | None = None
 
 
 class DeviceConnectedMessage(DeckrModel):
     type: Literal["deviceConnected"] = "deviceConnected"
     device_id: str
-    device: WireHWDevice
+    device: HardwareDevice
 
 
 class DeviceDisconnectedMessage(DeckrModel):
