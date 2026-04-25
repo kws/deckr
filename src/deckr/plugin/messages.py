@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, unquote
 
-from pydantic import ConfigDict, Field
+from pydantic import Field, field_serializer, field_validator
 
-from deckr.core.util.pydantic import CamelModel, to_camel
+from deckr.contracts.models import DeckrModel, freeze_json, thaw_json
 
 
 def _new_message_id() -> str:
@@ -87,24 +88,24 @@ def parse_context_id(context_id: str) -> dict[str, str | None]:
     return parts
 
 
-class HostMessage(CamelModel):
+class HostMessage(DeckrModel):
     """Message envelope for plugin host protocol. All messages carry from/to for routing."""
-
-    model_config = ConfigDict(
-        populate_by_name=True,
-        extra="forbid",
-    )
 
     from_id: str = Field(alias="from")
     to_id: str = Field(alias="to")
     type: str
-    payload: dict[str, Any]
+    payload: Mapping[str, Any]
     message_id: str = Field(default_factory=_new_message_id, alias="messageId")
     in_reply_to: str | None = Field(default=None, alias="inReplyTo")
-    internal_metadata: dict[str, Any] | None = Field(
-        default=None,
-        exclude=True,
-    )  # In-memory only; not serialized
+
+    @field_validator("payload", mode="after")
+    @classmethod
+    def _freeze_payload(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("payload")
+    def _serialize_payload(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
 
     def for_host(self, host_id: str) -> bool:
         """True if this message is intended for the given host."""
@@ -123,34 +124,20 @@ class HostMessage(CamelModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
     @classmethod
-    def from_dict(
-        cls, d: dict[str, Any], *, internal_metadata: dict[str, Any] | None = None
-    ) -> HostMessage:
-        """Deserialize from JSON. internal_metadata is only set via kwarg when receiver knows source."""
+    def from_dict(cls, d: dict[str, Any]) -> HostMessage:
+        """Deserialize from JSON."""
         data = dict(d)
         if "messageId" not in data:
             raise ValueError("messageId is required")
-        message = cls.model_validate(data)
-        if internal_metadata is None:
-            return message
-        return message.model_copy(
-            update={"internal_metadata": dict(internal_metadata)}
-        )
+        return cls.model_validate(data)
 
     @classmethod
     def schema_dict(cls) -> dict[str, Any]:
         return cls.model_json_schema(by_alias=True)
 
 
-class TitleOptions(CamelModel):
+class TitleOptions(DeckrModel):
     """Font and styling options for controller-rendered titles."""
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-        frozen=True,
-    )
 
     font_family: str | None = None
     font_size: int | str | None = None
@@ -163,34 +150,29 @@ class TitleOptions(CamelModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
-class SlotBinding(CamelModel):
+class SlotBinding(DeckrModel):
     """One slot bound to an action for static or dynamic pages."""
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-        frozen=True,
-    )
 
     slot_id: str
     action_uuid: str
-    settings: dict[str, Any]
+    settings: Mapping[str, Any]
     title_options: TitleOptions | None = None
 
+    @field_validator("settings", mode="after")
+    @classmethod
+    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
 
-class DynamicPageDescriptor(CamelModel):
+    @field_serializer("settings")
+    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+class DynamicPageDescriptor(DeckrModel):
     """Plugin-generated page descriptor carried by openPage commands."""
 
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-        frozen=True,
-    )
-
     page_id: str
-    slots: list[SlotBinding]
+    slots: tuple[SlotBinding, ...]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for plugin command payloads."""

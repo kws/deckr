@@ -11,7 +11,7 @@ import anyio
 
 from deckr.core.component import BaseComponent, Component, ComponentManager
 from deckr.core.config import ConfigDocument
-from deckr.core.messaging import EventBus
+from deckr.transports.bus import EventBus
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
 CORE_LANE_NAMES = ("hardware_events", "plugin_messages")

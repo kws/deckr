@@ -48,8 +48,8 @@ all = [
 ]
 
 [project.entry-points."deckr.components"]
-"deckr.bridges.mqtt" = "deckr.bridges.mqtt:component"
-"deckr.bridges.websocket" = "deckr.bridges.websocket:component"
+"deckr.transports.mqtt" = "deckr.transports.mqtt:component"
+"deckr.transports.websocket" = "deckr.transports.websocket:component"
 
 [project.urls]
 Documentation = "https://github.com/kws/deckr#readme"

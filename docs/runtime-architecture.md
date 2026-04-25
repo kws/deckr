@@ -30,7 +30,7 @@ The two external realities shaping this architecture are:
 
 The shared APIs and runtime primitives for this architecture belong in `deckr`.
 That includes the core message specifications that move across event lanes and
-across any bridges attached to those lanes.
+across any transports attached to those lanes.
 
 ## Architectural Model
 
@@ -44,7 +44,7 @@ There are not separate architectural discovery systems for:
 - controllers
 - drivers
 - plugin hosts
-- bridges
+- transports
 - "special" runtime services
 
 Those are semantic roles, not different runtime kinds.
@@ -90,11 +90,12 @@ as incidental local variable names.
 The current core lane set includes:
 
 - `plugin_messages`
-- `hardware_events`
+- `hardware_events`, carrying Deckr hardware wire messages for both hardware
+  input events and controller output commands
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
 not create new core lanes ad hoc inside a controller, plugin host, driver, or
-bridge package.
+transport package.
 
 Third-party extension lanes are allowed, but they must use globally namespaced
 identifiers owned by the extending system. Extension lanes must not squat on
@@ -103,37 +104,37 @@ short unqualified names that look like Deckr core contracts.
 The recommended convention for extension lane identifiers is a dotted
 owner-qualified name such as `acme.metrics.events`.
 
-### Event Lane Bridging
+### Event Lane Transport
 
 Named event lanes are logical buses, not process-local implementation details.
 
 A lane may exist:
 
 - locally and in-memory within one process
-- across process boundaries via a bridge component
-- across host or network boundaries via a bridge component
+- across process boundaries via a transport component
+- across host or network boundaries via a transport component
 
-Bridge transports such as WebSocket, MQTT, Redis, or future mechanisms are not
+Transports such as WebSocket, MQTT, Redis, or future mechanisms are not
 different architectural classes. They are all just transport adapters carrying
 the same lane semantics.
 
 No transport is primary or second-class in the architecture.
 
-A bridge is also just a component.
+A transport is also just a component.
 
-A bridge component:
+A transport component:
 
 - consumes one or more named lanes
 - republishes those same lane semantics across a transport boundary
 - preserves lane meaning
 - translates only framing, delivery, and transport concerns
 
-A bridge must not redefine the meaning of a lane just because it is crossing a
+A transport must not redefine the meaning of a lane just because it is crossing a
 process or network boundary.
 
 ### Wire Contract Rule
 
-Once a lane is bridged, messages on that lane must use standardized,
+Once a lane is transported, messages on that lane must use standardized,
 wire-friendly contracts.
 
 All core wire contracts belong in `deckr`.
@@ -175,19 +176,19 @@ Systems may extend these with additional message types, but those extensions:
 
 - must not change the meaning of core message types
 - must not change the shape of core message types
-- must remain wire-safe if they cross a bridge
+- must remain wire-safe if they cross a transport
 
 Extension messages are allowed. Competing definitions of core messages are not.
 
 ### Transport Boundary Rule
 
-In-process event objects and bridged wire objects may differ internally if that
+In-process event objects and transported wire objects may differ internally if that
 is useful for implementation.
 
 However, the architectural contract is always the wire-safe core schema owned by
 `deckr`.
 
-No bridge may depend on:
+No transport may depend on:
 
 - Python object identity
 - pickle-style serialization
@@ -201,7 +202,7 @@ Do not preserve:
 - dataclass-vs-Pydantic duality
 - alias fields for compatibility
 - legacy envelope forms
-- alternate bridge payload shapes
+- alternate transport payload shapes
 
 for backwards compatibility. This project is in ALPHA. The correct protocol is
 more important than preserving mistaken wire forms.
@@ -297,13 +298,13 @@ The intended meanings are:
   - whether the component type is `singleton` or `multi_instance`
 
 Lane declarations describe logical lane contracts. Those contracts may be hosted
-locally, or they may be bridged across transport boundaries by other
+locally, or they may be transported across transport boundaries by other
 components.
 
 For most component types, `consumes` and `publishes` are fixed lists declared by
 the component type itself.
 
-For configurable adapter components such as bridges, the manifest may instead
+For configurable adapter components such as transports, the manifest may instead
 declare the component's lane binding capability, and instance configuration may
 then provide the exact lane bindings for that specific instance. In that case
 the launcher must resolve the instance's actual `consumes` and `publishes` from
@@ -317,15 +318,15 @@ Examples:
 
 - `deckr.controller`
 - `deckr.plugin_hosts.python`
-- `deckr.bridges.mqtt`
-- `deckr.bridges.websocket`
+- `deckr.transports.mqtt`
+- `deckr.transports.websocket`
 - `deckr.drivers.mqtt`
 
 The launcher must use the manifest's declared `config_prefix`. It must not try
 to infer meaning from path segments such as `plugin_hosts`, `drivers`, or
 `controller`.
 
-`deckr.plugin_hosts.python` and `deckr.bridges.mqtt` are therefore two separate
+`deckr.plugin_hosts.python` and `deckr.transports.mqtt` are therefore two separate
 component types, not a parent component and a child component.
 
 ### Exact Prefix Binding
@@ -350,7 +351,7 @@ This means:
 
 - `deckr.plugin_hosts.python` does not automatically receive configuration from
   `deckr.plugin_hosts`
-- `deckr.bridges.mqtt` does not automatically receive configuration from
+- `deckr.transports.mqtt` does not automatically receive configuration from
   `deckr.plugin_hosts.python`
 - dotted names are exact binding prefixes, not inheritance paths
 
@@ -384,7 +385,7 @@ enabled/disabled convention.
 
 Component type identity and component instance identity are different concepts.
 
-`deckr.bridges.mqtt` is not an instance of `deckr.plugin_hosts.python`; it is a
+`deckr.transports.mqtt` is not an instance of `deckr.plugin_hosts.python`; it is a
 distinct component type with its own manifest and its own exact
 `config_prefix`.
 
@@ -429,33 +430,33 @@ and the launcher would instantiate two instances with `instance_id = "main"` and
 This is the only permitted way to express multiplicity within the generic
 component model.
 
-### Bridge Components
+### Transport Components
 
-Bus bridges are not declared on lanes. Bus bridges are declared as normal
+Bus transports are not declared on lanes. Bus transports are declared as normal
 components.
 
-There is no separate bridge registry, no bridge-only discovery mechanism, and
+There is no separate transport registry, no transport-only discovery mechanism, and
 no launcher rule that says a transport automatically belongs to one semantic
 role.
 
-A bridge is modeled in three layers:
+A transport is modeled in three layers:
 
-- bridge component type
-- bridge component instance
+- transport component type
+- transport component instance
 - per-lane binding
 
 Those layers must not be collapsed together.
 
 The meanings are:
 
-- bridge component type
-  - the reusable implementation such as `deckr.bridges.mqtt` or
-    `deckr.bridges.websocket`
+- transport component type
+  - the reusable implementation such as `deckr.transports.mqtt` or
+    `deckr.transports.websocket`
   - discovered through the normal component mechanism
   - declares its manifest, transport family, and whether its bindings are fixed
     or configurable per instance
-- bridge component instance
-  - one configured deployment of that bridge type
+- transport component instance
+  - one configured deployment of that transport type
   - owns transport/session configuration such as hostname, port, credentials,
     server/client mode, reconnect policy, and similar concerns
 - per-lane binding
@@ -463,16 +464,16 @@ The meanings are:
     transport address
   - owns direction and remote addressing
 
-The recommended naming convention for reusable bridge component types is:
+The recommended naming convention for reusable transport component types is:
 
-- `deckr.bridges.websocket`
-- `deckr.bridges.mqtt`
-- `deckr.bridges.redis`
+- `deckr.transports.websocket`
+- `deckr.transports.mqtt`
+- `deckr.transports.redis`
 
 This is only a naming convention for normal components. It is not a second
 architectural discovery model.
 
-Bridge configuration has two parts:
+Transport configuration has two parts:
 
 - transport/session configuration
 - explicit `bindings`
@@ -480,7 +481,7 @@ Bridge configuration has two parts:
 Each binding must declare:
 
 - `lane`
-  - the exact logical Deckr lane being bridged
+  - the exact logical Deckr lane being transported
 - `direction`
   - one of `ingress`, `egress`, or `bidirectional`
 - one transport-specific remote address
@@ -489,57 +490,57 @@ Each binding must declare:
   lane
 
 For core Deckr lanes, the lane name implies the core wire contract from
-`deckr`. That contract must not be redefined in bridge-local configuration.
+`deckr`. That contract must not be redefined in transport-local configuration.
 
 For extension lanes, the binding must identify the extension wire contract
 explicitly. Do not rely on convention or out-of-band knowledge.
 
-Bridge bindings are explicit because hidden transport-to-lane assumptions are a
+Transport bindings are explicit because hidden transport-to-lane assumptions are a
 major source of architectural drift.
 
 The launcher must never infer:
 
 - that MQTT implies `plugin_messages`
 - that WebSocket implies `hardware_events`
-- that a component under `plugin_hosts` must bridge plugin traffic
-- that a component under `drivers` must bridge hardware traffic
+- that a component under `plugin_hosts` must transport plugin traffic
+- that a component under `drivers` must transport hardware traffic
 
-All such mappings must be explicit in the bridge instance configuration.
+All such mappings must be explicit in the transport instance configuration.
 
-A recommended configuration shape for multi-instance bridges is:
+A recommended configuration shape for multi-instance transports is:
 
-- `[deckr.bridges.<transport>.instances.<instance_id>]`
+- `[deckr.transports.<transport>.instances.<instance_id>]`
   - transport/session configuration
-- `[deckr.bridges.<transport>.instances.<instance_id>.bindings.<binding_id>]`
+- `[deckr.transports.<transport>.instances.<instance_id>.bindings.<binding_id>]`
   - one explicit lane binding
 
 For example:
 
-- `[deckr.bridges.mqtt.instances.main]`
-- `[deckr.bridges.mqtt.instances.main.bindings.plugin_messages]`
-- `[deckr.bridges.mqtt.instances.main.bindings.hardware_events]`
+- `[deckr.transports.mqtt.instances.main]`
+- `[deckr.transports.mqtt.instances.main.bindings.plugin_messages]`
+- `[deckr.transports.mqtt.instances.main.bindings.hardware_events]`
 
 In this model:
 
-- `instance_id` identifies the bridge runtime instance
+- `instance_id` identifies the transport runtime instance
 - `binding_id` identifies one binding within that instance
 - `lane` identifies the Deckr logical lane contract
 
-The binding identifier is local to the bridge instance. It is not the lane
+The binding identifier is local to the transport instance. It is not the lane
 name, not the component name, and not a discovery key.
 
 This separation matters:
 
-- the same bridge instance may carry multiple lanes
+- the same transport instance may carry multiple lanes
 - multiple bindings may use the same transport session
-- multiple bridge instances may carry the same lane to different remote peers
+- multiple transport instances may carry the same lane to different remote peers
 - transport topology must not leak back into component discovery
 
-The component itself remains responsible for parsing its own bridge config,
+The component itself remains responsible for parsing its own transport config,
 validating transport options, and deciding whether it should currently activate
 each configured binding.
 
-If a bridge cannot establish its transport session, it may remain temporarily
+If a transport cannot establish its transport session, it may remain temporarily
 inactive and later begin participating when the remote endpoint becomes
 available. That is still component behavior, not launcher policy.
 
@@ -575,10 +576,10 @@ honor the same manifest, prefix, and lane model.
 - Lane contracts are the only generic wiring primitive.
 - The launcher creates the full core lane set before component startup.
 - Core lane names belong in `deckr`.
-- Lanes are logical runtime contracts and may be bridged across transport
+- Lanes are logical runtime contracts and may be transported across transport
   boundaries.
-- Bridge transports are peers architecturally; none are special-cased.
-- Core bridged message envelopes and payloads live in `deckr`.
+- Transports are peers architecturally; none are special-cased.
+- Core transported message envelopes and payloads live in `deckr`.
 - Pydantic models in `deckr` are the canonical Python authoring format for core
   wire contracts.
 - JSON Schema generated from those contracts is the interoperability artifact
@@ -590,8 +591,8 @@ honor the same manifest, prefix, and lane model.
 - The launcher does not interpret "enabled" or "disabled" for components.
 - Runtime context may carry only generic launcher metadata and lane handles as a
   generic primitive.
-- Bridges are declared as normal components, not as lane-local special cases.
-- Bridge instances own explicit per-lane bindings.
+- Transports are declared as normal components, not as lane-local special cases.
+- Transport instances own explicit per-lane bindings.
 - The launcher must not infer lane bindings from transport kind, role name, or
   config path.
 - Implicit parent-prefix inheritance is forbidden.

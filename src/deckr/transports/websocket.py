@@ -11,18 +11,6 @@ from urllib.parse import urlsplit
 import anyio
 from anyio import get_cancelled_exc_class
 
-from deckr.bridges._common import (
-    BridgeBindingConfigBase,
-    StrictBridgeModel,
-    bridge_id_for,
-    lanes_for_bindings,
-)
-from deckr.bridges._lanes import build_lane_handler
-from deckr.core._bridge import (
-    BridgeEnvelopeError,
-    build_bridge_envelope,
-    parse_bridge_envelope,
-)
 from deckr.core.component import BaseComponent, RunContext
 from deckr.core.components import (
     ComponentCardinality,
@@ -32,28 +20,79 @@ from deckr.core.components import (
     InactiveComponent,
     ResolvedLaneSet,
 )
+from deckr.transports._common import (
+    TransportBindingConfigBase,
+    _StrictConfigModel,
+    lanes_for_bindings,
+    transport_id_for,
+)
+from deckr.transports._lanes import build_lane_handler
 
 logger = logging.getLogger(__name__)
 
 _SEND_TIMEOUT = 0.25
 _UNSUPPORTED_DATA_CLOSE_CODE = 1003
+TRANSPORT_KIND = "websocket"
 
 
-class WebSocketBridgeBindingConfig(BridgeBindingConfigBase):
+class WebSocketTransportEnvelopeError(ValueError):
+    """Raised when a WebSocket transport envelope is invalid."""
+
+
+def build_websocket_envelope(
+    transport_id: str,
+    lane: str,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "transportId": transport_id,
+        "lane": lane,
+        "message": message,
+    }
+
+
+def parse_websocket_envelope(payload: Any) -> tuple[str | None, str, dict[str, Any]]:
+    if not isinstance(payload, dict):
+        raise WebSocketTransportEnvelopeError(
+            "WebSocket transport payload must be a JSON object"
+        )
+
+    transport_id = payload.get("transportId")
+    if transport_id is not None and not isinstance(transport_id, str):
+        raise WebSocketTransportEnvelopeError(
+            "WebSocket transport payload 'transportId' must be a string"
+        )
+
+    lane = payload.get("lane")
+    if not isinstance(lane, str) or not lane.strip():
+        raise WebSocketTransportEnvelopeError(
+            "WebSocket transport payload 'lane' must be a non-empty string"
+        )
+
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        raise WebSocketTransportEnvelopeError(
+            "WebSocket transport payload 'message' must be an object"
+        )
+
+    return transport_id, lane, message
+
+
+class WebSocketTransportBindingConfig(TransportBindingConfigBase):
     path: str | None = None
     uri: str | None = None
 
 
-class WebSocketBridgeConfig(StrictBridgeModel):
+class WebSocketTransportConfig(_StrictConfigModel):
     enabled: bool = True
-    bridge_id: str | None = None
+    transport_id: str | None = None
     mode: str = "server"
     host: str = "127.0.0.1"
     port: int = 0
     origin: str | None = None
     allowed_origins: tuple[str, ...] = ()
     allow_no_origin: bool = True
-    bindings: dict[str, WebSocketBridgeBindingConfig]
+    bindings: dict[str, WebSocketTransportBindingConfig]
 
 
 class _BindingRuntime:
@@ -61,32 +100,33 @@ class _BindingRuntime:
         self,
         *,
         binding_id: str,
-        config: WebSocketBridgeBindingConfig,
+        config: WebSocketTransportBindingConfig,
         bus: Any,
-        bridge_id: str,
+        transport_id: str,
     ) -> None:
         self.binding_id = binding_id
         self.config = config
         self.bus = bus
-        self.bridge_id = bridge_id
+        self.transport_id = transport_id
         self.handler = build_lane_handler(
             lane=config.lane,
-            bridge_id=bridge_id,
+            transport_kind=TRANSPORT_KIND,
+            transport_id=transport_id,
             bus=bus,
         )
 
 
-class WebSocketBridgeComponent(BaseComponent):
+class WebSocketTransportComponent(BaseComponent):
     def __init__(
         self,
         *,
         runtime_name: str,
-        bridge_id: str,
-        config: WebSocketBridgeConfig,
+        transport_id: str,
+        config: WebSocketTransportConfig,
         bindings: list[_BindingRuntime],
     ) -> None:
         super().__init__(name=runtime_name)
-        self._bridge_id = bridge_id
+        self._transport_id = transport_id
         self._config = config
         self._bindings = bindings
         self._server = None
@@ -97,13 +137,13 @@ class WebSocketBridgeComponent(BaseComponent):
 
     async def start(self, ctx: RunContext) -> None:
         if self._config.mode == "server":
-            ctx.tg.start_soon(self._run_server, name="websocket_bridge_server")
+            ctx.tg.start_soon(self._run_server, name="websocket_transport_server")
             return
         for binding in self._bindings:
             ctx.tg.start_soon(
                 self._run_client_binding,
                 binding,
-                name=f"websocket_bridge:{binding.binding_id}",
+                name=f"websocket_transport:{binding.binding_id}",
             )
 
     async def _run_server(self) -> None:
@@ -111,7 +151,7 @@ class WebSocketBridgeComponent(BaseComponent):
             from websockets.asyncio.server import serve
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "WebSocket bridge requires websockets. Install deckr[websocket]."
+                "WebSocket transport requires websockets. Install deckr[websocket]."
             ) from exc
 
         async with anyio.create_task_group() as tg:
@@ -123,6 +163,12 @@ class WebSocketBridgeComponent(BaseComponent):
                 process_request=self._process_request,
             )
             self._server = server
+            for binding in self._bindings:
+                tg.start_soon(
+                    self._server_bus_to_websocket_loop,
+                    binding,
+                    name=f"websocket_transport_server:{binding.binding_id}",
+                )
             try:
                 await server.wait_closed()
             finally:
@@ -148,7 +194,7 @@ class WebSocketBridgeComponent(BaseComponent):
             from websockets.exceptions import ConnectionClosed
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "WebSocket bridge requires websockets. Install deckr[websocket]."
+                "WebSocket transport requires websockets. Install deckr[websocket]."
             ) from exc
 
         path = self._server_connection_path(websocket)
@@ -156,7 +202,7 @@ class WebSocketBridgeComponent(BaseComponent):
             await websocket.close(code=1008, reason="missing request path")
             return
 
-        remote_bridge_id: str | None = None
+        remote_transport_id: str | None = None
         async with self._server_connection_context(websocket, path):
             try:
                 async for raw in websocket:
@@ -168,10 +214,10 @@ class WebSocketBridgeComponent(BaseComponent):
                         return
 
                     try:
-                        remote_bridge_id, lane, payload = parse_bridge_envelope(
+                        remote_transport_id, lane, payload = parse_websocket_envelope(
                             json.loads(raw)
                         )
-                        if remote_bridge_id == self._bridge_id:
+                        if remote_transport_id == self._transport_id:
                             continue
                         binding = self._binding_for_server_path(path, lane=lane)
                         if binding is None:
@@ -181,20 +227,20 @@ class WebSocketBridgeComponent(BaseComponent):
                                 lane,
                             )
                             continue
-                        await self._set_connection_remote_id(websocket, remote_bridge_id)
+                        await self._set_connection_remote_id(websocket, remote_transport_id)
                         await binding.handler.handle_remote_payload(
                             payload,
-                            send_remote=lambda response, target_bridge_id, binding=binding: self._send_to_server_connections(
+                            send_remote=lambda response, target_transport_id, binding=binding: self._send_to_server_connections(
                                 binding,
                                 response,
-                                target_bridge_id=target_bridge_id,
+                                target_transport_id=target_transport_id,
                             ),
-                            remote_bridge_id=remote_bridge_id,
+                            remote_transport_id=remote_transport_id,
                         )
                     except json.JSONDecodeError:
                         logger.warning("Dropped malformed WebSocket JSON message")
-                    except BridgeEnvelopeError:
-                        logger.warning("Dropped malformed WebSocket bridge envelope")
+                    except WebSocketTransportEnvelopeError:
+                        logger.warning("Dropped malformed WebSocket transport envelope")
                     except Exception:
                         logger.exception("Error forwarding WebSocket message to bus")
             except ConnectionClosed:
@@ -202,7 +248,19 @@ class WebSocketBridgeComponent(BaseComponent):
             finally:
                 await self._notify_transport_disconnect(
                     bindings=self._bindings_for_server_path(path),
-                    remote_bridge_id=remote_bridge_id,
+                    remote_transport_id=remote_transport_id,
+                )
+
+    async def _server_bus_to_websocket_loop(self, binding: _BindingRuntime) -> None:
+        async with binding.bus.subscribe() as stream:
+            async for envelope in stream:
+                await binding.handler.handle_local_event(
+                    envelope,
+                    send_remote=lambda payload, target_transport_id: self._send_to_server_connections(
+                        binding,
+                        payload,
+                        target_transport_id=target_transport_id,
+                    ),
                 )
 
     async def _run_client_binding(self, binding: _BindingRuntime) -> None:
@@ -211,7 +269,7 @@ class WebSocketBridgeComponent(BaseComponent):
             from websockets.exceptions import ConnectionClosed
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "WebSocket bridge requires websockets. Install deckr[websocket]."
+                "WebSocket transport requires websockets. Install deckr[websocket]."
             ) from exc
 
         uri = binding.config.uri or ""
@@ -227,7 +285,7 @@ class WebSocketBridgeComponent(BaseComponent):
                     raise
                 except ConnectionClosed:
                     logger.info(
-                        "WebSocket bridge client disconnected from %s; retrying",
+                        "WebSocket transport client disconnected from %s; retrying",
                         uri,
                     )
         except cancelled_exc:
@@ -235,19 +293,19 @@ class WebSocketBridgeComponent(BaseComponent):
 
     async def _client_bus_to_websocket_loop(self, websocket, binding: _BindingRuntime) -> None:
         async with binding.bus.subscribe() as stream:
-            async for event in stream:
+            async for envelope in stream:
                 await binding.handler.handle_local_event(
-                    event,
-                    send_remote=lambda payload, target_bridge_id: self._send_to_client(
+                    envelope,
+                    send_remote=lambda payload, target_transport_id: self._send_to_client(
                         websocket,
                         binding,
                         payload,
-                        target_bridge_id=target_bridge_id,
+                        target_transport_id=target_transport_id,
                     ),
                 )
 
     async def _client_websocket_to_bus_loop(self, websocket, binding: _BindingRuntime) -> None:
-        remote_bridge_id: str | None = None
+        remote_transport_id: str | None = None
         try:
             async for raw in websocket:
                 if isinstance(raw, bytes):
@@ -258,30 +316,30 @@ class WebSocketBridgeComponent(BaseComponent):
                     return
 
                 try:
-                    remote_bridge_id, lane, payload = parse_bridge_envelope(
+                    remote_transport_id, lane, payload = parse_websocket_envelope(
                         json.loads(raw)
                     )
-                    if remote_bridge_id == self._bridge_id or lane != binding.config.lane:
+                    if remote_transport_id == self._transport_id or lane != binding.config.lane:
                         continue
                     await binding.handler.handle_remote_payload(
                         payload,
-                        send_remote=lambda response, target_bridge_id: self._send_to_client(
+                        send_remote=lambda response, target_transport_id: self._send_to_client(
                             websocket,
                             binding,
                             response,
-                            target_bridge_id=target_bridge_id,
+                            target_transport_id=target_transport_id,
                         ),
-                        remote_bridge_id=remote_bridge_id,
+                        remote_transport_id=remote_transport_id,
                     )
                 except json.JSONDecodeError:
                     logger.warning("Dropped malformed WebSocket JSON message")
-                except BridgeEnvelopeError:
-                    logger.warning("Dropped malformed WebSocket bridge envelope")
+                except WebSocketTransportEnvelopeError:
+                    logger.warning("Dropped malformed WebSocket transport envelope")
                 except Exception:
                     logger.exception("Error forwarding WebSocket message to bus")
         finally:
             await binding.handler.handle_transport_disconnect(
-                remote_bridge_id=remote_bridge_id,
+                remote_transport_id=remote_transport_id,
             )
 
     async def _send_to_client(
@@ -290,11 +348,11 @@ class WebSocketBridgeComponent(BaseComponent):
         binding: _BindingRuntime,
         payload: dict[str, Any],
         *,
-        target_bridge_id: str | None,
+        target_transport_id: str | None,
     ) -> None:
-        del target_bridge_id
-        envelope = build_bridge_envelope(
-            self._bridge_id,
+        del target_transport_id
+        envelope = build_websocket_envelope(
+            self._transport_id,
             binding.config.lane,
             payload,
         )
@@ -305,17 +363,17 @@ class WebSocketBridgeComponent(BaseComponent):
         binding: _BindingRuntime,
         payload: dict[str, Any],
         *,
-        target_bridge_id: str | None,
+        target_transport_id: str | None,
     ) -> None:
         try:
             from websockets.exceptions import ConnectionClosed
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "WebSocket bridge requires websockets. Install deckr[websocket]."
+                "WebSocket transport requires websockets. Install deckr[websocket]."
             ) from exc
 
-        envelope = build_bridge_envelope(
-            self._bridge_id,
+        envelope = build_websocket_envelope(
+            self._transport_id,
             binding.config.lane,
             payload,
         )
@@ -327,8 +385,8 @@ class WebSocketBridgeComponent(BaseComponent):
                 for websocket in self._connections
                 if self._connection_paths.get(websocket) == path
                 and (
-                    target_bridge_id is None
-                    or self._connection_remote_ids.get(websocket) == target_bridge_id
+                    target_transport_id is None
+                    or self._connection_remote_ids.get(websocket) == target_transport_id
                 )
             ]
 
@@ -393,10 +451,10 @@ class WebSocketBridgeComponent(BaseComponent):
             self._connection_paths.pop(websocket, None)
             self._connection_remote_ids.pop(websocket, None)
 
-    async def _set_connection_remote_id(self, websocket, remote_bridge_id: str | None) -> None:
+    async def _set_connection_remote_id(self, websocket, remote_transport_id: str | None) -> None:
         async with self._connections_lock:
             if websocket in self._connections:
-                self._connection_remote_ids[websocket] = remote_bridge_id
+                self._connection_remote_ids[websocket] = remote_transport_id
 
     async def _drop_connection(self, websocket) -> None:
         await self._remove_connection(websocket)
@@ -429,22 +487,22 @@ class WebSocketBridgeComponent(BaseComponent):
         self,
         *,
         bindings: list[_BindingRuntime],
-        remote_bridge_id: str | None,
+        remote_transport_id: str | None,
     ) -> None:
         for binding in bindings:
             await binding.handler.handle_transport_disconnect(
-                remote_bridge_id=remote_bridge_id,
+                remote_transport_id=remote_transport_id,
             )
 
 
-def _validate_config(config: WebSocketBridgeConfig) -> WebSocketBridgeConfig:
+def _validate_config(config: WebSocketTransportConfig) -> WebSocketTransportConfig:
     mode = config.mode.strip().lower()
     if mode not in {"client", "server"}:
-        raise ValueError("WebSocket bridge mode must be 'client' or 'server'")
+        raise ValueError("WebSocket transport mode must be 'client' or 'server'")
     config.mode = mode
 
     if not config.bindings:
-        raise ValueError("WebSocket bridge requires at least one binding")
+        raise ValueError("WebSocket transport requires at least one binding")
 
     for binding_id, binding in config.bindings.items():
         if not binding.enabled:
@@ -453,7 +511,7 @@ def _validate_config(config: WebSocketBridgeConfig) -> WebSocketBridgeConfig:
             path = (binding.path or "").strip()
             if not path:
                 raise ValueError(
-                    f"WebSocket bridge binding {binding_id!r} requires path in server mode"
+                    f"WebSocket transport binding {binding_id!r} requires path in server mode"
                 )
             binding.path = path if path.startswith("/") else f"/{path}"
             binding.uri = None
@@ -461,15 +519,15 @@ def _validate_config(config: WebSocketBridgeConfig) -> WebSocketBridgeConfig:
             uri = (binding.uri or "").strip()
             if not uri:
                 raise ValueError(
-                    f"WebSocket bridge binding {binding_id!r} requires uri in client mode"
+                    f"WebSocket transport binding {binding_id!r} requires uri in client mode"
                 )
             binding.uri = uri
             binding.path = None
     return config
 
 
-def _config_from_mapping(source: Mapping[str, Any]) -> WebSocketBridgeConfig:
-    config = WebSocketBridgeConfig.model_validate(dict(source))
+def _config_from_mapping(source: Mapping[str, Any]) -> WebSocketTransportConfig:
+    config = WebSocketTransportConfig.model_validate(dict(source))
     return _validate_config(config)
 
 
@@ -498,8 +556,8 @@ def component_factory(context: ComponentContext):
     if not config.enabled:
         return InactiveComponent(name=context.runtime_name)
 
-    bridge_id = bridge_id_for(
-        configured=config.bridge_id,
+    transport_id = transport_id_for(
+        configured=config.transport_id,
         runtime_name=context.runtime_name,
     )
     bindings = [
@@ -507,16 +565,16 @@ def component_factory(context: ComponentContext):
             binding_id=binding_id,
             config=binding,
             bus=context.require_lane(binding.lane),
-            bridge_id=bridge_id,
+            transport_id=transport_id,
         )
         for binding_id, binding in sorted(config.bindings.items())
         if binding.enabled
     ]
     if not bindings:
         return InactiveComponent(name=context.runtime_name)
-    return WebSocketBridgeComponent(
+    return WebSocketTransportComponent(
         runtime_name=context.runtime_name,
-        bridge_id=bridge_id,
+        transport_id=transport_id,
         config=config,
         bindings=bindings,
     )
@@ -524,8 +582,8 @@ def component_factory(context: ComponentContext):
 
 component = ComponentDefinition(
     manifest=ComponentManifest(
-        component_id="deckr.bridges.websocket",
-        config_prefix="deckr.bridges.websocket",
+        component_id="deckr.transports.websocket",
+        config_prefix="deckr.transports.websocket",
         cardinality=ComponentCardinality.MULTI_INSTANCE,
     ),
     factory=component_factory,

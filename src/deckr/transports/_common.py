@@ -12,13 +12,13 @@ CORE_LANE_SCHEMA_IDS = {
 }
 
 
-class BridgeDirection(StrEnum):
+class TransportDirection(StrEnum):
     INGRESS = "ingress"
     EGRESS = "egress"
     BIDIRECTIONAL = "bidirectional"
 
 
-class StrictBridgeModel(BaseModel):
+class _StrictConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
@@ -28,17 +28,17 @@ def resolved_schema_id(*, lane: str, explicit_schema_id: str | None) -> str:
         return core_schema_id
     if explicit_schema_id:
         return explicit_schema_id
-    raise ValueError(f"Bridge binding for lane {lane!r} requires schema_id")
+    raise ValueError(f"Transport binding for lane {lane!r} requires schema_id")
 
 
-def bridge_id_for(*, configured: str | None, runtime_name: str) -> str:
+def transport_id_for(*, configured: str | None, runtime_name: str) -> str:
     candidate = (configured or "").strip()
     return candidate or runtime_name
 
 
-class BridgeBindingConfigBase(StrictBridgeModel):
+class TransportBindingConfigBase(_StrictConfigModel):
     lane: str
-    direction: BridgeDirection = BridgeDirection.BIDIRECTIONAL
+    direction: TransportDirection = TransportDirection.BIDIRECTIONAL
     schema_id: str | None = None
     enabled: bool = True
 
@@ -46,20 +46,22 @@ class BridgeBindingConfigBase(StrictBridgeModel):
         return resolved_schema_id(lane=self.lane, explicit_schema_id=self.schema_id)
 
 
-def lanes_for_bindings(bindings: dict[str, BridgeBindingConfigBase]) -> ResolvedLaneSet:
+def lanes_for_bindings(
+    bindings: dict[str, TransportBindingConfigBase],
+) -> ResolvedLaneSet:
     consumes: set[str] = set()
     publishes: set[str] = set()
     for binding in bindings.values():
         if not binding.enabled:
             continue
         if binding.direction in {
-            BridgeDirection.EGRESS,
-            BridgeDirection.BIDIRECTIONAL,
+            TransportDirection.EGRESS,
+            TransportDirection.BIDIRECTIONAL,
         }:
             consumes.add(binding.lane)
         if binding.direction in {
-            BridgeDirection.INGRESS,
-            BridgeDirection.BIDIRECTIONAL,
+            TransportDirection.INGRESS,
+            TransportDirection.BIDIRECTIONAL,
         }:
             publishes.add(binding.lane)
     return ResolvedLaneSet(

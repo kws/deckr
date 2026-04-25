@@ -6,38 +6,28 @@ from pydantic import ValidationError
 from deckr.hardware import events as hw_events
 
 
-class StubDevice:
-    def __init__(self) -> None:
-        self.id = "local-device"
-        self.hid = "hid:local-device"
-        self.name = "Stub Device"
-        self.slots = [
-            hw_events.HWSlot(
+def _stub_device_info() -> hw_events.WireHWDevice:
+    return hw_events.WireHWDevice(
+        id="local-device",
+        hid="hid:local-device",
+        name="Stub Device",
+        slots=[
+            hw_events.WireHWSlot(
                 id="0,0",
-                coordinates=hw_events.Coordinates(column=0, row=0),
-                image_format=hw_events.HWSImageFormat(width=72, height=72),
-                gestures=frozenset({"key_down", "key_up"}),
+                coordinates=hw_events.WireCoordinates(column=0, row=0),
+                image_format=hw_events.WireHWSImageFormat(width=72, height=72),
+                gestures=["key_down", "key_up"],
             )
-        ]
-
-    async def set_image(self, slot_id: str, image: bytes) -> None:
-        return
-
-    async def clear_slot(self, slot_id: str) -> None:
-        return
-
-    async def sleep_screen(self) -> None:
-        return
-
-    async def wake_screen(self) -> None:
-        return
+        ],
+    )
 
 
 def test_device_connected_serializes_with_camel_case_wire_fields():
-    device = StubDevice()
-    event = hw_events.DeviceConnectedEvent(device_id=device.id, device=device)
-
-    message = hw_events.event_to_transport_message(event)
+    device = _stub_device_info()
+    message = hw_events.DeviceConnectedMessage(
+        device_id=device.id,
+        device=device,
+    )
     wire = hw_events.hardware_message_to_wire(message)
 
     assert wire["type"] == "deviceConnected"
@@ -49,20 +39,18 @@ def test_device_connected_serializes_with_camel_case_wire_fields():
 
     parsed = hw_events.hardware_message_from_wire(wire)
     assert isinstance(parsed, hw_events.DeviceConnectedMessage)
-    info = hw_events.device_info_from_wire(parsed.device)
-    assert info.id == device.id
-    assert info.name == "Stub Device"
-    assert info.slots[0].gestures == frozenset({"key_down", "key_up"})
+    assert parsed.device.id == device.id
+    assert parsed.device.name == "Stub Device"
+    assert parsed.device.slots[0].gestures == ("key_down", "key_up")
 
 
 def test_set_image_command_round_trips_binary_payload():
-    command = hw_events.SetImageCommand(
+    message = hw_events.SetImageMessage(
         device_id="local-device",
         slot_id="0,0",
         image=b"\x00\xff\x10",
     )
 
-    message = hw_events.command_to_transport_message(command)
     wire = hw_events.hardware_message_to_wire(message)
 
     assert wire["type"] == "setImage"
@@ -71,8 +59,19 @@ def test_set_image_command_round_trips_binary_payload():
     assert isinstance(wire["image"], str)
 
     parsed = hw_events.hardware_message_from_wire(wire)
-    restored = hw_events.transport_message_to_command(parsed)
-    assert restored == command
+    assert parsed == message
+
+
+def test_hardware_messages_reject_unknown_routing_metadata():
+    with pytest.raises(ValidationError):
+        hw_events.KeyDownMessage.model_validate(
+            {
+                "deviceId": "local-device",
+                "keyId": "0,0",
+                "internalMetadata": {"source": "transport"},
+                "type": "keyDown",
+            }
+        )
 
 
 def test_remote_device_id_round_trip():

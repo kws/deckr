@@ -22,7 +22,7 @@ def test_slot_info_serializes_to_camel_case() -> None:
         image_format={"width": 72, "height": 72, "format": "JPEG", "rotation": 0},
     )
 
-    data = slot.model_dump(by_alias=True)
+    data = slot.model_dump(by_alias=True, mode="json")
 
     assert data["slotId"] == "0,0"
     assert data["slotType"] == "key"
@@ -47,7 +47,7 @@ def test_will_appear_uses_slot_metadata_instead_of_controller_payload() -> None:
         ),
     )
 
-    dumped = event.model_dump(by_alias=True)
+    dumped = event.model_dump(by_alias=True, mode="json")
 
     assert dumped == {
         "event": "willAppear",

@@ -8,19 +8,6 @@ from typing import Any
 import anyio
 from anyio import get_cancelled_exc_class
 
-from deckr.bridges._common import (
-    BridgeBindingConfigBase,
-    BridgeDirection,
-    StrictBridgeModel,
-    bridge_id_for,
-    lanes_for_bindings,
-)
-from deckr.bridges._lanes import build_lane_handler
-from deckr.core._bridge import (
-    BridgeEnvelopeError,
-    build_bridge_envelope,
-    parse_bridge_envelope,
-)
 from deckr.core.component import BaseComponent, RunContext
 from deckr.core.components import (
     ComponentCardinality,
@@ -30,24 +17,74 @@ from deckr.core.components import (
     InactiveComponent,
     ResolvedLaneSet,
 )
+from deckr.transports._common import (
+    TransportBindingConfigBase,
+    TransportDirection,
+    _StrictConfigModel,
+    lanes_for_bindings,
+    transport_id_for,
+)
+from deckr.transports._lanes import build_lane_handler
 
 logger = logging.getLogger(__name__)
 
 QOS = 2
+TRANSPORT_KIND = "mqtt"
 
 
-class MqttBridgeBindingConfig(BridgeBindingConfigBase):
+class MqttTransportEnvelopeError(ValueError):
+    """Raised when an MQTT transport envelope is invalid."""
+
+
+def build_mqtt_envelope(
+    transport_id: str,
+    lane: str,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "transportId": transport_id,
+        "lane": lane,
+        "message": message,
+    }
+
+
+def parse_mqtt_envelope(payload: Any) -> tuple[str | None, str, dict[str, Any]]:
+    if not isinstance(payload, dict):
+        raise MqttTransportEnvelopeError("MQTT transport payload must be a JSON object")
+
+    transport_id = payload.get("transportId")
+    if transport_id is not None and not isinstance(transport_id, str):
+        raise MqttTransportEnvelopeError(
+            "MQTT transport payload 'transportId' must be a string"
+        )
+
+    lane = payload.get("lane")
+    if not isinstance(lane, str) or not lane.strip():
+        raise MqttTransportEnvelopeError(
+            "MQTT transport payload 'lane' must be a non-empty string"
+        )
+
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        raise MqttTransportEnvelopeError(
+            "MQTT transport payload 'message' must be an object"
+        )
+
+    return transport_id, lane, message
+
+
+class MqttTransportBindingConfig(TransportBindingConfigBase):
     topic: str
 
 
-class MqttBridgeConfig(StrictBridgeModel):
+class MqttTransportConfig(_StrictConfigModel):
     enabled: bool = True
-    bridge_id: str | None = None
+    transport_id: str | None = None
     hostname: str
     port: int = 1883
     username: str | None = None
     password: str | None = None
-    bindings: dict[str, MqttBridgeBindingConfig]
+    bindings: dict[str, MqttTransportBindingConfig]
 
 
 class _BindingRuntime:
@@ -55,32 +92,33 @@ class _BindingRuntime:
         self,
         *,
         binding_id: str,
-        config: MqttBridgeBindingConfig,
+        config: MqttTransportBindingConfig,
         bus: Any,
-        bridge_id: str,
+        transport_id: str,
     ) -> None:
         self.binding_id = binding_id
         self.config = config
         self.bus = bus
-        self.bridge_id = bridge_id
+        self.transport_id = transport_id
         self.handler = build_lane_handler(
             lane=config.lane,
-            bridge_id=bridge_id,
+            transport_kind=TRANSPORT_KIND,
+            transport_id=transport_id,
             bus=bus,
         )
 
 
-class MqttBridgeComponent(BaseComponent):
+class MqttTransportComponent(BaseComponent):
     def __init__(
         self,
         *,
         runtime_name: str,
-        bridge_id: str,
-        config: MqttBridgeConfig,
+        transport_id: str,
+        config: MqttTransportConfig,
         bindings: list[_BindingRuntime],
     ) -> None:
         super().__init__(name=runtime_name)
-        self._bridge_id = bridge_id
+        self._transport_id = transport_id
         self._config = config
         self._bindings = bindings
 
@@ -89,7 +127,7 @@ class MqttBridgeComponent(BaseComponent):
             ctx.tg.start_soon(
                 self._run_binding,
                 binding,
-                name=f"mqtt_bridge:{binding.binding_id}",
+                name=f"mqtt_transport:{binding.binding_id}",
             )
 
     async def _run_binding(self, binding: _BindingRuntime) -> None:
@@ -97,7 +135,7 @@ class MqttBridgeComponent(BaseComponent):
             import aiomqtt
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "MQTT bridge requires aiomqtt. Install deckr[mqtt]."
+                "MQTT transport requires aiomqtt. Install deckr[mqtt]."
             ) from exc
 
         cancelled_exc = get_cancelled_exc_class()
@@ -111,26 +149,26 @@ class MqttBridgeComponent(BaseComponent):
                     password=self._config.password,
                 ) as client:
                     if binding.config.direction in {
-                        BridgeDirection.INGRESS,
-                        BridgeDirection.BIDIRECTIONAL,
+                        TransportDirection.INGRESS,
+                        TransportDirection.BIDIRECTIONAL,
                     }:
                         await client.subscribe(binding.config.topic, qos=QOS)
                     async with anyio.create_task_group() as tg:
                         if binding.config.direction in {
-                            BridgeDirection.EGRESS,
-                            BridgeDirection.BIDIRECTIONAL,
+                            TransportDirection.EGRESS,
+                            TransportDirection.BIDIRECTIONAL,
                         }:
                             tg.start_soon(self._bus_to_mqtt_loop, client, binding)
                         if binding.config.direction in {
-                            BridgeDirection.INGRESS,
-                            BridgeDirection.BIDIRECTIONAL,
+                            TransportDirection.INGRESS,
+                            TransportDirection.BIDIRECTIONAL,
                         }:
                             tg.start_soon(self._mqtt_to_bus_loop, client, binding)
             except cancelled_exc:
                 raise
             except Exception:
                 logger.exception(
-                    "MQTT bridge binding %s disconnected from %s:%s; retrying in %.1fs",
+                    "MQTT transport binding %s disconnected from %s:%s; retrying in %.1fs",
                     binding.binding_id,
                     self._config.hostname,
                     self._config.port,
@@ -143,14 +181,14 @@ class MqttBridgeComponent(BaseComponent):
 
     async def _bus_to_mqtt_loop(self, client, binding: _BindingRuntime) -> None:
         async with binding.bus.subscribe() as stream:
-            async for event in stream:
+            async for envelope in stream:
                 await binding.handler.handle_local_event(
-                    event,
-                    send_remote=lambda payload, target_bridge_id: self._publish(
+                    envelope,
+                    send_remote=lambda payload, target_transport_id: self._publish(
                         client,
                         binding,
                         payload,
-                        target_bridge_id=target_bridge_id,
+                        target_transport_id=target_transport_id,
                     ),
                 )
 
@@ -163,21 +201,21 @@ class MqttBridgeComponent(BaseComponent):
                 raw = message.payload
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
-                remote_bridge_id, lane, payload = parse_bridge_envelope(json.loads(raw))
-                if remote_bridge_id == self._bridge_id or lane != binding.config.lane:
+                remote_transport_id, lane, payload = parse_mqtt_envelope(json.loads(raw))
+                if remote_transport_id == self._transport_id or lane != binding.config.lane:
                     continue
                 await binding.handler.handle_remote_payload(
                     payload,
-                    send_remote=lambda response, target_bridge_id: self._publish(
+                    send_remote=lambda response, target_transport_id: self._publish(
                         client,
                         binding,
                         response,
-                        target_bridge_id=target_bridge_id,
+                        target_transport_id=target_transport_id,
                     ),
-                    remote_bridge_id=remote_bridge_id,
+                    remote_transport_id=remote_transport_id,
                 )
-            except BridgeEnvelopeError:
-                logger.warning("Dropped malformed MQTT bridge envelope")
+            except MqttTransportEnvelopeError:
+                logger.warning("Dropped malformed MQTT transport envelope")
             except Exception:
                 logger.exception("Error forwarding MQTT message to bus")
 
@@ -187,11 +225,11 @@ class MqttBridgeComponent(BaseComponent):
         binding: _BindingRuntime,
         payload: dict[str, Any],
         *,
-        target_bridge_id: str | None,
+        target_transport_id: str | None,
     ) -> None:
-        del target_bridge_id
-        envelope = build_bridge_envelope(
-            self._bridge_id,
+        del target_transport_id
+        envelope = build_mqtt_envelope(
+            self._transport_id,
             binding.config.lane,
             payload,
         )
@@ -205,8 +243,8 @@ class MqttBridgeComponent(BaseComponent):
         return
 
 
-def _config_from_mapping(source: Mapping[str, Any]) -> MqttBridgeConfig:
-    return MqttBridgeConfig.model_validate(dict(source))
+def _config_from_mapping(source: Mapping[str, Any]) -> MqttTransportConfig:
+    return MqttTransportConfig.model_validate(dict(source))
 
 
 def _resolve_lanes(
@@ -234,8 +272,8 @@ def component_factory(context: ComponentContext):
     if not config.enabled:
         return InactiveComponent(name=context.runtime_name)
 
-    bridge_id = bridge_id_for(
-        configured=config.bridge_id,
+    transport_id = transport_id_for(
+        configured=config.transport_id,
         runtime_name=context.runtime_name,
     )
     bindings = [
@@ -243,16 +281,16 @@ def component_factory(context: ComponentContext):
             binding_id=binding_id,
             config=binding,
             bus=context.require_lane(binding.lane),
-            bridge_id=bridge_id,
+            transport_id=transport_id,
         )
         for binding_id, binding in sorted(config.bindings.items())
         if binding.enabled
     ]
     if not bindings:
         return InactiveComponent(name=context.runtime_name)
-    return MqttBridgeComponent(
+    return MqttTransportComponent(
         runtime_name=context.runtime_name,
-        bridge_id=bridge_id,
+        transport_id=transport_id,
         config=config,
         bindings=bindings,
     )
@@ -260,8 +298,8 @@ def component_factory(context: ComponentContext):
 
 component = ComponentDefinition(
     manifest=ComponentManifest(
-        component_id="deckr.bridges.mqtt",
-        config_prefix="deckr.bridges.mqtt",
+        component_id="deckr.transports.mqtt",
+        config_prefix="deckr.transports.mqtt",
         cardinality=ComponentCardinality.MULTI_INSTANCE,
     ),
     factory=component_factory,

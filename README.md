@@ -69,14 +69,14 @@ Deckr’s target architecture is:
 - one runtime abstraction: `Component`
 - one discovery model
 - named event lanes as the only generic wiring primitive
-- bridges modeled as ordinary components
+- transports modeled as ordinary components
 - core wire contracts defined in `deckr`
 
-Controllers, drivers, plugin hosts, and bridges are semantic roles, not
+Controllers, drivers, plugin hosts, and transports are semantic roles, not
 different architectural kinds.
 
 If you are looking for the design rules around discovery, lane ownership,
-bridge configuration, wire contracts, configuration namespacing, and alpha
+transport configuration, wire contracts, configuration namespacing, and alpha
 policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
 
 ## Package Boundaries

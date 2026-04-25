@@ -124,8 +124,8 @@ def test_multi_instance_component_only_creates_declared_instances(
 def test_component_definition_can_resolve_instance_specific_lanes() -> None:
     definition = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="deckr.bridges.mqtt",
-            config_prefix="deckr.bridges.mqtt",
+            component_id="deckr.transports.mqtt",
+            config_prefix="deckr.transports.mqtt",
             cardinality=ComponentCardinality.MULTI_INSTANCE,
         ),
         factory=lambda context: None,
