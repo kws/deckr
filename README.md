@@ -2,21 +2,23 @@
 
 `deckr` is the shared core for the Deckr ecosystem.
 
-It owns the reusable runtime model, lane contracts, and wire contracts that
-other Deckr components build on without pulling in controller-specific policy.
+It owns the reusable runtime model, lane contracts, message contracts, and
+wire-safe schemas that other Deckr components build on without pulling in
+controller-specific policy.
 That includes:
 
 - the `Component` runtime abstraction
 - named event lanes such as `plugin_messages` and `hardware_events`
-- core wire message specifications and transport-neutral contracts
+- core Deckr message specifications and transport-neutral routing contracts
 - shared runtime utilities such as component lifecycle support and MQTT helpers
 - hardware-facing and plugin-facing shared models
 
 The normative architecture reference now lives in:
 
 - [docs/runtime-architecture.md](docs/runtime-architecture.md)
+- [docs/bus-architecture.md](docs/bus-architecture.md)
 
-That document is the source of truth for the current architecture. It is
+Those documents are the source of truth for the current architecture. They are
 explicitly normative, alpha-stage, and intentionally non-backward-compatible.
 
 The controller now lives in its own sibling repository:
@@ -32,6 +34,7 @@ src/deckr/
   plugin/      Plugin-facing contracts, rendering types, and protocol types
 docs/
   runtime-architecture.md
+  bus-architecture.md
 tests/
 ```
 
@@ -70,14 +73,21 @@ Deckr’s target architecture is:
 - one discovery model
 - named event lanes as the only generic wiring primitive
 - transports modeled as ordinary components
-- core wire contracts defined in `deckr`
+- core message and routing contracts defined in `deckr`
 
 Controllers, drivers, plugin hosts, and transports are semantic roles, not
 different architectural kinds.
 
 If you are looking for the design rules around discovery, lane ownership,
-transport configuration, wire contracts, configuration namespacing, and alpha
-policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
+transport configuration, wire-safe schemas, configuration namespacing, and
+alpha policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
+
+If you are looking for the design rules around Deckr message routing,
+transport-neutral envelopes, endpoint reachability, clients, broadcasts, and
+disconnect cleanup, read [docs/bus-architecture.md](docs/bus-architecture.md).
+That document exists because local, MQTT, WebSocket, and future transports must
+carry the same Deckr messages without leaking transport identity into
+application routing.
 
 ## Package Boundaries
 
@@ -99,11 +109,24 @@ Run the contract checks with:
 uv run lint-imports
 ```
 
-## Plugin Protocols
+## Deckr Message Protocols
 
-`deckr.pluginhost.messages` defines the runtime-neutral wire contract for the
-core `plugin_messages` lane. It is shared by controllers, plugin hosts,
-transports, and non-Python implementations.
+Deckr's core message protocols are the contracts spoken between Deckr
+architectural endpoints such as controllers, plugin hosts, and hardware
+managers. They are separate from transport protocols such as MQTT and WebSocket,
+and separate from adapter-private protocols such as Elgato plugin messages or
+Python plugin runtime control-plane messages.
+
+The current implementation still has known protocol-shape gaps, especially
+around `plugin_messages`. The intended bus model is documented in
+[docs/bus-architecture.md](docs/bus-architecture.md): local and transported
+messages must share the same Deckr routing semantics, while transport-local
+framing and client/session identity stay below the application layer.
+
+`deckr.pluginhost.messages` currently contains shared plugin-host message models
+used by controllers, plugin hosts, transports, and non-Python implementations.
+Its public API shape should follow the bus architecture rather than preserve
+mistaken implementation details.
 
 `deckr.python_plugin` defines only the Python plugin SDK surface. Other plugin
 formats should define their own SDK/protocol surfaces instead of importing this

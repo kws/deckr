@@ -5,10 +5,10 @@ happens to do today.
 
 Deckr is in ALPHA. We are still deciding what the architecture is. Because of
 that, backwards compatibility is not a goal. Compatibility shims, aliases,
-adapter layers, dual APIs, transitional discovery paths, and legacy fallback
-behavior are strictly forbidden. If something is wrong, remove it and replace it
-with the right design. Do not preserve a mistaken abstraction just because some
-code already exists.
+compatibility adapter layers, dual APIs, transitional discovery paths, and legacy
+fallback behavior are strictly forbidden. If something is wrong, remove it and
+replace it with the right design. Do not preserve a mistaken abstraction just
+because some code already exists.
 
 ## Core Goal
 
@@ -29,8 +29,9 @@ The two external realities shaping this architecture are:
   and input events.
 
 The shared APIs and runtime primitives for this architecture belong in `deckr`.
-That includes the core message specifications that move across event lanes and
-across any transports attached to those lanes.
+That includes the core message specifications, routing metadata, and wire-safe
+contracts that move across event lanes and across any transports attached to
+those lanes.
 
 ## Architectural Model
 
@@ -90,8 +91,13 @@ as incidental local variable names.
 The current core lane set includes:
 
 - `plugin_messages`
-- `hardware_events`, carrying Deckr hardware wire messages for both hardware
-  input events and controller output commands
+- `hardware_events`
+
+The bus and routing requirements for these lanes are defined in
+[bus-architecture.md](bus-architecture.md). This document owns the generic
+component and lane model; the bus architecture document owns endpoint identity,
+client reachability, logical Deckr envelopes, broadcast semantics, and
+disconnect cleanup.
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
 not create new core lanes ad hoc inside a controller, plugin host, driver, or
@@ -132,22 +138,27 @@ A transport component:
 A transport must not redefine the meaning of a lane just because it is crossing a
 process or network boundary.
 
-### Wire Contract Rule
+### Message Contract Rule
 
-Once a lane is transported, messages on that lane must use standardized,
-wire-friendly contracts.
+Messages on a core lane must use standardized, wire-safe Deckr contracts whether
+they are delivered locally or across a transport boundary.
 
-All core wire contracts belong in `deckr`.
+All core message contracts belong in `deckr`.
 
-These core wire contracts include:
+These core contracts include:
 
-- core lane message envelope types
-- core payload types
+- the Deckr logical message envelope
+- endpoint and route metadata
+- core lane message body types
 - core event types
 - core command types
 
-Envelopes such as `HostMessage`-style protocol wrappers are part of the core
-wire contract. They are not transport-specific implementation details.
+The Deckr logical message envelope is part of the Deckr message protocol. It is
+not an MQTT envelope, a WebSocket envelope, a local Python object wrapper, or any
+other transport-local frame.
+
+Transport framing may exist outside the Deckr message envelope, but it is not
+the lane message contract.
 
 Python is expected to author these core contracts using Pydantic models.
 
@@ -161,16 +172,17 @@ Transport adapters must not invent alternate payload shapes for core lane
 traffic.
 
 Transport adapters may add minimal transport-local framing metadata outside the
-standardized Deckr message payload when required for delivery, session
-management, deduplication, loop prevention, fragmentation, or similar
-transport-local concerns.
+standardized Deckr message envelope when required for delivery, session
+management, deduplication, loop prevention, fragmentation, client reachability,
+or similar transport-local concerns.
 
 That outer framing is not the lane message contract. It must never change the
-meaning or shape of the standardized Deckr message carried inside it.
+meaning or shape of the standardized Deckr message carried inside it, and it
+must not leak into application routing.
 
 ### Core and Extension Messages
 
-Deckr defines a core set of wire message types that the platform expects.
+Deckr defines a core set of message types that the platform expects.
 
 Systems may extend these with additional message types, but those extensions:
 
@@ -182,11 +194,15 @@ Extension messages are allowed. Competing definitions of core messages are not.
 
 ### Transport Boundary Rule
 
-In-process event objects and transported wire objects may differ internally if that
-is useful for implementation.
+In-process event objects and serialized wire objects may differ internally if
+that is useful for implementation.
 
-However, the architectural contract is always the wire-safe core schema owned by
-`deckr`.
+However, the architectural contract is always the wire-safe Deckr message schema
+owned by `deckr`.
+
+Local and transported lane semantics must be the same. Local delivery must not
+depend on a different protocol model just because no network transport is
+involved.
 
 No transport may depend on:
 
@@ -194,6 +210,7 @@ No transport may depend on:
 - pickle-style serialization
 - transport-specific ad hoc payloads
 - undocumented envelope variants
+- application-visible transport identity
 
 If a core message contract is wrong, replace it.
 
@@ -406,9 +423,9 @@ That runtime identity must be:
 - derived deterministically from `component_id` and `instance_id`
 - separate from protocol-level addresses carried on event lanes
 
-Protocol addresses such as `controller:<controller_id>` and `host:<host_id>`
-are lane-level messaging identities. They are not the generic lifecycle identity
-of a component instance.
+Protocol addresses such as `controller:<controller_id>`, `host:<host_id>`, and
+`hardware_manager:<manager_id>` are lane-level messaging identities. They are
+not the generic lifecycle identity of a component instance.
 
 The configuration model for multi-instance components is:
 
@@ -489,10 +506,10 @@ Each binding must declare:
 - `schema_id` for extension lanes when the lane is not defined as a core Deckr
   lane
 
-For core Deckr lanes, the lane name implies the core wire contract from
+For core Deckr lanes, the lane name implies the core Deckr message contract from
 `deckr`. That contract must not be redefined in transport-local configuration.
 
-For extension lanes, the binding must identify the extension wire contract
+For extension lanes, the binding must identify the extension message contract
 explicitly. Do not rely on convention or out-of-band knowledge.
 
 Transport bindings are explicit because hidden transport-to-lane assumptions are a
@@ -579,13 +596,16 @@ honor the same manifest, prefix, and lane model.
 - Lanes are logical runtime contracts and may be transported across transport
   boundaries.
 - Transports are peers architecturally; none are special-cased.
-- Core transported message envelopes and payloads live in `deckr`.
+- Core Deckr message envelopes, route metadata, and payloads live in `deckr`.
 - Pydantic models in `deckr` are the canonical Python authoring format for core
-  wire contracts.
+  message contracts.
 - JSON Schema generated from those contracts is the interoperability artifact
   for non-Python implementations.
 - Transport-local framing may exist, but it must not redefine the carried Deckr
   message contract.
+- Transport-local identity must not leak into application-level routing.
+- Endpoint identity and route reachability are distinct from component lifecycle
+  identity.
 - Configuration is bound by exact manifest-declared prefix.
 - Components parse only their own resolved configuration mapping.
 - The launcher does not interpret "enabled" or "disabled" for components.
