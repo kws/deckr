@@ -8,7 +8,7 @@ from deckr.plugin.events import PageAppear, PageDisappear
 
 if TYPE_CHECKING:
     from deckr.plugin.core_api import CorePluginContext
-    from deckr.plugin.types import DynamicPageDescriptor
+    from deckr.plugin.messages import DynamicPageDescriptor
 
 CAPABILITY_PAGES = "deckr.pages"
 CAPABILITY_SCREEN_POWER = "deckr.screen-power"

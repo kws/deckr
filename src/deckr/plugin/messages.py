@@ -9,7 +9,7 @@ from urllib.parse import quote, unquote
 
 from pydantic import ConfigDict, Field
 
-from deckr.core.util.pydantic import CamelModel
+from deckr.core.util.pydantic import CamelModel, to_camel
 
 
 def _new_message_id() -> str:
@@ -140,6 +140,66 @@ class HostMessage(CamelModel):
     @classmethod
     def schema_dict(cls) -> dict[str, Any]:
         return cls.model_json_schema(by_alias=True)
+
+
+class TitleOptions(CamelModel):
+    """Font and styling options for controller-rendered titles."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+        frozen=True,
+    )
+
+    font_family: str | None = None
+    font_size: int | str | None = None
+    font_style: str | None = None
+    title_color: str | None = None
+    title_alignment: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for plugin command payloads."""
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+class SlotBinding(CamelModel):
+    """One slot bound to an action for static or dynamic pages."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+        frozen=True,
+    )
+
+    slot_id: str
+    action_uuid: str
+    settings: dict[str, Any]
+    title_options: TitleOptions | None = None
+
+
+class DynamicPageDescriptor(CamelModel):
+    """Plugin-generated page descriptor carried by openPage commands."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+        frozen=True,
+    )
+
+    page_id: str
+    slots: list[SlotBinding]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for plugin command payloads."""
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+def make_dynamic_page_id() -> str:
+    """Generate a unique page ID for dynamic pages."""
+    return str(uuid.uuid4())
 
 
 # Message type constants

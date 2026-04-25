@@ -14,7 +14,7 @@ from deckr.plugin.events import (
     WillAppear,
     WillDisappear,
 )
-from deckr.plugin.rendering import TitleOptions
+from deckr.plugin.messages import TitleOptions
 
 
 class CorePluginContext(Protocol):
