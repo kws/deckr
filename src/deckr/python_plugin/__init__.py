@@ -1,0 +1,2 @@
+"""Python plugin SDK contracts."""
+

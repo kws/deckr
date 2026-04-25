@@ -1,14 +1,14 @@
 from typing import Protocol
 
-from deckr.plugin.core_api import CorePlugin, CorePluginAction, CorePluginContext
-from deckr.plugin.events import (
+from deckr.python_plugin.core_api import CorePlugin, CorePluginAction, CorePluginContext
+from deckr.python_plugin.events import (
     DialRotate,
     KeyDown,
     KeyUp,
     TouchSwipe,
     TouchTap,
 )
-from deckr.plugin.extensions import DeckrPluginContextExtensions
+from deckr.python_plugin.extensions import DeckrPluginContextExtensions
 
 
 class ControlContext(Protocol):

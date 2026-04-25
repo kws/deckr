@@ -89,8 +89,9 @@ management, controller configuration, or controller-owned state, it belongs in
 Internal boundaries are enforced with `.importlinter`:
 
 - `deckr.core` must not import `deckr.hardware`
-- `deckr.core` must not import `deckr.plugin`
-- `deckr.hardware` must not import `deckr.plugin`
+- `deckr.core` must not import `deckr.pluginhost` or `deckr.python_plugin`
+- `deckr.hardware` must not import `deckr.pluginhost` or `deckr.python_plugin`
+- `deckr.pluginhost` must not import `deckr.python_plugin`
 
 Run the contract checks with:
 
@@ -98,16 +99,22 @@ Run the contract checks with:
 uv run lint-imports
 ```
 
-## Plugin Protocol Layers
+## Plugin Protocols
 
-The plugin contract is intentionally split into a small core plus Deckr-specific
-extensions:
+`deckr.pluginhost.messages` defines the runtime-neutral wire contract for the
+core `plugin_messages` lane. It is shared by controllers, plugin hosts,
+transports, and non-Python implementations.
 
-- `deckr.plugin.core_api`
+`deckr.python_plugin` defines only the Python plugin SDK surface. Other plugin
+formats should define their own SDK/protocol surfaces instead of importing this
+package. The Python SDK is intentionally split into a small core plus
+Deckr-specific extensions:
+
+- `deckr.python_plugin.core_api`
   - The minimum surface a controller-lite implementation should support.
   - Keeps `set_title`, `set_image`, `show_alert`, `show_ok`, and settings
     focused on the shared controller/plugin semantics.
-- `deckr.plugin.extensions`
+- `deckr.python_plugin.extensions`
   - Deckr-only features such as static page navigation, dynamic pages, and
     screen power control.
 

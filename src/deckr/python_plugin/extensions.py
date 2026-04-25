@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from deckr.plugin.events import PageAppear, PageDisappear
+from deckr.python_plugin.events import PageAppear, PageDisappear
 
 if TYPE_CHECKING:
-    from deckr.plugin.core_api import CorePluginContext
-    from deckr.plugin.messages import DynamicPageDescriptor
+    from deckr.python_plugin.core_api import CorePluginContext
+    from deckr.pluginhost.messages import DynamicPageDescriptor
 
 CAPABILITY_PAGES = "deckr.pages"
 CAPABILITY_SCREEN_POWER = "deckr.screen-power"

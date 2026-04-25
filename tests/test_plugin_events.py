@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deckr.plugin.events import (
+from deckr.python_plugin.events import (
     DialRotate,
     KeyDown,
     PageAppear,

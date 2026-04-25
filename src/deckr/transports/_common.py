@@ -8,7 +8,7 @@ from deckr.core.components import ResolvedLaneSet
 
 CORE_LANE_SCHEMA_IDS = {
     "hardware_events": "deckr.hardware.transport_message",
-    "plugin_messages": "deckr.plugin.host_message",
+    "plugin_messages": "deckr.pluginhost.host_message",
 }
 
 

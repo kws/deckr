@@ -16,12 +16,12 @@ from deckr.core.components import (
 )
 from deckr.core.config import ConfigDocument
 from deckr.hardware.events import hardware_transport_message_schema
-from deckr.plugin.messages import HostMessage
+from deckr.pluginhost.messages import HostMessage
 
 
 def _core_wire_schemas() -> dict[str, dict]:
     return {
-        "plugin.host_message": HostMessage.schema_dict(),
+        "deckr.pluginhost.host_message": HostMessage.schema_dict(),
         "hardware.transport_message": hardware_transport_message_schema(),
     }
 
@@ -285,7 +285,7 @@ def test_host_message_is_pydantic_and_schema_exportable() -> None:
     assert HostMessage.from_dict(payload) == message
 
     schemas = _core_wire_schemas()
-    assert "plugin.host_message" in schemas
+    assert "deckr.pluginhost.host_message" in schemas
     assert "hardware.transport_message" in schemas
 
 
@@ -338,6 +338,6 @@ def test_host_message_routing_requires_canonical_addresses() -> None:
 
 def test_extract_device_id_rejects_legacy_context_shape() -> None:
     with pytest.raises(ValueError, match="Invalid contextId"):
-        from deckr.plugin.messages import extract_device_id
+        from deckr.pluginhost.messages import extract_device_id
 
         extract_device_id("device-1.0,0")

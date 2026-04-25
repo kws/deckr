@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Protocol
 
-from deckr.plugin.events import (
+from deckr.python_plugin.events import (
     DialRotate,
     KeyDown,
     KeyUp,
@@ -14,7 +14,7 @@ from deckr.plugin.events import (
     WillAppear,
     WillDisappear,
 )
-from deckr.plugin.messages import TitleOptions
+from deckr.pluginhost.messages import TitleOptions
 
 
 class CorePluginContext(Protocol):

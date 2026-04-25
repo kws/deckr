@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from deckr.hardware import events as hw_events
-from deckr.plugin.messages import HostMessage
+from deckr.pluginhost.messages import HostMessage
 from deckr.transports.bus import (
     TRANSPORT_ID_HEADER,
     TRANSPORT_KIND_HEADER,

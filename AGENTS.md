@@ -24,12 +24,17 @@ device-manager-specific behavior here. That belongs in the sibling
 
 - `src/deckr/core`
   - Generic runtime utilities and messaging primitives.
-  - Must not depend on `deckr.hardware` or `deckr.plugin`.
+  - Must not depend on `deckr.hardware`, `deckr.pluginhost`, or
+    `deckr.python_plugin`.
 - `src/deckr/hardware`
   - Shared hardware-facing contracts.
-  - Must not depend on `deckr.plugin`.
-- `src/deckr/plugin`
-  - Plugin-facing shared contracts and manifests.
+  - Must not depend on `deckr.pluginhost` or `deckr.python_plugin`.
+- `src/deckr/pluginhost`
+  - Runtime-neutral `plugin_messages` lane wire contracts.
+  - Must not depend on `deckr.python_plugin`.
+- `src/deckr/python_plugin`
+  - Python plugin SDK contracts used by Python plugin authors and
+    `deckr-pluginhost-python`.
 - `tests`
   - Tests for the core package only.
 
@@ -47,8 +52,9 @@ device-manager-specific behavior here. That belongs in the sibling
 These are enforced in [`.importlinter`](./.importlinter):
 
 - `deckr.core` must not import `deckr.hardware`
-- `deckr.core` must not import `deckr.plugin`
-- `deckr.hardware` must not import `deckr.plugin`
+- `deckr.core` must not import `deckr.pluginhost` or `deckr.python_plugin`
+- `deckr.hardware` must not import `deckr.pluginhost` or `deckr.python_plugin`
+- `deckr.pluginhost` must not import `deckr.python_plugin`
 
 After touching package boundaries or import structure, run:
 

@@ -1,6 +1,6 @@
 """Tests for the explicit core-vs-extension plugin protocol split."""
 
-from deckr.plugin.messages import (
+from deckr.pluginhost.messages import (
     CORE_COMMAND_MESSAGE_TYPES,
     DECKR_EXTENSION_COMMAND_MESSAGE_TYPES,
     SET_IMAGE,

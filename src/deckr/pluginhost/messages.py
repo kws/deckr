@@ -1,10 +1,9 @@
-"""Plugin host protocol: HostMessage and message type constants."""
+"""Wire protocol for the core ``plugin_messages`` lane."""
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, unquote
 
@@ -225,14 +224,6 @@ OPEN_PAGE = "openPage"
 CLOSE_PAGE = "closePage"
 SLEEP_SCREEN = "sleepScreen"
 WAKE_SCREEN = "wakeScreen"
-
-
-@dataclass(frozen=True)
-class ActionsChangedEvent:
-    """Emitted by ActionRegistry when actions are registered/unregistered."""
-
-    registered: list[str]  # action UUIDs now available
-    unregistered: list[str]  # action UUIDs no longer available
 
 
 def extract_device_id(context_id: str) -> str:

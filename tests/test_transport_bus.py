@@ -4,7 +4,7 @@ from types import MappingProxyType
 
 import pytest
 
-from deckr.plugin.messages import HostMessage
+from deckr.pluginhost.messages import HostMessage
 from deckr.transports.bus import (
     TRANSPORT_ID_HEADER,
     TRANSPORT_KIND_HEADER,

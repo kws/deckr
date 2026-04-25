@@ -12,7 +12,7 @@ from websockets.asyncio.server import serve
 from deckr.core.component import RunContext
 from deckr.core.components import ComponentContext, LaneRegistry, runtime_name_for
 from deckr.hardware import events as hw_events
-from deckr.plugin.messages import HostMessage
+from deckr.pluginhost.messages import HostMessage
 from deckr.transports.bus import (
     TRANSPORT_ID_HEADER,
     TRANSPORT_KIND_HEADER,
