@@ -107,16 +107,9 @@ transports, and non-Python implementations.
 
 `deckr.python_plugin` defines only the Python plugin SDK surface. Other plugin
 formats should define their own SDK/protocol surfaces instead of importing this
-package. The Python SDK is intentionally split into a small core plus
-Deckr-specific extensions:
-
-- `deckr.python_plugin.core_api`
-  - The minimum surface a controller-lite implementation should support.
-  - Keeps `set_title`, `set_image`, `show_alert`, `show_ok`, and settings
-    focused on the shared controller/plugin semantics.
-- `deckr.python_plugin.extensions`
-  - Deckr-only features such as static page navigation, dynamic pages, and
-    screen power control.
+package. `deckr.python_plugin.interface` declares the single Python plugin API,
+including action lifecycle hooks, title/image/settings commands, page
+navigation, dynamic pages, and screen power control.
 
 The key image rule is:
 
