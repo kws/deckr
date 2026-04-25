@@ -166,9 +166,6 @@ SHOW_OK = "showOk"
 REQUEST_SETTINGS = "requestSettings"
 HERE_ARE_SETTINGS = "hereAreSettings"
 SET_SETTINGS = "setSettings"
-REQUEST_GLOBAL_SETTINGS = "requestGlobalSettings"
-HERE_ARE_GLOBAL_SETTINGS = "hereAreGlobalSettings"
-SET_GLOBAL_SETTINGS = "setGlobalSettings"
 SET_PAGE = "setPage"
 OPEN_PAGE = "openPage"
 CLOSE_PAGE = "closePage"
@@ -208,16 +205,6 @@ CORE_COMMAND_MESSAGE_TYPES = frozenset(
         SHOW_OK,
         REQUEST_SETTINGS,
         SET_SETTINGS,
-        REQUEST_GLOBAL_SETTINGS,
-        SET_GLOBAL_SETTINGS,
-    }
-)
-
-# Global settings commands are controller-scoped but not routed by contextId.
-GLOBAL_SETTINGS_MESSAGE_TYPES = frozenset(
-    {
-        REQUEST_GLOBAL_SETTINGS,
-        SET_GLOBAL_SETTINGS,
     }
 )
 

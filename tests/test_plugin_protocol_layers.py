@@ -3,9 +3,6 @@
 from deckr.plugin.messages import (
     CORE_COMMAND_MESSAGE_TYPES,
     DECKR_EXTENSION_COMMAND_MESSAGE_TYPES,
-    HERE_ARE_GLOBAL_SETTINGS,
-    REQUEST_GLOBAL_SETTINGS,
-    SET_GLOBAL_SETTINGS,
     SET_IMAGE,
     SET_PAGE,
 )
@@ -19,8 +16,6 @@ from deckr.plugin.rendering import (
 
 def test_core_and_extension_command_sets_are_explicit():
     assert SET_IMAGE in CORE_COMMAND_MESSAGE_TYPES
-    assert REQUEST_GLOBAL_SETTINGS in CORE_COMMAND_MESSAGE_TYPES
-    assert SET_GLOBAL_SETTINGS in CORE_COMMAND_MESSAGE_TYPES
     assert SET_PAGE in DECKR_EXTENSION_COMMAND_MESSAGE_TYPES
     assert SET_PAGE not in CORE_COMMAND_MESSAGE_TYPES
 
@@ -63,7 +58,3 @@ def test_build_action_metadata_uses_explicit_action_fields():
         "name": "Example Action",
         "pluginUuid": "com.example.plugin",
     }
-
-
-def test_global_settings_response_constant_is_stable():
-    assert HERE_ARE_GLOBAL_SETTINGS == "hereAreGlobalSettings"
