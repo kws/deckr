@@ -14,7 +14,6 @@ from deckr.contracts.messages import (
     endpoint_target,
     entity_subject,
     hardware_manager_address,
-    parse_hardware_manager_address,
 )
 from deckr.contracts.models import DeckrModel
 
@@ -44,9 +43,20 @@ class HardwareSlot(DeckrModel):
 
 class HardwareDevice(DeckrModel):
     id: str
+    fingerprint: str
     hid: str
     slots: tuple[HardwareSlot, ...]
     name: str | None = None
+
+
+class HardwareDeviceRef(DeckrModel):
+    manager_id: str
+    device_id: str
+
+
+class HardwareControlRef(HardwareDeviceRef):
+    control_id: str
+    control_kind: str
 
 
 class DeviceConnectedMessage(DeckrModel):
@@ -171,7 +181,7 @@ def hardware_subject(
     control_id: str | None = None,
     control_kind: str | None = None,
 ) -> EntitySubject:
-    identifiers = {
+    identifiers: dict[str, str] = {
         "managerId": manager_id,
         "deviceId": device_id,
     }
@@ -185,6 +195,19 @@ def hardware_subject(
     )
 
 
+def hardware_subject_for_device(ref: HardwareDeviceRef) -> EntitySubject:
+    return hardware_subject(manager_id=ref.manager_id, device_id=ref.device_id)
+
+
+def hardware_subject_for_control(ref: HardwareControlRef) -> EntitySubject:
+    return hardware_subject(
+        manager_id=ref.manager_id,
+        device_id=ref.device_id,
+        control_id=ref.control_id,
+        control_kind=ref.control_kind,
+    )
+
+
 def subject_manager_id(subject: EntitySubject) -> str | None:
     return subject.identifiers.get("managerId")
 
@@ -195,6 +218,44 @@ def subject_device_id(subject: EntitySubject) -> str | None:
 
 def subject_control_id(subject: EntitySubject) -> str | None:
     return subject.identifiers.get("controlId")
+
+
+def subject_control_kind(subject: EntitySubject) -> str | None:
+    return subject.identifiers.get("controlKind")
+
+
+def hardware_device_ref_from_subject(subject: EntitySubject) -> HardwareDeviceRef | None:
+    manager_id = subject_manager_id(subject)
+    device_id = subject_device_id(subject)
+    if manager_id is None or device_id is None:
+        return None
+    return HardwareDeviceRef(manager_id=manager_id, device_id=device_id)
+
+
+def hardware_control_ref_from_subject(
+    subject: EntitySubject,
+) -> HardwareControlRef | None:
+    manager_id = subject_manager_id(subject)
+    device_id = subject_device_id(subject)
+    control_id = subject_control_id(subject)
+    control_kind = subject_control_kind(subject)
+    if (
+        manager_id is None
+        or device_id is None
+        or control_id is None
+        or control_kind is None
+    ):
+        return None
+    return HardwareControlRef(
+        manager_id=manager_id,
+        device_id=device_id,
+        control_id=control_id,
+        control_kind=control_kind,
+    )
+
+
+def hardware_device_ref_from_message(message: DeckrMessage) -> HardwareDeviceRef | None:
+    return hardware_device_ref_from_subject(message.subject)
 
 
 def hardware_body_to_dict(body: HardwareTransportMessage) -> dict[str, Any]:
@@ -306,17 +367,38 @@ def hardware_command_message(
     )
 
 
-def hardware_manager_id_from_message(message: DeckrMessage) -> str | None:
-    if message.message_type in {
-        SET_IMAGE,
-        CLEAR_SLOT,
-        SLEEP_SCREEN,
-        WAKE_SCREEN,
-    }:
-        recipient = message.recipient
-        if hasattr(recipient, "endpoint"):
-            return parse_hardware_manager_address(recipient.endpoint)
-    return subject_manager_id(message.subject)
+def hardware_command_for_device(
+    *,
+    controller_id: str,
+    ref: HardwareDeviceRef,
+    message_type: str,
+    body: HardwareCommandMessage,
+) -> DeckrMessage:
+    return hardware_command_message(
+        controller_id=controller_id,
+        manager_id=ref.manager_id,
+        message_type=message_type,
+        device_id=ref.device_id,
+        body=body,
+    )
+
+
+def hardware_command_for_control(
+    *,
+    controller_id: str,
+    ref: HardwareControlRef,
+    message_type: str,
+    body: HardwareCommandMessage,
+) -> DeckrMessage:
+    return hardware_command_message(
+        controller_id=controller_id,
+        manager_id=ref.manager_id,
+        message_type=message_type,
+        device_id=ref.device_id,
+        control_id=ref.control_id,
+        control_kind=ref.control_kind,
+        body=body,
+    )
 
 
 def hardware_message_schema() -> dict[str, Any]:

@@ -27,6 +27,7 @@ from deckr.transports._common import (
     transport_id_for,
 )
 from deckr.transports._lanes import build_lane_handler
+from deckr.transports.routes import mark_forwarded_to_client
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,14 @@ class MqttTransportFrameError(ValueError):
 def build_mqtt_frame(
     transport_id: str,
     message: DeckrMessage,
+    *,
+    client_id: str | None = None,
 ) -> dict[str, Any]:
-    return TransportFrame(transportId=transport_id, message=message).to_dict()
+    return TransportFrame(
+        transportId=transport_id,
+        clientId=client_id,
+        message=message,
+    ).to_dict()
 
 
 def parse_mqtt_frame(payload: Any) -> TransportFrame:
@@ -81,6 +88,7 @@ class _BindingRuntime:
         self.config = config
         self.bus = bus
         self.transport_id = transport_id
+        self.client_id = f"mqtt:{transport_id}:{binding_id}"
         self.handler = build_lane_handler(
             lane=config.lane,
             transport_kind=TRANSPORT_KIND,
@@ -129,6 +137,13 @@ class MqttTransportComponent(BaseComponent):
                     username=self._config.username,
                     password=self._config.password,
                 ) as client:
+                    await binding.bus.route_table.client_connected(
+                        client_id=binding.client_id,
+                        client_kind="remote",
+                        transport_kind=TRANSPORT_KIND,
+                        transport_id=self._transport_id,
+                        description=binding.binding_id,
+                    )
                     if binding.config.direction in {
                         TransportDirection.INGRESS,
                         TransportDirection.BIDIRECTIONAL,
@@ -145,9 +160,12 @@ class MqttTransportComponent(BaseComponent):
                             TransportDirection.BIDIRECTIONAL,
                         }:
                             tg.start_soon(self._mqtt_to_bus_loop, client, binding)
+                    await binding.bus.route_table.client_disconnected(binding.client_id)
             except cancelled_exc:
+                await binding.bus.route_table.client_disconnected(binding.client_id)
                 raise
             except Exception:
+                await binding.bus.route_table.client_disconnected(binding.client_id)
                 logger.exception(
                     "MQTT transport binding %s disconnected from %s:%s; retrying in %.1fs",
                     binding.binding_id,
@@ -189,6 +207,7 @@ class MqttTransportComponent(BaseComponent):
                     continue
                 await binding.handler.handle_remote_message(
                     frame.message,
+                    client_id=binding.client_id,
                 )
             except MqttTransportFrameError:
                 logger.warning("Dropped malformed MQTT transport frame")
@@ -201,9 +220,15 @@ class MqttTransportComponent(BaseComponent):
         binding: _BindingRuntime,
         message: DeckrMessage,
     ) -> None:
+        if not await binding.handler.route_targets_client(
+            message,
+            client_id=binding.client_id,
+        ):
+            return
         frame = build_mqtt_frame(
             self._transport_id,
-            message,
+            mark_forwarded_to_client(message, client_id=binding.client_id),
+            client_id=binding.client_id,
         )
         await client.publish(
             binding.config.topic,

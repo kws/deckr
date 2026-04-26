@@ -13,10 +13,12 @@ from deckr.contracts.messages import (
     controller_address,
     endpoint_target,
     entity_subject,
+    hardware_manager_address,
     host_address,
 )
 from deckr.core.component import RunContext
 from deckr.core.components import ComponentContext, LaneRegistry, runtime_name_for
+from deckr.hardware import events as hw_events
 from deckr.pluginhost.messages import plugin_message
 from deckr.transports.bus import EventBus
 from deckr.transports.mqtt import (
@@ -96,6 +98,20 @@ def _plugin_message(message_type: str, value: int) -> DeckrMessage:
     )
 
 
+def _without_route(message: DeckrMessage) -> DeckrMessage:
+    return message.model_copy(update={"route": None})
+
+
+def _hardware_device() -> hw_events.HardwareDevice:
+    return hw_events.HardwareDevice(
+        id="deck",
+        name="Deck",
+        hid="hid:deck",
+        fingerprint="serial:deck",
+        slots=[],
+    )
+
+
 @pytest.mark.asyncio
 async def test_mqtt_transport_forwards_deckr_messages_unchanged() -> None:
     plugin_bus = EventBus("plugin_messages")
@@ -119,6 +135,13 @@ async def test_mqtt_transport_forwards_deckr_messages_unchanged() -> None:
     binding = transport._bindings[0]
     client = _FakeMqttClient()
     outbound_message = _plugin_message("deckr.ready", 1)
+    await plugin_bus.route_table.claim_endpoint(
+        endpoint=controller_address("controller-main"),
+        client_id=binding.client_id,
+        client_kind="remote",
+        transport_kind="mqtt",
+        transport_id="python-mqtt",
+    )
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(transport._bus_to_mqtt_loop, client, binding)
@@ -128,13 +151,12 @@ async def test_mqtt_transport_forwards_deckr_messages_unchanged() -> None:
             await client.published_event.wait()
         tg.cancel_scope.cancel()
 
-    assert client.published == [
-        (
-            "deckr/v1",
-            json.dumps(build_mqtt_frame("python-mqtt", outbound_message)),
-            2,
-        )
-    ]
+    assert len(client.published) == 1
+    assert client.published[0][0] == "deckr/v1"
+    assert client.published[0][2] == 2
+    published_frame = parse_mqtt_frame(json.loads(client.published[0][1]))
+    assert _without_route(published_frame.message) == outbound_message
+    assert published_frame.client_id == binding.client_id
 
     inbound_message = _plugin_message("deckr.inbound", 7)
     async with (
@@ -149,7 +171,8 @@ async def test_mqtt_transport_forwards_deckr_messages_unchanged() -> None:
         received = await _next_message(stream, "deckr.inbound")
         tg.cancel_scope.cancel()
 
-    assert received == inbound_message
+    assert _without_route(received) == inbound_message
+    assert received.route.current_client_id == binding.client_id
 
 
 @pytest.mark.asyncio
@@ -197,12 +220,13 @@ async def test_websocket_transport_frames_deckr_messages(
             )
 
             received = await _next_message(stream, "host.event")
-            assert received == inbound_message
+            assert _without_route(received) == inbound_message
 
             await plugin_bus.send(outbound_message)
             frame = parse_websocket_frame(json.loads(await websocket.recv()))
             assert frame.transport_id == "controller-ws"
-            assert frame.message == outbound_message
+            assert _without_route(frame.message) == outbound_message
+            assert frame.client_id is not None
 
         tg.cancel_scope.cancel()
 
@@ -213,3 +237,83 @@ def test_transport_frames_validate_deckr_messages() -> None:
     assert parse_websocket_frame(
         build_websocket_frame("ws-a", message)
     ).message == message
+
+
+@pytest.mark.asyncio
+async def test_websocket_hardware_manager_uses_same_envelope_and_route_semantics(
+    unused_tcp_port: int,
+) -> None:
+    device = _hardware_device()
+    manager_endpoint = hardware_manager_address("room-a")
+    connected = hw_events.hardware_input_message(
+        manager_id="room-a",
+        device_id=device.id,
+        body=hw_events.DeviceConnectedMessage(device=device),
+    )
+
+    local_bus = EventBus("hardware_events")
+    await local_bus.claim_local_endpoint(manager_endpoint)
+    async with local_bus.subscribe() as stream:
+        await local_bus.send(connected)
+        assert await stream.receive() == connected
+    assert (await local_bus.route_table.route_for(manager_endpoint)).client_kind == "local"
+
+    hardware_bus = EventBus("hardware_events")
+    server = websocket_transport_component.factory(
+        _component_context(
+            websocket_transport_component,
+            raw_config={
+                "transport_id": "controller-ws",
+                "mode": "server",
+                "host": "127.0.0.1",
+                "port": unused_tcp_port,
+                "bindings": {
+                    "hardware": {
+                        "lane": "hardware_events",
+                        "path": "/hardware",
+                    }
+                },
+            },
+            lanes={"hardware_events": hardware_bus},
+        )
+    )
+
+    async with anyio.create_task_group() as tg:
+        await server.start(RunContext(tg=tg, stopping=anyio.Event()))
+        await anyio.sleep(0.1)
+
+        async with hardware_bus.subscribe() as stream, connect(
+            f"ws://127.0.0.1:{unused_tcp_port}/hardware"
+        ) as websocket:
+            await websocket.send(
+                json.dumps(build_websocket_frame("manager-ws", connected))
+            )
+            received = await _next_message(stream, hw_events.DEVICE_CONNECTED)
+            assert _without_route(received) == connected
+            route = await hardware_bus.route_table.route_for(manager_endpoint)
+            assert route is not None
+            assert route.client_kind == "remote"
+
+            command = hw_events.hardware_command_message(
+                controller_id="controller-main",
+                manager_id="room-a",
+                message_type=hw_events.CLEAR_SLOT,
+                device_id=device.id,
+                control_id="0,0",
+                control_kind="slot",
+                body=hw_events.ClearSlotMessage(slot_id="0,0"),
+            )
+            await hardware_bus.send(command)
+            frame = parse_websocket_frame(json.loads(await websocket.recv()))
+            assert _without_route(frame.message) == command
+            assert frame.message.recipient.endpoint == manager_endpoint
+            assert hw_events.hardware_control_ref_from_subject(
+                frame.message.subject
+            ) == hw_events.HardwareControlRef(
+                manager_id="room-a",
+                device_id="deck",
+                control_id="0,0",
+                control_kind="slot",
+            )
+
+        tg.cancel_scope.cancel()

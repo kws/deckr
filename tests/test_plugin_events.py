@@ -38,7 +38,7 @@ def test_slot_info_serializes_to_camel_case() -> None:
 
 def test_will_appear_uses_slot_metadata_instead_of_controller_payload() -> None:
     event = WillAppear(
-        context="controller=a|device=b|slot=0%2C0",
+        context="controller=a|config=b|slot=0%2C0",
         slot=SlotInfo(
             slot_id="0,0",
             slot_type="key",
@@ -51,7 +51,7 @@ def test_will_appear_uses_slot_metadata_instead_of_controller_payload() -> None:
 
     assert dumped == {
         "event": "willAppear",
-        "context": "controller=a|device=b|slot=0%2C0",
+        "context": "controller=a|config=b|slot=0%2C0",
         "slot": {
             "slotId": "0,0",
             "slotType": "key",
@@ -64,13 +64,13 @@ def test_will_appear_uses_slot_metadata_instead_of_controller_payload() -> None:
 
 def test_will_disappear_serializes_slot_id() -> None:
     event = WillDisappear(
-        context="controller=a|device=b|slot=0%2C0",
+        context="controller=a|config=b|slot=0%2C0",
         slot_id="0,0",
     )
 
     assert event.model_dump(by_alias=True) == {
         "event": "willDisappear",
-        "context": "controller=a|device=b|slot=0%2C0",
+        "context": "controller=a|config=b|slot=0%2C0",
         "slotId": "0,0",
     }
 

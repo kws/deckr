@@ -34,12 +34,12 @@ def _decode_context_value(value: str) -> str:
     return unquote(value)
 
 
-def build_context_id(controller_id: str, device_id: str, slot_id: str) -> str:
+def build_context_id(controller_id: str, config_id: str, slot_id: str) -> str:
     """Canonical controller-scoped context ID."""
     return "|".join(
         [
             f"controller={_encode_context_value(controller_id)}",
-            f"device={_encode_context_value(device_id)}",
+            f"config={_encode_context_value(config_id)}",
             f"slot={_encode_context_value(slot_id)}",
         ]
     )
@@ -49,7 +49,7 @@ def _parse_context_id(context_id: str) -> dict[str, str | None]:
     """Parse canonical controller-scoped context IDs."""
     parts: dict[str, str | None] = {
         "controller_id": None,
-        "device_id": None,
+        "config_id": None,
         "slot_id": None,
     }
     for item in context_id.split("|"):
@@ -61,8 +61,8 @@ def _parse_context_id(context_id: str) -> dict[str, str | None]:
             raise ValueError(f"Invalid contextId {context_id!r}")
         if key == "controller":
             parts["controller_id"] = decoded
-        elif key == "device":
-            parts["device_id"] = decoded
+        elif key == "config":
+            parts["config_id"] = decoded
         elif key == "slot":
             parts["slot_id"] = decoded
         else:
@@ -149,12 +149,12 @@ def context_subject(context_id: str) -> EntitySubject:
     except ValueError:
         parsed = {}
     controller_id = parsed.get("controller_id")
-    device_id = parsed.get("device_id")
+    config_id = parsed.get("config_id")
     slot_id = parsed.get("slot_id")
     if controller_id is not None:
         identifiers["controllerId"] = controller_id
-    if device_id is not None:
-        identifiers["deviceId"] = device_id
+    if config_id is not None:
+        identifiers["configId"] = config_id
     if slot_id is not None:
         identifiers["slotId"] = slot_id
     return entity_subject("context", **identifiers)
@@ -170,8 +170,8 @@ def subject_controller_id(subject: EntitySubject) -> str | None:
     return str(value) if value is not None else None
 
 
-def subject_device_id(subject: EntitySubject) -> str | None:
-    value = subject.identifiers.get("deviceId")
+def subject_config_id(subject: EntitySubject) -> str | None:
+    value = subject.identifiers.get("configId")
     return str(value) if value is not None else None
 
 

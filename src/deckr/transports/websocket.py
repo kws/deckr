@@ -3,6 +3,7 @@ from __future__ import annotations
 import http
 import json
 import logging
+import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import Any
@@ -14,8 +15,6 @@ from pydantic import ValidationError
 
 from deckr.contracts.messages import (
     DeckrMessage,
-    EndpointAddress,
-    EndpointTarget,
     TransportFrame,
 )
 from deckr.core.component import BaseComponent, RunContext
@@ -34,6 +33,7 @@ from deckr.transports._common import (
     transport_id_for,
 )
 from deckr.transports._lanes import build_lane_handler
+from deckr.transports.routes import mark_forwarded_to_client
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,14 @@ class WebSocketTransportFrameError(ValueError):
 def build_websocket_frame(
     transport_id: str,
     message: DeckrMessage,
+    *,
+    client_id: str | None = None,
 ) -> dict[str, Any]:
-    return TransportFrame(transportId=transport_id, message=message).to_dict()
+    return TransportFrame(
+        transportId=transport_id,
+        clientId=client_id,
+        message=message,
+    ).to_dict()
 
 
 def parse_websocket_frame(payload: Any) -> TransportFrame:
@@ -94,6 +100,7 @@ class _BindingRuntime:
         self.config = config
         self.bus = bus
         self.transport_id = transport_id
+        self.client_id = f"websocket:{transport_id}:{binding_id}"
         self.handler = build_lane_handler(
             lane=config.lane,
             transport_kind=TRANSPORT_KIND,
@@ -119,7 +126,7 @@ class WebSocketTransportComponent(BaseComponent):
         self._connections_lock = anyio.Lock()
         self._connections: set[Any] = set()
         self._connection_paths: dict[Any, str] = {}
-        self._connection_endpoints: dict[Any, set[EndpointAddress]] = {}
+        self._connection_client_ids: dict[Any, str] = {}
 
     async def start(self, ctx: RunContext) -> None:
         if self._config.mode == "server":
@@ -215,12 +222,12 @@ class WebSocketTransportComponent(BaseComponent):
                                 frame.message.lane,
                             )
                             continue
-                        await self._add_connection_endpoint(
-                            websocket,
-                            frame.message.sender,
-                        )
+                        client_id = self._connection_client_ids.get(websocket)
+                        if client_id is None:
+                            continue
                         await binding.handler.handle_remote_message(
                             frame.message,
+                            client_id=client_id,
                         )
                     except json.JSONDecodeError:
                         logger.warning("Dropped malformed WebSocket JSON message")
@@ -261,12 +268,21 @@ class WebSocketTransportComponent(BaseComponent):
             async for websocket in connect(uri, origin=self._config.origin):
                 try:
                     async with anyio.create_task_group() as tg:
+                        await binding.bus.route_table.client_connected(
+                            client_id=binding.client_id,
+                            client_kind="remote",
+                            transport_kind=TRANSPORT_KIND,
+                            transport_id=self._transport_id,
+                            description=binding.binding_id,
+                        )
                         tg.start_soon(self._client_bus_to_websocket_loop, websocket, binding)
                         await self._client_websocket_to_bus_loop(websocket, binding)
                         tg.cancel_scope.cancel()
                 except cancelled_exc:
+                    await binding.bus.route_table.client_disconnected(binding.client_id)
                     raise
                 except ConnectionClosed:
+                    await binding.bus.route_table.client_disconnected(binding.client_id)
                     logger.info(
                         "WebSocket transport client disconnected from %s; retrying",
                         uri,
@@ -307,6 +323,7 @@ class WebSocketTransportComponent(BaseComponent):
                         continue
                     await binding.handler.handle_remote_message(
                         frame.message,
+                        client_id=binding.client_id,
                     )
                 except json.JSONDecodeError:
                     logger.warning("Dropped malformed WebSocket JSON message")
@@ -315,6 +332,7 @@ class WebSocketTransportComponent(BaseComponent):
                 except Exception:
                     logger.exception("Error forwarding WebSocket message to bus")
         finally:
+            await binding.bus.route_table.client_disconnected(binding.client_id)
             await binding.handler.handle_transport_disconnect()
 
     async def _send_to_client(
@@ -323,9 +341,15 @@ class WebSocketTransportComponent(BaseComponent):
         binding: _BindingRuntime,
         message: DeckrMessage,
     ) -> None:
+        if not await binding.handler.route_targets_client(
+            message,
+            client_id=binding.client_id,
+        ):
+            return
         frame = build_websocket_frame(
             self._transport_id,
-            message,
+            mark_forwarded_to_client(message, client_id=binding.client_id),
+            client_id=binding.client_id,
         )
         await websocket.send(json.dumps(frame))
 
@@ -341,22 +365,30 @@ class WebSocketTransportComponent(BaseComponent):
                 "WebSocket transport requires websockets. Install deckr[websocket]."
             ) from exc
 
-        frame = build_websocket_frame(
-            self._transport_id,
-            message,
-        )
-        text = json.dumps(frame)
         path = binding.config.path or "/ws"
         async with self._connections_lock:
             connections = [
                 websocket
                 for websocket in self._connections
                 if self._connection_paths.get(websocket) == path
-                and self._message_targets_connection(message, websocket)
             ]
 
         to_close: list[Any] = []
         for websocket in connections:
+            client_id = self._connection_client_ids.get(websocket)
+            if client_id is None:
+                continue
+            if not await binding.handler.route_targets_client(
+                message,
+                client_id=client_id,
+            ):
+                continue
+            frame = build_websocket_frame(
+                self._transport_id,
+                mark_forwarded_to_client(message, client_id=client_id),
+                client_id=client_id,
+            )
+            text = json.dumps(frame)
             try:
                 with anyio.move_on_after(_SEND_TIMEOUT) as scope:
                     await websocket.send(text)
@@ -405,35 +437,29 @@ class WebSocketTransportComponent(BaseComponent):
         return urlsplit(path).path
 
     async def _add_connection(self, websocket, path: str) -> None:
+        client_id = f"websocket:{self._transport_id}:{uuid.uuid4().hex}"
         async with self._connections_lock:
             self._connections.add(websocket)
             self._connection_paths[websocket] = path
-            self._connection_endpoints[websocket] = set()
+            self._connection_client_ids[websocket] = client_id
+        bindings = self._bindings_for_server_path(path)
+        if bindings:
+            await bindings[0].bus.route_table.client_connected(
+                client_id=client_id,
+                client_kind="remote",
+                transport_kind=TRANSPORT_KIND,
+                transport_id=self._transport_id,
+                description=path,
+            )
 
     async def _remove_connection(self, websocket) -> None:
+        client_id: str | None = None
         async with self._connections_lock:
             self._connections.discard(websocket)
             self._connection_paths.pop(websocket, None)
-            self._connection_endpoints.pop(websocket, None)
-
-    async def _add_connection_endpoint(
-        self,
-        websocket,
-        endpoint: EndpointAddress,
-    ) -> None:
-        async with self._connections_lock:
-            if websocket in self._connections:
-                self._connection_endpoints.setdefault(websocket, set()).add(endpoint)
-
-    def _message_targets_connection(
-        self,
-        message: DeckrMessage,
-        websocket,
-    ) -> bool:
-        recipient = message.recipient
-        if not isinstance(recipient, EndpointTarget):
-            return True
-        return recipient.endpoint in self._connection_endpoints.get(websocket, set())
+            client_id = self._connection_client_ids.pop(websocket, None)
+        if client_id is not None and self._bindings:
+            await self._bindings[0].bus.route_table.client_disconnected(client_id)
 
     async def _drop_connection(self, websocket) -> None:
         await self._remove_connection(websocket)
@@ -445,9 +471,13 @@ class WebSocketTransportComponent(BaseComponent):
     async def _close_all_connections(self) -> None:
         async with self._connections_lock:
             connections = list(self._connections)
+            client_ids = list(self._connection_client_ids.values())
             self._connections.clear()
             self._connection_paths.clear()
-            self._connection_endpoints.clear()
+            self._connection_client_ids.clear()
+        for client_id in client_ids:
+            if self._bindings:
+                await self._bindings[0].bus.route_table.client_disconnected(client_id)
         for websocket in connections:
             try:
                 await websocket.close()

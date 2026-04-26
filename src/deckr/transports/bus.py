@@ -10,6 +10,7 @@ from typing import Any, TypeVar
 import anyio
 
 from deckr.contracts.messages import DeckrMessage
+from deckr.transports.routes import RouteTable
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,10 @@ class EventBus:
         buffer_size: int = 100,
         *,
         send_timeout: float = 0.25,
+        route_table: RouteTable | None = None,
     ):
         self.lane = lane
+        self.route_table = route_table or RouteTable()
         self._buffer_size = buffer_size
         self._send_timeout = send_timeout
         self._lock = anyio.Lock()
@@ -86,6 +89,19 @@ class EventBus:
 
     def to_async_callback(self) -> Callable[[Any], Awaitable[None]]:
         return self.send
+
+    async def claim_local_endpoint(self, endpoint: str) -> str:
+        client_id = f"local:{endpoint}"
+        await self.route_table.claim_endpoint(
+            endpoint=endpoint,
+            client_id=client_id,
+            client_kind="local",
+        )
+        return client_id
+
+    async def withdraw_local_endpoint(self, *, endpoint: str, client_id: str) -> None:
+        await self.route_table.withdraw_endpoint(endpoint=endpoint, client_id=client_id)
+        await self.route_table.client_disconnected(client_id)
 
 
 T = TypeVar("T")
