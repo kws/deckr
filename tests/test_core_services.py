@@ -5,10 +5,12 @@ from pathlib import Path
 import anyio
 import pytest
 
+from deckr.contracts.lanes import LaneContract, LaneRoutePolicy
 from deckr.contracts.messages import (
     DeckrMessage,
     controller_address,
     controllers_broadcast,
+    endpoint_address,
     endpoint_target,
     entity_subject,
     host_address,
@@ -281,6 +283,315 @@ async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
         assert seen["plugin_lane"] is not None
         assert seen["hardware_lane"] is not None
 
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_activate_components_uses_manifest_lane_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+            publishes=(lane,),
+            lane_contracts=(
+                LaneContract(
+                    lane=lane,
+                    schema_id="acme.metrics.events.v1",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset({"acme_worker"}),
+                    ),
+                ),
+            ),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.acme.metrics"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definition,
+    )
+    document = _document({"deckr": {"acme": {"metrics": {"enabled": True}}}})
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        result = await activate_components(document, component_manager)
+        bus = result.get_lane(lane)
+        assert bus is not None
+        accepted = await bus.route_table.claim_endpoint(
+            endpoint=endpoint_address("acme_worker", "one"),
+            lane=lane,
+            client_id="websocket:worker",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="message_sender",
+        )
+
+        assert accepted is not None
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_deployment_lane_contract_enables_extension_route_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+            publishes=(lane,),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.acme.metrics"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definition,
+    )
+    document = _document(
+        {
+            "deckr": {
+                "acme": {"metrics": {"enabled": True}},
+                "lane_contracts": {
+                    lane: {
+                        "schema_id": "acme.metrics.events.v1",
+                        "route_policy": {
+                            "remote_claim_endpoint_families": ["acme_worker"],
+                        },
+                    }
+                },
+            }
+        }
+    )
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        result = await activate_components(document, component_manager)
+        bus = result.get_lane(lane)
+        assert bus is not None
+        accepted = await bus.route_table.claim_endpoint(
+            endpoint=endpoint_address("acme_worker", "one"),
+            lane=lane,
+            client_id="websocket:worker",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="message_sender",
+        )
+
+        assert accepted is not None
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_deployment_lane_contract_can_narrow_manifest_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+            publishes=(lane,),
+            lane_contracts=(
+                LaneContract(
+                    lane=lane,
+                    schema_id="acme.metrics.events.v1",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset(
+                            {"acme_worker", "acme_observer"}
+                        ),
+                        allowed_sender_families=frozenset(
+                            {"acme_worker", "acme_observer"}
+                        ),
+                        allowed_recipient_families=frozenset(
+                            {"acme_worker", "acme_observer"}
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.acme.metrics"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definition,
+    )
+    document = _document(
+        {
+            "deckr": {
+                "acme": {"metrics": {"enabled": True}},
+                "lane_contracts": {
+                    lane: {
+                        "route_policy": {
+                            "remote_claim_endpoint_families": ["acme_worker"],
+                            "allowed_sender_families": ["acme_worker"],
+                            "allowed_recipient_families": ["acme_worker"],
+                        },
+                    }
+                },
+            }
+        }
+    )
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        result = await activate_components(document, component_manager)
+        bus = result.get_lane(lane)
+        assert bus is not None
+        accepted = await bus.route_table.claim_endpoint(
+            endpoint=endpoint_address("acme_worker", "one"),
+            lane=lane,
+            client_id="websocket:worker",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="message_sender",
+        )
+        rejected = await bus.route_table.claim_endpoint(
+            endpoint=endpoint_address("acme_observer", "one"),
+            lane=lane,
+            client_id="websocket:observer",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="message_sender",
+        )
+
+        assert accepted is not None
+        assert rejected is None
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_deployment_lane_contract_must_not_widen_manifest_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+            publishes=(lane,),
+            lane_contracts=(
+                LaneContract(
+                    lane=lane,
+                    schema_id="acme.metrics.events.v1",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset({"acme_worker"}),
+                    ),
+                ),
+            ),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.acme.metrics"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definition,
+    )
+    document = _document(
+        {
+            "deckr": {
+                "acme": {"metrics": {"enabled": True}},
+                "lane_contracts": {
+                    lane: {
+                        "route_policy": {
+                            "remote_claim_endpoint_families": [
+                                "acme_worker",
+                                "acme_observer",
+                            ],
+                        },
+                    }
+                },
+            }
+        }
+    )
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        with pytest.raises(ValueError, match="must not widen"):
+            await activate_components(document, component_manager)
+
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_extension_lane_without_contract_rejects_remote_claim_in_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+            publishes=(lane,),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.acme.metrics"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definition,
+    )
+    document = _document({"deckr": {"acme": {"metrics": {"enabled": True}}}})
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        result = await activate_components(document, component_manager)
+        bus = result.get_lane(lane)
+        assert bus is not None
+        rejected = await bus.route_table.claim_endpoint(
+            endpoint=endpoint_address("acme_worker", "one"),
+            lane=lane,
+            client_id="websocket:worker",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="message_sender",
+        )
+
+        assert rejected is None
         tg.cancel_scope.cancel()
 
 

@@ -114,6 +114,13 @@ def _without_route(message: DeckrMessage) -> DeckrMessage:
     return message.model_copy(update={"route": None})
 
 
+async def _server_client_id(server) -> str:
+    with anyio.fail_after(3):
+        while not server._connection_client_ids:
+            await anyio.sleep(0.01)
+    return next(iter(server._connection_client_ids.values()))
+
+
 def _hardware_device() -> hw_events.HardwareDevice:
     return hw_events.HardwareDevice(
         id="deck",
@@ -346,6 +353,15 @@ async def test_websocket_egress_binding_does_not_admit_remote_messages(
                 await stream.receive()
             assert scope.cancel_called
 
+            await plugin_bus.route_table.claim_endpoint(
+                endpoint=host_address("python"),
+                lane="plugin_messages",
+                client_id=await _server_client_id(server),
+                client_kind="remote",
+                transport_kind="websocket",
+                transport_id="controller-ws",
+                claim_source="transport_route",
+            )
             outbound_message = _broadcast_plugin_message("controller.event", 2)
             await plugin_bus.send(outbound_message)
             frame = parse_websocket_frame(json.loads(await websocket.recv()))
@@ -459,6 +475,15 @@ async def test_websocket_client_egress_binding_does_not_admit_remote_messages(
                     await stream.receive()
                 assert scope.cancel_called
 
+                await plugin_bus.route_table.claim_endpoint(
+                    endpoint=host_address("python"),
+                    lane="plugin_messages",
+                    client_id=client._bindings[0].client_id,
+                    client_kind="remote",
+                    transport_kind="websocket",
+                    transport_id="controller-ws",
+                    claim_source="transport_route",
+                )
                 outbound_message = _broadcast_plugin_message("controller.event", 2)
                 await plugin_bus.send(outbound_message)
                 frame = parse_websocket_frame(
@@ -537,9 +562,55 @@ def test_core_lane_bindings_use_deckr_schema_contracts() -> None:
                         "path": "/plugin",
                     }
                 },
+        },
+        instance_id="main",
+    )
+
+
+def test_websocket_server_rejects_duplicate_path_lane_bindings() -> None:
+    with pytest.raises(ValueError, match="duplicate path/lane"):
+        websocket_transport_component.lanes_for(
+            raw_config={
+                "mode": "server",
+                "bindings": {
+                    "plugin-a": {
+                        "lane": "plugin_messages",
+                        "path": "plugin",
+                    },
+                    "plugin-b": {
+                        "lane": "plugin_messages",
+                        "path": "/plugin",
+                    },
+                },
             },
             instance_id="main",
         )
+
+
+def test_websocket_server_allows_non_duplicate_path_lane_bindings() -> None:
+    lanes = websocket_transport_component.lanes_for(
+        raw_config={
+            "mode": "server",
+            "bindings": {
+                "plugin": {
+                    "lane": "plugin_messages",
+                    "path": "/shared",
+                },
+                "hardware": {
+                    "lane": "hardware_events",
+                    "path": "/shared",
+                },
+                "plugin-alt": {
+                    "lane": "plugin_messages",
+                    "path": "/plugin-alt",
+                },
+            },
+        },
+        instance_id="main",
+    )
+
+    assert lanes.consumes == ("hardware_events", "plugin_messages")
+    assert lanes.publishes == ("hardware_events", "plugin_messages")
 
 
 @pytest.mark.asyncio
