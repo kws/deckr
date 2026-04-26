@@ -25,7 +25,7 @@ from deckr.contracts.messages import (
     host_address,
     plugin_hosts_broadcast,
 )
-from deckr.hardware import events as hw_events
+from deckr.hardware import messages as hw_messages
 from deckr.pluginhost.messages import (
     HOST_OFFLINE,
     HOST_ONLINE,
@@ -140,21 +140,23 @@ class _SlowFakeWebSocket:
 
 
 def _plugin_message(message_type: str, value: int) -> DeckrMessage:
+    del value
     return plugin_message(
         sender=host_address("python"),
         recipient=controller_address("controller-main"),
         message_type=message_type,
-        payload={"value": value},
+        body={},
         subject=entity_subject("test"),
     )
 
 
 def _broadcast_plugin_message(message_type: str, value: int) -> DeckrMessage:
+    del value
     return plugin_message(
         sender=controller_address("controller-main"),
         recipient=plugin_hosts_broadcast(),
         message_type=message_type,
-        payload={"value": value},
+        body={},
         subject=entity_subject("test"),
     )
 
@@ -170,8 +172,8 @@ async def _server_client_id(server) -> str:
     return next(iter(server._connection_client_ids.values()))
 
 
-def _hardware_device() -> hw_events.HardwareDevice:
-    return hw_events.HardwareDevice(
+def _hardware_device() -> hw_messages.HardwareDevice:
+    return hw_messages.HardwareDevice(
         id="deck",
         name="Deck",
         hid="hid:deck",
@@ -321,7 +323,7 @@ async def test_websocket_transport_frames_deckr_messages(
         sender=controller_address("controller-main"),
         recipient=endpoint_target(host_address("python")),
         message_type=REQUEST_ACTIONS,
-        payload={"value": 2},
+        body={},
         subject=entity_subject("test"),
     )
 
@@ -374,7 +376,7 @@ async def test_websocket_client_send_timeout_reports_drop_and_withdraws_route() 
         sender=controller_address("controller-main"),
         recipient=endpoint_target(host_address("python")),
         message_type=REQUEST_ACTIONS,
-        payload={},
+        body={},
         subject=entity_subject("test"),
     )
     await plugin_bus.route_table.claim_endpoint(
@@ -434,7 +436,7 @@ async def test_websocket_ingress_binding_does_not_forward_local_messages(
         sender=controller_address("controller-main"),
         recipient=endpoint_target(host_address("python")),
         message_type=REQUEST_ACTIONS,
-        payload={"value": 2},
+        body={},
         subject=entity_subject("test"),
     )
 
@@ -891,7 +893,7 @@ def test_websocket_server_allows_non_duplicate_path_lane_bindings() -> None:
                     "path": "/shared",
                 },
                 "hardware": {
-                    "lane": "hardware_events",
+                    "lane": "hardware_messages",
                     "path": "/shared",
                 },
                 "plugin-alt": {
@@ -903,8 +905,8 @@ def test_websocket_server_allows_non_duplicate_path_lane_bindings() -> None:
         instance_id="main",
     )
 
-    assert lanes.consumes == ("hardware_events", "plugin_messages")
-    assert lanes.publishes == ("hardware_events", "plugin_messages")
+    assert lanes.consumes == ("hardware_messages", "plugin_messages")
+    assert lanes.publishes == ("hardware_messages", "plugin_messages")
 
 
 @pytest.mark.asyncio
@@ -913,24 +915,24 @@ async def test_websocket_hardware_manager_uses_same_envelope_and_route_semantics
 ) -> None:
     device = _hardware_device()
     manager_endpoint = hardware_manager_address("room-a")
-    connected = hw_events.hardware_input_message(
+    connected = hw_messages.hardware_input_message(
         manager_id="room-a",
         device_id=device.id,
-        body=hw_events.DeviceConnectedMessage(device=device),
+        body=hw_messages.DeviceConnectedMessage(device=device),
     )
 
-    local_bus = EventBus("hardware_events")
+    local_bus = EventBus("hardware_messages")
     await local_bus.claim_local_endpoint(manager_endpoint)
     async with local_bus.subscribe() as stream:
         await local_bus.send(connected)
         assert await stream.receive() == connected
     route = await local_bus.route_table.route_for(
         manager_endpoint,
-        lane="hardware_events",
+        lane="hardware_messages",
     )
     assert route.client_kind == "local"
 
-    hardware_bus = EventBus("hardware_events")
+    hardware_bus = EventBus("hardware_messages")
     server = websocket_transport_component.factory(
         _component_context(
             websocket_transport_component,
@@ -941,12 +943,12 @@ async def test_websocket_hardware_manager_uses_same_envelope_and_route_semantics
                 "port": unused_tcp_port,
                 "bindings": {
                     "hardware": {
-                        "lane": "hardware_events",
+                        "lane": "hardware_messages",
                         "path": "/hardware",
                     }
                 },
             },
-            lanes={"hardware_events": hardware_bus},
+            lanes={"hardware_messages": hardware_bus},
         )
     )
 
@@ -961,31 +963,31 @@ async def test_websocket_hardware_manager_uses_same_envelope_and_route_semantics
             await websocket.send(
                 json.dumps(build_websocket_frame("manager-ws", connected))
             )
-            received = await _next_message(stream, hw_events.DEVICE_CONNECTED)
+            received = await _next_message(stream, hw_messages.DEVICE_CONNECTED)
             assert _without_route(received) == connected
             route = await hardware_bus.route_table.route_for(
                 manager_endpoint,
-                lane="hardware_events",
+                lane="hardware_messages",
             )
             assert route is not None
             assert route.client_kind == "remote"
 
-            command = hw_events.hardware_command_message(
+            command = hw_messages.hardware_command_message(
                 controller_id="controller-main",
                 manager_id="room-a",
-                message_type=hw_events.CLEAR_SLOT,
+                message_type=hw_messages.CLEAR_SLOT,
                 device_id=device.id,
                 control_id="0,0",
                 control_kind="slot",
-                body=hw_events.ClearSlotMessage(slot_id="0,0"),
+                body=hw_messages.ClearSlotMessage(slot_id="0,0"),
             )
             await hardware_bus.send(command)
             frame = parse_websocket_frame(json.loads(await websocket.recv()))
             assert _without_route(frame.message) == command
             assert frame.message.recipient.endpoint == manager_endpoint
-            assert hw_events.hardware_control_ref_from_subject(
+            assert hw_messages.hardware_control_ref_from_subject(
                 frame.message.subject
-            ) == hw_events.HardwareControlRef(
+            ) == hw_messages.HardwareControlRef(
                 manager_id="room-a",
                 device_id="deck",
                 control_id="0,0",

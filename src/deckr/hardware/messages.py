@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from deckr.contracts.messages import (
-    HARDWARE_EVENTS_LANE,
+    HARDWARE_MESSAGES_LANE,
     DeckrMessage,
     EndpointAddress,
     EntitySubject,
@@ -281,7 +281,7 @@ def hardware_message(
 ) -> DeckrMessage:
     target = recipient if not isinstance(recipient, str | EndpointAddress) else endpoint_target(recipient)
     return DeckrMessage(
-        lane=HARDWARE_EVENTS_LANE,
+        lane=HARDWARE_MESSAGES_LANE,
         messageType=message_type,
         sender=sender,
         recipient=target,
@@ -292,7 +292,7 @@ def hardware_message(
     )
 
 
-def hardware_event_message(
+def _hardware_input_envelope(
     *,
     manager_id: str,
     message_type: str,
@@ -333,7 +333,7 @@ def hardware_input_message(
     elif isinstance(body, TouchTapMessage | TouchSwipeMessage):
         control_id = body.touch_id
         control_kind = "touch"
-    return hardware_event_message(
+    return _hardware_input_envelope(
         manager_id=manager_id,
         message_type=message_type,
         device_id=device_id,

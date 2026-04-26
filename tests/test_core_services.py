@@ -29,13 +29,13 @@ from deckr.contracts.messages import (
     message_targets_endpoint,
 )
 from deckr.core.config import ConfigDocument
-from deckr.hardware.events import hardware_message_schema
+from deckr.hardware.messages import hardware_message_schema
 from deckr.pluginhost.messages import (
     HOST_ONLINE,
-    PluginMessageBody,
+    SettingsBody,
+    plugin_body_dict,
     plugin_host_subject,
     plugin_message,
-    plugin_payload,
 )
 from deckr.runtime import Deckr
 from deckr.transports.websocket import component as websocket_transport_component
@@ -44,7 +44,7 @@ from deckr.transports.websocket import component as websocket_transport_componen
 def _core_wire_schemas() -> dict[str, dict]:
     return {
         "deckr.message.plugin_messages.v1": DeckrMessage.schema_dict(),
-        "deckr.message.hardware_events.v1": hardware_message_schema(),
+        "deckr.message.hardware_messages.v1": hardware_message_schema(),
     }
 
 
@@ -78,7 +78,7 @@ def test_resolve_component_specs_includes_singleton_and_multi_instance(
         manifest=ComponentManifest(
             component_id="deckr.controller",
             config_prefix="deckr.controller",
-            consumes=("hardware_events", "plugin_messages"),
+            consumes=("hardware_messages", "plugin_messages"),
             publishes=("plugin_messages",),
         ),
         factory=lambda context: _DummyComponent(name=context.runtime_name),
@@ -223,7 +223,7 @@ async def test_start_components_provides_runtime_lanes_and_exact_config(
         seen["controller_config"] = dict(context.raw_config)
         seen["controller_has_document"] = hasattr(context, "document")
         seen["plugin_lane"] = context.require_lane("plugin_messages")
-        seen["hardware_lane"] = context.require_lane("hardware_events")
+        seen["hardware_lane"] = context.require_lane("hardware_messages")
         return _DummyComponent(name=context.runtime_name)
 
     def host_factory(context):
@@ -243,7 +243,7 @@ async def test_start_components_provides_runtime_lanes_and_exact_config(
                 manifest=ComponentManifest(
                     component_id="deckr.controller",
                     config_prefix="deckr.controller",
-                    consumes=("hardware_events", "plugin_messages"),
+                    consumes=("hardware_messages", "plugin_messages"),
                     publishes=("plugin_messages",),
                 ),
                 factory=controller_factory,
@@ -280,7 +280,7 @@ async def test_start_components_provides_runtime_lanes_and_exact_config(
             "deckr.controller",
             "deckr.plugin_hosts.python:main",
         ]
-        assert result.lane_names == ("hardware_events", "plugin_messages")
+        assert result.lane_names == ("hardware_messages", "plugin_messages")
         assert seen["controller_config"] == {"log_level": "debug"}
         assert seen["host_config"] == {"host_id": "python"}
         assert seen["controller_has_document"] is False
@@ -1008,8 +1008,8 @@ def _mode_component_definitions() -> dict[str, ComponentDefinition]:
             manifest=ComponentManifest(
                 component_id="deckr.controller",
                 config_prefix="deckr.controller",
-                consumes=("hardware_events", "plugin_messages"),
-                publishes=("hardware_events", "plugin_messages"),
+                consumes=("hardware_messages", "plugin_messages"),
+                publishes=("hardware_messages", "plugin_messages"),
             ),
             factory=factory,
         ),
@@ -1027,8 +1027,8 @@ def _mode_component_definitions() -> dict[str, ComponentDefinition]:
             manifest=ComponentManifest(
                 component_id="deckr.drivers.elgato",
                 config_prefix="deckr.drivers.elgato",
-                consumes=("hardware_events",),
-                publishes=("hardware_events",),
+                consumes=("hardware_messages",),
+                publishes=("hardware_messages",),
             ),
             factory=factory,
         ),
@@ -1062,7 +1062,7 @@ def _mode_component_definitions() -> dict[str, ComponentDefinition]:
                                     "main": {
                                         "bindings": {
                                             "plugin": {"lane": "plugin_messages"},
-                                            "hardware": {"lane": "hardware_events"},
+                                            "hardware": {"lane": "hardware_messages"},
                                         }
                                     }
                                 }
@@ -1109,7 +1109,7 @@ def _mode_component_definitions() -> dict[str, ComponentDefinition]:
                                 "instances": {
                                     "hardware": {
                                         "bindings": {
-                                            "hardware": {"lane": "hardware_events"},
+                                            "hardware": {"lane": "hardware_messages"},
                                         }
                                     }
                                 }
@@ -1137,7 +1137,7 @@ async def test_runtime_modes_are_ordinary_component_composition(
         route_expiry_interval=0.01,
     ) as deckr, start_components(deckr, plan) as host:
         assert {component.name for component in host.components} == component_names
-        assert set(deckr.lanes.names) == {"hardware_events", "plugin_messages"}
+        assert set(deckr.lanes.names) == {"hardware_messages", "plugin_messages"}
 
 
 @pytest.mark.asyncio
@@ -1155,7 +1155,7 @@ def test_deckr_message_is_pydantic_and_schema_exportable() -> None:
         sender=host_address("python"),
         recipient=controllers_broadcast(),
         message_type=HOST_ONLINE,
-        payload={"hostId": "python"},
+        body={},
         subject=plugin_host_subject("python"),
     )
 
@@ -1172,23 +1172,23 @@ def test_deckr_message_is_pydantic_and_schema_exportable() -> None:
     assert payload["lane"] == "plugin_messages"
     assert payload["messageType"] == HOST_ONLINE
     assert DeckrMessage.from_dict(payload) == message
-    assert plugin_payload(message) == {"hostId": "python"}
+    assert plugin_body_dict(message) == {}
 
     schemas = _core_wire_schemas()
     assert "deckr.message.plugin_messages.v1" in schemas
-    assert "deckr.message.hardware_events.v1" in schemas
+    assert "deckr.message.hardware_messages.v1" in schemas
 
 
-def test_plugin_body_payload_is_immutable_json() -> None:
+def test_plugin_body_settings_are_immutable_json() -> None:
     source_payload = {"value": {"nested": [1]}}
-    body = PluginMessageBody(payload=source_payload)
+    body = SettingsBody(settings=source_payload)
 
     source_payload["value"] = {"nested": [2]}
 
-    assert body.payload == {"value": {"nested": (1,)}}
+    assert body.settings == {"value": {"nested": (1,)}}
     with pytest.raises(TypeError):
-        body.payload["added"] = True  # type: ignore[index]
-    assert body.to_dict()["payload"] == {"value": {"nested": [1]}}
+        body.settings["added"] = True  # type: ignore[index]
+    assert body.to_dict()["settings"] == {"value": {"nested": [1]}}
 
 
 def test_deckr_message_routing_uses_targets_not_legacy_strings() -> None:
@@ -1196,7 +1196,7 @@ def test_deckr_message_routing_uses_targets_not_legacy_strings() -> None:
         sender=host_address("python"),
         recipient=controller_address("controller-main"),
         message_type=HOST_ONLINE,
-        payload={"hostId": "python"},
+        body={},
         subject=entity_subject("plugin_host", hostId="python"),
     )
     assert message_targets_endpoint(
@@ -1210,7 +1210,7 @@ def test_deckr_message_routing_uses_targets_not_legacy_strings() -> None:
         sender=controller_address("controller-main"),
         recipient=endpoint_target(host_address("python")),
         message_type="requestActions",
-        payload={},
+        body={},
         subject=entity_subject("plugin_actions"),
     )
     assert message_targets_endpoint(host_message, host_address("python"))

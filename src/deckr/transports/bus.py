@@ -2,18 +2,26 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from functools import cache
+from inspect import isawaitable
 from typing import Any, TypeVar
 
 import anyio
 
 from deckr.contracts.lanes import BackpressureHandling
-from deckr.contracts.messages import DeckrMessage, EndpointAddress
+from deckr.contracts.messages import (
+    DeckrMessage,
+    EndpointAddress,
+    EntitySubject,
+    endpoint_target,
+)
 from deckr.transports.routes import RouteTable
 
 logger = logging.getLogger(__name__)
+
+ReplyPredicate = Callable[[DeckrMessage], bool | Awaitable[bool]]
 
 
 class EventBus:
@@ -83,6 +91,57 @@ class EventBus:
                     s = self._subscribers.pop(sid, None)
                     if s is not None:
                         await s.aclose()
+
+    async def request(
+        self,
+        message: DeckrMessage,
+        *,
+        timeout: float = 2.0,
+        accept: ReplyPredicate | None = None,
+    ) -> DeckrMessage:
+        """Send a message and wait for the first accepted correlated reply."""
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero")
+        async with self.subscribe() as stream:
+            await self.send(message)
+            with anyio.fail_after(timeout):
+                while True:
+                    reply = await stream.receive()
+                    if reply.message_id == message.message_id:
+                        continue
+                    if reply.in_reply_to != message.message_id:
+                        continue
+                    if accept is not None:
+                        accepted = accept(reply)
+                        if isawaitable(accepted):
+                            accepted = await accepted
+                        if not accepted:
+                            continue
+                    return reply
+
+    async def reply_to(
+        self,
+        request: DeckrMessage,
+        *,
+        sender: str | EndpointAddress,
+        message_type: str,
+        body: Mapping[str, Any],
+        subject: EntitySubject,
+        causation_id: str | None = None,
+    ) -> DeckrMessage:
+        """Send a direct reply to ``request`` using Deckr envelope correlation."""
+        reply = DeckrMessage(
+            lane=request.lane,
+            messageType=message_type,
+            sender=sender,
+            recipient=endpoint_target(request.sender),
+            subject=subject,
+            body=body,
+            inReplyTo=request.message_id,
+            causationId=causation_id,
+        )
+        await self.send(reply)
+        return reply
 
     @asynccontextmanager
     async def subscribe(

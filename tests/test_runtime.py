@@ -23,7 +23,7 @@ async def _next_route_event(stream, event_type: str):
 async def test_deckr_creates_core_lanes_with_one_shared_route_table() -> None:
     async with Deckr(route_expiry_interval=0.01) as deckr:
         plugin_bus = deckr.bus("plugin_messages")
-        hardware_bus = deckr.bus("hardware_events")
+        hardware_bus = deckr.bus("hardware_messages")
 
         assert isinstance(plugin_bus, EventBus)
         assert plugin_bus.route_table is deckr.route_table

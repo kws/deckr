@@ -8,7 +8,7 @@ controller-specific policy.
 That includes:
 
 - the `Component` runtime abstraction
-- named event lanes such as `plugin_messages` and `hardware_events`
+- named event lanes such as `plugin_messages` and `hardware_messages`
 - core Deckr message specifications, identity rules, and transport-neutral
   routing contracts
 - shared runtime utilities such as component lifecycle support and MQTT helpers

@@ -9,17 +9,17 @@ from pydantic import ConfigDict, Field, RootModel, field_serializer, field_valid
 
 from deckr.contracts.models import DeckrModel, freeze_json, thaw_json
 
-HARDWARE_EVENTS_LANE = "hardware_events"
+HARDWARE_MESSAGES_LANE = "hardware_messages"
 PLUGIN_MESSAGES_LANE = "plugin_messages"
-CORE_LANE_NAMES = (HARDWARE_EVENTS_LANE, PLUGIN_MESSAGES_LANE)
+CORE_LANE_NAMES = (HARDWARE_MESSAGES_LANE, PLUGIN_MESSAGES_LANE)
 
 DECKR_MESSAGE_PROTOCOL_VERSION = "1"
 DECKR_TRANSPORT_FRAME_VERSION = "1"
 
-HARDWARE_EVENTS_SCHEMA_ID = "deckr.message.hardware_events.v1"
+HARDWARE_MESSAGES_SCHEMA_ID = "deckr.message.hardware_messages.v1"
 PLUGIN_MESSAGES_SCHEMA_ID = "deckr.message.plugin_messages.v1"
 CORE_LANE_SCHEMA_IDS = {
-    HARDWARE_EVENTS_LANE: HARDWARE_EVENTS_SCHEMA_ID,
+    HARDWARE_MESSAGES_LANE: HARDWARE_MESSAGES_SCHEMA_ID,
     PLUGIN_MESSAGES_LANE: PLUGIN_MESSAGES_SCHEMA_ID,
 }
 
@@ -40,11 +40,7 @@ CORE_ENDPOINT_FAMILIES = frozenset(
     }
 )
 
-BroadcastScope = Literal[
-    "plugin_hosts",
-    "controllers",
-    "hardware_managers",
-]
+BroadcastScope = str
 
 
 def _new_message_id() -> str:

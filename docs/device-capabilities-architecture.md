@@ -302,8 +302,8 @@ runtime ids, or transport ids.
 
 The core hardware lane is `hardware_messages`.
 
-There is no `hardware_events` alias. If implementation still uses
-`hardware_events`, rename it before v1.
+No legacy hardware lane alias exists. All implementations should use the single
+public hardware lane name before v1.
 
 Device discovery must carry `DeviceDescriptor`.
 

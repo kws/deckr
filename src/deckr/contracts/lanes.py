@@ -7,7 +7,7 @@ from enum import StrEnum
 from deckr.contracts.messages import (
     BUILTIN_ACTION_PROVIDER_ID,
     CORE_LANE_SCHEMA_IDS,
-    HARDWARE_EVENTS_LANE,
+    HARDWARE_MESSAGES_LANE,
     LEGACY_BUILTIN_ACTION_PROVIDER_ID,
     PLUGIN_MESSAGES_LANE,
 )
@@ -208,6 +208,7 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "openPage",
         "pageAppear",
         "pageDisappear",
+        "pluginExtension",
         "requestActions",
         "requestSettings",
         "setImage",
@@ -320,6 +321,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                 {
                     "closePage",
                     "openPage",
+                    "pluginExtension",
                     "requestSettings",
                     "setImage",
                     "setPage",
@@ -343,7 +345,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
     ),
 )
 
-HARDWARE_EVENTS_DELIVERY = replace(
+HARDWARE_MESSAGES_DELIVERY = replace(
     CORE_EPHEMERAL_DELIVERY,
     ordering_keys=(
         "sender",
@@ -421,11 +423,11 @@ CORE_LANE_CONTRACTS: Mapping[str, LaneContract] = {
             },
         ),
     ),
-    HARDWARE_EVENTS_LANE: LaneContract(
-        lane=HARDWARE_EVENTS_LANE,
-        schema_id=CORE_LANE_SCHEMA_IDS[HARDWARE_EVENTS_LANE],
+    HARDWARE_MESSAGES_LANE: LaneContract(
+        lane=HARDWARE_MESSAGES_LANE,
+        schema_id=CORE_LANE_SCHEMA_IDS[HARDWARE_MESSAGES_LANE],
         message_types=HARDWARE_MESSAGE_TYPES,
-        delivery=HARDWARE_EVENTS_DELIVERY,
+        delivery=HARDWARE_MESSAGES_DELIVERY,
         route_policy=LaneRoutePolicy(
             remote_claim_endpoint_families=frozenset(
                 {"controller", "hardware_manager"}

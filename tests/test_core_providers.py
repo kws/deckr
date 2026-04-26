@@ -131,7 +131,7 @@ def test_component_definition_can_resolve_instance_specific_lanes() -> None:
         factory=lambda context: None,
         resolve_lanes=lambda **kwargs: ResolvedLaneSet(
             consumes=("plugin_messages",),
-            publishes=("plugin_messages", "hardware_events"),
+            publishes=("plugin_messages", "hardware_messages"),
         ),
     )
 
@@ -142,5 +142,5 @@ def test_component_definition_can_resolve_instance_specific_lanes() -> None:
 
     assert lanes == ResolvedLaneSet(
         consumes=("plugin_messages",),
-        publishes=("plugin_messages", "hardware_events"),
+        publishes=("plugin_messages", "hardware_messages"),
     )
