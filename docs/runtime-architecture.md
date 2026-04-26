@@ -562,7 +562,10 @@ For core Deckr lanes, the lane name implies the core Deckr message contract from
 `deckr`. That contract must not be redefined in transport-local configuration.
 
 For extension lanes, the binding must identify the extension message contract
-explicitly. Do not rely on convention or out-of-band knowledge.
+explicitly. During normal runtime activation, that schema id must match the
+resolved lane contract from the lane contract registry. Do not rely on
+convention or out-of-band knowledge, and do not treat a transport binding's
+schema id as the whole route policy for the lane.
 
 Transport bindings are explicit because hidden transport-to-lane assumptions are a
 major source of architectural drift.
