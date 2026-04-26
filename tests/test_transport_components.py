@@ -10,6 +10,12 @@ import pytest
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
+from deckr.components import (
+    ComponentContext,
+    LaneRegistry,
+    RunContext,
+    runtime_name_for,
+)
 from deckr.contracts.messages import (
     DeckrMessage,
     controller_address,
@@ -19,8 +25,6 @@ from deckr.contracts.messages import (
     host_address,
     plugin_hosts_broadcast,
 )
-from deckr.core.component import RunContext
-from deckr.core.components import ComponentContext, LaneRegistry, runtime_name_for
 from deckr.hardware import events as hw_events
 from deckr.pluginhost.messages import (
     HOST_OFFLINE,

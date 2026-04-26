@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
@@ -12,6 +13,7 @@ from deckr.launcher import (
     LauncherSpec,
     launch,
     load_launcher_document,
+    run_configured_deckr,
     run_document,
     validate_component_configuration,
 )
@@ -112,6 +114,59 @@ def test_run_document_uses_signal_handler_and_runner(
 
     assert captured["document"] is document
     assert "task_group" in captured
+
+
+def test_run_configured_deckr_uses_public_runtime_and_component_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Done(Exception):
+        pass
+
+    captured: dict[str, object] = {}
+    plan = type(
+        "Plan",
+        (),
+        {
+            "lane_contracts": "contracts",
+            "lane_names": ("plugin_messages",),
+        },
+    )()
+
+    class FakeDeckr:
+        def __init__(self, *, lane_contracts, lanes):
+            captured["lane_contracts"] = lane_contracts
+            captured["lanes"] = lanes
+
+        async def __aenter__(self):
+            captured["deckr_entered"] = True
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            captured["deckr_exited"] = True
+
+    @asynccontextmanager
+    async def fake_start_components(deckr, resolved_plan):
+        captured["start_components_deckr"] = deckr
+        captured["start_components_plan"] = resolved_plan
+        yield object()
+
+    async def fake_sleep_forever() -> None:
+        raise Done()
+
+    document = ConfigDocument(raw={"deckr": {}}, source_path=None, base_dir=Path.cwd())
+    monkeypatch.setattr("deckr.launcher.resolve_component_host_plan", lambda doc: plan)
+    monkeypatch.setattr("deckr.launcher.Deckr", FakeDeckr)
+    monkeypatch.setattr("deckr.launcher.start_components", fake_start_components)
+    monkeypatch.setattr("deckr.launcher.anyio.sleep_forever", fake_sleep_forever)
+
+    with pytest.raises(Done):
+        anyio.run(run_configured_deckr, document)
+
+    assert captured["lane_contracts"] == "contracts"
+    assert captured["lanes"] == ("plugin_messages",)
+    assert captured["start_components_plan"] is plan
+    assert captured["deckr_entered"] is True
+    assert captured["deckr_exited"] is True
 
 
 def test_cli_prints_default_config() -> None:

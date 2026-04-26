@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator, Awaitable
 
 import anyio
 
-from deckr.core.component._defs import (
+from deckr.components._defs import (
     Component,
     ComponentLifecycleEvent,
     ComponentLifecycleEventType,

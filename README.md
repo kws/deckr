@@ -17,6 +17,7 @@ That includes:
 The normative architecture reference now lives in:
 
 - [docs/runtime-architecture.md](docs/runtime-architecture.md)
+- [docs/runtime-modes.md](docs/runtime-modes.md)
 - [docs/bus-architecture.md](docs/bus-architecture.md)
 
 Those documents are the source of truth for the current architecture. They are
@@ -30,11 +31,14 @@ The controller now lives in its own sibling repository:
 
 ```text
 src/deckr/
+  components/  Public component model, lifecycle manager, and component host
   core/        Generic runtime primitives, lanes, lifecycle, and transport helpers
   hardware/    Hardware-facing shared contracts and wire models
   plugin/      Plugin-facing contracts, rendering types, and protocol types
+  runtime.py   Managed Deckr runtime context for lanes and route lifecycle
 docs/
   runtime-architecture.md
+  runtime-modes.md
   bus-architecture.md
 tests/
 ```

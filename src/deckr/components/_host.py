@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import anyio
 
+from deckr.components._defs import BaseComponent, Component
+from deckr.components._runner import ComponentManager
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     BackpressureHandling,
@@ -29,10 +32,12 @@ from deckr.contracts.lanes import (
     MqttDeliveryConstraints,
 )
 from deckr.contracts.messages import CORE_LANE_NAMES
-from deckr.core.component import BaseComponent, Component, ComponentManager
 from deckr.core.config import ConfigDocument
 from deckr.transports.bus import EventBus
 from deckr.transports.routes import RouteTable
+
+if TYPE_CHECKING:
+    from deckr.runtime import Deckr
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
 
@@ -136,6 +141,9 @@ class ComponentDefinition:
         )
 
 
+ComponentDefinitions = Mapping[str, ComponentDefinition] | Sequence[ComponentDefinition]
+
+
 @dataclass(frozen=True, slots=True)
 class ComponentInstanceSpec:
     component_id: str
@@ -147,13 +155,53 @@ class ComponentInstanceSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class ComponentActivationResult:
+class ComponentHostPlan:
+    specs: tuple[ComponentInstanceSpec, ...]
+    lane_contracts: LaneContractRegistry
+    lane_names: tuple[str, ...]
+    base_dir: Path
+
+    @classmethod
+    def from_specs(
+        cls,
+        specs: Sequence[ComponentInstanceSpec],
+        *,
+        base_dir: Path | None = None,
+        lane_contracts: LaneContractRegistry | Sequence[LaneContract] | None = None,
+    ) -> ComponentHostPlan:
+        normalized_specs = tuple(specs)
+        registry = _build_lane_contract_registry(
+            normalized_specs,
+            extra_contracts=lane_contracts,
+        )
+        _validate_component_lane_bindings(normalized_specs, registry)
+        return cls(
+            specs=normalized_specs,
+            lane_contracts=registry,
+            lane_names=_lane_names_for_specs(
+                normalized_specs,
+                lane_contracts=registry,
+            ),
+            base_dir=base_dir or Path.cwd(),
+        )
+
+    @property
+    def components(self) -> tuple[ComponentInstanceSpec, ...]:
+        return self.specs
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentHost:
+    component_manager: ComponentManager
     components: tuple[Component, ...]
     lane_names: tuple[str, ...]
     lanes: LaneRegistry
 
     def get_lane(self, name: str) -> EventBus | None:
         return self.lanes.get(name)
+
+    async def stop(self) -> None:
+        await self.component_manager.stop()
 
 
 class LaneRegistry:
@@ -163,13 +211,12 @@ class LaneRegistry:
     @classmethod
     def from_names(
         cls,
-        lane_names: set[str] | frozenset[str],
+        lane_names: set[str] | frozenset[str] | tuple[str, ...],
         *,
-        lane_contracts: LaneContractRegistry | None = None,
+        route_table: RouteTable,
     ) -> LaneRegistry:
         names = set(CORE_LANE_NAMES)
         names.update(lane_names)
-        route_table = RouteTable(lane_contracts=lane_contracts)
         return cls(
             {name: EventBus(name, route_table=route_table) for name in sorted(names)}
         )
@@ -270,11 +317,20 @@ def _multi_instance_specs(
 def resolve_component_instance_specs(
     document: ConfigDocument,
     *,
-    discovered_component_ids: list[str] | tuple[str, ...],
+    discovered_component_ids: list[str] | tuple[str, ...] | None = None,
+    definitions: ComponentDefinitions | None = None,
 ) -> list[ComponentInstanceSpec]:
+    if definitions is not None:
+        definition_map = _definition_mapping(definitions)
+        component_ids = sorted(definition_map)
+        definition_for = definition_map.get
+    else:
+        component_ids = sorted(set(discovered_component_ids or ()))
+        definition_for = load_component_definition
+
     specs: list[ComponentInstanceSpec] = []
-    for component_id in sorted(set(discovered_component_ids)):
-        definition = load_component_definition(component_id)
+    for component_id in component_ids:
+        definition = definition_for(component_id)
         if definition is None:
             continue
         if definition.manifest.cardinality == ComponentCardinality.SINGLETON:
@@ -293,6 +349,12 @@ def configured_component_instance_specs(
         document,
         discovered_component_ids=available_component_ids(),
     )
+
+
+def _definition_mapping(definitions: ComponentDefinitions) -> dict[str, ComponentDefinition]:
+    if isinstance(definitions, Mapping):
+        return dict(definitions)
+    return {definition.manifest.component_id: definition for definition in definitions}
 
 
 def _string_set(value: Any, *, field_name: str) -> frozenset[str]:
@@ -859,11 +921,34 @@ def _narrow_lane_contract(base: LaneContract, override: LaneContract) -> LaneCon
     )
 
 
-def build_lane_contract_registry(
-    instance_specs: list[ComponentInstanceSpec],
-    document: ConfigDocument,
+def _build_lane_contract_registry(
+    instance_specs: Sequence[ComponentInstanceSpec],
+    *,
+    document: ConfigDocument | None = None,
+    extra_contracts: LaneContractRegistry | Sequence[LaneContract] | None = None,
 ) -> LaneContractRegistry:
     contracts: dict[str, LaneContract] = dict(CORE_LANE_CONTRACTS)
+    if isinstance(extra_contracts, LaneContractRegistry):
+        provided_contracts = tuple(extra_contracts.contracts.values())
+    else:
+        provided_contracts = tuple(extra_contracts or ())
+
+    for contract in provided_contracts:
+        if contract.lane in CORE_LANE_CONTRACTS:
+            if CORE_LANE_CONTRACTS[contract.lane] != contract:
+                raise ValueError(
+                    f"Extension lane contract input must not override "
+                    f"core lane contract {contract.lane!r}"
+                )
+            continue
+        existing = contracts.get(contract.lane)
+        if existing is not None and existing != contract:
+            raise ValueError(
+                f"Duplicate lane contract {contract.lane!r} declarations "
+                "must be identical"
+            )
+        contracts[contract.lane] = existing or contract
+
     for spec in instance_specs:
         for contract in spec.definition.manifest.lane_contracts:
             if contract.lane in CORE_LANE_CONTRACTS:
@@ -879,57 +964,123 @@ def build_lane_contract_registry(
                 )
             contracts[contract.lane] = existing or contract
 
-    for lane, source in sorted(document.children("deckr.lane_contracts").items()):
-        if lane in CORE_LANE_CONTRACTS:
-            raise ValueError(
-                f"Deployment config must not override core lane contract {lane!r}"
+    if document is not None:
+        for lane, source in sorted(document.children("deckr.lane_contracts").items()):
+            if lane in CORE_LANE_CONTRACTS:
+                raise ValueError(
+                    f"Deployment config must not override core lane contract {lane!r}"
+                )
+            contract = _lane_contract_from_mapping(lane, source)
+            existing = contracts.get(lane)
+            contracts[lane] = (
+                _narrow_lane_contract(existing, contract)
+                if existing is not None
+                else contract
             )
-        contract = _lane_contract_from_mapping(lane, source)
-        existing = contracts.get(lane)
-        contracts[lane] = (
-            _narrow_lane_contract(existing, contract)
-            if existing is not None
-            else contract
-        )
     return LaneContractRegistry(contracts.values())
 
 
-def build_lane_registry(
-    instance_specs: list[ComponentInstanceSpec],
+def build_lane_contract_registry(
+    instance_specs: Sequence[ComponentInstanceSpec],
+    document: ConfigDocument,
+) -> LaneContractRegistry:
+    return _build_lane_contract_registry(instance_specs, document=document)
+
+
+def _lane_names_for_specs(
+    instance_specs: Sequence[ComponentInstanceSpec],
     *,
     lane_contracts: LaneContractRegistry | None = None,
-) -> LaneRegistry:
-    lane_names: set[str] = set()
+) -> tuple[str, ...]:
+    lane_names: set[str] = set(CORE_LANE_NAMES)
     for spec in instance_specs:
         lane_names.update(spec.lanes.consumes)
         lane_names.update(spec.lanes.publishes)
-    return LaneRegistry.from_names(lane_names, lane_contracts=lane_contracts)
+    if lane_contracts is not None:
+        lane_names.update(
+            lane
+            for lane in lane_contracts.contracts
+            if lane not in CORE_LANE_CONTRACTS
+        )
+    return tuple(sorted(lane_names))
 
 
-async def activate_components(
-    document: ConfigDocument,
-    component_manager: ComponentManager,
-) -> ComponentActivationResult:
-    specs = configured_component_instance_specs(document)
-    lane_contracts = build_lane_contract_registry(specs, document)
+def build_lane_registry(
+    instance_specs: Sequence[ComponentInstanceSpec],
+    *,
+    route_table: RouteTable,
+) -> LaneRegistry:
+    return LaneRegistry.from_names(
+        _lane_names_for_specs(instance_specs),
+        route_table=route_table,
+    )
+
+
+def _validate_component_lane_bindings(
+    specs: Sequence[ComponentInstanceSpec],
+    lane_contracts: LaneContractRegistry,
+) -> None:
     for spec in specs:
         spec.definition.validate_resolved_lane_bindings(
             raw_config=spec.raw_config,
             instance_id=spec.instance_id,
             lane_contracts=lane_contracts,
         )
-    lanes = build_lane_registry(specs, lane_contracts=lane_contracts)
 
+
+def resolve_component_host_plan(
+    document: ConfigDocument,
+    *,
+    definitions: ComponentDefinitions | None = None,
+) -> ComponentHostPlan:
+    specs = tuple(
+        configured_component_instance_specs(document)
+        if definitions is None
+        else resolve_component_instance_specs(document, definitions=definitions)
+    )
+    lane_contracts = _build_lane_contract_registry(specs, document=document)
+    _validate_component_lane_bindings(specs, lane_contracts)
+    return ComponentHostPlan(
+        specs=specs,
+        lane_contracts=lane_contracts,
+        lane_names=_lane_names_for_specs(specs, lane_contracts=lane_contracts),
+        base_dir=document.base_dir,
+    )
+
+
+def _validate_runtime_for_plan(deckr: Deckr, plan: ComponentHostPlan) -> None:
+    if not deckr.is_running:
+        raise RuntimeError("Deckr runtime must be entered before starting components")
+
+    missing_lanes = sorted(set(plan.lane_names) - set(deckr.lanes.names))
+    if missing_lanes:
+        lanes = ", ".join(repr(lane) for lane in missing_lanes)
+        raise LookupError(f"Deckr runtime is missing required lane(s): {lanes}")
+
+    runtime_contracts = deckr.lane_contracts.contracts
+    for lane, contract in sorted(plan.lane_contracts.contracts.items()):
+        if runtime_contracts.get(lane) != contract:
+            raise ValueError(
+                f"Deckr runtime lane contract for {lane!r} does not match "
+                "the component host plan"
+            )
+
+
+async def _activate_component_plan(
+    deckr: Deckr,
+    plan: ComponentHostPlan,
+    component_manager: ComponentManager,
+) -> ComponentHost:
     created: list[Component] = []
-    for spec in specs:
+    for spec in plan.specs:
         context = ComponentContext(
             component_id=spec.component_id,
             instance_id=spec.instance_id,
             runtime_name=spec.runtime_name,
             manifest=spec.definition.manifest,
             raw_config=spec.raw_config,
-            base_dir=document.base_dir,
-            lanes=lanes,
+            base_dir=plan.base_dir,
+            lanes=deckr.lanes,
         )
         component = spec.definition.factory(context)
         if not isinstance(component, Component):
@@ -943,21 +1094,26 @@ async def activate_components(
     for component in created:
         await component_manager.add_component(component)
 
-    return ComponentActivationResult(
+    return ComponentHost(
+        component_manager=component_manager,
         components=tuple(created),
-        lane_names=lanes.names,
-        lanes=lanes,
+        lane_names=plan.lane_names,
+        lanes=deckr.lanes,
     )
 
 
-async def run_components(
-    document: ConfigDocument,
-) -> None:
+@asynccontextmanager
+async def start_components(
+    deckr: Deckr,
+    plan: ComponentHostPlan,
+) -> AsyncIterator[ComponentHost]:
+    _validate_runtime_for_plan(deckr, plan)
     component_manager = ComponentManager()
     async with anyio.create_task_group() as tg:
         tg.start_soon(component_manager.run)
-        await activate_components(
-            document,
-            component_manager,
-        )
-        await anyio.sleep_forever()
+        host = await _activate_component_plan(deckr, plan, component_manager)
+        try:
+            yield host
+        finally:
+            await host.stop()
+            tg.cancel_scope.cancel()

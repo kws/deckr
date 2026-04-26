@@ -7,12 +7,14 @@ from typing import TypeAlias
 
 import anyio
 
-from deckr.core.components import (
+from deckr.components import (
     configured_component_instance_specs,
-    run_components,
+    resolve_component_host_plan,
+    start_components,
 )
 from deckr.core.config import ConfigDocument, load_config_document
 from deckr.core.util.anyio import add_signal_handler
+from deckr.runtime import Deckr
 
 DocumentHook: TypeAlias = Callable[[ConfigDocument], None]
 DocumentLoader: TypeAlias = Callable[[Path | None], ConfigDocument]
@@ -31,12 +33,21 @@ _DEFAULT_CONFIG_DOCUMENT_TEXT = """# Deckr configuration document
 """
 
 
+async def run_configured_deckr(document: ConfigDocument) -> None:
+    plan = resolve_component_host_plan(document)
+    async with Deckr(
+        lane_contracts=plan.lane_contracts,
+        lanes=plan.lane_names,
+    ) as deckr, start_components(deckr, plan):
+        await anyio.sleep_forever()
+
+
 @dataclass(frozen=True, slots=True)
 class LauncherSpec:
     default_config_text: str | None = None
     load_document: DocumentLoader | None = None
     before_run: DocumentHook | None = None
-    runner: DocumentRunner = run_components
+    runner: DocumentRunner = run_configured_deckr
     require_components: bool = True
 
 
@@ -77,7 +88,7 @@ def validate_component_configuration(document: ConfigDocument) -> None:
 
 async def run_document(
     document: ConfigDocument,
-    runner: DocumentRunner = run_components,
+    runner: DocumentRunner = run_configured_deckr,
 ) -> None:
     async with anyio.create_task_group() as tg:
         await add_signal_handler(tg)

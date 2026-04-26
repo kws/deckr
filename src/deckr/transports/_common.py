@@ -4,9 +4,9 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+from deckr.components import ResolvedLaneSet
 from deckr.contracts.lanes import LaneContractRegistry
 from deckr.contracts.messages import CORE_LANE_SCHEMA_IDS
-from deckr.core.components import ResolvedLaneSet
 
 
 class TransportDirection(StrEnum):

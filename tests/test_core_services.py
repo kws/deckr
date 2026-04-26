@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-import anyio
 import pytest
 
+from deckr.components import (
+    BaseComponent,
+    ComponentCardinality,
+    ComponentDefinition,
+    ComponentHostPlan,
+    ComponentInstanceSpec,
+    ComponentManifest,
+    ResolvedLaneSet,
+    resolve_component_host_plan,
+    resolve_component_instance_specs,
+    start_components,
+)
 from deckr.contracts.lanes import DeliverySemantics, LaneContract, LaneRoutePolicy
 from deckr.contracts.messages import (
     DeckrMessage,
@@ -16,15 +28,6 @@ from deckr.contracts.messages import (
     host_address,
     message_targets_endpoint,
 )
-from deckr.core.component import BaseComponent, ComponentManager
-from deckr.core.components import (
-    ComponentActivationResult,
-    ComponentCardinality,
-    ComponentDefinition,
-    ComponentManifest,
-    activate_components,
-    resolve_component_instance_specs,
-)
 from deckr.core.config import ConfigDocument
 from deckr.hardware.events import hardware_message_schema
 from deckr.pluginhost.messages import (
@@ -34,6 +37,7 @@ from deckr.pluginhost.messages import (
     plugin_message,
     plugin_payload,
 )
+from deckr.runtime import Deckr
 from deckr.transports.websocket import component as websocket_transport_component
 
 
@@ -54,6 +58,17 @@ class _DummyComponent(BaseComponent):
 
 def _document(raw: dict) -> ConfigDocument:
     return ConfigDocument(raw=raw, source_path=None, base_dir=Path.cwd())
+
+
+@asynccontextmanager
+async def _running_components(document: ConfigDocument):
+    plan = resolve_component_host_plan(document)
+    async with Deckr(
+        lane_contracts=plan.lane_contracts,
+        lanes=plan.lane_names,
+        route_expiry_interval=0.01,
+    ) as deckr, start_components(deckr, plan) as host:
+        yield host, deckr
 
 
 def test_resolve_component_specs_includes_singleton_and_multi_instance(
@@ -80,7 +95,7 @@ def test_resolve_component_specs_includes_singleton_and_multi_instance(
     )
 
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: {
             "deckr.controller": controller,
             "deckr.plugin_hosts.python": host,
@@ -144,7 +159,7 @@ def test_resolve_component_specs_do_not_inherit_parent_prefix(
     )
 
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: host,
     )
 
@@ -184,7 +199,7 @@ def test_resolve_component_specs_skip_unconfigured_singletons(
     )
 
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: controller,
     )
 
@@ -199,7 +214,7 @@ def test_resolve_component_specs_skip_unconfigured_singletons(
 
 
 @pytest.mark.asyncio
-async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
+async def test_start_components_provides_runtime_lanes_and_exact_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, object] = {}
@@ -218,11 +233,11 @@ async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
         return _DummyComponent(name=context.runtime_name)
 
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.controller", "deckr.plugin_hosts.python"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: {
             "deckr.controller": ComponentDefinition(
                 manifest=ComponentManifest(
@@ -260,17 +275,7 @@ async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        result: ComponentActivationResult = await activate_components(
-            document,
-            component_manager,
-        )
-
+    async with _running_components(document) as (result, _deckr):
         assert [component.name for component in result.components] == [
             "deckr.controller",
             "deckr.plugin_hosts.python:main",
@@ -284,11 +289,116 @@ async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
         assert seen["plugin_lane"] is not None
         assert seen["hardware_lane"] is not None
 
-        tg.cancel_scope.cancel()
+
+@pytest.mark.asyncio
+async def test_manual_component_definitions_use_same_hosting_path() -> None:
+    seen: dict[str, object] = {}
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=("plugin_messages",),
+        ),
+        factory=lambda context: seen.setdefault(
+            "component",
+            _DummyComponent(name=context.runtime_name),
+        ),
+    )
+    document = _document({"deckr": {"acme": {"metrics": {"enabled": True}}}})
+
+    plan = resolve_component_host_plan(
+        document,
+        definitions={definition.manifest.component_id: definition},
+    )
+    async with Deckr(
+        lane_contracts=plan.lane_contracts,
+        lanes=plan.lane_names,
+        route_expiry_interval=0.01,
+    ) as deckr, start_components(deckr, plan) as host:
+        assert [component.name for component in host.components] == [
+            "deckr.acme.metrics"
+        ]
 
 
 @pytest.mark.asyncio
-async def test_activate_components_uses_manifest_lane_contracts(
+async def test_manual_component_specs_use_same_hosting_path() -> None:
+    seen: dict[str, object] = {}
+
+    def factory(context):
+        seen["config"] = dict(context.raw_config)
+        return _DummyComponent(name=context.runtime_name)
+
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.manual.component",
+            config_prefix="deckr.manual.component",
+            consumes=("plugin_messages",),
+        ),
+        factory=factory,
+    )
+    spec = ComponentInstanceSpec(
+        component_id=definition.manifest.component_id,
+        instance_id="default",
+        runtime_name="deckr.manual.component",
+        raw_config={"value": 1},
+        definition=definition,
+        lanes=ResolvedLaneSet(consumes=("plugin_messages",)),
+    )
+    plan = ComponentHostPlan.from_specs((spec,), base_dir=Path.cwd())
+
+    async with Deckr(
+        lane_contracts=plan.lane_contracts,
+        lanes=plan.lane_names,
+        route_expiry_interval=0.01,
+    ) as deckr, start_components(deckr, plan) as host:
+        assert [component.name for component in host.components] == [
+            "deckr.manual.component"
+        ]
+        assert seen["config"] == {"value": 1}
+
+
+@pytest.mark.asyncio
+async def test_component_host_rejects_mismatched_runtime_contract() -> None:
+    lane = "acme.metrics.events"
+    plan_contract = LaneContract(lane=lane, schema_id="acme.metrics.events.v1")
+    runtime_contract = LaneContract(lane=lane, schema_id="acme.metrics.events.v2")
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+            lane_contracts=(plan_contract,),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    document = _document({"deckr": {"acme": {"metrics": {"enabled": True}}}})
+    plan = resolve_component_host_plan(
+        document,
+        definitions={definition.manifest.component_id: definition},
+    )
+
+    async with Deckr(
+        lane_contracts=(runtime_contract,),
+        lanes=(lane,),
+        route_expiry_interval=0.01,
+    ) as deckr:
+        with pytest.raises(ValueError, match="does not match"):
+            async with start_components(deckr, plan):
+                pass
+
+
+@pytest.mark.asyncio
+async def test_component_host_requires_entered_deckr_runtime() -> None:
+    plan = ComponentHostPlan.from_specs((), base_dir=Path.cwd())
+    deckr = Deckr(lane_contracts=plan.lane_contracts, lanes=plan.lane_names)
+
+    with pytest.raises(RuntimeError, match="must be entered"):
+        async with start_components(deckr, plan):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_component_host_plan_uses_manifest_lane_contracts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     lane = "acme.metrics.events"
@@ -311,21 +421,15 @@ async def test_activate_components_uses_manifest_lane_contracts(
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.acme.metrics"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definition,
     )
     document = _document({"deckr": {"acme": {"metrics": {"enabled": True}}}})
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        result = await activate_components(document, component_manager)
+    async with _running_components(document) as (result, _deckr):
         bus = result.get_lane(lane)
         assert bus is not None
         accepted = await bus.route_table.claim_endpoint(
@@ -339,7 +443,6 @@ async def test_activate_components_uses_manifest_lane_contracts(
         )
 
         assert accepted is not None
-        tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
@@ -377,11 +480,11 @@ async def test_duplicate_extension_lane_contracts_must_be_identical(
         second.manifest.component_id: second,
     }
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: sorted(definitions),
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definitions[component_id],
     )
     document = _document(
@@ -396,15 +499,8 @@ async def test_duplicate_extension_lane_contracts_must_be_identical(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        result = await activate_components(document, component_manager)
+    async with _running_components(document) as (result, _deckr):
         assert result.get_lane(lane) is not None
-        tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
@@ -451,11 +547,11 @@ async def test_conflicting_duplicate_extension_lane_contracts_are_rejected(
         second.manifest.component_id: second,
     }
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: sorted(definitions),
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definitions[component_id],
     )
     document = _document(
@@ -470,15 +566,8 @@ async def test_conflicting_duplicate_extension_lane_contracts_are_rejected(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        with pytest.raises(ValueError, match="Duplicate lane contract"):
-            await activate_components(document, component_manager)
-        tg.cancel_scope.cancel()
+    with pytest.raises(ValueError, match="Duplicate lane contract"):
+        resolve_component_host_plan(document)
 
 
 @pytest.mark.asyncio
@@ -502,23 +591,16 @@ async def test_unsupported_lane_delivery_profile_is_rejected(
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.acme.metrics"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definition,
     )
     document = _document({"deckr": {"acme": {"metrics": {"enabled": True}}}})
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        with pytest.raises(ValueError, match="only at-most-once"):
-            await activate_components(document, component_manager)
-        tg.cancel_scope.cancel()
+    with pytest.raises(ValueError, match="only at-most-once"):
+        resolve_component_host_plan(document)
 
 
 @pytest.mark.asyncio
@@ -535,11 +617,11 @@ async def test_unsupported_deployment_delivery_profile_is_rejected(
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.acme.metrics"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definition,
     )
     document = _document(
@@ -557,15 +639,8 @@ async def test_unsupported_deployment_delivery_profile_is_rejected(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        with pytest.raises(ValueError, match="replay delivery is not implemented"):
-            await activate_components(document, component_manager)
-        tg.cancel_scope.cancel()
+    with pytest.raises(ValueError, match="replay delivery is not implemented"):
+        resolve_component_host_plan(document)
 
 
 @pytest.mark.asyncio
@@ -595,11 +670,11 @@ async def test_extension_transport_binding_schema_must_match_resolved_contract(
         "deckr.transports.websocket": websocket_transport_component,
     }
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: sorted(definitions),
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definitions[component_id],
     )
     document = _document(
@@ -625,15 +700,8 @@ async def test_extension_transport_binding_schema_must_match_resolved_contract(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        with pytest.raises(ValueError, match="must match resolved lane contract"):
-            await activate_components(document, component_manager)
-        tg.cancel_scope.cancel()
+    with pytest.raises(ValueError, match="must match resolved lane contract"):
+        resolve_component_host_plan(document)
 
 
 @pytest.mark.asyncio
@@ -642,11 +710,11 @@ async def test_extension_transport_binding_requires_resolved_contract(
 ) -> None:
     lane = "acme.metrics.events"
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.transports.websocket"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: websocket_transport_component,
     )
     document = _document(
@@ -671,15 +739,8 @@ async def test_extension_transport_binding_requires_resolved_contract(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        with pytest.raises(ValueError, match="no resolved lane contract"):
-            await activate_components(document, component_manager)
-        tg.cancel_scope.cancel()
+    with pytest.raises(ValueError, match="no resolved lane contract"):
+        resolve_component_host_plan(document)
 
 
 @pytest.mark.asyncio
@@ -697,11 +758,11 @@ async def test_deployment_lane_contract_enables_extension_route_policy(
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.acme.metrics"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definition,
     )
     document = _document(
@@ -719,13 +780,7 @@ async def test_deployment_lane_contract_enables_extension_route_policy(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        result = await activate_components(document, component_manager)
+    async with _running_components(document) as (result, _deckr):
         bus = result.get_lane(lane)
         assert bus is not None
         accepted = await bus.route_table.claim_endpoint(
@@ -739,7 +794,6 @@ async def test_deployment_lane_contract_enables_extension_route_policy(
         )
 
         assert accepted is not None
-        tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
@@ -774,11 +828,11 @@ async def test_deployment_lane_contract_can_narrow_manifest_policy(
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.acme.metrics"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definition,
     )
     document = _document(
@@ -797,13 +851,7 @@ async def test_deployment_lane_contract_can_narrow_manifest_policy(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        result = await activate_components(document, component_manager)
+    async with _running_components(document) as (result, _deckr):
         bus = result.get_lane(lane)
         assert bus is not None
         accepted = await bus.route_table.claim_endpoint(
@@ -827,7 +875,6 @@ async def test_deployment_lane_contract_can_narrow_manifest_policy(
 
         assert accepted is not None
         assert rejected is None
-        tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
@@ -854,11 +901,11 @@ async def test_deployment_lane_contract_must_not_widen_manifest_policy(
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.acme.metrics"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definition,
     )
     document = _document(
@@ -878,20 +925,11 @@ async def test_deployment_lane_contract_must_not_widen_manifest_policy(
             }
         }
     )
-    component_manager = ComponentManager()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
-
-        with pytest.raises(ValueError, match="must not widen"):
-            await activate_components(document, component_manager)
-
-        tg.cancel_scope.cancel()
+    with pytest.raises(ValueError, match="must not widen"):
+        resolve_component_host_plan(document)
 
 
-@pytest.mark.asyncio
-async def test_extension_lane_without_contract_rejects_remote_claim_in_runtime(
+def test_extension_lane_without_contract_rejects_runtime_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     lane = "acme.metrics.events"
@@ -905,35 +943,211 @@ async def test_extension_lane_without_contract_rejects_remote_claim_in_runtime(
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
     monkeypatch.setattr(
-        "deckr.core.components.available_component_ids",
+        "deckr.components._host.available_component_ids",
         lambda: ["deckr.acme.metrics"],
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: definition,
     )
     document = _document({"deckr": {"acme": {"metrics": {"enabled": True}}}})
-    component_manager = ComponentManager()
+    plan = resolve_component_host_plan(document)
 
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        await anyio.sleep(0.01)
+    with pytest.raises(ValueError, match="require lane contracts"):
+        Deckr(lane_contracts=plan.lane_contracts, lanes=plan.lane_names)
 
-        result = await activate_components(document, component_manager)
-        bus = result.get_lane(lane)
-        assert bus is not None
-        rejected = await bus.route_table.claim_endpoint(
-            endpoint=endpoint_address("acme_worker", "one"),
-            lane=lane,
-            client_id="websocket:worker",
-            client_kind="remote",
-            transport_kind="websocket",
-            transport_id="ws-main",
-            claim_source="message_sender",
+
+def test_deployment_lane_contract_registers_extension_lane_without_component() -> None:
+    lane = "acme.metrics.events"
+    document = _document(
+        {
+            "deckr": {
+                "lane_contracts": {
+                    lane: {
+                        "schema_id": "acme.metrics.events.v1",
+                        "route_policy": {
+                            "remote_claim_endpoint_families": ["acme_worker"],
+                        },
+                    }
+                }
+            }
+        }
+    )
+
+    plan = resolve_component_host_plan(document, definitions={})
+    deckr = Deckr(lane_contracts=plan.lane_contracts, lanes=plan.lane_names)
+
+    assert lane in plan.lane_names
+    assert deckr.bus(lane).lane == lane
+    assert deckr.lane_contracts.contract_for(lane).schema_id == (
+        "acme.metrics.events.v1"
+    )
+
+
+def _mode_component_definitions() -> dict[str, ComponentDefinition]:
+    def factory(context):
+        return _DummyComponent(name=context.runtime_name)
+
+    def transport_lanes(
+        *,
+        manifest,
+        raw_config,
+        instance_id,
+    ) -> ResolvedLaneSet:
+        del manifest, instance_id
+        lanes = tuple(
+            sorted(
+                str(binding["lane"])
+                for binding in raw_config.get("bindings", {}).values()
+            )
+        )
+        return ResolvedLaneSet(consumes=lanes, publishes=lanes)
+
+    definitions = [
+        ComponentDefinition(
+            manifest=ComponentManifest(
+                component_id="deckr.controller",
+                config_prefix="deckr.controller",
+                consumes=("hardware_events", "plugin_messages"),
+                publishes=("hardware_events", "plugin_messages"),
+            ),
+            factory=factory,
+        ),
+        ComponentDefinition(
+            manifest=ComponentManifest(
+                component_id="deckr.plugin_hosts.python",
+                config_prefix="deckr.plugin_hosts.python",
+                consumes=("plugin_messages",),
+                publishes=("plugin_messages",),
+                cardinality=ComponentCardinality.MULTI_INSTANCE,
+            ),
+            factory=factory,
+        ),
+        ComponentDefinition(
+            manifest=ComponentManifest(
+                component_id="deckr.drivers.elgato",
+                config_prefix="deckr.drivers.elgato",
+                consumes=("hardware_events",),
+                publishes=("hardware_events",),
+            ),
+            factory=factory,
+        ),
+        ComponentDefinition(
+            manifest=ComponentManifest(
+                component_id="deckr.transports.mqtt",
+                config_prefix="deckr.transports.mqtt",
+                cardinality=ComponentCardinality.MULTI_INSTANCE,
+            ),
+            factory=factory,
+            resolve_lanes=transport_lanes,
+        ),
+    ]
+    return {definition.manifest.component_id: definition for definition in definitions}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("document", "component_names"),
+    [
+        (
+            _document(
+                {
+                    "deckr": {
+                        "controller": {"id": "controller-main"},
+                        "plugin_hosts": {"python": {"instances": {"main": {}}}},
+                        "drivers": {"elgato": {"manager_id": "desk"}},
+                        "transports": {
+                            "mqtt": {
+                                "instances": {
+                                    "main": {
+                                        "bindings": {
+                                            "plugin": {"lane": "plugin_messages"},
+                                            "hardware": {"lane": "hardware_events"},
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            ),
+            {
+                "deckr.controller",
+                "deckr.plugin_hosts.python:main",
+                "deckr.drivers.elgato",
+                "deckr.transports.mqtt:main",
+            },
+        ),
+        (
+            _document(
+                {
+                    "deckr": {
+                        "plugin_hosts": {"python": {"instances": {"main": {}}}},
+                        "transports": {
+                            "mqtt": {
+                                "instances": {
+                                    "plugin": {
+                                        "bindings": {
+                                            "plugin": {"lane": "plugin_messages"},
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            ),
+            {"deckr.plugin_hosts.python:main", "deckr.transports.mqtt:plugin"},
+        ),
+        (
+            _document(
+                {
+                    "deckr": {
+                        "drivers": {"elgato": {"manager_id": "desk"}},
+                        "transports": {
+                            "mqtt": {
+                                "instances": {
+                                    "hardware": {
+                                        "bindings": {
+                                            "hardware": {"lane": "hardware_events"},
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            ),
+            {"deckr.drivers.elgato", "deckr.transports.mqtt:hardware"},
+        ),
+    ],
+)
+async def test_runtime_modes_are_ordinary_component_composition(
+    document: ConfigDocument,
+    component_names: set[str],
+) -> None:
+    plan = resolve_component_host_plan(
+        document,
+        definitions=_mode_component_definitions(),
+    )
+
+    async with Deckr(
+        lane_contracts=plan.lane_contracts,
+        lanes=plan.lane_names,
+        route_expiry_interval=0.01,
+    ) as deckr, start_components(deckr, plan) as host:
+        assert {component.name for component in host.components} == component_names
+        assert set(deckr.lanes.names) == {"hardware_events", "plugin_messages"}
+
+
+@pytest.mark.asyncio
+async def test_embedded_manual_runtime_uses_deckr_without_discovery() -> None:
+    async with Deckr(route_expiry_interval=0.01) as deckr:
+        client_id = await deckr.bus("plugin_messages").claim_local_endpoint(
+            host_address("embedded")
         )
 
-        assert rejected is None
-        tg.cancel_scope.cancel()
+        assert client_id == "local:plugin_messages:host:embedded"
 
 
 def test_deckr_message_is_pydantic_and_schema_exportable() -> None:

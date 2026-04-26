@@ -7,7 +7,7 @@ import anyio
 import pytest
 import pytest_asyncio
 
-from deckr.core.component import (
+from deckr.components import (
     ComponentManager,
     ComponentState,
     RunContext,

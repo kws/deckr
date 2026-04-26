@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from deckr.core.components import (
+from deckr.components import (
     ComponentCardinality,
     ComponentDefinition,
     ComponentManifest,
@@ -27,7 +27,7 @@ def test_singleton_component_uses_exact_prefix_mapping(
         factory=lambda context: None,
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: controller,
     )
 
@@ -65,7 +65,7 @@ def test_singleton_component_without_exact_prefix_is_not_created(
         factory=lambda context: None,
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: controller,
     )
 
@@ -91,7 +91,7 @@ def test_multi_instance_component_only_creates_declared_instances(
         factory=lambda context: None,
     )
     monkeypatch.setattr(
-        "deckr.core.components.load_component_definition",
+        "deckr.components._host.load_component_definition",
         lambda component_id: host,
     )
 

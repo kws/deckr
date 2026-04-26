@@ -9,20 +9,21 @@ import anyio
 from anyio import get_cancelled_exc_class
 from pydantic import ValidationError
 
-from deckr.contracts.lanes import (
-    DEFAULT_LANE_CONTRACT_REGISTRY,
-    LaneContractRegistry,
-)
-from deckr.contracts.messages import DeckrMessage, TransportFrame
-from deckr.core.component import BaseComponent, RunContext
-from deckr.core.components import (
+from deckr.components import (
+    BaseComponent,
     ComponentCardinality,
     ComponentContext,
     ComponentDefinition,
     ComponentManifest,
     InactiveComponent,
     ResolvedLaneSet,
+    RunContext,
 )
+from deckr.contracts.lanes import (
+    DEFAULT_LANE_CONTRACT_REGISTRY,
+    LaneContractRegistry,
+)
+from deckr.contracts.messages import DeckrMessage, TransportFrame
 from deckr.transports._common import (
     TransportBindingConfigBase,
     _StrictConfigModel,
