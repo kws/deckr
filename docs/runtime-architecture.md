@@ -35,7 +35,7 @@ those lanes.
 
 ## Architectural Model
 
-There is exactly one runtime abstraction in Deckr: `Component`.
+There is exactly one runtime participant abstraction in Deckr: `Component`.
 
 There is exactly one discovery mechanism in Deckr: components are discovered
 uniformly through a single entry-point based mechanism.
@@ -56,6 +56,25 @@ component. Any future third-party participant is also just a component.
 If a design introduces a second generic discovery abstraction because one role
 "feels special", that design is wrong.
 
+There is also one runtime host contract.
+
+A runtime host is the process or application that embeds Deckr's runtime
+infrastructure. The bundled Deckr launcher is the reference runtime host, but it
+is not the only valid host. A web application, service framework, test harness, or
+larger product may embed Deckr directly.
+
+The runtime host owns:
+
+- constructing the managed lane runtime
+- starting and stopping core bus infrastructure
+- optionally discovering and instantiating components
+- wiring components against one shared runtime context
+
+Core bus infrastructure is not an auto-discovered component. It must not be made
+optional by component discovery, duplicated by multiple discovered services, or
+hidden inside one transport. It is part of the Deckr runtime contract that every
+host must satisfy.
+
 ## Event Lanes
 
 Components are wired together through named event bus lanes.
@@ -63,19 +82,20 @@ Components are wired together through named event bus lanes.
 A component declares which lanes it consumes and which lanes it publishes to.
 That declaration is part of the component's manifest or metadata contract.
 
-The launcher is responsible for:
+A runtime host that uses Deckr components is responsible for:
 
 - discovering components
 - constructing the available named lanes
 - instantiating components
 - wiring components against one shared runtime context
 
-The launcher must resolve the full set of required lanes and construct their
+A runtime host must resolve the full set of required lanes and construct their
 handles before starting any component. No component may rely on another
 component having already started in order for a core lane to exist.
 
-The launcher does not care whether a component is "really" a controller, driver,
-or plugin host. The only generic concern is the lane contract it declares.
+The runtime host does not care whether a component is "really" a controller,
+driver, or plugin host. The only generic concern is the lane contract it
+declares.
 
 This means the architecture is defined by lane interaction, not by role-specific
 loader types.
@@ -85,20 +105,22 @@ loader types.
 Core lane names are part of the architecture and belong in `deckr`, just like
 core message contracts.
 
-The launcher must treat lane names as stable logical contract identifiers, not
+A runtime host must treat lane names as stable logical contract identifiers, not
 as incidental local variable names.
 
 The current core lane set includes:
 
 - `plugin_messages`
-- `hardware_events`
+- `hardware_messages`
 
 The bus and routing requirements for these lanes are defined in
 [bus-architecture.md](bus-architecture.md). This document owns the generic
 component and lane model; the bus architecture document owns endpoint identity,
 entity subjects, client reachability, route claims, logical Deckr envelopes,
 broadcast semantics, delivery semantics, control-plane messages, and disconnect
-cleanup.
+cleanup. The device, control, and capability contracts carried by the hardware
+lane are defined in
+[device-capabilities-architecture.md](device-capabilities-architecture.md).
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
 not create new core lanes ad hoc inside a controller, plugin host, driver, or
@@ -156,6 +178,136 @@ systems may provide broker fan-out, request/reply inboxes, consumer or queue
 groups, durable streams, replay, redelivery, TTL, dead-letter handling, or
 edge/leaf topology below Deckr. Application components still use Deckr lane
 handles, Deckr envelopes, Deckr endpoint addresses, and Deckr subjects.
+
+### Managed Lane Runtime
+
+The managed lane runtime is the host-facing Deckr primitive that makes named
+lanes usable.
+
+It includes:
+
+- the lane registry
+- one application-facing event bus per lane
+- the shared route table for those lanes
+- core route lifecycle services such as route lease expiry
+- future generic bus infrastructure such as shared diagnostics or control-plane
+  dispatch, if those remain lane-generic
+
+The managed lane runtime belongs in `deckr`. It is not a transport, controller,
+driver, plugin host, or special discovered component.
+
+Every runtime host must either use the Deckr-provided managed lane runtime or
+explicitly provide equivalent behavior. In particular, route lease expiry must be
+driven exactly once per shared route table. Expiry must not depend on a
+transport, a controller, a plugin host, a message arriving, or the bundled Deckr
+launcher.
+
+The Deckr launcher should use the same managed lane runtime API that embedding
+hosts use. It may add configuration loading, component discovery, signal
+handling, and process lifecycle conveniences, but it must not be the only place
+where required lane infrastructure exists.
+
+### Deckr Instance API
+
+The simplest supported embedding shape should be one managed Deckr instance.
+
+The public Python API should make this the normal path:
+
+```python
+async with Deckr() as deckr:
+    plugin_bus = deckr.bus("plugin_messages")
+    hardware_bus = deckr.bus("hardware_messages")
+```
+
+That object is a runtime host helper around the managed lane runtime. It should:
+
+- create the core lane set by default
+- accept extension lane contracts explicitly
+- expose lane handles through one obvious API such as `bus(name)` or
+  `lanes.require(name)`
+- expose the shared route table for diagnostics and route-event subscriptions
+- start required generic bus services exactly once
+- stop those services through normal async context-manager cancellation
+
+Component discovery and component lifecycle should sit on top of that instance,
+not inside the lane bus itself. A host that wants Deckr components should be able
+to call a component-host API such as `start_components(...)` against an existing
+Deckr instance. A host that only wants lane messaging should not need component
+discovery at all.
+
+The bundled launcher should be a thin convenience wrapper around this public
+runtime API. It may load configuration, install signal handlers, and start
+configured components, but it should not assemble required Deckr services through
+a private path unavailable to embedded hosts.
+
+### Supported Hosting Modes
+
+Deckr should support several hosting modes through the same runtime primitives.
+These modes are deployment shapes, not different architectures.
+
+- full-stack runtime
+  - runs a managed Deckr instance plus component hosting
+  - may start controller, plugin hosts, hardware drivers, transports, and other
+    local services in one process
+- embedded application runtime
+  - creates a managed Deckr instance inside another application such as a web
+    service, desktop app, or test harness
+  - may use lane messaging directly, start components manually, or use component
+    discovery
+- skinny plugin host runtime
+  - runs only the managed lane runtime, a plugin host, and the transports needed
+    to reach a controller domain
+  - does not require a local controller or hardware driver
+- remote driver runtime
+  - runs only the managed lane runtime, one or more hardware drivers or hardware
+    managers, and the transports needed to reach a controller domain
+  - does not require a local controller or plugin host
+
+Every mode must use the same managed lane runtime, lane contracts, route table,
+route lifecycle services, component model, and transport binding rules. A
+"skinny" runtime omits components; it does not get a thinner protocol, a different
+bus, or a role-specific discovery path.
+
+Component hosting must likewise have one mechanism. A runtime host may obtain
+components through entry-point discovery, direct application registration, tests,
+or explicit construction, but once a component definition or instance is resolved
+it must pass through the same lane-contract validation, exact-prefix configuration
+binding, `RunContext`, `ComponentManager`, and lifecycle supervision.
+
+The bundled launcher may expose convenient presets or examples for these modes,
+but presets must be expressed as ordinary component composition and explicit
+transport bindings. They must not introduce hidden lane inference such as
+"plugin host mode means plugin traffic" or "driver mode means hardware traffic."
+
+### AnyIO Runtime Boundary
+
+Deckr's Python runtime is AnyIO-native.
+
+AnyIO is part of the Python hosting contract for:
+
+- component lifecycle and `RunContext`
+- task groups, cancellation, and stop signals
+- in-process lane fan-out
+- route table synchronization and route-event streams
+- local backpressure and timeout behavior
+
+Python hosts should either run Deckr inside an existing AnyIO-compatible async
+context or use `anyio.run(...)`. Frameworks built on asyncio can host Deckr
+through AnyIO's asyncio backend.
+
+The Deckr protocol is not AnyIO-specific. Message envelopes, lane names, route
+metadata, JSON Schema, endpoint addresses, subjects, and wire payloads must remain
+runtime-agnostic and usable by non-Python implementations.
+
+Implementation code may temporarily use backend-specific libraries behind an
+adapter boundary, but backend-specific objects must not leak into Deckr's public
+runtime API. Do not expose asyncio tasks, futures, streams, event loops, or
+subprocess handles as Deckr protocol or component contracts.
+
+The v1 target is that reusable Deckr Python runtime services are AnyIO-native
+where practical. Any remaining asyncio-specific implementation dependencies must
+be tracked explicitly and either replaced with AnyIO equivalents or isolated
+behind private adapters with documented backend limits.
 
 ### Message Contract Rule
 
@@ -255,7 +407,7 @@ requiring deep integration or fixed bootstrap sequencing.
 If a component needs another component's traffic, it should express that through
 lane usage and runtime behavior, not by relying on bespoke startup choreography.
 
-The shared runtime context may provide generic launcher metadata such as:
+The shared runtime context may provide generic runtime-host metadata such as:
 
 - `component_id`
 - `instance_id`
@@ -318,7 +470,8 @@ Deckr should support configuration documents such as TOML, but the architecture
 does not require one concrete file format.
 
 What matters is that configuration is bound by component manifest, not by
-semantic role and not by one global document schema understood by the launcher.
+semantic role and not by one global document schema understood by the runtime
+host.
 
 ### Component Manifest Contract
 
@@ -355,9 +508,9 @@ the component type itself.
 For configurable adapter components such as transports, the manifest may instead
 declare the component's lane binding capability, and instance configuration may
 then provide the exact lane bindings for that specific instance. In that case
-the launcher must resolve the instance's actual `consumes` and `publishes` from
-those explicit bindings, not infer them from semantic role, transport type, or
-path naming.
+the runtime host must resolve the instance's actual `consumes` and `publishes`
+from those explicit bindings, not infer them from semantic role, transport type,
+or path naming.
 
 As a default convention, `config_prefix` should be the canonical Python import
 path of the component.
@@ -370,8 +523,8 @@ Examples:
 - `deckr.transports.websocket`
 - `deckr.drivers.mqtt`
 
-The launcher must use the manifest's declared `config_prefix`. It must not try
-to infer meaning from path segments such as `plugin_hosts`, `drivers`, or
+The runtime host must use the manifest's declared `config_prefix`. It must not
+try to infer meaning from path segments such as `plugin_hosts`, `drivers`, or
 `controller`.
 
 `deckr.plugin_hosts.python` and `deckr.transports.mqtt` are therefore two separate
@@ -381,14 +534,14 @@ component types, not a parent component and a child component.
 
 Each component is only concerned with its own exact configuration prefix.
 
-The launcher must:
+The runtime host must:
 
 - discover the component
 - read its manifest
 - resolve the exact configuration namespace for that component
 - pass only that resolved configuration mapping to the component
 
-The launcher must not:
+The runtime host must not:
 
 - inspect sibling component sections on behalf of the component
 - merge parent namespaces implicitly
@@ -415,9 +568,9 @@ Each component:
 - decides for itself what defaults apply
 - decides for itself what "enabled" or "disabled" means
 
-The launcher does not own component enablement policy.
+A runtime host does not own component enablement policy.
 
-A component being "disabled" is not a launcher-level state. In an event-bus
+A component being "disabled" is not a runtime-host-level state. In an event-bus
 architecture it simply means the component currently chooses not to consume from
 or publish to its declared lanes. That decision belongs entirely to the
 component, and it may change at runtime if external circumstances change.
@@ -426,7 +579,7 @@ For example, a component may initially decide not to participate because another
 service is absent, and later begin consuming or publishing when that dependency
 appears.
 
-The launcher must never short-circuit that behavior by imposing a generic
+The runtime host must never short-circuit that behavior by imposing a generic
 enabled/disabled convention.
 
 ### Singleton and Multi-Instance Components
@@ -442,15 +595,15 @@ that component type, and its configuration lives exactly at its declared
 `config_prefix`.
 
 If a component type is `multi_instance`, that must be declared explicitly in the
-manifest. In that case the launcher may create multiple component instances of
-the same type, each with a separate `instance_id`.
+manifest. In that case the runtime host may create multiple component instances
+of the same type, each with a separate `instance_id`.
 
-Every instantiated component also has a launcher-scoped runtime identity used
+Every instantiated component also has a runtime-host-scoped identity used
 for lifecycle management.
 
 That runtime identity must be:
 
-- unique within one launcher runtime
+- unique within one runtime host
 - derived deterministically from `component_id` and `instance_id`
 - separate from protocol-level addresses carried on event lanes
 
@@ -459,9 +612,9 @@ Protocol addresses such as `controller:<controller_id>`, `host:<host_id>`, and
 not the generic lifecycle identity of a component instance.
 
 Deckr protocol endpoint addresses, entity subjects, client/session ids,
-transport addresses, component type ids, and launcher runtime identities are all
-separate concepts. A component may currently derive one configured value from
-another as a convenience, but the architecture must not depend on that
+transport addresses, component type ids, and runtime-host component identities
+are all separate concepts. A component may currently derive one configured value
+from another as a convenience, but the architecture must not depend on that
 derivation.
 
 The configuration model for multi-instance components is:
@@ -478,8 +631,8 @@ deckr.plugin_hosts.python` would use:
 - `[deckr.plugin_hosts.python.instances.main]`
 - `[deckr.plugin_hosts.python.instances.remote]`
 
-and the launcher would instantiate two instances with `instance_id = "main"` and
-`instance_id = "remote"`.
+and the runtime host would instantiate two instances with `instance_id = "main"`
+and `instance_id = "remote"`.
 
 This is the only permitted way to express multiplicity within the generic
 component model.
@@ -490,7 +643,7 @@ Bus transports are not declared on lanes. Bus transports are declared as normal
 components.
 
 There is no separate transport registry, no transport-only discovery mechanism, and
-no launcher rule that says a transport automatically belongs to one semantic
+no runtime-host rule that says a transport automatically belongs to one semantic
 role.
 
 A transport is modeled in three layers:
@@ -570,10 +723,10 @@ schema id as the whole route policy for the lane.
 Transport bindings are explicit because hidden transport-to-lane assumptions are a
 major source of architectural drift.
 
-The launcher must never infer:
+The runtime host must never infer:
 
 - that MQTT implies `plugin_messages`
-- that WebSocket implies `hardware_events`
+- that WebSocket implies `hardware_messages`
 - that a component under `plugin_hosts` must transport plugin traffic
 - that a component under `drivers` must transport hardware traffic
 
@@ -590,7 +743,7 @@ For example:
 
 - `[deckr.transports.mqtt.instances.main]`
 - `[deckr.transports.mqtt.instances.main.bindings.plugin_messages]`
-- `[deckr.transports.mqtt.instances.main.bindings.hardware_events]`
+- `[deckr.transports.mqtt.instances.main.bindings.hardware_messages]`
 
 In this model:
 
@@ -614,7 +767,7 @@ each configured binding.
 
 If a transport cannot establish its transport session, it may remain temporarily
 inactive and later begin participating when the remote endpoint becomes
-available. That is still component behavior, not launcher policy.
+available. That is still component behavior, not runtime-host policy.
 
 ### Shared Defaults
 
@@ -625,7 +778,7 @@ That kind of implicit parent lookup is an unnecessary complication and is
 forbidden.
 
 If shared defaults are ever needed, they must be introduced as an explicit,
-separate configuration mechanism and resolved by the launcher before the
+separate configuration mechanism and resolved by the runtime host before the
 component is instantiated.
 
 The component must still receive one final resolved mapping for itself.
@@ -638,21 +791,28 @@ Even if such a defaults system is added later, it must obey these rules:
 - defaults do not create a second discovery or role-specific configuration
   mechanism
 
-Custom launchers may choose their own configuration objects, but they must still
-honor the same manifest, prefix, and lane model.
+Custom runtime hosts may choose their own configuration objects, but they must
+still honor the same manifest, prefix, lane model, and managed lane runtime
+contract.
 
 ## Hard Rules
 
 - There is one component model.
 - There is one discovery model.
 - Lane contracts are the only generic wiring primitive.
-- The launcher creates the full core lane set before component startup.
+- The runtime host creates the full core lane set before component startup.
 - Core lane names belong in `deckr`.
 - Lanes are logical runtime contracts and may be transported across transport
   boundaries.
 - Transports are peers architecturally; none are special-cased.
 - Shared lane infrastructure owns the application-facing send/subscribe/fan-out
   API.
+- The managed lane runtime owns required generic bus infrastructure such as route
+  lease expiry.
+- Required lane infrastructure must not depend on the bundled Deckr launcher.
+- Core bus infrastructure is not an auto-discovered component.
+- The public Python runtime API is AnyIO-native; backend-specific async objects
+  must not leak into Deckr contracts.
 - Core Deckr message envelopes, route metadata, and payloads live in `deckr`.
 - Pydantic models in `deckr` are the canonical Python authoring format for core
   message contracts.
@@ -674,13 +834,13 @@ honor the same manifest, prefix, and lane model.
   protocol endpoint identity are separate.
 - Configuration is bound by exact manifest-declared prefix.
 - Components parse only their own resolved configuration mapping.
-- The launcher does not interpret "enabled" or "disabled" for components.
-- Runtime context may carry only generic launcher metadata and lane handles as a
-  generic primitive.
+- The runtime host does not interpret "enabled" or "disabled" for components.
+- Runtime context may carry only generic runtime-host metadata and lane handles
+  as a generic primitive.
 - Transports are declared as normal components, not as lane-local special cases.
 - Transport instances own explicit per-lane bindings.
-- The launcher must not infer lane bindings from transport kind, role name, or
-  config path.
+- The runtime host must not infer lane bindings from transport kind, role name,
+  or config path.
 - Implicit parent-prefix inheritance is forbidden.
 - Type identity and instance identity are separate.
 - Lifecycle identity and protocol address identity are separate.

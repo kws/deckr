@@ -154,6 +154,8 @@ class MqttTransportComponent(BaseComponent):
                         transport_kind=TRANSPORT_KIND,
                         transport_id=self._transport_id,
                         description=binding.binding_id,
+                        trusted_bridge=binding.config.trusted_bridge,
+                        authority_id=binding.config.authority_id,
                     )
                     if binding.config.allows_ingress():
                         await client.subscribe(

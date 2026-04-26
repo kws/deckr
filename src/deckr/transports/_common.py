@@ -42,6 +42,8 @@ class TransportBindingConfigBase(_StrictConfigModel):
     lane: str
     direction: TransportDirection = TransportDirection.BIDIRECTIONAL
     schema_id: str | None = None
+    trusted_bridge: bool = False
+    authority_id: str | None = None
     enabled: bool = True
 
     def resolved_schema_id(self) -> str:

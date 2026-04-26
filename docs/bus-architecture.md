@@ -209,10 +209,11 @@ Deckr uses these separate identity concepts:
   - a concrete locator in a transport substrate
   - examples: MQTT topic, WebSocket path or URI, Redis stream
 - component identity
-  - the launcher/discovery identity of a component type
+  - the runtime-host/discovery identity of a component type
   - examples: `deckr.controller`, `deckr.transports.mqtt`
 - component runtime identity
-  - the launcher-scoped lifecycle identity of one configured component instance
+  - the runtime-host-scoped lifecycle identity of one configured component
+    instance
   - examples: `deckr.transports.mqtt:main`
 
 These concepts must remain separate even when one current implementation happens
@@ -401,9 +402,9 @@ A route record should include at least:
 - claim source and trust status
 
 Alpha route claims are lane-scoped. A claim for `host:python` on
-`plugin_messages` does not make that endpoint reachable on `hardware_events` or
-on an extension lane. If a participant needs the same logical endpoint reachable
-on multiple lanes, it must claim the endpoint separately on each lane.
+`plugin_messages` does not make that endpoint reachable on `hardware_messages`
+or on an extension lane. If a participant needs the same logical endpoint
+reachable on multiple lanes, it must claim the endpoint separately on each lane.
 
 Local in-process claims are authoritative for their lane. A local claim may
 replace a remote claim for the same lane and endpoint, and a remote claim may not
@@ -422,7 +423,8 @@ Remote claims are accepted only when the lane policy allows the claimed endpoint
 family. For core lanes:
 
 - `plugin_messages` may learn `host` and `controller` endpoint routes
-- `hardware_events` may learn `hardware_manager` and `controller` endpoint routes
+- `hardware_messages` may learn `hardware_manager` and `controller` endpoint
+  routes
 
 Untrusted remote direct claims are accepted only within the lane policy. Bridged
 claims require trusted route authority. Conflicts are exclusive per lane and
@@ -513,7 +515,7 @@ A lane is a logical Deckr contract.
 
 Core lanes currently include:
 
-- `hardware_events`
+- `hardware_messages`
 - `plugin_messages`
 
 Lane meaning must be identical whether the lane is local or transported.
@@ -537,6 +539,9 @@ A lane contract must define:
 
 Transports bind to lanes. They do not define lane semantics.
 
+The device, control, and capability contracts carried by `hardware_messages` are
+defined in [device-capabilities-architecture.md](device-capabilities-architecture.md).
+
 ## Shared Bus Responsibilities
 
 The local lane bus is the application-facing messaging surface for one Deckr
@@ -553,6 +558,7 @@ including:
 - recipient selection from endpoint addresses or broadcast targets
 - expansion of broadcast scopes into concrete delivery decisions
 - route table lookup and endpoint reachability state
+- route lease expiry and lease-loss control-plane reporting
 - duplicate detection and forwarding policy where those are generic to the lane
 - control-plane route events such as endpoint reachable or unreachable
 - common observability hooks for message ids, traces, and route history
@@ -579,6 +585,9 @@ The responsibility split is:
 - routing service
   - owns Deckr endpoint reachability, route selection, broadcast expansion,
     route claims, leases, duplicate policy, loop policy, and trust decisions
+- managed lane runtime
+  - starts required generic bus infrastructure exactly once per shared route table,
+    including route lease expiry
 - transport component
   - owns connection/session management, concrete transport framing, substrate
     publish/subscribe calls, and translating remote frames into Deckr messages
@@ -593,6 +602,12 @@ The responsibility split is:
 
 The implementation may combine the lane bus and routing service in one module at
 first, but the responsibilities must remain conceptually separate.
+
+Route lease expiry is active runtime behavior. The routing service defines the
+expiry operation and emits the resulting control-plane events. The managed lane
+runtime drives that operation on time. Expiry must not be implemented as a
+transport-local cleanup hook, a controller responsibility, or a lazy side effect
+of the next message.
 
 ## Hardware Routing
 
@@ -802,6 +817,7 @@ Control-plane messages describe the messaging system itself, such as:
 - endpoint unreachable
 - endpoint claim rejected
 - route lease renewed
+- route expired
 - endpoint capabilities changed
 - transport binding healthy or unhealthy
 
@@ -886,9 +902,12 @@ Known gaps:
 - endpoint ids and runtime ids currently share normalization assumptions
 - broadcast and forwarding policy is still incomplete
 - local-only controller events share lanes with transported protocol messages
-- route leases, expiry, and capability-aware route selection are not yet modeled
+- route leases and bridge authority are modeled in the route table, but the
+  managed lane runtime still needs to drive lease expiry in normal embedded
+  runtime hosts
+- capability-aware route selection is not yet modeled
 - endpoint claim policy is currently lane/family/trust based; full
-  authentication and bridge authority are not yet modeled
+  authentication is not yet modeled
 - there is not yet an architecture spike recording which generic messaging
   mechanics should be delegated to NATS, Dapr, or another standard substrate
   before Deckr builds them itself

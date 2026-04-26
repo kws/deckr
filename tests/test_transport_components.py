@@ -715,6 +715,48 @@ def test_core_lane_bindings_use_deckr_schema_contracts() -> None:
         )
 
 
+def test_transport_bindings_accept_local_bridge_authority_config() -> None:
+    mqtt_transport = mqtt_transport_component.factory(
+        _component_context(
+            mqtt_transport_component,
+            raw_config={
+                "hostname": "mqtt.example.net",
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "topic": "deckr/plugin",
+                        "trusted_bridge": True,
+                        "authority_id": "local-config",
+                    }
+                },
+            },
+            lanes={"plugin_messages": EventBus("plugin_messages")},
+        )
+    )
+    websocket_transport = websocket_transport_component.factory(
+        _component_context(
+            websocket_transport_component,
+            raw_config={
+                "mode": "server",
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "path": "/plugin",
+                        "trusted_bridge": True,
+                        "authority_id": "local-config",
+                    }
+                },
+            },
+            lanes={"plugin_messages": EventBus("plugin_messages")},
+        )
+    )
+
+    assert mqtt_transport._bindings[0].config.trusted_bridge is True
+    assert mqtt_transport._bindings[0].config.authority_id == "local-config"
+    assert websocket_transport._bindings[0].config.trusted_bridge is True
+    assert websocket_transport._bindings[0].config.authority_id == "local-config"
+
+
 def test_mqtt_core_lane_bindings_reject_non_ephemeral_delivery_options() -> None:
     with pytest.raises(ValueError, match="qos <= 0"):
         mqtt_transport_component.lanes_for(

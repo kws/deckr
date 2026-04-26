@@ -31,7 +31,10 @@ from deckr.pluginhost.messages import HOST_ONLINE, REQUEST_ACTIONS, plugin_messa
 from deckr.transports._lanes import build_lane_handler
 from deckr.transports.bus import EventBus
 from deckr.transports.routes import (
+    DEFAULT_ROUTE_LEASE_DURATION_MS,
     MAX_ROUTE_HISTORY,
+    MAX_ROUTE_LEASE_DURATION_MS,
+    MIN_ROUTE_LEASE_DURATION_MS,
     RouteTable,
     mark_forwarded_to_client,
     mark_received_from_client,
@@ -372,6 +375,208 @@ async def test_route_table_trusted_remote_replaces_untrusted_claim() -> None:
     assert reachable.route.trust_status == "trusted"
     route = await bus.route_table.route_for(endpoint, lane="plugin_messages")
     assert route.client_id == "websocket:trusted"
+
+
+@pytest.mark.asyncio
+async def test_remote_route_claim_stores_soft_lease_timestamps() -> None:
+    bus = EventBus("plugin_messages")
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    route = await bus.route_table.claim_endpoint(
+        endpoint=host_address("python"),
+        lane="plugin_messages",
+        client_id="websocket:host",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        claim_source="transport_route",
+        now=now,
+    )
+
+    assert route is not None
+    assert route.claimed_at == now
+    assert route.last_seen_at == now
+    assert route.lease_duration_ms == DEFAULT_ROUTE_LEASE_DURATION_MS
+    assert route.lease_expires_at == now + timedelta(
+        milliseconds=DEFAULT_ROUTE_LEASE_DURATION_MS
+    )
+
+
+@pytest.mark.asyncio
+async def test_route_lease_duration_bounds_are_authoritative() -> None:
+    bus = EventBus("plugin_messages")
+
+    with pytest.raises(ValueError, match="at least"):
+        await bus.route_table.claim_endpoint(
+            endpoint=host_address("too-fast"),
+            lane="plugin_messages",
+            client_id="websocket:too-fast",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="transport_route",
+            lease_duration_ms=MIN_ROUTE_LEASE_DURATION_MS - 1,
+        )
+
+    with pytest.raises(ValueError, match="at most"):
+        await bus.route_table.claim_endpoint(
+            endpoint=host_address("too-slow"),
+            lane="plugin_messages",
+            client_id="websocket:too-slow",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="transport_route",
+            lease_duration_ms=MAX_ROUTE_LEASE_DURATION_MS + 1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_same_client_sender_claim_renews_transport_route() -> None:
+    bus = EventBus("plugin_messages")
+    handler = build_lane_handler(
+        lane="plugin_messages",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        bus=bus,
+    )
+    endpoint = host_address("test")
+    claimed_at = datetime(2026, 1, 1, tzinfo=UTC)
+    await bus.route_table.claim_endpoint(
+        endpoint=endpoint,
+        lane="plugin_messages",
+        client_id="websocket:host",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        claim_source="transport_route",
+        lease_duration_ms=120_000,
+        now=claimed_at,
+    )
+
+    async with bus.route_table.subscribe() as events, bus.subscribe() as messages:
+        await handler.handle_remote_message(_message(), client_id="websocket:host")
+        renewed = await _next_route_event(events, "routeLeaseRenewed")
+        received = await _next_message(messages, HOST_ONLINE)
+
+    assert received.route.current_client_id == "websocket:host"
+    assert renewed.route is not None
+    assert renewed.route.claim_source == "transport_route"
+    assert renewed.route.claimed_at == claimed_at
+    assert renewed.route.last_seen_at > claimed_at
+    assert renewed.route.lease_duration_ms == 120_000
+    assert renewed.route.lease_expires_at == renewed.route.last_seen_at + timedelta(
+        milliseconds=120_000
+    )
+
+
+@pytest.mark.asyncio
+async def test_expire_routes_removes_remote_routes_and_reports_route_loss() -> None:
+    bus = EventBus("plugin_messages")
+    endpoint = host_address("python")
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    route = await bus.route_table.claim_endpoint(
+        endpoint=endpoint,
+        lane="plugin_messages",
+        client_id="websocket:host",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        claim_source="transport_route",
+        now=now,
+    )
+    assert route is not None
+    assert route.lease_expires_at is not None
+
+    async with bus.route_table.subscribe() as events:
+        expired = await bus.route_table.expire_routes(
+            now=route.lease_expires_at + timedelta(milliseconds=1)
+        )
+        route_expired = await _next_route_event(events, "routeExpired")
+        unreachable = await _next_route_event(events, "endpointUnreachable")
+
+    assert expired == (route,)
+    assert route_expired.reason == "leaseExpired"
+    assert unreachable.reason == "leaseExpired"
+    assert await bus.route_table.route_for(endpoint, lane="plugin_messages") is None
+
+
+@pytest.mark.asyncio
+async def test_local_routes_do_not_lease_expire() -> None:
+    bus = EventBus("plugin_messages")
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    route = await bus.route_table.claim_endpoint(
+        endpoint=host_address("local"),
+        lane="plugin_messages",
+        client_id="local:host:local",
+        client_kind="local",
+        now=now,
+    )
+
+    assert route is not None
+    assert route.lease_expires_at is None
+    assert await bus.route_table.expire_routes(now=now + timedelta(days=1)) == ()
+    assert (
+        await bus.route_table.route_for(host_address("local"), lane="plugin_messages")
+    ) == route
+
+
+@pytest.mark.asyncio
+async def test_endpoint_capability_events_do_not_change_route_selection() -> None:
+    bus = EventBus("plugin_messages")
+    endpoint = host_address("python")
+
+    async with bus.route_table.subscribe() as events:
+        route = await bus.route_table.claim_endpoint(
+            endpoint=endpoint,
+            lane="plugin_messages",
+            client_id="websocket:host",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="transport_route",
+            capabilities=("actions",),
+        )
+        advertised = await _next_route_event(
+            events,
+            "endpointCapabilitiesAdvertised",
+        )
+
+    assert route is not None
+    assert advertised.route is not None
+    assert advertised.route.capabilities == ("actions",)
+
+    async with bus.route_table.subscribe() as events:
+        changed_route = await bus.route_table.update_endpoint_capabilities(
+            endpoint=endpoint,
+            lane="plugin_messages",
+            client_id="websocket:host",
+            capabilities=("actions", "settings"),
+        )
+        changed = await _next_route_event(events, "endpointCapabilitiesChanged")
+
+    assert changed_route is not None
+    assert changed.route is not None
+    assert changed.route.capabilities == ("actions", "settings")
+    assert (
+        await bus.route_table.route_for(endpoint, lane="plugin_messages")
+    ).client_id == "websocket:host"
+
+    async with bus.route_table.subscribe() as events:
+        withdrawn_route = await bus.route_table.update_endpoint_capabilities(
+            endpoint=endpoint,
+            lane="plugin_messages",
+            client_id="websocket:host",
+            capabilities=(),
+        )
+        withdrawn = await _next_route_event(events, "endpointCapabilitiesWithdrawn")
+
+    assert withdrawn_route is not None
+    assert withdrawn.route is not None
+    assert withdrawn.route.capabilities == ()
+    assert (
+        await bus.route_table.route_for(endpoint, lane="plugin_messages")
+    ).client_id == "websocket:host"
 
 
 @pytest.mark.asyncio
@@ -969,6 +1174,132 @@ async def test_route_table_accepts_extension_remote_claim_with_policy() -> None:
 
     assert accepted is not None
     assert accepted.endpoint == endpoint_address("acme_worker", "one")
+
+
+@pytest.mark.asyncio
+async def test_untrusted_bridged_endpoint_claim_is_rejected() -> None:
+    route_table = RouteTable(
+        lane_contracts=LaneContractRegistry(
+            [
+                LaneContract(
+                    lane="acme.bridge",
+                    schema_id="acme.bridge.v1",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset({"acme"}),
+                        bridgeable=True,
+                    ),
+                )
+            ]
+        )
+    )
+    bus = EventBus("acme.bridge", route_table=route_table)
+
+    async with bus.route_table.subscribe() as events:
+        rejected = await bus.route_table.claim_endpoint(
+            endpoint=endpoint_address("acme", "behind-bridge"),
+            lane="acme.bridge",
+            client_id="websocket:bridge",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            direct=False,
+            claim_source="transport_route",
+            trust_status="trusted",
+        )
+        event = await _next_route_event(events, "endpointClaimRejected")
+
+    assert rejected is None
+    assert event.reason == "bridged endpoint claims require trusted bridge authority"
+
+
+@pytest.mark.asyncio
+async def test_trusted_bridged_endpoint_claim_requires_bridgeable_lane() -> None:
+    bus = EventBus("plugin_messages")
+
+    async with bus.route_table.subscribe() as events:
+        rejected = await bus.route_table.claim_endpoint(
+            endpoint=host_address("behind-bridge"),
+            lane="plugin_messages",
+            client_id="websocket:bridge",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            direct=False,
+            claim_source="transport_route",
+            trust_status="trusted",
+            trusted_bridge=True,
+            authority_id="local-config",
+        )
+        event = await _next_route_event(events, "endpointClaimRejected")
+
+    assert rejected is None
+    assert event.reason == "lane 'plugin_messages' does not allow bridged endpoint claims"
+
+
+@pytest.mark.asyncio
+async def test_trusted_bridge_forwards_bridgeable_extension_lane_and_drops_duplicate() -> (
+    None
+):
+    route_table = RouteTable(
+        lane_contracts=LaneContractRegistry(
+            [
+                LaneContract(
+                    lane="acme.bridge",
+                    schema_id="acme.bridge.v1",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset({"acme"}),
+                        allowed_sender_families=frozenset({"acme"}),
+                        allowed_recipient_families=frozenset({"acme"}),
+                        bridgeable=True,
+                    ),
+                )
+            ]
+        )
+    )
+    bus = EventBus("acme.bridge", route_table=route_table)
+    target = endpoint_address("acme", "behind-bridge")
+    accepted = await bus.route_table.claim_endpoint(
+        endpoint=target,
+        lane="acme.bridge",
+        client_id="websocket:bridge",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        direct=False,
+        claim_source="transport_route",
+        trust_status="trusted",
+        trusted_bridge=True,
+        authority_id="local-config",
+    )
+    message = _message("acme.bridge").model_copy(
+        update={
+            "sender": endpoint_address("acme", "origin"),
+            "recipient": endpoint_target(target),
+            "subject": entity_subject("bridge"),
+        }
+    )
+    received = mark_received_from_client(message, client_id="websocket:origin")
+
+    assert accepted is not None
+    assert (
+        await route_targets_client(
+            bus.route_table,
+            received,
+            client_id="websocket:bridge",
+        )
+    ) is True
+
+    async with bus.route_table.subscribe() as events:
+        assert (
+            await route_targets_client(
+                bus.route_table,
+                received,
+                client_id="websocket:bridge",
+            )
+        ) is False
+        dropped = await _next_route_event(events, "messageDropped")
+
+    assert dropped.reason == "duplicateBridgedMessage"
 
 
 @pytest.mark.asyncio
