@@ -9,7 +9,8 @@ That includes:
 
 - the `Component` runtime abstraction
 - named event lanes such as `plugin_messages` and `hardware_events`
-- core Deckr message specifications and transport-neutral routing contracts
+- core Deckr message specifications, identity rules, and transport-neutral
+  routing contracts
 - shared runtime utilities such as component lifecycle support and MQTT helpers
 - hardware-facing and plugin-facing shared models
 
@@ -72,8 +73,13 @@ Deckr’s target architecture is:
 - one runtime abstraction: `Component`
 - one discovery model
 - named event lanes as the only generic wiring primitive
+- shared lane infrastructure for application-facing send/subscribe/fan-out
 - transports modeled as ordinary components
 - core message and routing contracts defined in `deckr`
+- standard messaging substrates evaluated before Deckr builds generic broker
+  features itself
+- stable endpoint addresses and explicit subjects that are separate from
+  component runtime ids, transport ids, sessions, topics, and paths
 
 Controllers, drivers, plugin hosts, and transports are semantic roles, not
 different architectural kinds.
@@ -83,11 +89,25 @@ transport configuration, wire-safe schemas, configuration namespacing, and
 alpha policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
 
 If you are looking for the design rules around Deckr message routing,
-transport-neutral envelopes, endpoint reachability, clients, broadcasts, and
+transport-neutral envelopes, endpoint addresses, entity subjects, endpoint
+reachability, route claims, clients, broadcasts, delivery semantics, and
 disconnect cleanup, read [docs/bus-architecture.md](docs/bus-architecture.md).
 That document exists because local, MQTT, WebSocket, and future transports must
-carry the same Deckr messages without leaking transport identity into
-application routing.
+carry the same Deckr messages without leaking component lifecycle identity,
+transport identity, or transport topology into application routing.
+
+"Same semantics" does not mean every transport reimplements a bus. The shared
+lane bus owns the application-facing send/subscribe API and local fan-out.
+Transport components attach to lanes and translate concrete transport delivery
+into Deckr messages.
+
+It also does not mean Deckr should become NATS, Dapr, MQTT, WebSocket, Redis, or
+any other messaging system. Those systems may be adopted as substrates behind
+explicit transport adapter or bridge boundaries. Application code still speaks
+Deckr lanes, Deckr envelopes, Deckr endpoint addresses, and Deckr subjects.
+Before Deckr builds generic remote routing, durable delivery, replay,
+request/reply plumbing, duplicate windows, queue groups, TTL, or dead-letter
+behavior, the architecture should evaluate standard substrates first.
 
 ## Package Boundaries
 
@@ -118,7 +138,8 @@ and separate from adapter-private protocols such as Elgato plugin messages or
 Python plugin runtime control-plane messages.
 
 The current implementation still has known protocol-shape gaps, especially
-around `plugin_messages`. The intended bus model is documented in
+around `plugin_messages`, remote hardware routing, context ids, action
+addresses, and broadcast pseudo-addresses. The intended bus model is documented in
 [docs/bus-architecture.md](docs/bus-architecture.md): local and transported
 messages must share the same Deckr routing semantics, while transport-local
 framing and client/session identity stay below the application layer.
@@ -127,6 +148,13 @@ framing and client/session identity stay below the application layer.
 used by controllers, plugin hosts, transports, and non-Python implementations.
 Its public API shape should follow the bus architecture rather than preserve
 mistaken implementation details.
+
+In particular, endpoint addresses such as `controller:<controller_id>`,
+`host:<host_id>`, and `hardware_manager:<manager_id>` are protocol routing
+identities. They are not launcher runtime names, plugin runtime ids, WebSocket
+connection ids, MQTT topics, or concrete hardware ids. Device, slot, action,
+context, profile, and page references are subjects carried by lane messages, not
+transport locators.
 
 `deckr.python_plugin` defines only the Python plugin SDK surface. Other plugin
 formats should define their own SDK/protocol surfaces instead of importing this
