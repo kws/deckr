@@ -75,6 +75,14 @@ class DeckrLaneHandler:
             raise ValueError(
                 f"Remote message for lane {message.lane!r} cannot enter {self._lane!r}"
             )
+        if (
+            await self._route_table.remote_message_rejection_reason(
+                message,
+                client_id=client_id,
+            )
+            is not None
+        ):
+            return
         route = await self._route_table.claim_remote_sender(
             message,
             client_id=client_id,

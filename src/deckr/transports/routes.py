@@ -13,6 +13,7 @@ from deckr.contracts.lanes import (
     LaneContractRegistry,
 )
 from deckr.contracts.messages import (
+    BroadcastTarget,
     DeckrMessage,
     EndpointAddress,
     EndpointTarget,
@@ -30,7 +31,9 @@ RouteEventType = Literal[
     "endpointReachable",
     "endpointUnreachable",
     "endpointClaimRejected",
+    "messageRejected",
 ]
+MessagePolicyBoundary = Literal["remote_ingress", "transport_egress"]
 
 MAX_ROUTE_HISTORY = 16
 RouteKey = tuple[str, EndpointAddress]
@@ -77,6 +80,9 @@ class RouteEvent:
     client_id: str | None = None
     lane: str | None = None
     endpoint: EndpointAddress | None = None
+    message_id: str | None = None
+    message_type: str | None = None
+    sender: EndpointAddress | None = None
     route: EndpointRoute | None = None
     rejected_route: EndpointRoute | None = None
     reason: str | None = None
@@ -208,7 +214,7 @@ class RouteTable:
                 trust_status=trust_status,
                 capabilities=normalized_capabilities,
             )
-            rejection_reason = self._remote_claim_rejection_reason(
+            rejection_reason = self._claim_rejection_reason(
                 candidate,
             )
             if rejection_reason is not None:
@@ -362,6 +368,87 @@ class RouteTable:
             capabilities=capabilities,
         )
 
+    async def remote_message_rejection_reason(
+        self,
+        message: DeckrMessage,
+        *,
+        client_id: str,
+    ) -> str | None:
+        reason = self._message_policy_rejection_reason(
+            message,
+            boundary="remote_ingress",
+        )
+        if reason is not None:
+            await self._publish_message_rejected(
+                message,
+                client_id=client_id,
+                reason=reason,
+            )
+        return reason
+
+    async def route_targets_client(
+        self,
+        message: DeckrMessage,
+        *,
+        client_id: str,
+    ) -> bool:
+        if not should_forward_to_client(message, client_id=client_id):
+            return False
+
+        reason = self._message_policy_rejection_reason(
+            message,
+            boundary="transport_egress",
+        )
+        if reason is not None:
+            await self._publish_message_rejected(
+                message,
+                client_id=client_id,
+                reason=reason,
+            )
+            return False
+
+        bridge_rejection: str | None = None
+        targets_client = False
+        async with self._lock:
+            client = self._clients.get(client_id)
+            if client is None:
+                return False
+            contract = self._lane_contracts.contract_for(message.lane)
+            if (
+                client.client_kind == "remote"
+                and message.route is not None
+                and message.route.origin_client_id is not None
+                and message.route.origin_client_id != client_id
+                and contract.route_policy.bridgeable is not True
+            ):
+                bridge_rejection = (
+                    f"lane {message.lane!r} does not allow remote-to-remote forwarding"
+                )
+            else:
+                recipient = message.recipient
+                if isinstance(recipient, EndpointTarget):
+                    route = self._routes.get(
+                        self._route_key(lane=message.lane, endpoint=recipient.endpoint)
+                    )
+                    targets_client = route is not None and route.client_id == client_id
+                elif isinstance(recipient, BroadcastTarget):
+                    route_keys = self._routes_by_client.get(client_id, set())
+                    targets_client = any(
+                        route.lane == message.lane
+                        and route.endpoint.family == recipient.endpoint_family
+                        for route_key in route_keys
+                        if (route := self._routes.get(route_key)) is not None
+                    )
+
+        if bridge_rejection is not None:
+            await self._publish_message_rejected(
+                message,
+                client_id=client_id,
+                reason=bridge_rejection,
+            )
+            return False
+        return targets_client
+
     @asynccontextmanager
     async def subscribe(
         self,
@@ -391,24 +478,152 @@ class RouteTable:
                 async with self._lock:
                     self._subscribers.discard(send)
 
+    async def _publish_message_rejected(
+        self,
+        message: DeckrMessage,
+        *,
+        client_id: str,
+        reason: str,
+    ) -> None:
+        await self._publish(
+            RouteEvent(
+                event_type="messageRejected",
+                client_id=client_id,
+                lane=message.lane,
+                message_id=message.message_id,
+                message_type=message.message_type,
+                sender=message.sender,
+                reason=reason,
+            )
+        )
+
     def _route_key(self, *, lane: str, endpoint: EndpointAddress) -> RouteKey:
         return (lane, endpoint)
 
-    def _remote_claim_rejection_reason(
+    def _message_policy_rejection_reason(
+        self,
+        message: DeckrMessage,
+        *,
+        boundary: MessagePolicyBoundary,
+    ) -> str | None:
+        contract = self._lane_contracts.contract_for(message.lane)
+        policy = contract.route_policy
+
+        if message.message_type in policy.local_only_message_types:
+            return (
+                f"message type {message.message_type!r} on lane {message.lane!r} "
+                "is local-only"
+            )
+
+        sender_families = policy.allowed_sender_families
+        if (
+            sender_families is not None
+            and message.sender.family not in sender_families
+        ):
+            return (
+                f"sender family {message.sender.family!r} is not allowed "
+                f"on lane {message.lane!r}"
+            )
+
+        reserved_sender = self._reserved_endpoint_rejection_reason(
+            message.sender,
+            lane=message.lane,
+            role="sender",
+        )
+        if reserved_sender is not None:
+            return reserved_sender
+
+        recipient = message.recipient
+        if isinstance(recipient, EndpointTarget):
+            recipient_families = policy.allowed_recipient_families
+            if (
+                recipient_families is not None
+                and recipient.endpoint.family not in recipient_families
+            ):
+                return (
+                    f"recipient family {recipient.endpoint.family!r} is not allowed "
+                    f"on lane {message.lane!r}"
+                )
+            return self._reserved_endpoint_rejection_reason(
+                recipient.endpoint,
+                lane=message.lane,
+                role="recipient",
+            )
+
+        if isinstance(recipient, BroadcastTarget):
+            return self._broadcast_rejection_reason(
+                recipient,
+                lane=message.lane,
+                boundary=boundary,
+            )
+        return "message recipient target is not supported"
+
+    def _reserved_endpoint_rejection_reason(
+        self,
+        endpoint: EndpointAddress,
+        *,
+        lane: str,
+        role: str,
+    ) -> str | None:
+        contract = self._lane_contracts.contract_for(lane)
+        reserved_families = contract.route_policy.reserved_endpoint_ids.get(
+            endpoint.endpoint_id,
+            frozenset(),
+        )
+        if endpoint.family not in reserved_families:
+            return None
+        return (
+            f"reserved endpoint id {endpoint.endpoint_id!r} cannot be used as "
+            f"{role} for family {endpoint.family!r} on lane {lane!r}"
+        )
+
+    def _broadcast_rejection_reason(
+        self,
+        target: BroadcastTarget,
+        *,
+        lane: str,
+        boundary: MessagePolicyBoundary,
+    ) -> str | None:
+        contract = self._lane_contracts.contract_for(lane)
+        policy = contract.route_policy
+        if not policy.broadcast_targets:
+            return f"broadcast messages are not allowed on lane {lane!r}"
+        expected_family = policy.broadcast_targets.get(target.scope)
+        if expected_family is None:
+            return (
+                f"broadcast scope {target.scope!r} is not allowed "
+                f"on lane {lane!r}"
+            )
+        if target.endpoint_family != expected_family:
+            return (
+                f"broadcast scope {target.scope!r} on lane {lane!r} requires "
+                f"endpoint family {expected_family!r}, got {target.endpoint_family!r}"
+            )
+        if target.domain is not None:
+            return (
+                f"broadcast domain {target.domain!r} is not supported "
+                f"on lane {lane!r}"
+            )
+        hop_limit = (
+            target.hop_limit
+            if target.hop_limit is not None
+            else policy.default_broadcast_hop_limit
+        )
+        if hop_limit is None:
+            return None
+        if hop_limit < 0:
+            return "broadcast hop_limit must be non-negative"
+        if hop_limit > 1:
+            return "multi-hop broadcast requires bridge policy"
+        if hop_limit == 0 and boundary in {"remote_ingress", "transport_egress"}:
+            return "broadcast hop_limit=0 cannot cross a transport boundary"
+        return None
+
+    def _claim_rejection_reason(
         self,
         route: EndpointRoute,
     ) -> str | None:
-        if route.client_kind != "remote":
-            return None
         contract = self._lane_contracts.contract_for(route.lane)
-        families = contract.route_policy.remote_claim_endpoint_families
-        if not families:
-            return f"remote endpoint claims are not allowed on lane {route.lane!r}"
-        if route.endpoint.family not in families:
-            return (
-                f"endpoint family {route.endpoint.family!r} cannot be claimed "
-                f"on lane {route.lane!r}"
-            )
         reserved_families = contract.route_policy.reserved_endpoint_ids.get(
             route.endpoint.endpoint_id,
             frozenset(),
@@ -417,6 +632,16 @@ class RouteTable:
             return (
                 f"reserved endpoint id {route.endpoint.endpoint_id!r} cannot "
                 f"be claimed for family {route.endpoint.family!r} "
+                f"on lane {route.lane!r}"
+            )
+        if route.client_kind != "remote":
+            return None
+        families = contract.route_policy.remote_claim_endpoint_families
+        if not families:
+            return f"remote endpoint claims are not allowed on lane {route.lane!r}"
+        if route.endpoint.family not in families:
+            return (
+                f"endpoint family {route.endpoint.family!r} cannot be claimed "
                 f"on lane {route.lane!r}"
             )
         if not route.direct and route.trust_status != "trusted":
@@ -496,10 +721,4 @@ async def route_targets_client(
     *,
     client_id: str,
 ) -> bool:
-    if not should_forward_to_client(message, client_id=client_id):
-        return False
-    recipient = message.recipient
-    if not isinstance(recipient, EndpointTarget):
-        return True
-    route = await route_table.route_for(recipient.endpoint, lane=message.lane)
-    return route is not None and route.client_id == client_id
+    return await route_table.route_targets_client(message, client_id=client_id)

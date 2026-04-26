@@ -12,6 +12,7 @@ from deckr.contracts.messages import (
 )
 
 EndpointFamilies = frozenset[str]
+BroadcastTargets = Mapping[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +20,8 @@ class LaneRoutePolicy:
     remote_claim_endpoint_families: EndpointFamilies = frozenset()
     allowed_sender_families: EndpointFamilies | None = None
     allowed_recipient_families: EndpointFamilies | None = None
-    broadcast_targets: EndpointFamilies | None = None
+    broadcast_targets: BroadcastTargets = field(default_factory=dict)
+    default_broadcast_hop_limit: int | None = None
     bridgeable: bool | None = None
     local_only_message_types: frozenset[str] = frozenset()
     delivery_semantics: str | None = None
@@ -54,6 +56,14 @@ CORE_LANE_CONTRACTS: Mapping[str, LaneContract] = {
         schema_id=CORE_LANE_SCHEMA_IDS[PLUGIN_MESSAGES_LANE],
         route_policy=LaneRoutePolicy(
             remote_claim_endpoint_families=frozenset({"controller", "host"}),
+            allowed_sender_families=frozenset({"controller", "host"}),
+            allowed_recipient_families=frozenset({"controller", "host"}),
+            broadcast_targets={
+                "plugin_hosts": "host",
+                "controllers": "controller",
+            },
+            default_broadcast_hop_limit=1,
+            bridgeable=False,
             reserved_endpoint_ids={
                 BUILTIN_ACTION_PROVIDER_ID: frozenset({"host"}),
                 LEGACY_BUILTIN_ACTION_PROVIDER_ID: frozenset({"host"}),
@@ -67,6 +77,15 @@ CORE_LANE_CONTRACTS: Mapping[str, LaneContract] = {
             remote_claim_endpoint_families=frozenset(
                 {"controller", "hardware_manager"}
             ),
+            allowed_sender_families=frozenset({"controller", "hardware_manager"}),
+            allowed_recipient_families=frozenset(
+                {"controller", "hardware_manager"}
+            ),
+            broadcast_targets={
+                "controllers": "controller",
+            },
+            default_broadcast_hop_limit=1,
+            bridgeable=False,
         ),
     ),
 }

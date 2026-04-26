@@ -554,6 +554,7 @@ def _validate_config(config: WebSocketTransportConfig) -> WebSocketTransportConf
 
     validate_binding_schema_ids(config.bindings)
 
+    server_path_lanes: set[tuple[str, str]] = set()
     for binding_id, binding in config.bindings.items():
         if not binding.enabled:
             continue
@@ -564,6 +565,13 @@ def _validate_config(config: WebSocketTransportConfig) -> WebSocketTransportConf
                     f"WebSocket transport binding {binding_id!r} requires path in server mode"
                 )
             binding.path = path if path.startswith("/") else f"/{path}"
+            path_lane = (binding.path, binding.lane)
+            if path_lane in server_path_lanes:
+                raise ValueError(
+                    "WebSocket transport server bindings must not duplicate "
+                    f"path/lane {binding.path!r}/{binding.lane!r}"
+                )
+            server_path_lanes.add(path_lane)
             binding.uri = None
         else:
             uri = (binding.uri or "").strip()
