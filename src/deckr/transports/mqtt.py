@@ -9,6 +9,10 @@ import anyio
 from anyio import get_cancelled_exc_class
 from pydantic import ValidationError
 
+from deckr.contracts.lanes import (
+    DEFAULT_LANE_CONTRACT_REGISTRY,
+    LaneContractRegistry,
+)
 from deckr.contracts.messages import DeckrMessage, TransportFrame
 from deckr.core.component import BaseComponent, RunContext
 from deckr.core.components import (
@@ -24,6 +28,7 @@ from deckr.transports._common import (
     _StrictConfigModel,
     lanes_for_bindings,
     transport_id_for,
+    validate_binding_contracts,
     validate_binding_schema_ids,
 )
 from deckr.transports._lanes import build_lane_handler
@@ -31,7 +36,7 @@ from deckr.transports.routes import mark_forwarded_to_client
 
 logger = logging.getLogger(__name__)
 
-QOS = 2
+_SEND_TIMEOUT = 0.25
 TRANSPORT_KIND = "mqtt"
 
 
@@ -63,6 +68,8 @@ def parse_mqtt_frame(payload: Any) -> TransportFrame:
 
 class MqttTransportBindingConfig(TransportBindingConfigBase):
     topic: str
+    qos: int = 0
+    retain: bool = False
 
 
 class MqttTransportConfig(_StrictConfigModel):
@@ -72,6 +79,8 @@ class MqttTransportConfig(_StrictConfigModel):
     port: int = 1883
     username: str | None = None
     password: str | None = None
+    clean_session: bool = True
+    clean_start: bool = True
     bindings: dict[str, MqttTransportBindingConfig]
 
 
@@ -136,6 +145,8 @@ class MqttTransportComponent(BaseComponent):
                     port=self._config.port,
                     username=self._config.username,
                     password=self._config.password,
+                    clean_session=self._config.clean_session,
+                    clean_start=self._config.clean_start,
                 ) as client:
                     await binding.bus.route_table.client_connected(
                         client_id=binding.client_id,
@@ -145,7 +156,10 @@ class MqttTransportComponent(BaseComponent):
                         description=binding.binding_id,
                     )
                     if binding.config.allows_ingress():
-                        await client.subscribe(binding.config.topic, qos=QOS)
+                        await client.subscribe(
+                            binding.config.topic,
+                            qos=binding.config.qos,
+                        )
                     async with anyio.create_task_group() as tg:
                         if binding.config.allows_egress():
                             tg.start_soon(self._bus_to_mqtt_loop, client, binding)
@@ -200,6 +214,8 @@ class MqttTransportComponent(BaseComponent):
                     frame.message,
                     client_id=binding.client_id,
                 )
+            except json.JSONDecodeError:
+                logger.warning("Dropped malformed MQTT JSON message")
             except MqttTransportFrameError:
                 logger.warning("Dropped malformed MQTT transport frame")
             except Exception:
@@ -221,20 +237,90 @@ class MqttTransportComponent(BaseComponent):
             mark_forwarded_to_client(message, client_id=binding.client_id),
             client_id=binding.client_id,
         )
-        await client.publish(
-            binding.config.topic,
-            json.dumps(frame),
-            qos=QOS,
-        )
+        with anyio.move_on_after(_SEND_TIMEOUT) as scope:
+            await client.publish(
+                binding.config.topic,
+                json.dumps(frame),
+                qos=binding.config.qos,
+                retain=binding.config.retain,
+            )
+        if scope.cancel_called:
+            await binding.bus.route_table.message_dropped(
+                message,
+                client_id=binding.client_id,
+                reason="slowRemoteClient",
+            )
+            await binding.bus.route_table.client_disconnected(binding.client_id)
 
     async def stop(self) -> None:
         return
 
 
-def _config_from_mapping(source: Mapping[str, Any]) -> MqttTransportConfig:
+def _config_from_mapping(
+    source: Mapping[str, Any],
+    *,
+    lane_contracts: LaneContractRegistry = DEFAULT_LANE_CONTRACT_REGISTRY,
+) -> MqttTransportConfig:
     config = MqttTransportConfig.model_validate(dict(source))
-    validate_binding_schema_ids(config.bindings)
+    _validate_config(config, lane_contracts=lane_contracts)
     return config
+
+
+def _validate_config(
+    config: MqttTransportConfig,
+    *,
+    lane_contracts: LaneContractRegistry,
+) -> MqttTransportConfig:
+    if not config.bindings:
+        raise ValueError("MQTT transport requires at least one binding")
+    validate_binding_schema_ids(config.bindings)
+    for binding_id, binding in config.bindings.items():
+        if not binding.enabled:
+            continue
+        if binding.qos < 0 or binding.qos > 2:
+            raise ValueError(
+                f"MQTT transport binding {binding_id!r} qos must be 0, 1, or 2"
+            )
+        delivery = lane_contracts.contract_for(binding.lane).delivery
+        if delivery is None:
+            continue
+        if binding.qos > delivery.mqtt.max_qos:
+            raise ValueError(
+                f"MQTT transport binding {binding_id!r} for lane {binding.lane!r} "
+                f"supports qos <= {delivery.mqtt.max_qos}"
+            )
+        if binding.retain and not delivery.mqtt.retain:
+            raise ValueError(
+                f"MQTT transport binding {binding_id!r} for lane {binding.lane!r} "
+                "must not retain messages"
+            )
+    non_persistent_bindings_enabled = any(
+        binding.enabled
+        and (delivery := lane_contracts.contract_for(binding.lane).delivery) is not None
+        and not delivery.mqtt.persistent_session
+        for binding in config.bindings.values()
+    )
+    if non_persistent_bindings_enabled and not config.clean_session:
+        raise ValueError("MQTT lane delivery requires clean_session=true")
+    if non_persistent_bindings_enabled and not config.clean_start:
+        raise ValueError("MQTT lane delivery requires clean_start=true")
+    return config
+
+
+def _validate_lane_bindings(
+    *,
+    raw_config: Mapping[str, Any],
+    instance_id: str,
+    lane_contracts,
+) -> None:
+    del instance_id
+    source = dict(raw_config)
+    if not source:
+        return
+    config = _config_from_mapping(source, lane_contracts=lane_contracts)
+    if not config.enabled:
+        return
+    validate_binding_contracts(config.bindings, lane_contracts)
 
 
 def _resolve_lanes(
@@ -294,4 +380,5 @@ component = ComponentDefinition(
     ),
     factory=component_factory,
     resolve_lanes=_resolve_lanes,
+    validate_lane_bindings=_validate_lane_bindings,
 )

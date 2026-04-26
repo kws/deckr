@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field, RootModel, field_serializer, field_validator
@@ -105,7 +105,11 @@ def hardware_manager_address(manager_id: str) -> EndpointAddress:
 
 
 def parse_endpoint_address(address: str | EndpointAddress) -> EndpointAddress:
-    return address if isinstance(address, EndpointAddress) else EndpointAddress.model_validate(address)
+    return (
+        address
+        if isinstance(address, EndpointAddress)
+        else EndpointAddress.model_validate(address)
+    )
 
 
 def parse_controller_address(address: str | EndpointAddress) -> str | None:
@@ -151,7 +155,9 @@ class BroadcastTarget(DeckrModel):
     hop_limit: int | None = None
 
 
-MessageTarget = Annotated[EndpointTarget | BroadcastTarget, Field(discriminator="target_type")]
+MessageTarget = Annotated[
+    EndpointTarget | BroadcastTarget, Field(discriminator="target_type")
+]
 
 
 def endpoint_target(endpoint: str | EndpointAddress) -> EndpointTarget:
@@ -268,6 +274,13 @@ class DeckrMessage(DeckrModel):
     route: RouteMetadata | None = None
     body: Mapping[str, Any]
 
+    @field_validator("ttl_ms")
+    @classmethod
+    def _validate_ttl_ms(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("ttlMs must be non-negative")
+        return value
+
     @field_validator("body", mode="after")
     @classmethod
     def _freeze_body(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -325,3 +338,30 @@ def is_direct_message(message: DeckrMessage) -> bool:
 
 def message_schema_id_for_lane(lane: str) -> str | None:
     return CORE_LANE_SCHEMA_IDS.get(lane)
+
+
+def message_expires_at(message: DeckrMessage) -> datetime | None:
+    expiries: list[datetime] = []
+    if message.expires_at is not None:
+        expiries.append(message.expires_at)
+    if message.ttl_ms is not None:
+        expiries.append(message.created_at + timedelta(milliseconds=message.ttl_ms))
+    if not expiries:
+        return None
+    return min(expiries)
+
+
+def message_is_expired(
+    message: DeckrMessage,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    expires_at = message_expires_at(message)
+    if expires_at is None:
+        return False
+    current = now or _now_utc()
+    if expires_at.tzinfo is None and current.tzinfo is not None:
+        expires_at = expires_at.replace(tzinfo=current.tzinfo)
+    elif expires_at.tzinfo is not None and current.tzinfo is None:
+        current = current.replace(tzinfo=expires_at.tzinfo)
+    return expires_at <= current

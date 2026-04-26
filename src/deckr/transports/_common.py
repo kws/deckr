@@ -4,6 +4,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+from deckr.contracts.lanes import LaneContractRegistry
 from deckr.contracts.messages import CORE_LANE_SCHEMA_IDS
 from deckr.core.components import ResolvedLaneSet
 
@@ -65,6 +66,28 @@ def validate_binding_schema_ids(
     for binding in bindings.values():
         if binding.enabled:
             binding.resolved_schema_id()
+
+
+def validate_binding_contracts(
+    bindings: dict[str, TransportBindingConfigBase],
+    lane_contracts: LaneContractRegistry,
+) -> None:
+    for binding_id, binding in bindings.items():
+        if not binding.enabled:
+            continue
+        schema_id = binding.resolved_schema_id()
+        contract = lane_contracts.contract_for(binding.lane)
+        if contract.schema_id is None:
+            raise ValueError(
+                f"Transport binding {binding_id!r} for extension lane "
+                f"{binding.lane!r} has no resolved lane contract"
+            )
+        if contract.schema_id != schema_id:
+            raise ValueError(
+                f"Transport binding {binding_id!r} schema_id {schema_id!r} "
+                f"must match resolved lane contract schema_id "
+                f"{contract.schema_id!r} for lane {binding.lane!r}"
+            )
 
 
 def lanes_for_bindings(

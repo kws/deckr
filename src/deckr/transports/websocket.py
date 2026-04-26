@@ -31,6 +31,7 @@ from deckr.transports._common import (
     _StrictConfigModel,
     lanes_for_bindings,
     transport_id_for,
+    validate_binding_contracts,
     validate_binding_schema_ids,
 )
 from deckr.transports._lanes import build_lane_handler
@@ -395,7 +396,27 @@ class WebSocketTransportComponent(BaseComponent):
             mark_forwarded_to_client(message, client_id=binding.client_id),
             client_id=binding.client_id,
         )
-        await websocket.send(json.dumps(frame))
+        try:
+            with anyio.move_on_after(_SEND_TIMEOUT) as scope:
+                await websocket.send(json.dumps(frame))
+            if scope.cancel_called:
+                await binding.bus.route_table.message_dropped(
+                    message,
+                    client_id=binding.client_id,
+                    reason="slowRemoteClient",
+                )
+                await binding.bus.route_table.client_disconnected(binding.client_id)
+                await binding.handler.handle_transport_disconnect()
+                await websocket.close()
+        except Exception:
+            logger.exception("Error sending WebSocket message to client")
+            await binding.bus.route_table.message_dropped(
+                message,
+                client_id=binding.client_id,
+                reason="remoteSendFailed",
+            )
+            await binding.bus.route_table.client_disconnected(binding.client_id)
+            await binding.handler.handle_transport_disconnect()
 
     async def _send_to_server_connections(
         self,
@@ -437,11 +458,21 @@ class WebSocketTransportComponent(BaseComponent):
                 with anyio.move_on_after(_SEND_TIMEOUT) as scope:
                     await websocket.send(text)
                 if scope.cancel_called:
+                    await binding.bus.route_table.message_dropped(
+                        message,
+                        client_id=client_id,
+                        reason="slowRemoteClient",
+                    )
                     to_close.append(websocket)
             except ConnectionClosed:
                 to_close.append(websocket)
             except Exception:
                 logger.exception("Error sending WebSocket message to client")
+                await binding.bus.route_table.message_dropped(
+                    message,
+                    client_id=client_id,
+                    reason="remoteSendFailed",
+                )
                 to_close.append(websocket)
 
         for websocket in to_close:
@@ -589,6 +620,22 @@ def _config_from_mapping(source: Mapping[str, Any]) -> WebSocketTransportConfig:
     return _validate_config(config)
 
 
+def _validate_lane_bindings(
+    *,
+    raw_config: Mapping[str, Any],
+    instance_id: str,
+    lane_contracts,
+) -> None:
+    del instance_id
+    source = dict(raw_config)
+    if not source:
+        return
+    config = _config_from_mapping(source)
+    if not config.enabled:
+        return
+    validate_binding_contracts(config.bindings, lane_contracts)
+
+
 def _resolve_lanes(
     *,
     manifest: ComponentManifest,
@@ -646,4 +693,5 @@ component = ComponentDefinition(
     ),
     factory=component_factory,
     resolve_lanes=_resolve_lanes,
+    validate_lane_bindings=_validate_lane_bindings,
 )

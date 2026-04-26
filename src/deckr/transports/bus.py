@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 
 import anyio
 
+from deckr.contracts.lanes import BackpressureHandling
 from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.transports.routes import RouteTable
 
@@ -38,6 +39,8 @@ class EventBus:
             raise ValueError(
                 f"Cannot send message for lane {message.lane!r} on bus {self.lane!r}"
             )
+        if await self.route_table.local_message_rejection_reason(message) is not None:
+            return
         # Snapshot subscribers quickly under lock
         async with self._lock:
             subs = list(self._subscribers.items())
@@ -55,11 +58,26 @@ class EventBus:
 
         # evict slow subscribers
         if to_drop:
+            delivery = self.route_table.delivery_for_lane(self.lane)
+            local_backpressure = (
+                delivery.local_backpressure if delivery is not None else None
+            )
+            if (
+                local_backpressure is not None
+                and local_backpressure != BackpressureHandling.DROP_SUBSCRIBER
+            ):
+                return
             logger.warning(
                 "EventBus dropped %d slow subscriber(s) while delivering %s",
                 len(to_drop),
                 message.message_type,
             )
+            for sid in to_drop:
+                await self.route_table.message_dropped(
+                    message,
+                    client_id=sid,
+                    reason="slowLocalSubscriber",
+                )
             async with self._lock:
                 for sid in to_drop:
                     s = self._subscribers.pop(sid, None)

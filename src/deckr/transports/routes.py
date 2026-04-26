@@ -10,6 +10,8 @@ import anyio
 
 from deckr.contracts.lanes import (
     DEFAULT_LANE_CONTRACT_REGISTRY,
+    DeliverySemantics,
+    ExpiryHandling,
     LaneContractRegistry,
 )
 from deckr.contracts.messages import (
@@ -18,6 +20,7 @@ from deckr.contracts.messages import (
     EndpointAddress,
     EndpointTarget,
     RouteMetadata,
+    message_is_expired,
     parse_endpoint_address,
 )
 
@@ -32,6 +35,7 @@ RouteEventType = Literal[
     "endpointUnreachable",
     "endpointClaimRejected",
     "messageRejected",
+    "messageDropped",
 ]
 MessagePolicyBoundary = Literal["remote_ingress", "transport_egress"]
 
@@ -386,6 +390,44 @@ class RouteTable:
             )
         return reason
 
+    async def local_message_rejection_reason(
+        self,
+        message: DeckrMessage,
+    ) -> str | None:
+        reason = self._message_policy_rejection_reason(
+            message,
+            boundary="local",
+        )
+        if reason is not None:
+            await self._publish_message_rejected(
+                message,
+                client_id=None,
+                reason=reason,
+            )
+        return reason
+
+    async def message_dropped(
+        self,
+        message: DeckrMessage,
+        *,
+        client_id: str | None,
+        reason: str,
+    ) -> None:
+        await self._publish(
+            RouteEvent(
+                event_type="messageDropped",
+                client_id=client_id,
+                lane=message.lane,
+                message_id=message.message_id,
+                message_type=message.message_type,
+                sender=message.sender,
+                reason=reason,
+            )
+        )
+
+    def delivery_for_lane(self, lane: str) -> DeliverySemantics | None:
+        return self._lane_contracts.contract_for(lane).delivery
+
     async def route_targets_client(
         self,
         message: DeckrMessage,
@@ -482,7 +524,7 @@ class RouteTable:
         self,
         message: DeckrMessage,
         *,
-        client_id: str,
+        client_id: str | None,
         reason: str,
     ) -> None:
         await self._publish(
@@ -504,22 +546,37 @@ class RouteTable:
         self,
         message: DeckrMessage,
         *,
-        boundary: MessagePolicyBoundary,
+        boundary: MessagePolicyBoundary | Literal["local"],
     ) -> str | None:
         contract = self._lane_contracts.contract_for(message.lane)
         policy = contract.route_policy
 
-        if message.message_type in policy.local_only_message_types:
+        if message_is_expired(message):
+            delivery = contract.delivery
+            if delivery is None or delivery.expiry == ExpiryHandling.DROP_AND_REPORT:
+                return f"message {message.message_id!r} expired"
+            return f"message {message.message_id!r} expired"
+
+        if (
+            contract.message_types
+            and message.message_type not in contract.message_types
+        ):
+            return (
+                f"message type {message.message_type!r} is not supported "
+                f"on lane {message.lane!r}"
+            )
+
+        if (
+            boundary != "local"
+            and message.message_type in policy.local_only_message_types
+        ):
             return (
                 f"message type {message.message_type!r} on lane {message.lane!r} "
                 "is local-only"
             )
 
         sender_families = policy.allowed_sender_families
-        if (
-            sender_families is not None
-            and message.sender.family not in sender_families
-        ):
+        if sender_families is not None and message.sender.family not in sender_families:
             return (
                 f"sender family {message.sender.family!r} is not allowed "
                 f"on lane {message.lane!r}"
@@ -590,10 +647,7 @@ class RouteTable:
             return f"broadcast messages are not allowed on lane {lane!r}"
         expected_family = policy.broadcast_targets.get(target.scope)
         if expected_family is None:
-            return (
-                f"broadcast scope {target.scope!r} is not allowed "
-                f"on lane {lane!r}"
-            )
+            return f"broadcast scope {target.scope!r} is not allowed on lane {lane!r}"
         if target.endpoint_family != expected_family:
             return (
                 f"broadcast scope {target.scope!r} on lane {lane!r} requires "
@@ -601,8 +655,7 @@ class RouteTable:
             )
         if target.domain is not None:
             return (
-                f"broadcast domain {target.domain!r} is not supported "
-                f"on lane {lane!r}"
+                f"broadcast domain {target.domain!r} is not supported on lane {lane!r}"
             )
         hop_limit = (
             target.hop_limit

@@ -5,7 +5,7 @@ from pathlib import Path
 import anyio
 import pytest
 
-from deckr.contracts.lanes import LaneContract, LaneRoutePolicy
+from deckr.contracts.lanes import DeliverySemantics, LaneContract, LaneRoutePolicy
 from deckr.contracts.messages import (
     DeckrMessage,
     controller_address,
@@ -34,6 +34,7 @@ from deckr.pluginhost.messages import (
     plugin_message,
     plugin_payload,
 )
+from deckr.transports.websocket import component as websocket_transport_component
 
 
 def _core_wire_schemas() -> dict[str, dict]:
@@ -338,6 +339,346 @@ async def test_activate_components_uses_manifest_lane_contracts(
         )
 
         assert accepted is not None
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_extension_lane_contracts_must_be_identical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    contract = LaneContract(
+        lane=lane,
+        schema_id="acme.metrics.events.v1",
+        route_policy=LaneRoutePolicy(
+            remote_claim_endpoint_families=frozenset({"acme_worker"}),
+        ),
+    )
+    first = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics.one",
+            config_prefix="deckr.acme.metrics.one",
+            consumes=(lane,),
+            lane_contracts=(contract,),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    second = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics.two",
+            config_prefix="deckr.acme.metrics.two",
+            publishes=(lane,),
+            lane_contracts=(contract,),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    definitions = {
+        first.manifest.component_id: first,
+        second.manifest.component_id: second,
+    }
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: sorted(definitions),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definitions[component_id],
+    )
+    document = _document(
+        {
+            "deckr": {
+                "acme": {
+                    "metrics": {
+                        "one": {"enabled": True},
+                        "two": {"enabled": True},
+                    }
+                }
+            }
+        }
+    )
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        result = await activate_components(document, component_manager)
+        assert result.get_lane(lane) is not None
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_conflicting_duplicate_extension_lane_contracts_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    first = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics.one",
+            config_prefix="deckr.acme.metrics.one",
+            consumes=(lane,),
+            lane_contracts=(
+                LaneContract(
+                    lane=lane,
+                    schema_id="acme.metrics.events.v1",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset({"acme_worker"}),
+                    ),
+                ),
+            ),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    second = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics.two",
+            config_prefix="deckr.acme.metrics.two",
+            publishes=(lane,),
+            lane_contracts=(
+                LaneContract(
+                    lane=lane,
+                    schema_id="acme.metrics.events.v2",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset({"acme_worker"}),
+                    ),
+                ),
+            ),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    definitions = {
+        first.manifest.component_id: first,
+        second.manifest.component_id: second,
+    }
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: sorted(definitions),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definitions[component_id],
+    )
+    document = _document(
+        {
+            "deckr": {
+                "acme": {
+                    "metrics": {
+                        "one": {"enabled": True},
+                        "two": {"enabled": True},
+                    }
+                }
+            }
+        }
+    )
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        with pytest.raises(ValueError, match="Duplicate lane contract"):
+            await activate_components(document, component_manager)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_lane_delivery_profile_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+            lane_contracts=(
+                LaneContract(
+                    lane=lane,
+                    schema_id="acme.metrics.events.v1",
+                    delivery=DeliverySemantics(guarantee="at_least_once"),
+                ),
+            ),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.acme.metrics"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definition,
+    )
+    document = _document({"deckr": {"acme": {"metrics": {"enabled": True}}}})
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        with pytest.raises(ValueError, match="only at-most-once"):
+            await activate_components(document, component_manager)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_deployment_delivery_profile_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.acme.metrics"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definition,
+    )
+    document = _document(
+        {
+            "deckr": {
+                "acme": {"metrics": {"enabled": True}},
+                "lane_contracts": {
+                    lane: {
+                        "schema_id": "acme.metrics.events.v1",
+                        "delivery": {
+                            "replay": "broker",
+                        },
+                    }
+                },
+            }
+        }
+    )
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        with pytest.raises(ValueError, match="replay delivery is not implemented"):
+            await activate_components(document, component_manager)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_extension_transport_binding_schema_must_match_resolved_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    metrics = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.acme.metrics",
+            config_prefix="deckr.acme.metrics",
+            consumes=(lane,),
+            lane_contracts=(
+                LaneContract(
+                    lane=lane,
+                    schema_id="acme.metrics.events.v1",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset({"acme_worker"}),
+                    ),
+                ),
+            ),
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+    definitions = {
+        "deckr.acme.metrics": metrics,
+        "deckr.transports.websocket": websocket_transport_component,
+    }
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: sorted(definitions),
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: definitions[component_id],
+    )
+    document = _document(
+        {
+            "deckr": {
+                "acme": {"metrics": {"enabled": True}},
+                "transports": {
+                    "websocket": {
+                        "instances": {
+                            "main": {
+                                "mode": "server",
+                                "bindings": {
+                                    "metrics": {
+                                        "lane": lane,
+                                        "schema_id": "acme.metrics.events.v2",
+                                        "path": "/metrics",
+                                    }
+                                },
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    )
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        with pytest.raises(ValueError, match="must match resolved lane contract"):
+            await activate_components(document, component_manager)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_extension_transport_binding_requires_resolved_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "acme.metrics.events"
+    monkeypatch.setattr(
+        "deckr.core.components.available_component_ids",
+        lambda: ["deckr.transports.websocket"],
+    )
+    monkeypatch.setattr(
+        "deckr.core.components.load_component_definition",
+        lambda component_id: websocket_transport_component,
+    )
+    document = _document(
+        {
+            "deckr": {
+                "transports": {
+                    "websocket": {
+                        "instances": {
+                            "main": {
+                                "mode": "server",
+                                "bindings": {
+                                    "metrics": {
+                                        "lane": lane,
+                                        "schema_id": "acme.metrics.events.v1",
+                                        "path": "/metrics",
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
+    component_manager = ComponentManager()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        await anyio.sleep(0.01)
+
+        with pytest.raises(ValueError, match="no resolved lane contract"):
+            await activate_components(document, component_manager)
         tg.cancel_scope.cancel()
 
 

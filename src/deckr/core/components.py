@@ -11,9 +11,22 @@ import anyio
 
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
+    BackpressureHandling,
+    DeliveryDurability,
+    DeliveryGuarantee,
+    DeliveryOrdering,
+    DeliveryPersistence,
+    DeliveryReplay,
+    DeliverySemantics,
+    ExpiryHandling,
+    IdempotencySemantics,
     LaneContract,
     LaneContractRegistry,
     LaneRoutePolicy,
+    MalformedMessageHandling,
+    MessageFamily,
+    MessageFamilyDelivery,
+    MqttDeliveryConstraints,
 )
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.component import BaseComponent, Component, ComponentManager
@@ -73,11 +86,22 @@ class LaneResolver(Protocol):
     ) -> ResolvedLaneSet: ...
 
 
+class LaneBindingValidator(Protocol):
+    def __call__(
+        self,
+        *,
+        raw_config: Mapping[str, Any],
+        instance_id: str,
+        lane_contracts: LaneContractRegistry,
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ComponentDefinition:
     manifest: ComponentManifest
     factory: ComponentFactory
     resolve_lanes: LaneResolver | None = None
+    validate_lane_bindings: LaneBindingValidator | None = None
 
     def lanes_for(
         self,
@@ -94,6 +118,21 @@ class ComponentDefinition:
         return ResolvedLaneSet(
             consumes=self.manifest.consumes,
             publishes=self.manifest.publishes,
+        )
+
+    def validate_resolved_lane_bindings(
+        self,
+        *,
+        raw_config: Mapping[str, Any],
+        instance_id: str,
+        lane_contracts: LaneContractRegistry,
+    ) -> None:
+        if self.validate_lane_bindings is None:
+            return
+        self.validate_lane_bindings(
+            raw_config=raw_config,
+            instance_id=instance_id,
+            lane_contracts=lane_contracts,
         )
 
 
@@ -308,7 +347,9 @@ def _broadcast_targets(value: Any, *, field_name: str) -> Mapping[str, str]:
     return targets
 
 
-def _reserved_endpoint_ids(value: Any, *, field_name: str) -> Mapping[str, frozenset[str]]:
+def _reserved_endpoint_ids(
+    value: Any, *, field_name: str
+) -> Mapping[str, frozenset[str]]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
@@ -324,7 +365,211 @@ def _reserved_endpoint_ids(value: Any, *, field_name: str) -> Mapping[str, froze
     return reserved
 
 
+def _string_tuple(value: Any, *, field_name: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise ValueError(f"{field_name} must be a list of strings")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise ValueError(f"{field_name} must be a list of non-empty strings")
+        items.append(item)
+    return tuple(items)
+
+
+def _enum_value(enum_type, value: Any, *, field_name: str):
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    try:
+        return enum_type(value)
+    except ValueError as exc:
+        allowed = ", ".join(repr(item.value) for item in enum_type)
+        raise ValueError(f"{field_name} must be one of {allowed}") from exc
+
+
+def _optional_enum_value(enum_type, value: Any, *, field_name: str):
+    if value is None:
+        return None
+    return _enum_value(enum_type, value, field_name=field_name)
+
+
+def _mqtt_delivery_constraints_from_mapping(
+    value: Any,
+    *,
+    field_name: str,
+) -> MqttDeliveryConstraints:
+    if value is None:
+        return MqttDeliveryConstraints()
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be a table")
+    max_qos = value.get("max_qos", 0)
+    if not isinstance(max_qos, int) or max_qos < 0 or max_qos > 2:
+        raise ValueError(f"{field_name}.max_qos must be an integer from 0 to 2")
+    retain = value.get("retain", False)
+    if not isinstance(retain, bool):
+        raise ValueError(f"{field_name}.retain must be a boolean")
+    persistent_session = value.get("persistent_session", False)
+    if not isinstance(persistent_session, bool):
+        raise ValueError(f"{field_name}.persistent_session must be a boolean")
+    return MqttDeliveryConstraints(
+        max_qos=max_qos,
+        retain=retain,
+        persistent_session=persistent_session,
+    )
+
+
+def _message_family_delivery_from_mapping(
+    value: Any,
+    *,
+    field_name: str,
+) -> MessageFamilyDelivery:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be a table")
+    family = _optional_enum_value(
+        MessageFamily,
+        value.get("family"),
+        field_name=f"{field_name}.family",
+    )
+    if family is None:
+        raise ValueError(f"{field_name}.family is required")
+    idempotency = _optional_enum_value(
+        IdempotencySemantics,
+        value.get("idempotency"),
+        field_name=f"{field_name}.idempotency",
+    )
+    return MessageFamilyDelivery(
+        family=family,
+        message_types=_string_set(
+            value.get("message_types"),
+            field_name=f"{field_name}.message_types",
+        ),
+        idempotency=idempotency,
+        ordering_keys=_string_tuple(
+            value.get("ordering_keys"),
+            field_name=f"{field_name}.ordering_keys",
+        ),
+    )
+
+
+def _message_family_deliveries(
+    value: Any, *, field_name: str
+) -> tuple[MessageFamilyDelivery, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise ValueError(f"{field_name} must be a list of tables")
+    return tuple(
+        _message_family_delivery_from_mapping(
+            item,
+            field_name=f"{field_name}.{index}",
+        )
+        for index, item in enumerate(value)
+    )
+
+
+def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | None:
+    if source is None:
+        return None
+    if isinstance(source, str):
+        raise ValueError(
+            f"Lane contract {lane!r} delivery must be a table, not a string"
+        )
+    if not isinstance(source, Mapping):
+        raise ValueError(f"Lane contract {lane!r} delivery must be a table")
+    return DeliverySemantics(
+        persistence=(
+            _optional_enum_value(
+                DeliveryPersistence,
+                source.get("persistence"),
+                field_name="delivery.persistence",
+            )
+            or DeliveryPersistence.EPHEMERAL
+        ),
+        durability=(
+            _optional_enum_value(
+                DeliveryDurability,
+                source.get("durability"),
+                field_name="delivery.durability",
+            )
+            or DeliveryDurability.NON_DURABLE
+        ),
+        guarantee=(
+            _optional_enum_value(
+                DeliveryGuarantee,
+                source.get("guarantee"),
+                field_name="delivery.guarantee",
+            )
+            or DeliveryGuarantee.AT_MOST_ONCE
+        ),
+        replay=(
+            _optional_enum_value(
+                DeliveryReplay,
+                source.get("replay"),
+                field_name="delivery.replay",
+            )
+            or DeliveryReplay.NONE
+        ),
+        ordering=(
+            _optional_enum_value(
+                DeliveryOrdering,
+                source.get("ordering"),
+                field_name="delivery.ordering",
+            )
+            or DeliveryOrdering.LOCAL_OR_CONNECTION_FIFO
+        ),
+        ordering_keys=_string_tuple(
+            source.get("ordering_keys"),
+            field_name="delivery.ordering_keys",
+        ),
+        expiry=(
+            _optional_enum_value(
+                ExpiryHandling,
+                source.get("expiry"),
+                field_name="delivery.expiry",
+            )
+            or ExpiryHandling.DROP_AND_REPORT
+        ),
+        local_backpressure=(
+            _optional_enum_value(
+                BackpressureHandling,
+                source.get("local_backpressure"),
+                field_name="delivery.local_backpressure",
+            )
+            or BackpressureHandling.DROP_SUBSCRIBER
+        ),
+        remote_backpressure=(
+            _optional_enum_value(
+                BackpressureHandling,
+                source.get("remote_backpressure"),
+                field_name="delivery.remote_backpressure",
+            )
+            or BackpressureHandling.DISCONNECT_OR_WITHDRAW_ROUTE
+        ),
+        malformed_messages=(
+            _optional_enum_value(
+                MalformedMessageHandling,
+                source.get("malformed_messages"),
+                field_name="delivery.malformed_messages",
+            )
+            or MalformedMessageHandling.DROP_UNPARSEABLE_LOG_PARSEABLE_REJECTION
+        ),
+        mqtt=_mqtt_delivery_constraints_from_mapping(
+            source.get("mqtt"),
+            field_name="delivery.mqtt",
+        ),
+        message_families=_message_family_deliveries(
+            source.get("message_families"),
+            field_name="delivery.message_families",
+        ),
+    )
+
+
 def _route_policy_from_mapping(source: Mapping[str, Any]) -> LaneRoutePolicy:
+    if source.get("delivery_semantics") is not None:
+        raise ValueError(
+            "route_policy.delivery_semantics has been replaced by delivery"
+        )
     return LaneRoutePolicy(
         remote_claim_endpoint_families=_string_set(
             source.get("remote_claim_endpoint_families"),
@@ -351,11 +596,6 @@ def _route_policy_from_mapping(source: Mapping[str, Any]) -> LaneRoutePolicy:
             source.get("local_only_message_types"),
             field_name="local_only_message_types",
         ),
-        delivery_semantics=(
-            str(source["delivery_semantics"])
-            if source.get("delivery_semantics") is not None
-            else None
-        ),
         reserved_endpoint_ids=_reserved_endpoint_ids(
             source.get("reserved_endpoint_ids"),
             field_name="reserved_endpoint_ids",
@@ -367,12 +607,21 @@ def _lane_contract_from_mapping(lane: str, source: Mapping[str, Any]) -> LaneCon
     schema_id = source.get("schema_id")
     if schema_id is not None and not isinstance(schema_id, str):
         raise ValueError(f"Lane contract {lane!r} schema_id must be a string")
+    if source.get("delivery_semantics") is not None:
+        raise ValueError(
+            f"Lane contract {lane!r} delivery_semantics has been replaced by delivery"
+        )
     route_policy_source = source.get("route_policy", {})
     if not isinstance(route_policy_source, Mapping):
         raise ValueError(f"Lane contract {lane!r} route_policy must be a table")
     return LaneContract(
         lane=lane,
         schema_id=schema_id,
+        message_types=_string_set(
+            source.get("message_types"),
+            field_name=f"Lane contract {lane!r} message_types",
+        ),
+        delivery=_delivery_from_mapping(source.get("delivery"), lane=lane),
         route_policy=_route_policy_from_mapping(route_policy_source),
     )
 
@@ -408,7 +657,6 @@ def _merge_route_policy(
         local_only_message_types=(
             override.local_only_message_types or base.local_only_message_types
         ),
-        delivery_semantics=override.delivery_semantics or base.delivery_semantics,
         reserved_endpoint_ids={
             **base.reserved_endpoint_ids,
             **override.reserved_endpoint_ids,
@@ -420,6 +668,8 @@ def _merge_lane_contract(base: LaneContract, override: LaneContract) -> LaneCont
     return LaneContract(
         lane=base.lane,
         schema_id=override.schema_id or base.schema_id,
+        message_types=override.message_types or base.message_types,
+        delivery=override.delivery or base.delivery,
         route_policy=_merge_route_policy(base.route_policy, override.route_policy),
     )
 
@@ -497,24 +747,35 @@ def _narrow_bridgeable(
         return base
     base_allows_bridging = base is True
     if override is True and not base_allows_bridging:
+        raise ValueError(f"Deployment lane contract {lane!r} must not widen bridgeable")
+    return override
+
+
+def _narrow_message_types(
+    base: frozenset[str],
+    override: frozenset[str],
+    *,
+    lane: str,
+) -> frozenset[str]:
+    if not override:
+        return base
+    if base and not override.issubset(base):
         raise ValueError(
-            f"Deployment lane contract {lane!r} must not widen bridgeable"
+            f"Deployment lane contract {lane!r} must not widen message_types"
         )
     return override
 
 
-def _narrow_delivery_semantics(
-    base: str | None,
-    override: str | None,
+def _narrow_delivery(
+    base: DeliverySemantics | None,
+    override: DeliverySemantics | None,
     *,
     lane: str,
-) -> str | None:
+) -> DeliverySemantics | None:
     if override is None:
         return base
     if base is not None and override != base:
-        raise ValueError(
-            f"Deployment lane contract {lane!r} must not change delivery_semantics"
-        )
+        raise ValueError(f"Deployment lane contract {lane!r} must not change delivery")
     return override
 
 
@@ -569,23 +830,27 @@ def _narrow_route_policy(
         local_only_message_types=(
             base.local_only_message_types | override.local_only_message_types
         ),
-        delivery_semantics=_narrow_delivery_semantics(
-            base.delivery_semantics,
-            override.delivery_semantics,
-            lane=lane,
-        ),
         reserved_endpoint_ids=reserved_endpoint_ids,
     )
 
 
 def _narrow_lane_contract(base: LaneContract, override: LaneContract) -> LaneContract:
-    if override.schema_id is not None and base.schema_id not in {None, override.schema_id}:
+    if override.schema_id is not None and base.schema_id not in {
+        None,
+        override.schema_id,
+    }:
         raise ValueError(
             f"Deployment lane contract {base.lane!r} must not change schema_id"
         )
     return LaneContract(
         lane=base.lane,
         schema_id=base.schema_id or override.schema_id,
+        message_types=_narrow_message_types(
+            base.message_types,
+            override.message_types,
+            lane=base.lane,
+        ),
+        delivery=_narrow_delivery(base.delivery, override.delivery, lane=base.lane),
         route_policy=_narrow_route_policy(
             base.route_policy,
             override.route_policy,
@@ -607,11 +872,12 @@ def build_lane_contract_registry(
                     f"core lane contract {contract.lane!r}"
                 )
             existing = contracts.get(contract.lane)
-            contracts[contract.lane] = (
-                _merge_lane_contract(existing, contract)
-                if existing is not None
-                else contract
-            )
+            if existing is not None and existing != contract:
+                raise ValueError(
+                    f"Duplicate lane contract {contract.lane!r} declarations "
+                    "must be identical"
+                )
+            contracts[contract.lane] = existing or contract
 
     for lane, source in sorted(document.children("deckr.lane_contracts").items()):
         if lane in CORE_LANE_CONTRACTS:
@@ -646,6 +912,12 @@ async def activate_components(
 ) -> ComponentActivationResult:
     specs = configured_component_instance_specs(document)
     lane_contracts = build_lane_contract_registry(specs, document)
+    for spec in specs:
+        spec.definition.validate_resolved_lane_bindings(
+            raw_config=spec.raw_config,
+            instance_id=spec.instance_id,
+            lane_contracts=lane_contracts,
+        )
     lanes = build_lane_registry(specs, lane_contracts=lane_contracts)
 
     created: list[Component] = []

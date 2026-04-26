@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import anyio
 import pytest
 
-from deckr.contracts.lanes import LaneContract, LaneContractRegistry, LaneRoutePolicy
+from deckr.contracts.lanes import (
+    CORE_LANE_CONTRACTS,
+    DeliveryGuarantee,
+    DeliveryPersistence,
+    DeliveryReplay,
+    LaneContract,
+    LaneContractRegistry,
+    LaneRoutePolicy,
+)
 from deckr.contracts.messages import (
     BUILTIN_ACTION_PROVIDER_ID,
     LEGACY_BUILTIN_ACTION_PROVIDER_ID,
@@ -17,7 +27,7 @@ from deckr.contracts.messages import (
     host_address,
     plugin_hosts_broadcast,
 )
-from deckr.pluginhost.messages import plugin_message
+from deckr.pluginhost.messages import HOST_ONLINE, REQUEST_ACTIONS, plugin_message
 from deckr.transports._lanes import build_lane_handler
 from deckr.transports.bus import EventBus
 from deckr.transports.routes import (
@@ -34,13 +44,13 @@ def _message(lane: str = "plugin_messages"):
     message = plugin_message(
         sender=host_address("test"),
         recipient=controller_address("test"),
-        message_type="test.message",
-        payload={"value": 1},
+        message_type=HOST_ONLINE,
+        payload={"hostId": "test"},
         subject=entity_subject("test"),
     )
     if lane == "plugin_messages":
         return message
-    return message.model_copy(update={"lane": lane})
+    return message.model_copy(update={"lane": lane, "message_type": "deviceConnected"})
 
 
 async def _next_route_event(stream, event_type: str):
@@ -68,7 +78,7 @@ async def test_event_bus_delivers_deckr_messages_directly() -> None:
 
     assert received is message
     assert received.lane == "plugin_messages"
-    assert received.message_type == "test.message"
+    assert received.message_type == HOST_ONLINE
 
 
 @pytest.mark.asyncio
@@ -85,6 +95,139 @@ async def test_event_bus_rejects_non_deckr_message() -> None:
 
     with pytest.raises(TypeError, match="DeckrMessage"):
         await bus.send({"legacy": "payload"})  # type: ignore[arg-type]
+
+
+def test_core_lane_delivery_profiles_are_structured() -> None:
+    for lane in ("plugin_messages", "hardware_events"):
+        contract = CORE_LANE_CONTRACTS[lane]
+        assert contract.delivery is not None
+        assert contract.delivery.persistence == DeliveryPersistence.EPHEMERAL
+        assert contract.delivery.guarantee == DeliveryGuarantee.AT_MOST_ONCE
+        assert contract.delivery.replay == DeliveryReplay.NONE
+        assert not hasattr(contract.route_policy, "delivery_semantics")
+
+
+def test_plugin_message_delivery_families_cover_core_message_types() -> None:
+    contract = CORE_LANE_CONTRACTS["plugin_messages"]
+    assert contract.delivery is not None
+    family_message_types = frozenset(
+        message_type
+        for family in contract.delivery.message_families
+        for message_type in family.message_types
+    )
+    assert contract.message_types == family_message_types
+
+
+@pytest.mark.asyncio
+async def test_event_bus_reports_unsupported_core_message_type() -> None:
+    bus = EventBus("plugin_messages")
+    message = _message().model_copy(update={"message_type": "unsupported"})
+
+    async with bus.route_table.subscribe() as events, bus.subscribe() as messages:
+        await bus.send(message)
+        event = await _next_route_event(events, "messageRejected")
+        with anyio.move_on_after(0.05) as scope:
+            await messages.receive()
+
+    assert scope.cancel_called
+    assert event.message_id == message.message_id
+    assert event.reason == (
+        "message type 'unsupported' is not supported on lane 'plugin_messages'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_event_bus_drops_expired_local_message_with_rejection_event() -> None:
+    bus = EventBus("plugin_messages")
+    message = _message().model_copy(
+        update={
+            "created_at": datetime.now(UTC) - timedelta(seconds=1),
+            "ttl_ms": 1,
+        }
+    )
+
+    async with bus.route_table.subscribe() as events, bus.subscribe() as messages:
+        await bus.send(message)
+        event = await _next_route_event(events, "messageRejected")
+        with anyio.move_on_after(0.05) as scope:
+            await messages.receive()
+
+    assert scope.cancel_called
+    assert event.message_id == message.message_id
+    assert event.reason == f"message {message.message_id!r} expired"
+
+
+@pytest.mark.asyncio
+async def test_remote_ingress_drops_expired_message_before_sender_claim() -> None:
+    bus = EventBus("plugin_messages")
+    handler = build_lane_handler(
+        lane="plugin_messages",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        bus=bus,
+    )
+    message = _message().model_copy(
+        update={
+            "created_at": datetime.now(UTC) - timedelta(seconds=1),
+            "ttl_ms": 1,
+        }
+    )
+
+    async with bus.route_table.subscribe() as events, bus.subscribe() as messages:
+        await handler.handle_remote_message(message, client_id="websocket:host")
+        event = await _next_route_event(events, "messageRejected")
+        with anyio.move_on_after(0.05) as scope:
+            await messages.receive()
+
+    assert scope.cancel_called
+    assert event.reason == f"message {message.message_id!r} expired"
+    assert (
+        await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_transport_egress_drops_expired_message() -> None:
+    bus = EventBus("plugin_messages")
+    await bus.route_table.claim_endpoint(
+        endpoint=controller_address("controller-main"),
+        lane="plugin_messages",
+        client_id="websocket:controller",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        claim_source="transport_route",
+    )
+    message = _message().model_copy(
+        update={
+            "created_at": datetime.now(UTC) - timedelta(seconds=1),
+            "ttl_ms": 1,
+        }
+    )
+
+    async with bus.route_table.subscribe() as events:
+        assert (
+            await route_targets_client(
+                bus.route_table,
+                message,
+                client_id="websocket:controller",
+            )
+        ) is False
+        event = await _next_route_event(events, "messageRejected")
+
+    assert event.reason == f"message {message.message_id!r} expired"
+
+
+@pytest.mark.asyncio
+async def test_event_bus_reports_slow_local_subscriber_drop() -> None:
+    bus = EventBus("plugin_messages", buffer_size=0, send_timeout=0.01)
+
+    async with bus.route_table.subscribe() as events, bus.subscribe():
+        await bus.send(_message())
+        event = await _next_route_event(events, "messageDropped")
+
+    assert event.message_type == HOST_ONLINE
+    assert event.reason == "slowLocalSubscriber"
 
 
 @pytest.mark.asyncio
@@ -277,8 +420,12 @@ async def test_remote_ingress_rejects_sender_family_before_claim() -> None:
     assert event.message_id == message.message_id
     assert event.message_type == message.message_type
     assert event.sender == message.sender
-    assert event.reason == "sender family 'host' is not allowed on lane 'hardware_events'"
-    assert await bus.route_table.route_for(message.sender, lane="hardware_events") is None
+    assert (
+        event.reason == "sender family 'host' is not allowed on lane 'hardware_events'"
+    )
+    assert (
+        await bus.route_table.route_for(message.sender, lane="hardware_events") is None
+    )
 
 
 @pytest.mark.asyncio
@@ -293,7 +440,7 @@ async def test_remote_ingress_rejects_recipient_family_before_claim() -> None:
     message = plugin_message(
         sender=host_address("python"),
         recipient=hardware_manager_address("deck"),
-        message_type="test.message",
+        message_type=HOST_ONLINE,
         payload={},
         subject=entity_subject("test"),
     )
@@ -308,7 +455,9 @@ async def test_remote_ingress_rejects_recipient_family_before_claim() -> None:
     assert event.reason == (
         "recipient family 'hardware_manager' is not allowed on lane 'plugin_messages'"
     )
-    assert await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    assert (
+        await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    )
 
 
 @pytest.mark.asyncio
@@ -329,7 +478,7 @@ async def test_remote_ingress_rejects_reserved_sender_before_claim(
     message = plugin_message(
         sender=host_address(reserved_host_id),
         recipient=controller_address("controller-main"),
-        message_type="test.message",
+        message_type=HOST_ONLINE,
         payload={},
         subject=entity_subject("test"),
     )
@@ -342,7 +491,9 @@ async def test_remote_ingress_rejects_reserved_sender_before_claim(
 
     assert scope.cancel_called
     assert "reserved endpoint id" in event.reason
-    assert await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    assert (
+        await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    )
 
 
 @pytest.mark.asyncio
@@ -357,7 +508,7 @@ async def test_remote_ingress_rejects_reserved_recipient_before_claim() -> None:
     message = plugin_message(
         sender=controller_address("controller-main"),
         recipient=host_address(BUILTIN_ACTION_PROVIDER_ID),
-        message_type="test.message",
+        message_type=REQUEST_ACTIONS,
         payload={},
         subject=entity_subject("test"),
     )
@@ -373,7 +524,9 @@ async def test_remote_ingress_rejects_reserved_recipient_before_claim() -> None:
         "reserved endpoint id 'deckr.controller.builtin' cannot be used as "
         "recipient for family 'host' on lane 'plugin_messages'"
     )
-    assert await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    assert (
+        await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    )
 
 
 @pytest.mark.asyncio
@@ -388,7 +541,7 @@ async def test_remote_ingress_rejects_disallowed_broadcast_scope_before_claim() 
     message = plugin_message(
         sender=controller_address("controller-main"),
         recipient=hardware_managers_broadcast(),
-        message_type="test.broadcast",
+        message_type=REQUEST_ACTIONS,
         payload={},
         subject=entity_subject("test"),
     )
@@ -400,7 +553,9 @@ async def test_remote_ingress_rejects_disallowed_broadcast_scope_before_claim() 
     assert event.reason == (
         "broadcast scope 'hardware_managers' is not allowed on lane 'plugin_messages'"
     )
-    assert await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    assert (
+        await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    )
 
 
 @pytest.mark.asyncio
@@ -415,7 +570,7 @@ async def test_remote_ingress_rejects_broadcast_scope_family_mismatch() -> None:
     message = plugin_message(
         sender=host_address("python"),
         recipient=BroadcastTarget(scope="controllers", endpointFamily="host"),
-        message_type="test.broadcast",
+        message_type=HOST_ONLINE,
         payload={},
         subject=entity_subject("test"),
     )
@@ -428,7 +583,9 @@ async def test_remote_ingress_rejects_broadcast_scope_family_mismatch() -> None:
         "broadcast scope 'controllers' on lane 'plugin_messages' requires "
         "endpoint family 'controller', got 'host'"
     )
-    assert await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    assert (
+        await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    )
 
 
 @pytest.mark.asyncio
@@ -463,7 +620,7 @@ async def test_remote_ingress_rejects_broadcast_domain_and_hop_policy(
     message = plugin_message(
         sender=controller_address("controller-main"),
         recipient=recipient,
-        message_type="test.broadcast",
+        message_type=REQUEST_ACTIONS,
         payload={},
         subject=entity_subject("test"),
     )
@@ -473,11 +630,15 @@ async def test_remote_ingress_rejects_broadcast_domain_and_hop_policy(
         event = await _next_route_event(events, "messageRejected")
 
     assert event.reason == reason
-    assert await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    assert (
+        await bus.route_table.route_for(message.sender, lane="plugin_messages") is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_broadcast_egress_expands_to_clients_with_matching_claimed_routes() -> None:
+async def test_broadcast_egress_expands_to_clients_with_matching_claimed_routes() -> (
+    None
+):
     bus = EventBus("plugin_messages")
     host_route = await bus.route_table.claim_endpoint(
         endpoint=host_address("python"),
@@ -500,7 +661,7 @@ async def test_broadcast_egress_expands_to_clients_with_matching_claimed_routes(
     message = plugin_message(
         sender=controller_address("controller-main"),
         recipient=plugin_hosts_broadcast(),
-        message_type="test.broadcast",
+        message_type=REQUEST_ACTIONS,
         payload={},
         subject=entity_subject("test"),
     )
@@ -534,7 +695,7 @@ async def test_broadcast_hop_limit_zero_blocks_transport_egress() -> None:
     message = plugin_message(
         sender=controller_address("controller-main"),
         recipient=plugin_hosts_broadcast(hop_limit=0),
-        message_type="test.broadcast",
+        message_type=REQUEST_ACTIONS,
         payload={},
         subject=entity_subject("test"),
     )
@@ -589,7 +750,10 @@ async def test_local_only_message_type_blocks_ingress_and_egress() -> None:
         await handler.handle_remote_message(message, client_id="websocket:one")
         ingress_event = await _next_route_event(events, "messageRejected")
 
-    assert ingress_event.reason == "message type 'private' on lane 'acme.private' is local-only"
+    assert (
+        ingress_event.reason
+        == "message type 'private' on lane 'acme.private' is local-only"
+    )
     assert await bus.route_table.route_for(message.sender, lane="acme.private") is None
 
     await bus.route_table.claim_endpoint(
@@ -611,11 +775,41 @@ async def test_local_only_message_type_blocks_ingress_and_egress() -> None:
         ) is False
         egress_event = await _next_route_event(events, "messageRejected")
 
-    assert egress_event.reason == "message type 'private' on lane 'acme.private' is local-only"
+    assert (
+        egress_event.reason
+        == "message type 'private' on lane 'acme.private' is local-only"
+    )
 
 
 @pytest.mark.asyncio
-async def test_remote_origin_message_is_not_forwarded_to_another_remote_client() -> None:
+async def test_local_only_message_type_still_delivers_locally() -> None:
+    route_table = RouteTable(
+        lane_contracts=LaneContractRegistry(
+            [
+                LaneContract(
+                    lane="acme.private",
+                    schema_id="acme.private.v1",
+                    route_policy=LaneRoutePolicy(
+                        local_only_message_types=frozenset({"private"}),
+                    ),
+                )
+            ]
+        )
+    )
+    bus = EventBus("acme.private", route_table=route_table)
+    message = _message("acme.private").model_copy(update={"message_type": "private"})
+
+    async with bus.subscribe() as messages:
+        await bus.send(message)
+        received = await messages.receive()
+
+    assert received is message
+
+
+@pytest.mark.asyncio
+async def test_remote_origin_message_is_not_forwarded_to_another_remote_client() -> (
+    None
+):
     bus = EventBus("plugin_messages")
     await bus.route_table.claim_endpoint(
         endpoint=host_address("python"),
@@ -635,14 +829,14 @@ async def test_remote_origin_message_is_not_forwarded_to_another_remote_client()
     inbound = plugin_message(
         sender=controller_address("controller-main"),
         recipient=plugin_hosts_broadcast(),
-        message_type="test.broadcast",
+        message_type=REQUEST_ACTIONS,
         payload={},
         subject=entity_subject("test"),
     )
 
     async with bus.subscribe() as messages:
         await handler.handle_remote_message(inbound, client_id="websocket:controller")
-        received = await _next_message(messages, "test.broadcast")
+        received = await _next_message(messages, REQUEST_ACTIONS)
 
     async with bus.route_table.subscribe() as events:
         assert (
