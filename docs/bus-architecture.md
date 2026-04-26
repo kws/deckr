@@ -391,12 +391,45 @@ than a one-off behavior in each transport or lane handler.
 A route record should include at least:
 
 - endpoint address
+- lane scope
 - client/session id through which the endpoint is reachable
+- client kind
 - whether the endpoint is direct or behind a bridge
 - transport kind and transport instance for diagnostics
 - route lease or last-seen timestamp
 - capabilities relevant to routing decisions
 - claim source and trust status
+
+Alpha route claims are lane-scoped. A claim for `host:python` on
+`plugin_messages` does not make that endpoint reachable on `hardware_events` or
+on an extension lane. If a participant needs the same logical endpoint reachable
+on multiple lanes, it must claim the endpoint separately on each lane.
+
+Local in-process claims are authoritative for their lane. A local claim may
+replace a remote claim for the same lane and endpoint, and a remote claim may not
+replace a local claim.
+
+Remote claims require an explicit claim source and trust status. The current
+implementation supports:
+
+- `message_sender`
+  - a direct untrusted route inferred from a valid Deckr envelope arriving from a
+    transport client
+- `transport_route`
+  - an explicit route assertion made by a transport or bridge
+
+Remote claims are accepted only when the lane policy allows the claimed endpoint
+family. For core lanes:
+
+- `plugin_messages` may learn `host` and `controller` endpoint routes
+- `hardware_events` may learn `hardware_manager` and `controller` endpoint routes
+
+Untrusted remote direct claims are accepted only within the lane policy. Bridged
+claims require trusted route authority. Conflicts are exclusive per lane and
+endpoint: local wins over remote, higher trust may replace lower trust, and equal
+authority conflicts are rejected until the owning route is withdrawn or the
+client disconnects. Rejections surface as `endpointClaimRejected` control-plane
+events.
 
 ## Deckr Message Envelope
 
@@ -851,13 +884,11 @@ Known gaps:
 - broadcast targets are currently represented as pseudo-address strings such as
   `all_hosts` and `all_controllers`
 - endpoint ids and runtime ids currently share normalization assumptions
-- plugin host disconnect cleanup is not modeled through generic reachability
-- hardware and plugin lanes have different implicit cross-transport forwarding
-  policies
+- broadcast and forwarding policy is still incomplete
 - local-only controller events share lanes with transported protocol messages
-- transports do not yet expose one common route/reachability model
-- endpoint claim ownership, conflict handling, leases, and trust policy are not
-  yet modeled
+- route leases, expiry, and capability-aware route selection are not yet modeled
+- endpoint claim policy is currently lane/family/trust based; full
+  authentication and bridge authority are not yet modeled
 - there is not yet an architecture spike recording which generic messaging
   mechanics should be delegated to NATS, Dapr, or another standard substrate
   before Deckr builds them itself

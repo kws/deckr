@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 
 import anyio
 
-from deckr.contracts.messages import DeckrMessage
+from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.transports.routes import RouteTable
 
 logger = logging.getLogger(__name__)
@@ -90,17 +90,27 @@ class EventBus:
     def to_async_callback(self) -> Callable[[Any], Awaitable[None]]:
         return self.send
 
-    async def claim_local_endpoint(self, endpoint: str) -> str:
-        client_id = f"local:{endpoint}"
+    async def claim_local_endpoint(self, endpoint: str | EndpointAddress) -> str:
+        client_id = f"local:{self.lane}:{endpoint}"
         await self.route_table.claim_endpoint(
             endpoint=endpoint,
+            lane=self.lane,
             client_id=client_id,
             client_kind="local",
         )
         return client_id
 
-    async def withdraw_local_endpoint(self, *, endpoint: str, client_id: str) -> None:
-        await self.route_table.withdraw_endpoint(endpoint=endpoint, client_id=client_id)
+    async def withdraw_local_endpoint(
+        self,
+        *,
+        endpoint: str | EndpointAddress,
+        client_id: str,
+    ) -> None:
+        await self.route_table.withdraw_endpoint(
+            endpoint=endpoint,
+            lane=self.lane,
+            client_id=client_id,
+        )
         await self.route_table.client_disconnected(client_id)
 
 

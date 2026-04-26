@@ -12,11 +12,16 @@ from deckr.contracts.messages import (
     DeckrMessage,
     EndpointAddress,
     EndpointTarget,
+    HARDWARE_EVENTS_LANE,
+    PLUGIN_MESSAGES_LANE,
     RouteMetadata,
     parse_endpoint_address,
 )
 
 RouteClientKind = Literal["local", "remote"]
+RouteScope = Literal["lane"]
+RouteClaimSource = Literal["local", "message_sender", "transport_route"]
+RouteTrustStatus = Literal["local", "trusted", "untrusted"]
 RouteEventType = Literal[
     "clientConnected",
     "clientDisconnected",
@@ -26,6 +31,19 @@ RouteEventType = Literal[
 ]
 
 MAX_ROUTE_HISTORY = 16
+RouteKey = tuple[str, EndpointAddress]
+EndpointFamiliesInput = set[str] | frozenset[str] | tuple[str, ...]
+
+_DEFAULT_REMOTE_CLAIM_FAMILIES: dict[str, frozenset[str]] = {
+    PLUGIN_MESSAGES_LANE: frozenset({"controller", "host"}),
+    HARDWARE_EVENTS_LANE: frozenset({"controller", "hardware_manager"}),
+}
+
+_TRUST_PRECEDENCE: dict[RouteTrustStatus, int] = {
+    "untrusted": 10,
+    "trusted": 50,
+    "local": 100,
+}
 
 
 def route_client_id(prefix: str, *parts: str) -> str:
@@ -44,18 +62,24 @@ class RouteClient:
 
 @dataclass(frozen=True, slots=True)
 class EndpointRoute:
+    lane: str
     endpoint: EndpointAddress
     client_id: str
     client_kind: RouteClientKind
+    scope: RouteScope = "lane"
     direct: bool = True
     transport_kind: str | None = None
     transport_id: str | None = None
+    claim_source: RouteClaimSource = "local"
+    trust_status: RouteTrustStatus = "local"
+    capabilities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class RouteEvent:
     event_type: RouteEventType
     client_id: str | None = None
+    lane: str | None = None
     endpoint: EndpointAddress | None = None
     route: EndpointRoute | None = None
     rejected_route: EndpointRoute | None = None
@@ -68,8 +92,8 @@ class RouteTable:
     def __init__(self) -> None:
         self._lock = anyio.Lock()
         self._clients: dict[str, RouteClient] = {}
-        self._routes: dict[EndpointAddress, EndpointRoute] = {}
-        self._endpoints_by_client: dict[str, set[EndpointAddress]] = {}
+        self._routes: dict[RouteKey, EndpointRoute] = {}
+        self._routes_by_client: dict[str, set[RouteKey]] = {}
         self._subscribers: set[anyio.abc.ObjectSendStream[RouteEvent]] = set()
 
     async def client_connected(
@@ -92,7 +116,7 @@ class RouteTable:
             )
             if self._clients.get(client_id) != client:
                 self._clients[client_id] = client
-                self._endpoints_by_client.setdefault(client_id, set())
+                self._routes_by_client.setdefault(client_id, set())
                 event = RouteEvent(
                     event_type="clientConnected",
                     client_id=client_id,
@@ -107,19 +131,20 @@ class RouteTable:
         async with self._lock:
             if client_id not in self._clients:
                 return ()
-            endpoints = self._endpoints_by_client.pop(client_id, set())
+            route_keys = self._routes_by_client.pop(client_id, set())
             self._clients.pop(client_id, None)
-            for endpoint in endpoints:
-                route = self._routes.get(endpoint)
+            for route_key in route_keys:
+                route = self._routes.get(route_key)
                 if route is None or route.client_id != client_id:
                     continue
-                self._routes.pop(endpoint, None)
+                self._routes.pop(route_key, None)
                 removed.append(route)
                 events.append(
                     RouteEvent(
                         event_type="endpointUnreachable",
                         client_id=client_id,
-                        endpoint=endpoint,
+                        lane=route.lane,
+                        endpoint=route.endpoint,
                         route=route,
                         reason="clientDisconnected",
                     )
@@ -135,13 +160,33 @@ class RouteTable:
         self,
         *,
         endpoint: str | EndpointAddress,
+        lane: str,
         client_id: str,
         client_kind: RouteClientKind,
         transport_kind: str | None = None,
         transport_id: str | None = None,
         direct: bool = True,
+        claim_source: RouteClaimSource | None = None,
+        trust_status: RouteTrustStatus | None = None,
+        capabilities: tuple[str, ...] | list[str] = (),
+        allowed_endpoint_families: EndpointFamiliesInput | None = None,
     ) -> EndpointRoute | None:
         parsed = parse_endpoint_address(endpoint)
+        normalized_capabilities = tuple(dict.fromkeys(capabilities))
+        if client_kind == "local":
+            claim_source = "local"
+            trust_status = "local"
+        else:
+            if claim_source is None:
+                raise ValueError(
+                    "Remote endpoint claims require an explicit claim_source"
+                )
+            if claim_source == "local":
+                raise ValueError("Remote endpoint claims cannot use local claim_source")
+            if trust_status is None:
+                trust_status = "untrusted"
+            if trust_status == "local":
+                raise ValueError("Remote endpoint claims cannot use local trust_status")
         await self.client_connected(
             client_id=client_id,
             client_kind=client_kind,
@@ -151,38 +196,62 @@ class RouteTable:
         events: list[RouteEvent] = []
         accepted: EndpointRoute | None = None
         async with self._lock:
-            existing = self._routes.get(parsed)
             candidate = EndpointRoute(
+                lane=lane,
                 endpoint=parsed,
                 client_id=client_id,
                 client_kind=client_kind,
                 direct=direct,
                 transport_kind=transport_kind,
                 transport_id=transport_id,
+                claim_source=claim_source,
+                trust_status=trust_status,
+                capabilities=normalized_capabilities,
             )
+            rejection_reason = self._remote_claim_rejection_reason(
+                candidate,
+                allowed_endpoint_families=allowed_endpoint_families,
+            )
+            if rejection_reason is not None:
+                events.append(
+                    RouteEvent(
+                        event_type="endpointClaimRejected",
+                        client_id=client_id,
+                        lane=lane,
+                        endpoint=parsed,
+                        rejected_route=candidate,
+                        reason=rejection_reason,
+                    )
+                )
+                existing = None
+            else:
+                route_key = self._route_key(lane=lane, endpoint=parsed)
+                existing = self._routes.get(route_key)
             if existing is not None:
                 if existing == candidate:
                     return existing
-                if client_kind == "local" and existing.client_kind == "remote":
-                    endpoints = self._endpoints_by_client.get(existing.client_id)
-                    if endpoints is not None:
-                        endpoints.discard(parsed)
-                    self._routes[parsed] = candidate
-                    self._endpoints_by_client.setdefault(client_id, set()).add(parsed)
+                if self._claim_precedence(candidate) > self._claim_precedence(existing):
+                    routes = self._routes_by_client.get(existing.client_id)
+                    if routes is not None:
+                        routes.discard(route_key)
+                    self._routes[route_key] = candidate
+                    self._routes_by_client.setdefault(client_id, set()).add(route_key)
                     accepted = candidate
                     events.append(
                         RouteEvent(
                             event_type="endpointUnreachable",
                             client_id=existing.client_id,
+                            lane=lane,
                             endpoint=parsed,
                             route=existing,
-                            reason="localClaimReplaced",
+                            reason=self._replacement_reason(existing, candidate),
                         )
                     )
                     events.append(
                         RouteEvent(
                             event_type="endpointReachable",
                             client_id=client_id,
+                            lane=lane,
                             endpoint=parsed,
                             route=candidate,
                         )
@@ -195,20 +264,23 @@ class RouteTable:
                         RouteEvent(
                             event_type="endpointClaimRejected",
                             client_id=client_id,
+                            lane=lane,
                             endpoint=parsed,
                             route=existing,
                             rejected_route=candidate,
                             reason=reason,
                         )
                     )
-            else:
-                self._routes[parsed] = candidate
-                self._endpoints_by_client.setdefault(client_id, set()).add(parsed)
+            elif rejection_reason is None:
+                route_key = self._route_key(lane=lane, endpoint=parsed)
+                self._routes[route_key] = candidate
+                self._routes_by_client.setdefault(client_id, set()).add(route_key)
                 accepted = candidate
                 events.append(
                     RouteEvent(
                         event_type="endpointReachable",
                         client_id=client_id,
+                        lane=lane,
                         endpoint=parsed,
                         route=candidate,
                     )
@@ -221,22 +293,25 @@ class RouteTable:
         self,
         *,
         endpoint: str | EndpointAddress,
+        lane: str,
         client_id: str,
     ) -> EndpointRoute | None:
         parsed = parse_endpoint_address(endpoint)
         event: RouteEvent | None = None
         route: EndpointRoute | None = None
         async with self._lock:
-            existing = self._routes.get(parsed)
+            route_key = self._route_key(lane=lane, endpoint=parsed)
+            existing = self._routes.get(route_key)
             if existing is None or existing.client_id != client_id:
                 return None
-            route = self._routes.pop(parsed)
-            endpoints = self._endpoints_by_client.get(client_id)
-            if endpoints is not None:
-                endpoints.discard(parsed)
+            route = self._routes.pop(route_key)
+            routes = self._routes_by_client.get(client_id)
+            if routes is not None:
+                routes.discard(route_key)
             event = RouteEvent(
                 event_type="endpointUnreachable",
                 client_id=client_id,
+                lane=lane,
                 endpoint=parsed,
                 route=route,
                 reason="withdrawn",
@@ -248,19 +323,45 @@ class RouteTable:
     async def route_for(
         self,
         endpoint: str | EndpointAddress,
+        *,
+        lane: str,
     ) -> EndpointRoute | None:
         parsed = parse_endpoint_address(endpoint)
         async with self._lock:
-            return self._routes.get(parsed)
+            return self._routes.get(self._route_key(lane=lane, endpoint=parsed))
 
     async def routes_for_client(self, client_id: str) -> tuple[EndpointRoute, ...]:
         async with self._lock:
-            endpoints = self._endpoints_by_client.get(client_id, set())
+            route_keys = self._routes_by_client.get(client_id, set())
             return tuple(
                 route
-                for endpoint in endpoints
-                if (route := self._routes.get(endpoint)) is not None
+                for route_key in route_keys
+                if (route := self._routes.get(route_key)) is not None
             )
+
+    async def claim_remote_sender(
+        self,
+        message: DeckrMessage,
+        *,
+        client_id: str,
+        transport_kind: str | None = None,
+        transport_id: str | None = None,
+        direct: bool = True,
+        trust_status: RouteTrustStatus = "untrusted",
+        capabilities: tuple[str, ...] | list[str] = (),
+    ) -> EndpointRoute | None:
+        return await self.claim_endpoint(
+            endpoint=message.sender,
+            lane=message.lane,
+            client_id=client_id,
+            client_kind="remote",
+            transport_kind=transport_kind,
+            transport_id=transport_id,
+            direct=direct,
+            claim_source="message_sender",
+            trust_status=trust_status,
+            capabilities=capabilities,
+        )
 
     @asynccontextmanager
     async def subscribe(self) -> AsyncIterator[anyio.abc.ObjectReceiveStream[RouteEvent]]:
@@ -288,6 +389,47 @@ class RouteTable:
             except (anyio.BrokenResourceError, anyio.ClosedResourceError):
                 async with self._lock:
                     self._subscribers.discard(send)
+
+    def _route_key(self, *, lane: str, endpoint: EndpointAddress) -> RouteKey:
+        return (lane, endpoint)
+
+    def _remote_claim_rejection_reason(
+        self,
+        route: EndpointRoute,
+        *,
+        allowed_endpoint_families: EndpointFamiliesInput | None,
+    ) -> str | None:
+        if route.client_kind != "remote":
+            return None
+        families = (
+            frozenset(allowed_endpoint_families)
+            if allowed_endpoint_families is not None
+            else _DEFAULT_REMOTE_CLAIM_FAMILIES.get(route.lane, frozenset())
+        )
+        if not families:
+            return f"remote endpoint claims are not allowed on lane {route.lane!r}"
+        if route.endpoint.family not in families:
+            return (
+                f"endpoint family {route.endpoint.family!r} cannot be claimed "
+                f"on lane {route.lane!r}"
+            )
+        if not route.direct and route.trust_status != "trusted":
+            return "bridged endpoint claims require trusted route authority"
+        return None
+
+    def _claim_precedence(self, route: EndpointRoute) -> int:
+        if route.client_kind == "local":
+            return _TRUST_PRECEDENCE["local"]
+        return _TRUST_PRECEDENCE[route.trust_status]
+
+    def _replacement_reason(
+        self,
+        existing: EndpointRoute,
+        candidate: EndpointRoute,
+    ) -> str:
+        if candidate.client_kind == "local" and existing.client_kind == "remote":
+            return "localClaimReplaced"
+        return "higherAuthorityClaimReplaced"
 
 
 def mark_received_from_client(
@@ -353,5 +495,5 @@ async def route_targets_client(
     recipient = message.recipient
     if not isinstance(recipient, EndpointTarget):
         return True
-    route = await route_table.route_for(recipient.endpoint)
+    route = await route_table.route_for(recipient.endpoint, lane=message.lane)
     return route is not None and route.client_id == client_id

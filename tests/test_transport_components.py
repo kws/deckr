@@ -137,10 +137,12 @@ async def test_mqtt_transport_forwards_deckr_messages_unchanged() -> None:
     outbound_message = _plugin_message("deckr.ready", 1)
     await plugin_bus.route_table.claim_endpoint(
         endpoint=controller_address("controller-main"),
+        lane="plugin_messages",
         client_id=binding.client_id,
         client_kind="remote",
         transport_kind="mqtt",
         transport_id="python-mqtt",
+        claim_source="message_sender",
     )
 
     async with anyio.create_task_group() as tg:
@@ -256,7 +258,11 @@ async def test_websocket_hardware_manager_uses_same_envelope_and_route_semantics
     async with local_bus.subscribe() as stream:
         await local_bus.send(connected)
         assert await stream.receive() == connected
-    assert (await local_bus.route_table.route_for(manager_endpoint)).client_kind == "local"
+    route = await local_bus.route_table.route_for(
+        manager_endpoint,
+        lane="hardware_events",
+    )
+    assert route.client_kind == "local"
 
     hardware_bus = EventBus("hardware_events")
     server = websocket_transport_component.factory(
@@ -290,7 +296,10 @@ async def test_websocket_hardware_manager_uses_same_envelope_and_route_semantics
             )
             received = await _next_message(stream, hw_events.DEVICE_CONNECTED)
             assert _without_route(received) == connected
-            route = await hardware_bus.route_table.route_for(manager_endpoint)
+            route = await hardware_bus.route_table.route_for(
+                manager_endpoint,
+                lane="hardware_events",
+            )
             assert route is not None
             assert route.client_kind == "remote"
 

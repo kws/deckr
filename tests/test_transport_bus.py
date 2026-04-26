@@ -3,7 +3,12 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from deckr.contracts.messages import controller_address, entity_subject, host_address
+from deckr.contracts.messages import (
+    controller_address,
+    entity_subject,
+    hardware_manager_address,
+    host_address,
+)
 from deckr.pluginhost.messages import plugin_message
 from deckr.transports._lanes import build_lane_handler
 from deckr.transports.bus import EventBus
@@ -73,22 +78,26 @@ async def test_route_table_local_claim_rejects_remote_conflict() -> None:
     async with bus.route_table.subscribe() as stream:
         await bus.route_table.claim_endpoint(
             endpoint=endpoint,
+            lane="plugin_messages",
             client_id="local:host:python",
             client_kind="local",
         )
         await bus.route_table.claim_endpoint(
             endpoint=endpoint,
+            lane="plugin_messages",
             client_id="websocket:remote",
             client_kind="remote",
             transport_kind="websocket",
             transport_id="ws-main",
+            claim_source="message_sender",
         )
         reachable = await _next_route_event(stream, "endpointReachable")
         rejected = await _next_route_event(stream, "endpointClaimRejected")
 
     assert reachable.event_type == "endpointReachable"
     assert rejected.event_type == "endpointClaimRejected"
-    assert (await bus.route_table.route_for(endpoint)).client_id == "local:host:python"
+    route = await bus.route_table.route_for(endpoint, lane="plugin_messages")
+    assert route.client_id == "local:host:python"
 
 
 @pytest.mark.asyncio
@@ -98,33 +107,41 @@ async def test_route_table_first_remote_claim_owns_until_disconnect() -> None:
 
     accepted = await bus.route_table.claim_endpoint(
         endpoint=endpoint,
+        lane="plugin_messages",
         client_id="websocket:first",
         client_kind="remote",
         transport_kind="websocket",
         transport_id="ws-main",
+        claim_source="message_sender",
     )
     rejected = await bus.route_table.claim_endpoint(
         endpoint=endpoint,
+        lane="plugin_messages",
         client_id="mqtt:second",
         client_kind="remote",
         transport_kind="mqtt",
         transport_id="mqtt-main",
+        claim_source="message_sender",
     )
 
     assert accepted is not None
     assert rejected is None
-    assert (await bus.route_table.route_for(endpoint)).client_id == "websocket:first"
+    route = await bus.route_table.route_for(endpoint, lane="plugin_messages")
+    assert route.client_id == "websocket:first"
 
     await bus.route_table.client_disconnected("websocket:first")
     accepted_after_disconnect = await bus.route_table.claim_endpoint(
         endpoint=endpoint,
+        lane="plugin_messages",
         client_id="mqtt:second",
         client_kind="remote",
         transport_kind="mqtt",
         transport_id="mqtt-main",
+        claim_source="message_sender",
     )
     assert accepted_after_disconnect is not None
-    assert (await bus.route_table.route_for(endpoint)).client_id == "mqtt:second"
+    route = await bus.route_table.route_for(endpoint, lane="plugin_messages")
+    assert route.client_id == "mqtt:second"
 
 
 @pytest.mark.asyncio
@@ -133,15 +150,18 @@ async def test_route_table_local_claim_replaces_remote_claim() -> None:
     endpoint = host_address("python")
     await bus.route_table.claim_endpoint(
         endpoint=endpoint,
+        lane="plugin_messages",
         client_id="websocket:remote",
         client_kind="remote",
         transport_kind="websocket",
         transport_id="ws-main",
+        claim_source="message_sender",
     )
 
     async with bus.route_table.subscribe() as stream:
         accepted = await bus.route_table.claim_endpoint(
             endpoint=endpoint,
+            lane="plugin_messages",
             client_id="local:host:python",
             client_kind="local",
         )
@@ -152,8 +172,46 @@ async def test_route_table_local_claim_replaces_remote_claim() -> None:
     assert unreachable.client_id == "websocket:remote"
     assert unreachable.reason == "localClaimReplaced"
     assert reachable.client_id == "local:host:python"
-    assert (await bus.route_table.route_for(endpoint)).client_id == "local:host:python"
+    route = await bus.route_table.route_for(endpoint, lane="plugin_messages")
+    assert route.client_id == "local:host:python"
     assert await bus.route_table.routes_for_client("websocket:remote") == ()
+
+
+@pytest.mark.asyncio
+async def test_route_table_trusted_remote_claim_replaces_untrusted_remote_claim() -> None:
+    bus = EventBus("plugin_messages")
+    endpoint = host_address("python")
+    await bus.route_table.claim_endpoint(
+        endpoint=endpoint,
+        lane="plugin_messages",
+        client_id="websocket:untrusted",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        claim_source="message_sender",
+    )
+
+    async with bus.route_table.subscribe() as stream:
+        accepted = await bus.route_table.claim_endpoint(
+            endpoint=endpoint,
+            lane="plugin_messages",
+            client_id="websocket:trusted",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="transport_route",
+            trust_status="trusted",
+        )
+        unreachable = await _next_route_event(stream, "endpointUnreachable")
+        reachable = await _next_route_event(stream, "endpointReachable")
+
+    assert accepted is not None
+    assert unreachable.client_id == "websocket:untrusted"
+    assert unreachable.reason == "higherAuthorityClaimReplaced"
+    assert reachable.route is not None
+    assert reachable.route.trust_status == "trusted"
+    route = await bus.route_table.route_for(endpoint, lane="plugin_messages")
+    assert route.client_id == "websocket:trusted"
 
 
 @pytest.mark.asyncio
@@ -162,6 +220,7 @@ async def test_rejected_remote_endpoint_claim_does_not_enter_bus() -> None:
     endpoint = host_address("test")
     await bus.route_table.claim_endpoint(
         endpoint=endpoint,
+        lane="plugin_messages",
         client_id="local:host:test",
         client_kind="local",
     )
@@ -186,10 +245,12 @@ async def test_route_table_disconnect_removes_endpoint_routes() -> None:
     endpoint = host_address("python")
     await bus.route_table.claim_endpoint(
         endpoint=endpoint,
+        lane="plugin_messages",
         client_id="websocket:remote",
         client_kind="remote",
         transport_kind="websocket",
         transport_id="ws-main",
+        claim_source="message_sender",
     )
 
     async with bus.route_table.subscribe() as stream:
@@ -199,7 +260,86 @@ async def test_route_table_disconnect_removes_endpoint_routes() -> None:
 
     assert unreachable.event_type == "endpointUnreachable"
     assert disconnected.event_type == "clientDisconnected"
-    assert await bus.route_table.route_for(endpoint) is None
+    assert await bus.route_table.route_for(endpoint, lane="plugin_messages") is None
+
+
+@pytest.mark.asyncio
+async def test_remote_endpoint_claim_requires_explicit_claim_source() -> None:
+    bus = EventBus("plugin_messages")
+
+    with pytest.raises(ValueError, match="claim_source"):
+        await bus.route_table.claim_endpoint(
+            endpoint=host_address("python"),
+            lane="plugin_messages",
+            client_id="websocket:remote",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+        )
+
+
+@pytest.mark.asyncio
+async def test_route_table_rejects_remote_claim_outside_lane_policy() -> None:
+    bus = EventBus("plugin_messages")
+
+    async with bus.route_table.subscribe() as stream:
+        rejected = await bus.route_table.claim_endpoint(
+            endpoint=hardware_manager_address("deck"),
+            lane="plugin_messages",
+            client_id="websocket:remote",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="message_sender",
+        )
+        event = await _next_route_event(stream, "endpointClaimRejected")
+
+    assert rejected is None
+    assert event.rejected_route is not None
+    assert event.rejected_route.claim_source == "message_sender"
+    assert event.rejected_route.trust_status == "untrusted"
+    assert event.reason == (
+        "endpoint family 'hardware_manager' cannot be claimed on lane 'plugin_messages'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_route_table_claims_are_lane_scoped() -> None:
+    bus = EventBus("plugin_messages")
+    endpoint = controller_address("controller-main")
+
+    plugin_route = await bus.route_table.claim_endpoint(
+        endpoint=endpoint,
+        lane="plugin_messages",
+        client_id="websocket:plugin",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        claim_source="message_sender",
+    )
+    hardware_route = await bus.route_table.claim_endpoint(
+        endpoint=endpoint,
+        lane="hardware_events",
+        client_id="websocket:hardware",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        claim_source="message_sender",
+    )
+
+    assert plugin_route is not None
+    assert hardware_route is not None
+    assert plugin_route.lane == "plugin_messages"
+    assert plugin_route.scope == "lane"
+    assert plugin_route.transport_kind == "websocket"
+    assert plugin_route.claim_source == "message_sender"
+    assert plugin_route.trust_status == "untrusted"
+    assert (
+        await bus.route_table.route_for(endpoint, lane="plugin_messages")
+    ).client_id == "websocket:plugin"
+    assert (
+        await bus.route_table.route_for(endpoint, lane="hardware_events")
+    ).client_id == "websocket:hardware"
 
 
 def test_forwarding_metadata_prevents_echo_without_message_id_cache() -> None:

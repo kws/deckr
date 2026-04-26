@@ -75,10 +75,9 @@ class DeckrLaneHandler:
             raise ValueError(
                 f"Remote message for lane {message.lane!r} cannot enter {self._lane!r}"
             )
-        route = await self._route_table.claim_endpoint(
-            endpoint=message.sender,
+        route = await self._route_table.claim_remote_sender(
+            message,
             client_id=client_id,
-            client_kind="remote",
             transport_kind=self._transport_kind,
             transport_id=self._transport_id,
         )
