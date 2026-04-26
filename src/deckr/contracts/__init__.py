@@ -1,6 +1,14 @@
 """Shared Deckr protocol contract helpers."""
 
+from deckr.contracts.lanes import (
+    CORE_LANE_CONTRACTS,
+    DEFAULT_LANE_CONTRACT_REGISTRY,
+    LaneContract,
+    LaneContractRegistry,
+    LaneRoutePolicy,
+)
 from deckr.contracts.messages import (
+    BUILTIN_ACTION_PROVIDER_ID,
     CORE_ENDPOINT_FAMILIES,
     CORE_LANE_NAMES,
     CORE_LANE_SCHEMA_IDS,
@@ -8,8 +16,10 @@ from deckr.contracts.messages import (
     DECKR_TRANSPORT_FRAME_VERSION,
     HARDWARE_EVENTS_LANE,
     HARDWARE_EVENTS_SCHEMA_ID,
+    LEGACY_BUILTIN_ACTION_PROVIDER_ID,
     PLUGIN_MESSAGES_LANE,
     PLUGIN_MESSAGES_SCHEMA_ID,
+    RESERVED_BUILTIN_PROVIDER_IDS,
     BroadcastTarget,
     DeckrMessage,
     EndpointAddress,
@@ -46,11 +56,14 @@ from deckr.contracts.models import (
 )
 
 __all__ = [
+    "BUILTIN_ACTION_PROVIDER_ID",
     "CORE_ENDPOINT_FAMILIES",
+    "CORE_LANE_CONTRACTS",
     "CORE_LANE_NAMES",
     "CORE_LANE_SCHEMA_IDS",
     "DECKR_MESSAGE_PROTOCOL_VERSION",
     "DECKR_TRANSPORT_FRAME_VERSION",
+    "DEFAULT_LANE_CONTRACT_REGISTRY",
     "DeckrModel",
     "DeckrMessage",
     "EndpointAddress",
@@ -60,9 +73,14 @@ __all__ = [
     "HARDWARE_EVENTS_LANE",
     "HARDWARE_EVENTS_SCHEMA_ID",
     "JsonObject",
+    "LEGACY_BUILTIN_ACTION_PROVIDER_ID",
+    "LaneContract",
+    "LaneContractRegistry",
+    "LaneRoutePolicy",
     "MessageTarget",
     "PLUGIN_MESSAGES_LANE",
     "PLUGIN_MESSAGES_SCHEMA_ID",
+    "RESERVED_BUILTIN_PROVIDER_IDS",
     "RouteMetadata",
     "TraceContext",
     "TransportFrame",

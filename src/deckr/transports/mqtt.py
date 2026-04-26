@@ -21,10 +21,10 @@ from deckr.core.components import (
 )
 from deckr.transports._common import (
     TransportBindingConfigBase,
-    TransportDirection,
     _StrictConfigModel,
     lanes_for_bindings,
     transport_id_for,
+    validate_binding_schema_ids,
 )
 from deckr.transports._lanes import build_lane_handler
 from deckr.transports.routes import mark_forwarded_to_client
@@ -144,21 +144,12 @@ class MqttTransportComponent(BaseComponent):
                         transport_id=self._transport_id,
                         description=binding.binding_id,
                     )
-                    if binding.config.direction in {
-                        TransportDirection.INGRESS,
-                        TransportDirection.BIDIRECTIONAL,
-                    }:
+                    if binding.config.allows_ingress():
                         await client.subscribe(binding.config.topic, qos=QOS)
                     async with anyio.create_task_group() as tg:
-                        if binding.config.direction in {
-                            TransportDirection.EGRESS,
-                            TransportDirection.BIDIRECTIONAL,
-                        }:
+                        if binding.config.allows_egress():
                             tg.start_soon(self._bus_to_mqtt_loop, client, binding)
-                        if binding.config.direction in {
-                            TransportDirection.INGRESS,
-                            TransportDirection.BIDIRECTIONAL,
-                        }:
+                        if binding.config.allows_ingress():
                             tg.start_soon(self._mqtt_to_bus_loop, client, binding)
                     await binding.bus.route_table.client_disconnected(binding.client_id)
             except cancelled_exc:
@@ -241,7 +232,9 @@ class MqttTransportComponent(BaseComponent):
 
 
 def _config_from_mapping(source: Mapping[str, Any]) -> MqttTransportConfig:
-    return MqttTransportConfig.model_validate(dict(source))
+    config = MqttTransportConfig.model_validate(dict(source))
+    validate_binding_schema_ids(config.bindings)
+    return config
 
 
 def _resolve_lanes(

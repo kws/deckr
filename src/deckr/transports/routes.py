@@ -8,12 +8,14 @@ from typing import Literal
 
 import anyio
 
+from deckr.contracts.lanes import (
+    DEFAULT_LANE_CONTRACT_REGISTRY,
+    LaneContractRegistry,
+)
 from deckr.contracts.messages import (
     DeckrMessage,
     EndpointAddress,
     EndpointTarget,
-    HARDWARE_EVENTS_LANE,
-    PLUGIN_MESSAGES_LANE,
     RouteMetadata,
     parse_endpoint_address,
 )
@@ -32,12 +34,6 @@ RouteEventType = Literal[
 
 MAX_ROUTE_HISTORY = 16
 RouteKey = tuple[str, EndpointAddress]
-EndpointFamiliesInput = set[str] | frozenset[str] | tuple[str, ...]
-
-_DEFAULT_REMOTE_CLAIM_FAMILIES: dict[str, frozenset[str]] = {
-    PLUGIN_MESSAGES_LANE: frozenset({"controller", "host"}),
-    HARDWARE_EVENTS_LANE: frozenset({"controller", "hardware_manager"}),
-}
 
 _TRUST_PRECEDENCE: dict[RouteTrustStatus, int] = {
     "untrusted": 10,
@@ -89,7 +85,12 @@ class RouteEvent:
 class RouteTable:
     """In-process Deckr endpoint reachability and forwarding state."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        lane_contracts: LaneContractRegistry | None = None,
+    ) -> None:
+        self._lane_contracts = lane_contracts or DEFAULT_LANE_CONTRACT_REGISTRY
         self._lock = anyio.Lock()
         self._clients: dict[str, RouteClient] = {}
         self._routes: dict[RouteKey, EndpointRoute] = {}
@@ -169,7 +170,6 @@ class RouteTable:
         claim_source: RouteClaimSource | None = None,
         trust_status: RouteTrustStatus | None = None,
         capabilities: tuple[str, ...] | list[str] = (),
-        allowed_endpoint_families: EndpointFamiliesInput | None = None,
     ) -> EndpointRoute | None:
         parsed = parse_endpoint_address(endpoint)
         normalized_capabilities = tuple(dict.fromkeys(capabilities))
@@ -210,7 +210,6 @@ class RouteTable:
             )
             rejection_reason = self._remote_claim_rejection_reason(
                 candidate,
-                allowed_endpoint_families=allowed_endpoint_families,
             )
             if rejection_reason is not None:
                 events.append(
@@ -364,7 +363,9 @@ class RouteTable:
         )
 
     @asynccontextmanager
-    async def subscribe(self) -> AsyncIterator[anyio.abc.ObjectReceiveStream[RouteEvent]]:
+    async def subscribe(
+        self,
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[RouteEvent]]:
         send, receive = anyio.create_memory_object_stream[RouteEvent](
             max_buffer_size=100
         )
@@ -396,21 +397,26 @@ class RouteTable:
     def _remote_claim_rejection_reason(
         self,
         route: EndpointRoute,
-        *,
-        allowed_endpoint_families: EndpointFamiliesInput | None,
     ) -> str | None:
         if route.client_kind != "remote":
             return None
-        families = (
-            frozenset(allowed_endpoint_families)
-            if allowed_endpoint_families is not None
-            else _DEFAULT_REMOTE_CLAIM_FAMILIES.get(route.lane, frozenset())
-        )
+        contract = self._lane_contracts.contract_for(route.lane)
+        families = contract.route_policy.remote_claim_endpoint_families
         if not families:
             return f"remote endpoint claims are not allowed on lane {route.lane!r}"
         if route.endpoint.family not in families:
             return (
                 f"endpoint family {route.endpoint.family!r} cannot be claimed "
+                f"on lane {route.lane!r}"
+            )
+        reserved_families = contract.route_policy.reserved_endpoint_ids.get(
+            route.endpoint.endpoint_id,
+            frozenset(),
+        )
+        if route.endpoint.family in reserved_families:
+            return (
+                f"reserved endpoint id {route.endpoint.endpoint_id!r} cannot "
+                f"be claimed for family {route.endpoint.family!r} "
                 f"on lane {route.lane!r}"
             )
         if not route.direct and route.trust_status != "trusted":

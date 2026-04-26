@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import anyio
 import pytest
 from websockets.asyncio.client import connect
+from websockets.asyncio.server import serve
 
 from deckr.contracts.messages import (
     DeckrMessage,
@@ -15,6 +16,7 @@ from deckr.contracts.messages import (
     entity_subject,
     hardware_manager_address,
     host_address,
+    plugin_hosts_broadcast,
 )
 from deckr.core.component import RunContext
 from deckr.core.components import ComponentContext, LaneRegistry, runtime_name_for
@@ -92,6 +94,16 @@ def _plugin_message(message_type: str, value: int) -> DeckrMessage:
     return plugin_message(
         sender=host_address("python"),
         recipient=controller_address("controller-main"),
+        message_type=message_type,
+        payload={"value": value},
+        subject=entity_subject("test"),
+    )
+
+
+def _broadcast_plugin_message(message_type: str, value: int) -> DeckrMessage:
+    return plugin_message(
+        sender=controller_address("controller-main"),
+        recipient=plugin_hosts_broadcast(),
         message_type=message_type,
         payload={"value": value},
         subject=entity_subject("test"),
@@ -214,9 +226,10 @@ async def test_websocket_transport_frames_deckr_messages(
         await server.start(RunContext(tg=tg, stopping=anyio.Event()))
         await anyio.sleep(0.1)
 
-        async with plugin_bus.subscribe() as stream, connect(
-            f"ws://127.0.0.1:{unused_tcp_port}/plugin"
-        ) as websocket:
+        async with (
+            plugin_bus.subscribe() as stream,
+            connect(f"ws://127.0.0.1:{unused_tcp_port}/plugin") as websocket,
+        ):
             await websocket.send(
                 json.dumps(build_websocket_frame("remote-ws", inbound_message))
             )
@@ -233,12 +246,300 @@ async def test_websocket_transport_frames_deckr_messages(
         tg.cancel_scope.cancel()
 
 
+@pytest.mark.asyncio
+async def test_websocket_ingress_binding_does_not_forward_local_messages(
+    unused_tcp_port: int,
+) -> None:
+    plugin_bus = EventBus("plugin_messages")
+    server = websocket_transport_component.factory(
+        _component_context(
+            websocket_transport_component,
+            raw_config={
+                "transport_id": "controller-ws",
+                "mode": "server",
+                "host": "127.0.0.1",
+                "port": unused_tcp_port,
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "direction": "ingress",
+                        "path": "/plugin",
+                    }
+                },
+            },
+            lanes={"plugin_messages": plugin_bus},
+        )
+    )
+    inbound_message = _plugin_message("host.event", 1)
+    outbound_message = plugin_message(
+        sender=controller_address("controller-main"),
+        recipient=endpoint_target(host_address("python")),
+        message_type="controller.event",
+        payload={"value": 2},
+        subject=entity_subject("test"),
+    )
+
+    async with anyio.create_task_group() as tg:
+        await server.start(RunContext(tg=tg, stopping=anyio.Event()))
+        await anyio.sleep(0.1)
+
+        async with (
+            plugin_bus.subscribe() as stream,
+            connect(f"ws://127.0.0.1:{unused_tcp_port}/plugin") as websocket,
+        ):
+            await websocket.send(
+                json.dumps(build_websocket_frame("remote-ws", inbound_message))
+            )
+            received = await _next_message(stream, "host.event")
+            assert _without_route(received) == inbound_message
+
+            await plugin_bus.send(outbound_message)
+            with anyio.move_on_after(0.1) as scope:
+                await websocket.recv()
+            assert scope.cancel_called
+
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_websocket_egress_binding_does_not_admit_remote_messages(
+    unused_tcp_port: int,
+) -> None:
+    plugin_bus = EventBus("plugin_messages")
+    server = websocket_transport_component.factory(
+        _component_context(
+            websocket_transport_component,
+            raw_config={
+                "transport_id": "controller-ws",
+                "mode": "server",
+                "host": "127.0.0.1",
+                "port": unused_tcp_port,
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "direction": "egress",
+                        "path": "/plugin",
+                    }
+                },
+            },
+            lanes={"plugin_messages": plugin_bus},
+        )
+    )
+
+    async with anyio.create_task_group() as tg:
+        await server.start(RunContext(tg=tg, stopping=anyio.Event()))
+        await anyio.sleep(0.1)
+
+        async with (
+            plugin_bus.subscribe() as stream,
+            connect(f"ws://127.0.0.1:{unused_tcp_port}/plugin") as websocket,
+        ):
+            await websocket.send(
+                json.dumps(
+                    build_websocket_frame(
+                        "remote-ws",
+                        _plugin_message("host.event", 1),
+                    )
+                )
+            )
+            with anyio.move_on_after(0.1) as scope:
+                await stream.receive()
+            assert scope.cancel_called
+
+            outbound_message = _broadcast_plugin_message("controller.event", 2)
+            await plugin_bus.send(outbound_message)
+            frame = parse_websocket_frame(json.loads(await websocket.recv()))
+            assert _without_route(frame.message) == outbound_message
+
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_ingress_binding_does_not_forward_local_messages(
+    unused_tcp_port: int,
+) -> None:
+    plugin_bus = EventBus("plugin_messages")
+    remote_received_send, remote_received = anyio.create_memory_object_stream[str](10)
+    remote_connected = anyio.Event()
+    inbound_message = _plugin_message("host.event", 1)
+
+    async def remote_server(websocket) -> None:
+        remote_connected.set()
+        await websocket.send(
+            json.dumps(build_websocket_frame("remote-ws", inbound_message))
+        )
+        async for raw in websocket:
+            await remote_received_send.send(raw)
+
+    server = await serve(remote_server, "127.0.0.1", unused_tcp_port)
+    client = websocket_transport_component.factory(
+        _component_context(
+            websocket_transport_component,
+            raw_config={
+                "transport_id": "controller-ws",
+                "mode": "client",
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "direction": "ingress",
+                        "uri": f"ws://127.0.0.1:{unused_tcp_port}/plugin",
+                    }
+                },
+            },
+            lanes={"plugin_messages": plugin_bus},
+        )
+    )
+
+    try:
+        async with anyio.create_task_group() as tg:
+            async with plugin_bus.subscribe() as stream:
+                await client.start(RunContext(tg=tg, stopping=anyio.Event()))
+                with anyio.fail_after(3):
+                    await remote_connected.wait()
+
+                received = await _next_message(stream, "host.event")
+                assert _without_route(received) == inbound_message
+
+                await plugin_bus.send(_broadcast_plugin_message("controller.event", 2))
+                with anyio.move_on_after(0.1) as scope:
+                    await remote_received.receive()
+                assert scope.cancel_called
+
+            tg.cancel_scope.cancel()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_egress_binding_does_not_admit_remote_messages(
+    unused_tcp_port: int,
+) -> None:
+    plugin_bus = EventBus("plugin_messages")
+    remote_received_send, remote_received = anyio.create_memory_object_stream[str](10)
+    remote_connected = anyio.Event()
+
+    async def remote_server(websocket) -> None:
+        remote_connected.set()
+        await websocket.send(
+            json.dumps(
+                build_websocket_frame("remote-ws", _plugin_message("host.event", 1))
+            )
+        )
+        async for raw in websocket:
+            await remote_received_send.send(raw)
+
+    server = await serve(remote_server, "127.0.0.1", unused_tcp_port)
+    client = websocket_transport_component.factory(
+        _component_context(
+            websocket_transport_component,
+            raw_config={
+                "transport_id": "controller-ws",
+                "mode": "client",
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "direction": "egress",
+                        "uri": f"ws://127.0.0.1:{unused_tcp_port}/plugin",
+                    }
+                },
+            },
+            lanes={"plugin_messages": plugin_bus},
+        )
+    )
+
+    try:
+        async with anyio.create_task_group() as tg:
+            async with plugin_bus.subscribe() as stream:
+                await client.start(RunContext(tg=tg, stopping=anyio.Event()))
+                with anyio.fail_after(3):
+                    await remote_connected.wait()
+
+                with anyio.move_on_after(0.1) as scope:
+                    await stream.receive()
+                assert scope.cancel_called
+
+                outbound_message = _broadcast_plugin_message("controller.event", 2)
+                await plugin_bus.send(outbound_message)
+                frame = parse_websocket_frame(
+                    json.loads(await remote_received.receive())
+                )
+                assert _without_route(frame.message) == outbound_message
+
+            tg.cancel_scope.cancel()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
 def test_transport_frames_validate_deckr_messages() -> None:
     message = _plugin_message("schema.check", 3)
     assert parse_mqtt_frame(build_mqtt_frame("mqtt-a", message)).message == message
-    assert parse_websocket_frame(
-        build_websocket_frame("ws-a", message)
-    ).message == message
+    assert (
+        parse_websocket_frame(build_websocket_frame("ws-a", message)).message == message
+    )
+
+
+def test_extension_lane_bindings_require_schema_id() -> None:
+    with pytest.raises(ValueError, match="requires schema_id"):
+        mqtt_transport_component.lanes_for(
+            raw_config={
+                "hostname": "mqtt.example.net",
+                "bindings": {
+                    "metrics": {
+                        "lane": "acme.metrics.events",
+                        "topic": "deckr/metrics",
+                    }
+                },
+            },
+            instance_id="main",
+        )
+
+    with pytest.raises(ValueError, match="requires schema_id"):
+        websocket_transport_component.lanes_for(
+            raw_config={
+                "mode": "server",
+                "bindings": {
+                    "metrics": {
+                        "lane": "acme.metrics.events",
+                        "path": "/metrics",
+                    }
+                },
+            },
+            instance_id="main",
+        )
+
+
+def test_core_lane_bindings_use_deckr_schema_contracts() -> None:
+    lanes = mqtt_transport_component.lanes_for(
+        raw_config={
+            "hostname": "mqtt.example.net",
+            "bindings": {
+                "plugin": {
+                    "lane": "plugin_messages",
+                    "topic": "deckr/plugin",
+                }
+            },
+        },
+        instance_id="main",
+    )
+    assert lanes.consumes == ("plugin_messages",)
+    assert lanes.publishes == ("plugin_messages",)
+
+    with pytest.raises(ValueError, match="core lane 'plugin_messages'"):
+        websocket_transport_component.lanes_for(
+            raw_config={
+                "mode": "server",
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "schema_id": "acme.override.v1",
+                        "path": "/plugin",
+                    }
+                },
+            },
+            instance_id="main",
+        )
 
 
 @pytest.mark.asyncio
@@ -288,9 +589,10 @@ async def test_websocket_hardware_manager_uses_same_envelope_and_route_semantics
         await server.start(RunContext(tg=tg, stopping=anyio.Event()))
         await anyio.sleep(0.1)
 
-        async with hardware_bus.subscribe() as stream, connect(
-            f"ws://127.0.0.1:{unused_tcp_port}/hardware"
-        ) as websocket:
+        async with (
+            hardware_bus.subscribe() as stream,
+            connect(f"ws://127.0.0.1:{unused_tcp_port}/hardware") as websocket,
+        ):
             await websocket.send(
                 json.dumps(build_websocket_frame("manager-ws", connected))
             )

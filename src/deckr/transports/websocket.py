@@ -31,6 +31,7 @@ from deckr.transports._common import (
     _StrictConfigModel,
     lanes_for_bindings,
     transport_id_for,
+    validate_binding_schema_ids,
 )
 from deckr.transports._lanes import build_lane_handler
 from deckr.transports.routes import mark_forwarded_to_client
@@ -67,7 +68,9 @@ def parse_websocket_frame(payload: Any) -> TransportFrame:
     try:
         return TransportFrame.from_dict(payload)
     except ValidationError as exc:
-        raise WebSocketTransportFrameError("WebSocket transport frame is invalid") from exc
+        raise WebSocketTransportFrameError(
+            "WebSocket transport frame is invalid"
+        ) from exc
 
 
 class WebSocketTransportBindingConfig(TransportBindingConfigBase):
@@ -157,11 +160,12 @@ class WebSocketTransportComponent(BaseComponent):
             )
             self._server = server
             for binding in self._bindings:
-                tg.start_soon(
-                    self._server_bus_to_websocket_loop,
-                    binding,
-                    name=f"websocket_transport_server:{binding.binding_id}",
-                )
+                if binding.config.allows_egress():
+                    tg.start_soon(
+                        self._server_bus_to_websocket_loop,
+                        binding,
+                        name=f"websocket_transport_server:{binding.binding_id}",
+                    )
             try:
                 await server.wait_closed()
             finally:
@@ -206,9 +210,7 @@ class WebSocketTransportComponent(BaseComponent):
                         return
 
                     try:
-                        frame = parse_websocket_frame(
-                            json.loads(raw)
-                        )
+                        frame = parse_websocket_frame(json.loads(raw))
                         if frame.transport_id == self._transport_id:
                             continue
                         binding = self._binding_for_server_path(
@@ -218,6 +220,13 @@ class WebSocketTransportComponent(BaseComponent):
                         if binding is None:
                             logger.warning(
                                 "Dropped WebSocket message for unknown binding path=%s lane=%s",
+                                path,
+                                frame.message.lane,
+                            )
+                            continue
+                        if not binding.config.allows_ingress():
+                            logger.warning(
+                                "Dropped WebSocket ingress on egress-only binding path=%s lane=%s",
                                 path,
                                 frame.message.lane,
                             )
@@ -243,6 +252,8 @@ class WebSocketTransportComponent(BaseComponent):
                 )
 
     async def _server_bus_to_websocket_loop(self, binding: _BindingRuntime) -> None:
+        if not binding.config.allows_egress():
+            return
         async with binding.bus.subscribe() as stream:
             async for message in stream:
                 await binding.handler.handle_local_message(
@@ -275,8 +286,22 @@ class WebSocketTransportComponent(BaseComponent):
                             transport_id=self._transport_id,
                             description=binding.binding_id,
                         )
-                        tg.start_soon(self._client_bus_to_websocket_loop, websocket, binding)
-                        await self._client_websocket_to_bus_loop(websocket, binding)
+                        if binding.config.allows_egress():
+                            tg.start_soon(
+                                self._client_bus_to_websocket_loop,
+                                websocket,
+                                binding,
+                            )
+                        if binding.config.allows_ingress():
+                            await self._client_websocket_to_bus_loop(
+                                websocket,
+                                binding,
+                            )
+                        else:
+                            await self._client_websocket_drain_loop(
+                                websocket,
+                                binding,
+                            )
                         tg.cancel_scope.cancel()
                 except cancelled_exc:
                     await binding.bus.route_table.client_disconnected(binding.client_id)
@@ -290,7 +315,11 @@ class WebSocketTransportComponent(BaseComponent):
         except cancelled_exc:
             raise
 
-    async def _client_bus_to_websocket_loop(self, websocket, binding: _BindingRuntime) -> None:
+    async def _client_bus_to_websocket_loop(
+        self, websocket, binding: _BindingRuntime
+    ) -> None:
+        if not binding.config.allows_egress():
+            return
         async with binding.bus.subscribe() as stream:
             async for message in stream:
                 await binding.handler.handle_local_message(
@@ -302,7 +331,9 @@ class WebSocketTransportComponent(BaseComponent):
                     ),
                 )
 
-    async def _client_websocket_to_bus_loop(self, websocket, binding: _BindingRuntime) -> None:
+    async def _client_websocket_to_bus_loop(
+        self, websocket, binding: _BindingRuntime
+    ) -> None:
         try:
             async for raw in websocket:
                 if isinstance(raw, bytes):
@@ -313,9 +344,7 @@ class WebSocketTransportComponent(BaseComponent):
                     return
 
                 try:
-                    frame = parse_websocket_frame(
-                        json.loads(raw)
-                    )
+                    frame = parse_websocket_frame(json.loads(raw))
                     if (
                         frame.transport_id == self._transport_id
                         or frame.message.lane != binding.config.lane
@@ -331,6 +360,21 @@ class WebSocketTransportComponent(BaseComponent):
                     logger.warning("Dropped malformed WebSocket transport frame")
                 except Exception:
                     logger.exception("Error forwarding WebSocket message to bus")
+        finally:
+            await binding.bus.route_table.client_disconnected(binding.client_id)
+            await binding.handler.handle_transport_disconnect()
+
+    async def _client_websocket_drain_loop(
+        self, websocket, binding: _BindingRuntime
+    ) -> None:
+        try:
+            async for raw in websocket:
+                if isinstance(raw, bytes):
+                    await websocket.close(
+                        code=_UNSUPPORTED_DATA_CLOSE_CODE,
+                        reason="Binary frames are not supported",
+                    )
+                    return
         finally:
             await binding.bus.route_table.client_disconnected(binding.client_id)
             await binding.handler.handle_transport_disconnect()
@@ -425,9 +469,7 @@ class WebSocketTransportComponent(BaseComponent):
         return None
 
     def _bindings_for_server_path(self, path: str) -> list[_BindingRuntime]:
-        return [
-            binding for binding in self._bindings if binding.config.path == path
-        ]
+        return [binding for binding in self._bindings if binding.config.path == path]
 
     def _server_connection_path(self, websocket) -> str | None:
         request = getattr(websocket, "request", None)
@@ -509,6 +551,8 @@ def _validate_config(config: WebSocketTransportConfig) -> WebSocketTransportConf
 
     if not config.bindings:
         raise ValueError("WebSocket transport requires at least one binding")
+
+    validate_binding_schema_ids(config.bindings)
 
     for binding_id, binding in config.bindings.items():
         if not binding.enabled:

@@ -3,8 +3,12 @@ from __future__ import annotations
 import anyio
 import pytest
 
+from deckr.contracts.lanes import LaneContract, LaneContractRegistry, LaneRoutePolicy
 from deckr.contracts.messages import (
+    BUILTIN_ACTION_PROVIDER_ID,
+    LEGACY_BUILTIN_ACTION_PROVIDER_ID,
     controller_address,
+    endpoint_address,
     entity_subject,
     hardware_manager_address,
     host_address,
@@ -14,6 +18,7 @@ from deckr.transports._lanes import build_lane_handler
 from deckr.transports.bus import EventBus
 from deckr.transports.routes import (
     MAX_ROUTE_HISTORY,
+    RouteTable,
     mark_forwarded_to_client,
     mark_received_from_client,
     should_forward_to_client,
@@ -178,7 +183,7 @@ async def test_route_table_local_claim_replaces_remote_claim() -> None:
 
 
 @pytest.mark.asyncio
-async def test_route_table_trusted_remote_claim_replaces_untrusted_remote_claim() -> None:
+async def test_route_table_trusted_remote_replaces_untrusted_claim() -> None:
     bus = EventBus("plugin_messages")
     endpoint = host_address("python")
     await bus.route_table.claim_endpoint(
@@ -300,6 +305,91 @@ async def test_route_table_rejects_remote_claim_outside_lane_policy() -> None:
     assert event.rejected_route.trust_status == "untrusted"
     assert event.reason == (
         "endpoint family 'hardware_manager' cannot be claimed on lane 'plugin_messages'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_route_table_rejects_extension_remote_claim_without_policy() -> None:
+    bus = EventBus("acme.metrics.events")
+
+    async with bus.route_table.subscribe() as stream:
+        rejected = await bus.route_table.claim_endpoint(
+            endpoint=endpoint_address("acme_worker", "one"),
+            lane="acme.metrics.events",
+            client_id="websocket:remote",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="message_sender",
+        )
+        event = await _next_route_event(stream, "endpointClaimRejected")
+
+    assert rejected is None
+    assert event.rejected_route is not None
+    assert event.reason == (
+        "remote endpoint claims are not allowed on lane 'acme.metrics.events'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_route_table_accepts_extension_remote_claim_with_policy() -> None:
+    route_table = RouteTable(
+        lane_contracts=LaneContractRegistry(
+            [
+                LaneContract(
+                    lane="acme.metrics.events",
+                    schema_id="acme.metrics.events.v1",
+                    route_policy=LaneRoutePolicy(
+                        remote_claim_endpoint_families=frozenset({"acme_worker"}),
+                    ),
+                )
+            ]
+        )
+    )
+    bus = EventBus("acme.metrics.events", route_table=route_table)
+
+    accepted = await bus.route_table.claim_endpoint(
+        endpoint=endpoint_address("acme_worker", "one"),
+        lane="acme.metrics.events",
+        client_id="websocket:remote",
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="ws-main",
+        claim_source="message_sender",
+    )
+
+    assert accepted is not None
+    assert accepted.endpoint == endpoint_address("acme_worker", "one")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reserved_host_id",
+    [BUILTIN_ACTION_PROVIDER_ID, LEGACY_BUILTIN_ACTION_PROVIDER_ID],
+)
+async def test_route_table_rejects_reserved_plugin_host_endpoint_claim(
+    reserved_host_id: str,
+) -> None:
+    bus = EventBus("plugin_messages")
+
+    async with bus.route_table.subscribe() as stream:
+        rejected = await bus.route_table.claim_endpoint(
+            endpoint=host_address(reserved_host_id),
+            lane="plugin_messages",
+            client_id=f"websocket:{reserved_host_id}",
+            client_kind="remote",
+            transport_kind="websocket",
+            transport_id="ws-main",
+            claim_source="message_sender",
+        )
+        event = await _next_route_event(stream, "endpointClaimRejected")
+
+    assert rejected is None
+    assert event.rejected_route is not None
+    assert event.rejected_route.endpoint == host_address(reserved_host_id)
+    assert event.reason == (
+        f"reserved endpoint id {reserved_host_id!r} cannot be claimed "
+        "for family 'host' on lane 'plugin_messages'"
     )
 
 

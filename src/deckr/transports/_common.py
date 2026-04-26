@@ -19,11 +19,16 @@ class _StrictConfigModel(BaseModel):
 
 
 def resolved_schema_id(*, lane: str, explicit_schema_id: str | None) -> str:
+    explicit = explicit_schema_id.strip() if explicit_schema_id is not None else None
     core_schema_id = CORE_LANE_SCHEMA_IDS.get(lane)
     if core_schema_id is not None:
+        if explicit:
+            raise ValueError(
+                f"Transport binding for core lane {lane!r} must not define schema_id"
+            )
         return core_schema_id
-    if explicit_schema_id:
-        return explicit_schema_id
+    if explicit:
+        return explicit
     raise ValueError(f"Transport binding for lane {lane!r} requires schema_id")
 
 
@@ -41,24 +46,39 @@ class TransportBindingConfigBase(_StrictConfigModel):
     def resolved_schema_id(self) -> str:
         return resolved_schema_id(lane=self.lane, explicit_schema_id=self.schema_id)
 
+    def allows_ingress(self) -> bool:
+        return self.direction in {
+            TransportDirection.INGRESS,
+            TransportDirection.BIDIRECTIONAL,
+        }
+
+    def allows_egress(self) -> bool:
+        return self.direction in {
+            TransportDirection.EGRESS,
+            TransportDirection.BIDIRECTIONAL,
+        }
+
+
+def validate_binding_schema_ids(
+    bindings: dict[str, TransportBindingConfigBase],
+) -> None:
+    for binding in bindings.values():
+        if binding.enabled:
+            binding.resolved_schema_id()
+
 
 def lanes_for_bindings(
     bindings: dict[str, TransportBindingConfigBase],
 ) -> ResolvedLaneSet:
+    validate_binding_schema_ids(bindings)
     consumes: set[str] = set()
     publishes: set[str] = set()
     for binding in bindings.values():
         if not binding.enabled:
             continue
-        if binding.direction in {
-            TransportDirection.EGRESS,
-            TransportDirection.BIDIRECTIONAL,
-        }:
+        if binding.allows_egress():
             consumes.add(binding.lane)
-        if binding.direction in {
-            TransportDirection.INGRESS,
-            TransportDirection.BIDIRECTIONAL,
-        }:
+        if binding.allows_ingress():
             publishes.add(binding.lane)
     return ResolvedLaneSet(
         consumes=tuple(sorted(consumes)),
