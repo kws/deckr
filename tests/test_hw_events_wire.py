@@ -22,81 +22,69 @@ def _stub_device_info() -> hw_events.HardwareDevice:
     )
 
 
-def test_device_connected_serializes_with_camel_case_wire_fields():
+def test_device_connected_serializes_inside_deckr_envelope():
     device = _stub_device_info()
-    message = hw_events.DeviceConnectedMessage(
+    message = hw_events.hardware_input_message(
+        manager_id="manager-main",
         device_id=device.id,
-        device=device,
+        body=hw_events.DeviceConnectedMessage(device=device),
     )
-    wire = hw_events.hardware_message_to_wire(message)
+    wire = message.to_dict()
 
-    assert wire["type"] == "deviceConnected"
-    assert wire["deviceId"] == "local-device"
-    assert wire["device"]["hid"] == "hid:local-device"
-    assert wire["device"]["name"] == "Stub Device"
-    assert wire["device"]["slots"][0]["imageFormat"]["width"] == 72
-    assert wire["device"]["slots"][0]["slotType"] == "key"
+    assert wire["lane"] == "hardware_events"
+    assert wire["messageType"] == "deviceConnected"
+    assert wire["sender"] == "hardware_manager:manager-main"
+    assert wire["recipient"]["targetType"] == "broadcast"
+    assert wire["subject"]["identifiers"] == {
+        "managerId": "manager-main",
+        "deviceId": "local-device",
+    }
+    assert wire["body"]["device"]["hid"] == "hid:local-device"
+    assert wire["body"]["device"]["slots"][0]["imageFormat"]["width"] == 72
 
-    parsed = hw_events.hardware_message_from_wire(wire)
+    parsed = hw_events.hardware_body_from_message(type(message).from_dict(wire))
     assert isinstance(parsed, hw_events.DeviceConnectedMessage)
     assert parsed.device.id == device.id
-    assert parsed.device.name == "Stub Device"
     assert parsed.device.slots[0].gestures == ("key_down", "key_up")
 
 
 def test_set_image_command_round_trips_binary_payload():
-    message = hw_events.SetImageMessage(
+    message = hw_events.hardware_command_message(
+        controller_id="controller-main",
+        manager_id="manager-main",
+        message_type=hw_events.SET_IMAGE,
         device_id="local-device",
-        slot_id="0,0",
-        image=b"\x00\xff\x10",
+        control_id="0,0",
+        control_kind="slot",
+        body=hw_events.SetImageMessage(
+            slot_id="0,0",
+            image=b"\x00\xff\x10",
+        ),
     )
 
-    wire = hw_events.hardware_message_to_wire(message)
+    wire = message.to_dict()
 
-    assert wire["type"] == "setImage"
-    assert wire["deviceId"] == "local-device"
-    assert wire["slotId"] == "0,0"
-    assert isinstance(wire["image"], str)
+    assert wire["messageType"] == "setImage"
+    assert wire["recipient"]["endpoint"] == "hardware_manager:manager-main"
+    assert wire["subject"]["identifiers"]["deviceId"] == "local-device"
+    assert wire["subject"]["identifiers"]["controlId"] == "0,0"
+    assert isinstance(wire["body"]["image"], str)
 
-    parsed = hw_events.hardware_message_from_wire(wire)
-    assert parsed == message
+    parsed = hw_events.hardware_body_from_message(type(message).from_dict(wire))
+    assert parsed == hw_events.SetImageMessage(slot_id="0,0", image=b"\x00\xff\x10")
 
 
-def test_hardware_messages_reject_unknown_routing_metadata():
+def test_hardware_bodies_reject_routing_metadata():
     with pytest.raises(ValidationError):
         hw_events.KeyDownMessage.model_validate(
             {
                 "deviceId": "local-device",
                 "keyId": "0,0",
                 "internalMetadata": {"source": "transport"},
-                "type": "keyDown",
             }
         )
 
 
-def test_remote_device_id_round_trip():
-    remote_id = hw_events.build_remote_device_id("bedroom-pi", "virtual-1")
-    parsed = hw_events.parse_remote_device_id(remote_id)
-
-    assert parsed == {
-        "manager_id": "bedroom-pi",
-        "device_id": "virtual-1",
-    }
-
-
-def test_legacy_hello_messages_are_rejected():
-    with pytest.raises(ValidationError):
-        hw_events.hardware_message_from_wire(
-            {
-                "type": "managerHello",
-                "managerId": "bedroom-pi",
-            }
-        )
-
-    with pytest.raises(ValidationError):
-        hw_events.hardware_message_from_wire(
-            {
-                "type": "controllerHello",
-                "controllerId": "controller-main",
-            }
-        )
+def test_encoded_remote_device_ids_are_not_contract_helpers():
+    assert not hasattr(hw_events, "build_remote_device_id")
+    assert not hasattr(hw_events, "parse_remote_device_id")

@@ -1,46 +1,22 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
-from urllib.parse import quote, unquote
+from typing import Any, Literal
 
-from pydantic import Field, RootModel
+from pydantic import Field
 
+from deckr.contracts.messages import (
+    HARDWARE_EVENTS_LANE,
+    DeckrMessage,
+    EndpointAddress,
+    EntitySubject,
+    MessageTarget,
+    controllers_broadcast,
+    endpoint_target,
+    entity_subject,
+    hardware_manager_address,
+    parse_hardware_manager_address,
+)
 from deckr.contracts.models import DeckrModel
-
-
-def _encode_runtime_id(value: str) -> str:
-    return quote(value, safe="")
-
-
-def _decode_runtime_id(value: str) -> str:
-    return unquote(value)
-
-
-def build_remote_device_id(manager_id: str, device_id: str) -> str:
-    return (
-        f"manager={_encode_runtime_id(manager_id)}"
-        f"|device={_encode_runtime_id(device_id)}"
-    )
-
-
-def parse_remote_device_id(remote_device_id: str) -> dict[str, str | None]:
-    if not remote_device_id.startswith("manager="):
-        return {"manager_id": None, "device_id": remote_device_id or None}
-
-    parsed: dict[str, str | None] = {
-        "manager_id": None,
-        "device_id": None,
-    }
-    for item in remote_device_id.split("|"):
-        key, sep, value = item.partition("=")
-        if not sep:
-            continue
-        decoded = _decode_runtime_id(value)
-        if key == "manager":
-            parsed["manager_id"] = decoded
-        elif key == "device":
-            parsed["device_id"] = decoded
-    return parsed
 
 
 class HardwareCoordinates(DeckrModel):
@@ -74,69 +50,50 @@ class HardwareDevice(DeckrModel):
 
 
 class DeviceConnectedMessage(DeckrModel):
-    type: Literal["deviceConnected"] = "deviceConnected"
-    device_id: str
     device: HardwareDevice
 
 
 class DeviceDisconnectedMessage(DeckrModel):
-    type: Literal["deviceDisconnected"] = "deviceDisconnected"
-    device_id: str
+    pass
 
 
 class KeyDownMessage(DeckrModel):
-    type: Literal["keyDown"] = "keyDown"
-    device_id: str
     key_id: str
 
 
 class KeyUpMessage(DeckrModel):
-    type: Literal["keyUp"] = "keyUp"
-    device_id: str
     key_id: str
 
 
 class DialRotateMessage(DeckrModel):
-    type: Literal["dialRotate"] = "dialRotate"
-    device_id: str
     dial_id: str
     direction: Literal["clockwise", "counterclockwise"]
 
 
 class TouchTapMessage(DeckrModel):
-    type: Literal["touchTap"] = "touchTap"
-    device_id: str
     touch_id: str
 
 
 class TouchSwipeMessage(DeckrModel):
-    type: Literal["touchSwipe"] = "touchSwipe"
-    device_id: str
     touch_id: str
     direction: Literal["left", "right"]
 
 
 class SetImageMessage(DeckrModel):
-    type: Literal["setImage"] = "setImage"
-    device_id: str
     slot_id: str
     image: bytes
 
 
 class ClearSlotMessage(DeckrModel):
-    type: Literal["clearSlot"] = "clearSlot"
-    device_id: str
     slot_id: str
 
 
 class SleepScreenMessage(DeckrModel):
-    type: Literal["sleepScreen"] = "sleepScreen"
-    device_id: str
+    pass
 
 
 class WakeScreenMessage(DeckrModel):
-    type: Literal["wakeScreen"] = "wakeScreen"
-    device_id: str
+    pass
 
 
 HardwareInputMessage = (
@@ -156,10 +113,7 @@ HardwareCommandMessage = (
     | WakeScreenMessage
 )
 
-HardwareTransportMessage = Annotated[
-    HardwareInputMessage | HardwareCommandMessage,
-    Field(discriminator="type"),
-]
+HardwareTransportMessage = HardwareInputMessage | HardwareCommandMessage
 
 HARDWARE_INPUT_MESSAGE_TYPES = (
     DeviceConnectedMessage,
@@ -179,22 +133,191 @@ HARDWARE_COMMAND_MESSAGE_TYPES = (
 )
 
 
-class HardwareTransportEnvelope(RootModel[HardwareTransportMessage]):
-    root: HardwareTransportMessage
+DEVICE_CONNECTED = "deviceConnected"
+DEVICE_DISCONNECTED = "deviceDisconnected"
+KEY_DOWN = "keyDown"
+KEY_UP = "keyUp"
+DIAL_ROTATE = "dialRotate"
+TOUCH_TAP = "touchTap"
+TOUCH_SWIPE = "touchSwipe"
+SET_IMAGE = "setImage"
+CLEAR_SLOT = "clearSlot"
+SLEEP_SCREEN = "sleepScreen"
+WAKE_SCREEN = "wakeScreen"
+
+HARDWARE_BODY_BY_MESSAGE_TYPE: dict[str, type[HardwareTransportMessage]] = {
+    DEVICE_CONNECTED: DeviceConnectedMessage,
+    DEVICE_DISCONNECTED: DeviceDisconnectedMessage,
+    KEY_DOWN: KeyDownMessage,
+    KEY_UP: KeyUpMessage,
+    DIAL_ROTATE: DialRotateMessage,
+    TOUCH_TAP: TouchTapMessage,
+    TOUCH_SWIPE: TouchSwipeMessage,
+    SET_IMAGE: SetImageMessage,
+    CLEAR_SLOT: ClearSlotMessage,
+    SLEEP_SCREEN: SleepScreenMessage,
+    WAKE_SCREEN: WakeScreenMessage,
+}
+HARDWARE_MESSAGE_TYPE_BY_BODY = {
+    body_type: message_type
+    for message_type, body_type in HARDWARE_BODY_BY_MESSAGE_TYPE.items()
+}
 
 
-def hardware_message_to_wire(message: HardwareTransportMessage) -> dict[str, Any]:
-    return HardwareTransportEnvelope(root=message).model_dump(
-        by_alias=True,
-        mode="json",
+def hardware_subject(
+    *,
+    manager_id: str,
+    device_id: str,
+    control_id: str | None = None,
+    control_kind: str | None = None,
+) -> EntitySubject:
+    identifiers = {
+        "managerId": manager_id,
+        "deviceId": device_id,
+    }
+    if control_id is not None:
+        identifiers["controlId"] = control_id
+    if control_kind is not None:
+        identifiers["controlKind"] = control_kind
+    return entity_subject(
+        "hardware_control" if control_id is not None else "hardware_device",
+        **identifiers,
     )
 
 
-def hardware_message_from_wire(data: dict[str, Any]) -> HardwareTransportMessage:
-    return HardwareTransportEnvelope.model_validate(data).root
+def subject_manager_id(subject: EntitySubject) -> str | None:
+    return subject.identifiers.get("managerId")
 
 
-def hardware_transport_message_schema() -> dict[str, Any]:
-    return HardwareTransportEnvelope.model_json_schema(
-        by_alias=True,
+def subject_device_id(subject: EntitySubject) -> str | None:
+    return subject.identifiers.get("deviceId")
+
+
+def subject_control_id(subject: EntitySubject) -> str | None:
+    return subject.identifiers.get("controlId")
+
+
+def hardware_body_to_dict(body: HardwareTransportMessage) -> dict[str, Any]:
+    return body.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+def hardware_body_from_message(message: DeckrMessage) -> HardwareTransportMessage:
+    body_type = HARDWARE_BODY_BY_MESSAGE_TYPE.get(message.message_type)
+    if body_type is None:
+        raise ValueError(f"Unsupported hardware message type {message.message_type!r}")
+    return body_type.model_validate(message.body)
+
+
+def hardware_message(
+    *,
+    sender: str | EndpointAddress,
+    recipient: str | EndpointAddress | MessageTarget,
+    message_type: str,
+    body: HardwareTransportMessage,
+    subject: EntitySubject,
+    in_reply_to: str | None = None,
+    causation_id: str | None = None,
+) -> DeckrMessage:
+    target = recipient if not isinstance(recipient, str | EndpointAddress) else endpoint_target(recipient)
+    return DeckrMessage(
+        lane=HARDWARE_EVENTS_LANE,
+        messageType=message_type,
+        sender=sender,
+        recipient=target,
+        subject=subject,
+        body=hardware_body_to_dict(body),
+        inReplyTo=in_reply_to,
+        causationId=causation_id,
     )
+
+
+def hardware_event_message(
+    *,
+    manager_id: str,
+    message_type: str,
+    device_id: str,
+    body: HardwareInputMessage,
+    control_id: str | None = None,
+    control_kind: str | None = None,
+) -> DeckrMessage:
+    return hardware_message(
+        sender=hardware_manager_address(manager_id),
+        recipient=controllers_broadcast(),
+        message_type=message_type,
+        body=body,
+        subject=hardware_subject(
+            manager_id=manager_id,
+            device_id=device_id,
+            control_id=control_id,
+            control_kind=control_kind,
+        ),
+    )
+
+
+def hardware_input_message(
+    *,
+    manager_id: str,
+    device_id: str,
+    body: HardwareInputMessage,
+) -> DeckrMessage:
+    message_type = HARDWARE_MESSAGE_TYPE_BY_BODY[type(body)]
+    control_id: str | None = None
+    control_kind: str | None = None
+    if isinstance(body, KeyDownMessage | KeyUpMessage):
+        control_id = body.key_id
+        control_kind = "key"
+    elif isinstance(body, DialRotateMessage):
+        control_id = body.dial_id
+        control_kind = "dial"
+    elif isinstance(body, TouchTapMessage | TouchSwipeMessage):
+        control_id = body.touch_id
+        control_kind = "touch"
+    return hardware_event_message(
+        manager_id=manager_id,
+        message_type=message_type,
+        device_id=device_id,
+        body=body,
+        control_id=control_id,
+        control_kind=control_kind,
+    )
+
+
+def hardware_command_message(
+    *,
+    controller_id: str,
+    manager_id: str,
+    message_type: str,
+    device_id: str,
+    body: HardwareCommandMessage,
+    control_id: str | None = None,
+    control_kind: str | None = None,
+) -> DeckrMessage:
+    return hardware_message(
+        sender=f"controller:{controller_id}",
+        recipient=hardware_manager_address(manager_id),
+        message_type=message_type,
+        body=body,
+        subject=hardware_subject(
+            manager_id=manager_id,
+            device_id=device_id,
+            control_id=control_id,
+            control_kind=control_kind,
+        ),
+    )
+
+
+def hardware_manager_id_from_message(message: DeckrMessage) -> str | None:
+    if message.message_type in {
+        SET_IMAGE,
+        CLEAR_SLOT,
+        SLEEP_SCREEN,
+        WAKE_SCREEN,
+    }:
+        recipient = message.recipient
+        if hasattr(recipient, "endpoint"):
+            return parse_hardware_manager_address(recipient.endpoint)
+    return subject_manager_id(message.subject)
+
+
+def hardware_message_schema() -> dict[str, Any]:
+    return DeckrMessage.model_json_schema(by_alias=True)

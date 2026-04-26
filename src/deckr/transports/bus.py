@@ -2,57 +2,39 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from functools import cache
-from types import MappingProxyType
 from typing import Any, TypeVar
 
 import anyio
 
+from deckr.contracts.messages import DeckrMessage
+
 logger = logging.getLogger(__name__)
-
-TRANSPORT_KIND_HEADER = "deckr.transport.kind"
-TRANSPORT_ID_HEADER = "deckr.transport.id"
-TRANSPORT_REMOTE_ID_HEADER = "deckr.transport.remote_id"
-TRANSPORT_LANE_HEADER = "deckr.transport.lane"
-
-
-@dataclass(frozen=True, slots=True)
-class TransportEnvelope:
-    message: Any
-    headers: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
 
 
 class EventBus:
     def __init__(
         self,
+        lane: str,
         buffer_size: int = 100,
         *,
         send_timeout: float = 0.25,
     ):
+        self.lane = lane
         self._buffer_size = buffer_size
         self._send_timeout = send_timeout
         self._lock = anyio.Lock()
-        self._subscribers: dict[
-            str, anyio.abc.ObjectSendStream[TransportEnvelope]
-        ] = {}
+        self._subscribers: dict[str, anyio.abc.ObjectSendStream[DeckrMessage]] = {}
 
-    async def send(
-        self,
-        message: Any,
-        *,
-        headers: Mapping[str, Any] | None = None,
-    ) -> None:
-        envelope = (
-            message
-            if isinstance(message, TransportEnvelope) and headers is None
-            else TransportEnvelope(message=message, headers=headers or {})
-        )
+    async def send(self, message: DeckrMessage) -> None:
+        if not isinstance(message, DeckrMessage):
+            raise TypeError("EventBus.send requires a DeckrMessage")
+        if message.lane != self.lane:
+            raise ValueError(
+                f"Cannot send message for lane {message.lane!r} on bus {self.lane!r}"
+            )
         # Snapshot subscribers quickly under lock
         async with self._lock:
             subs = list(self._subscribers.items())
@@ -63,7 +45,7 @@ class EventBus:
         for sid, send_stream in subs:
             # "Drop if slow": do not allow a slow subscriber to block the bus.
             with anyio.move_on_after(self._send_timeout) as scope:
-                await send_stream.send(envelope)
+                await send_stream.send(message)
             if scope.cancel_called:
                 # Subscriber buffer full or send would block
                 to_drop.append(sid)
@@ -73,7 +55,7 @@ class EventBus:
             logger.warning(
                 "EventBus dropped %d slow subscriber(s) while delivering %s",
                 len(to_drop),
-                type(envelope.message).__name__,
+                message.message_type,
             )
             async with self._lock:
                 for sid in to_drop:
@@ -84,9 +66,9 @@ class EventBus:
     @asynccontextmanager
     async def subscribe(
         self,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[TransportEnvelope]]:
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[DeckrMessage]]:
         sid = str(uuid.uuid4())
-        send, receive = anyio.create_memory_object_stream[TransportEnvelope](
+        send, receive = anyio.create_memory_object_stream[DeckrMessage](
             max_buffer_size=self._buffer_size
         )
 
@@ -134,8 +116,7 @@ def _handler_names_by_event(cls: type) -> dict[type, tuple[str, ...]]:
 async def attach_event_handlers(obj: Any, event_bus: EventBus):
     handler_names = _handler_names_by_event(obj.__class__)
     async with event_bus.subscribe() as subscribe:
-        async for envelope in subscribe:
-            event = envelope.message
+        async for event in subscribe:
             handlers = handler_names.get(type(event), [])
             for handler_name in handlers:
                 handler = getattr(obj, handler_name)

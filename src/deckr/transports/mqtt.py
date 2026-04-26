@@ -7,7 +7,9 @@ from typing import Any
 
 import anyio
 from anyio import get_cancelled_exc_class
+from pydantic import ValidationError
 
+from deckr.contracts.messages import DeckrMessage, TransportFrame
 from deckr.core.component import BaseComponent, RunContext
 from deckr.core.components import (
     ComponentCardinality,
@@ -32,45 +34,24 @@ QOS = 2
 TRANSPORT_KIND = "mqtt"
 
 
-class MqttTransportEnvelopeError(ValueError):
-    """Raised when an MQTT transport envelope is invalid."""
+class MqttTransportFrameError(ValueError):
+    """Raised when an MQTT transport frame is invalid."""
 
 
-def build_mqtt_envelope(
+def build_mqtt_frame(
     transport_id: str,
-    lane: str,
-    message: dict[str, Any],
+    message: DeckrMessage,
 ) -> dict[str, Any]:
-    return {
-        "transportId": transport_id,
-        "lane": lane,
-        "message": message,
-    }
+    return TransportFrame(transportId=transport_id, message=message).to_dict()
 
 
-def parse_mqtt_envelope(payload: Any) -> tuple[str | None, str, dict[str, Any]]:
+def parse_mqtt_frame(payload: Any) -> TransportFrame:
     if not isinstance(payload, dict):
-        raise MqttTransportEnvelopeError("MQTT transport payload must be a JSON object")
-
-    transport_id = payload.get("transportId")
-    if transport_id is not None and not isinstance(transport_id, str):
-        raise MqttTransportEnvelopeError(
-            "MQTT transport payload 'transportId' must be a string"
-        )
-
-    lane = payload.get("lane")
-    if not isinstance(lane, str) or not lane.strip():
-        raise MqttTransportEnvelopeError(
-            "MQTT transport payload 'lane' must be a non-empty string"
-        )
-
-    message = payload.get("message")
-    if not isinstance(message, dict):
-        raise MqttTransportEnvelopeError(
-            "MQTT transport payload 'message' must be an object"
-        )
-
-    return transport_id, lane, message
+        raise MqttTransportFrameError("MQTT transport frame must be a JSON object")
+    try:
+        return TransportFrame.from_dict(payload)
+    except ValidationError as exc:
+        raise MqttTransportFrameError("MQTT transport frame is invalid") from exc
 
 
 class MqttTransportBindingConfig(TransportBindingConfigBase):
@@ -181,14 +162,13 @@ class MqttTransportComponent(BaseComponent):
 
     async def _bus_to_mqtt_loop(self, client, binding: _BindingRuntime) -> None:
         async with binding.bus.subscribe() as stream:
-            async for envelope in stream:
-                await binding.handler.handle_local_event(
-                    envelope,
-                    send_remote=lambda payload, target_transport_id: self._publish(
+            async for message in stream:
+                await binding.handler.handle_local_message(
+                    message,
+                    send_remote=lambda message: self._publish(
                         client,
                         binding,
-                        payload,
-                        target_transport_id=target_transport_id,
+                        message,
                     ),
                 )
 
@@ -201,21 +181,17 @@ class MqttTransportComponent(BaseComponent):
                 raw = message.payload
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
-                remote_transport_id, lane, payload = parse_mqtt_envelope(json.loads(raw))
-                if remote_transport_id == self._transport_id or lane != binding.config.lane:
+                frame = parse_mqtt_frame(json.loads(raw))
+                if (
+                    frame.transport_id == self._transport_id
+                    or frame.message.lane != binding.config.lane
+                ):
                     continue
-                await binding.handler.handle_remote_payload(
-                    payload,
-                    send_remote=lambda response, target_transport_id: self._publish(
-                        client,
-                        binding,
-                        response,
-                        target_transport_id=target_transport_id,
-                    ),
-                    remote_transport_id=remote_transport_id,
+                await binding.handler.handle_remote_message(
+                    frame.message,
                 )
-            except MqttTransportEnvelopeError:
-                logger.warning("Dropped malformed MQTT transport envelope")
+            except MqttTransportFrameError:
+                logger.warning("Dropped malformed MQTT transport frame")
             except Exception:
                 logger.exception("Error forwarding MQTT message to bus")
 
@@ -223,19 +199,15 @@ class MqttTransportComponent(BaseComponent):
         self,
         client,
         binding: _BindingRuntime,
-        payload: dict[str, Any],
-        *,
-        target_transport_id: str | None,
+        message: DeckrMessage,
     ) -> None:
-        del target_transport_id
-        envelope = build_mqtt_envelope(
+        frame = build_mqtt_frame(
             self._transport_id,
-            binding.config.lane,
-            payload,
+            message,
         )
         await client.publish(
             binding.config.topic,
-            json.dumps(envelope),
+            json.dumps(frame),
             qos=QOS,
         )
 

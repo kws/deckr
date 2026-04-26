@@ -9,12 +9,12 @@ from typing import Any, Protocol
 
 import anyio
 
+from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.component import BaseComponent, Component, ComponentManager
 from deckr.core.config import ConfigDocument
 from deckr.transports.bus import EventBus
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
-CORE_LANE_NAMES = ("hardware_events", "plugin_messages")
 
 
 class ComponentCardinality(StrEnum):
@@ -117,7 +117,7 @@ class LaneRegistry:
     def from_names(cls, lane_names: set[str] | frozenset[str]) -> LaneRegistry:
         names = set(CORE_LANE_NAMES)
         names.update(lane_names)
-        return cls({name: EventBus() for name in sorted(names)})
+        return cls({name: EventBus(name) for name in sorted(names)})
 
     def get(self, name: str) -> EventBus | None:
         return self._buses.get(name)

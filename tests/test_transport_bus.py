@@ -1,81 +1,50 @@
 from __future__ import annotations
 
-from types import MappingProxyType
-
 import pytest
 
-from deckr.pluginhost.messages import HostMessage
-from deckr.transports.bus import (
-    TRANSPORT_ID_HEADER,
-    TRANSPORT_KIND_HEADER,
-    EventBus,
-    TransportEnvelope,
-)
+from deckr.contracts.messages import controller_address, entity_subject, host_address
+from deckr.pluginhost.messages import plugin_message
+from deckr.transports.bus import EventBus
 
 
-def _message() -> HostMessage:
-    return HostMessage(
-        from_id="host:test",
-        to_id="controller:test",
-        type="test.message",
+def _message(lane: str = "plugin_messages"):
+    message = plugin_message(
+        sender=host_address("test"),
+        recipient=controller_address("test"),
+        message_type="test.message",
         payload={"value": 1},
+        subject=entity_subject("test"),
     )
-
-
-def test_host_message_payload_is_immutable_json() -> None:
-    source_payload = {"value": {"nested": [1]}}
-    message = HostMessage(
-        from_id="host:test",
-        to_id="controller:test",
-        type="test.message",
-        payload=source_payload,
-    )
-
-    source_payload["value"] = {"nested": [2]}
-
-    assert message.payload == {"value": {"nested": (1,)}}
-    with pytest.raises(TypeError):
-        message.payload["added"] = True  # type: ignore[index]
-    with pytest.raises(TypeError):
-        message.payload["value"]["nested"] = (3,)  # type: ignore[index]
-    assert message.to_dict()["payload"] == {"value": {"nested": [1]}}
+    if lane == "plugin_messages":
+        return message
+    return message.model_copy(update={"lane": lane})
 
 
 @pytest.mark.asyncio
-async def test_event_bus_delivers_transport_envelopes_with_immutable_headers() -> None:
-    bus = EventBus()
+async def test_event_bus_delivers_deckr_messages_directly() -> None:
+    bus = EventBus("plugin_messages")
     message = _message()
-    headers = {
-        TRANSPORT_KIND_HEADER: "mqtt",
-        TRANSPORT_ID_HEADER: "transport-a",
-    }
 
     async with bus.subscribe() as stream:
-        await bus.send(message, headers=headers)
-        headers[TRANSPORT_ID_HEADER] = "mutated-after-send"
+        await bus.send(message)
+        received = await stream.receive()
 
-        envelope = await stream.receive()
-
-    assert isinstance(envelope, TransportEnvelope)
-    assert envelope.message is message
-    assert isinstance(envelope.headers, MappingProxyType)
-    assert envelope.headers == {
-        TRANSPORT_KIND_HEADER: "mqtt",
-        TRANSPORT_ID_HEADER: "transport-a",
-    }
-    with pytest.raises(TypeError):
-        envelope.headers[TRANSPORT_ID_HEADER] = "mutated"  # type: ignore[index]
+    assert received is message
+    assert received.lane == "plugin_messages"
+    assert received.message_type == "test.message"
 
 
 @pytest.mark.asyncio
-async def test_event_bus_does_not_mutate_messages_for_transport_metadata() -> None:
-    bus = EventBus()
-    message = _message()
+async def test_event_bus_rejects_wrong_lane() -> None:
+    bus = EventBus("hardware_events")
 
-    async with bus.subscribe() as stream:
-        await bus.send(message, headers={TRANSPORT_KIND_HEADER: "websocket"})
-        envelope = await stream.receive()
+    with pytest.raises(ValueError, match="Cannot send message"):
+        await bus.send(_message())
 
-    assert envelope.message is message
-    assert not hasattr(message, "internal_metadata")
-    assert "internalMetadata" not in message.model_dump(mode="json", by_alias=True)
+
+@pytest.mark.asyncio
+async def test_event_bus_rejects_non_deckr_message() -> None:
+    bus = EventBus("plugin_messages")
+
+    with pytest.raises(TypeError, match="DeckrMessage"):
+        await bus.send({"legacy": "payload"})  # type: ignore[arg-type]

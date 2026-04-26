@@ -10,7 +10,14 @@ from urllib.parse import urlsplit
 
 import anyio
 from anyio import get_cancelled_exc_class
+from pydantic import ValidationError
 
+from deckr.contracts.messages import (
+    DeckrMessage,
+    EndpointAddress,
+    EndpointTarget,
+    TransportFrame,
+)
 from deckr.core.component import BaseComponent, RunContext
 from deckr.core.components import (
     ComponentCardinality,
@@ -35,47 +42,26 @@ _UNSUPPORTED_DATA_CLOSE_CODE = 1003
 TRANSPORT_KIND = "websocket"
 
 
-class WebSocketTransportEnvelopeError(ValueError):
-    """Raised when a WebSocket transport envelope is invalid."""
+class WebSocketTransportFrameError(ValueError):
+    """Raised when a WebSocket transport frame is invalid."""
 
 
-def build_websocket_envelope(
+def build_websocket_frame(
     transport_id: str,
-    lane: str,
-    message: dict[str, Any],
+    message: DeckrMessage,
 ) -> dict[str, Any]:
-    return {
-        "transportId": transport_id,
-        "lane": lane,
-        "message": message,
-    }
+    return TransportFrame(transportId=transport_id, message=message).to_dict()
 
 
-def parse_websocket_envelope(payload: Any) -> tuple[str | None, str, dict[str, Any]]:
+def parse_websocket_frame(payload: Any) -> TransportFrame:
     if not isinstance(payload, dict):
-        raise WebSocketTransportEnvelopeError(
-            "WebSocket transport payload must be a JSON object"
+        raise WebSocketTransportFrameError(
+            "WebSocket transport frame must be a JSON object"
         )
-
-    transport_id = payload.get("transportId")
-    if transport_id is not None and not isinstance(transport_id, str):
-        raise WebSocketTransportEnvelopeError(
-            "WebSocket transport payload 'transportId' must be a string"
-        )
-
-    lane = payload.get("lane")
-    if not isinstance(lane, str) or not lane.strip():
-        raise WebSocketTransportEnvelopeError(
-            "WebSocket transport payload 'lane' must be a non-empty string"
-        )
-
-    message = payload.get("message")
-    if not isinstance(message, dict):
-        raise WebSocketTransportEnvelopeError(
-            "WebSocket transport payload 'message' must be an object"
-        )
-
-    return transport_id, lane, message
+    try:
+        return TransportFrame.from_dict(payload)
+    except ValidationError as exc:
+        raise WebSocketTransportFrameError("WebSocket transport frame is invalid") from exc
 
 
 class WebSocketTransportBindingConfig(TransportBindingConfigBase):
@@ -133,7 +119,7 @@ class WebSocketTransportComponent(BaseComponent):
         self._connections_lock = anyio.Lock()
         self._connections: set[Any] = set()
         self._connection_paths: dict[Any, str] = {}
-        self._connection_remote_ids: dict[Any, str | None] = {}
+        self._connection_endpoints: dict[Any, set[EndpointAddress]] = {}
 
     async def start(self, ctx: RunContext) -> None:
         if self._config.mode == "server":
@@ -202,7 +188,6 @@ class WebSocketTransportComponent(BaseComponent):
             await websocket.close(code=1008, reason="missing request path")
             return
 
-        remote_transport_id: str | None = None
         async with self._server_connection_context(websocket, path):
             try:
                 async for raw in websocket:
@@ -214,33 +199,33 @@ class WebSocketTransportComponent(BaseComponent):
                         return
 
                     try:
-                        remote_transport_id, lane, payload = parse_websocket_envelope(
+                        frame = parse_websocket_frame(
                             json.loads(raw)
                         )
-                        if remote_transport_id == self._transport_id:
+                        if frame.transport_id == self._transport_id:
                             continue
-                        binding = self._binding_for_server_path(path, lane=lane)
+                        binding = self._binding_for_server_path(
+                            path,
+                            lane=frame.message.lane,
+                        )
                         if binding is None:
                             logger.warning(
                                 "Dropped WebSocket message for unknown binding path=%s lane=%s",
                                 path,
-                                lane,
+                                frame.message.lane,
                             )
                             continue
-                        await self._set_connection_remote_id(websocket, remote_transport_id)
-                        await binding.handler.handle_remote_payload(
-                            payload,
-                            send_remote=lambda response, target_transport_id, binding=binding: self._send_to_server_connections(
-                                binding,
-                                response,
-                                target_transport_id=target_transport_id,
-                            ),
-                            remote_transport_id=remote_transport_id,
+                        await self._add_connection_endpoint(
+                            websocket,
+                            frame.message.sender,
+                        )
+                        await binding.handler.handle_remote_message(
+                            frame.message,
                         )
                     except json.JSONDecodeError:
                         logger.warning("Dropped malformed WebSocket JSON message")
-                    except WebSocketTransportEnvelopeError:
-                        logger.warning("Dropped malformed WebSocket transport envelope")
+                    except WebSocketTransportFrameError:
+                        logger.warning("Dropped malformed WebSocket transport frame")
                     except Exception:
                         logger.exception("Error forwarding WebSocket message to bus")
             except ConnectionClosed:
@@ -248,18 +233,16 @@ class WebSocketTransportComponent(BaseComponent):
             finally:
                 await self._notify_transport_disconnect(
                     bindings=self._bindings_for_server_path(path),
-                    remote_transport_id=remote_transport_id,
                 )
 
     async def _server_bus_to_websocket_loop(self, binding: _BindingRuntime) -> None:
         async with binding.bus.subscribe() as stream:
-            async for envelope in stream:
-                await binding.handler.handle_local_event(
-                    envelope,
-                    send_remote=lambda payload, target_transport_id: self._send_to_server_connections(
+            async for message in stream:
+                await binding.handler.handle_local_message(
+                    message,
+                    send_remote=lambda message: self._send_to_server_connections(
                         binding,
-                        payload,
-                        target_transport_id=target_transport_id,
+                        message,
                     ),
                 )
 
@@ -293,19 +276,17 @@ class WebSocketTransportComponent(BaseComponent):
 
     async def _client_bus_to_websocket_loop(self, websocket, binding: _BindingRuntime) -> None:
         async with binding.bus.subscribe() as stream:
-            async for envelope in stream:
-                await binding.handler.handle_local_event(
-                    envelope,
-                    send_remote=lambda payload, target_transport_id: self._send_to_client(
+            async for message in stream:
+                await binding.handler.handle_local_message(
+                    message,
+                    send_remote=lambda message: self._send_to_client(
                         websocket,
                         binding,
-                        payload,
-                        target_transport_id=target_transport_id,
+                        message,
                     ),
                 )
 
     async def _client_websocket_to_bus_loop(self, websocket, binding: _BindingRuntime) -> None:
-        remote_transport_id: str | None = None
         try:
             async for raw in websocket:
                 if isinstance(raw, bytes):
@@ -316,54 +297,42 @@ class WebSocketTransportComponent(BaseComponent):
                     return
 
                 try:
-                    remote_transport_id, lane, payload = parse_websocket_envelope(
+                    frame = parse_websocket_frame(
                         json.loads(raw)
                     )
-                    if remote_transport_id == self._transport_id or lane != binding.config.lane:
+                    if (
+                        frame.transport_id == self._transport_id
+                        or frame.message.lane != binding.config.lane
+                    ):
                         continue
-                    await binding.handler.handle_remote_payload(
-                        payload,
-                        send_remote=lambda response, target_transport_id: self._send_to_client(
-                            websocket,
-                            binding,
-                            response,
-                            target_transport_id=target_transport_id,
-                        ),
-                        remote_transport_id=remote_transport_id,
+                    await binding.handler.handle_remote_message(
+                        frame.message,
                     )
                 except json.JSONDecodeError:
                     logger.warning("Dropped malformed WebSocket JSON message")
-                except WebSocketTransportEnvelopeError:
-                    logger.warning("Dropped malformed WebSocket transport envelope")
+                except WebSocketTransportFrameError:
+                    logger.warning("Dropped malformed WebSocket transport frame")
                 except Exception:
                     logger.exception("Error forwarding WebSocket message to bus")
         finally:
-            await binding.handler.handle_transport_disconnect(
-                remote_transport_id=remote_transport_id,
-            )
+            await binding.handler.handle_transport_disconnect()
 
     async def _send_to_client(
         self,
         websocket,
         binding: _BindingRuntime,
-        payload: dict[str, Any],
-        *,
-        target_transport_id: str | None,
+        message: DeckrMessage,
     ) -> None:
-        del target_transport_id
-        envelope = build_websocket_envelope(
+        frame = build_websocket_frame(
             self._transport_id,
-            binding.config.lane,
-            payload,
+            message,
         )
-        await websocket.send(json.dumps(envelope))
+        await websocket.send(json.dumps(frame))
 
     async def _send_to_server_connections(
         self,
         binding: _BindingRuntime,
-        payload: dict[str, Any],
-        *,
-        target_transport_id: str | None,
+        message: DeckrMessage,
     ) -> None:
         try:
             from websockets.exceptions import ConnectionClosed
@@ -372,22 +341,18 @@ class WebSocketTransportComponent(BaseComponent):
                 "WebSocket transport requires websockets. Install deckr[websocket]."
             ) from exc
 
-        envelope = build_websocket_envelope(
+        frame = build_websocket_frame(
             self._transport_id,
-            binding.config.lane,
-            payload,
+            message,
         )
-        text = json.dumps(envelope)
+        text = json.dumps(frame)
         path = binding.config.path or "/ws"
         async with self._connections_lock:
             connections = [
                 websocket
                 for websocket in self._connections
                 if self._connection_paths.get(websocket) == path
-                and (
-                    target_transport_id is None
-                    or self._connection_remote_ids.get(websocket) == target_transport_id
-                )
+                and self._message_targets_connection(message, websocket)
             ]
 
         to_close: list[Any] = []
@@ -443,18 +408,32 @@ class WebSocketTransportComponent(BaseComponent):
         async with self._connections_lock:
             self._connections.add(websocket)
             self._connection_paths[websocket] = path
-            self._connection_remote_ids[websocket] = None
+            self._connection_endpoints[websocket] = set()
 
     async def _remove_connection(self, websocket) -> None:
         async with self._connections_lock:
             self._connections.discard(websocket)
             self._connection_paths.pop(websocket, None)
-            self._connection_remote_ids.pop(websocket, None)
+            self._connection_endpoints.pop(websocket, None)
 
-    async def _set_connection_remote_id(self, websocket, remote_transport_id: str | None) -> None:
+    async def _add_connection_endpoint(
+        self,
+        websocket,
+        endpoint: EndpointAddress,
+    ) -> None:
         async with self._connections_lock:
             if websocket in self._connections:
-                self._connection_remote_ids[websocket] = remote_transport_id
+                self._connection_endpoints.setdefault(websocket, set()).add(endpoint)
+
+    def _message_targets_connection(
+        self,
+        message: DeckrMessage,
+        websocket,
+    ) -> bool:
+        recipient = message.recipient
+        if not isinstance(recipient, EndpointTarget):
+            return True
+        return recipient.endpoint in self._connection_endpoints.get(websocket, set())
 
     async def _drop_connection(self, websocket) -> None:
         await self._remove_connection(websocket)
@@ -468,7 +447,7 @@ class WebSocketTransportComponent(BaseComponent):
             connections = list(self._connections)
             self._connections.clear()
             self._connection_paths.clear()
-            self._connection_remote_ids.clear()
+            self._connection_endpoints.clear()
         for websocket in connections:
             try:
                 await websocket.close()
@@ -487,12 +466,9 @@ class WebSocketTransportComponent(BaseComponent):
         self,
         *,
         bindings: list[_BindingRuntime],
-        remote_transport_id: str | None,
     ) -> None:
         for binding in bindings:
-            await binding.handler.handle_transport_disconnect(
-                remote_transport_id=remote_transport_id,
-            )
+            await binding.handler.handle_transport_disconnect()
 
 
 def _validate_config(config: WebSocketTransportConfig) -> WebSocketTransportConfig:

@@ -7,28 +7,28 @@ from types import SimpleNamespace
 import anyio
 import pytest
 from websockets.asyncio.client import connect
-from websockets.asyncio.server import serve
 
+from deckr.contracts.messages import (
+    DeckrMessage,
+    controller_address,
+    endpoint_target,
+    entity_subject,
+    host_address,
+)
 from deckr.core.component import RunContext
 from deckr.core.components import ComponentContext, LaneRegistry, runtime_name_for
-from deckr.hardware import events as hw_events
-from deckr.pluginhost.messages import HostMessage
-from deckr.transports.bus import (
-    TRANSPORT_ID_HEADER,
-    TRANSPORT_KIND_HEADER,
-    TRANSPORT_LANE_HEADER,
-    TRANSPORT_REMOTE_ID_HEADER,
-    EventBus,
-)
+from deckr.pluginhost.messages import plugin_message
+from deckr.transports.bus import EventBus
 from deckr.transports.mqtt import (
-    build_mqtt_envelope,
+    build_mqtt_frame,
+    parse_mqtt_frame,
 )
 from deckr.transports.mqtt import (
     component as mqtt_transport_component,
 )
 from deckr.transports.websocket import (
-    build_websocket_envelope,
-    parse_websocket_envelope,
+    build_websocket_frame,
+    parse_websocket_frame,
 )
 from deckr.transports.websocket import (
     component as websocket_transport_component,
@@ -53,55 +53,12 @@ def _component_context(
     )
 
 
-async def _next_envelope(stream, event_type):
+async def _next_message(stream, message_type: str) -> DeckrMessage:
     with anyio.fail_after(3):
         while True:
-            envelope = await stream.receive()
-            if isinstance(envelope.message, event_type):
-                return envelope
-
-
-async def _wait_for(predicate, *, timeout: float = 3.0) -> None:
-    with anyio.fail_after(timeout):
-        while not predicate():
-            await anyio.sleep(0.01)
-
-
-class StubDevice:
-    def __init__(self, device_id: str = "virtual-1") -> None:
-        self.id = device_id
-        self.hid = f"virtual:{device_id}"
-        self.name = "Virtual Device"
-        self.slots = [
-            hw_events.HardwareSlot(
-                id="0,0",
-                coordinates=hw_events.HardwareCoordinates(column=0, row=0),
-                image_format=hw_events.HardwareImageFormat(width=72, height=72),
-                gestures=["key_down", "key_up"],
-            )
-        ]
-        self.commands: list[tuple[str, object]] = []
-
-    async def set_image(self, slot_id: str, image: bytes) -> None:
-        self.commands.append(("set_image", slot_id, image))
-
-    async def clear_slot(self, slot_id: str) -> None:
-        self.commands.append(("clear_slot", slot_id))
-
-    async def sleep_screen(self) -> None:
-        self.commands.append(("sleep_screen",))
-
-    async def wake_screen(self) -> None:
-        self.commands.append(("wake_screen",))
-
-
-def _device_info(device: StubDevice) -> hw_events.HardwareDevice:
-    return hw_events.HardwareDevice(
-        id=device.id,
-        hid=device.hid,
-        slots=list(device.slots),
-        name=device.name,
-    )
+            message = await stream.receive()
+            if message.message_type == message_type:
+                return message
 
 
 class _FakeMqttMessages:
@@ -129,206 +86,19 @@ class _FakeMqttClient:
         self.published_event.set()
 
 
-def _host_message(message_type: str, *, payload: dict | None = None) -> HostMessage:
-    return HostMessage(
-        from_id="host:test",
-        to_id="controller:test",
-        type=message_type,
-        payload=payload or {},
+def _plugin_message(message_type: str, value: int) -> DeckrMessage:
+    return plugin_message(
+        sender=host_address("python"),
+        recipient=controller_address("controller-main"),
+        message_type=message_type,
+        payload={"value": value},
+        subject=entity_subject("test"),
     )
 
 
 @pytest.mark.asyncio
-async def test_websocket_transport_server_handles_remote_hardware_devices(
-    unused_tcp_port: int,
-) -> None:
-    hardware_bus = EventBus()
-    server = websocket_transport_component.factory(
-        _component_context(
-            websocket_transport_component,
-            raw_config={
-                "transport_id": "controller-ws",
-                "mode": "server",
-                "host": "127.0.0.1",
-                "port": unused_tcp_port,
-                "bindings": {
-                    "hardware": {
-                        "lane": "hardware_events",
-                        "path": "/hardware",
-                    }
-                },
-            },
-            lanes={"hardware_events": hardware_bus},
-        )
-    )
-
-    remote_device_id = hw_events.build_remote_device_id("bedroom-pi", "virtual-1")
-    device = StubDevice()
-
-    async with anyio.create_task_group() as tg:
-        await server.start(RunContext(tg=tg, stopping=anyio.Event()))
-        await _wait_for(lambda: server._server is not None)
-
-        async with hardware_bus.subscribe() as stream:
-            async with connect(f"ws://127.0.0.1:{unused_tcp_port}/hardware") as websocket:
-                await websocket.send(
-                    json.dumps(
-                        build_websocket_envelope(
-                            "bedroom-pi",
-                            "hardware_events",
-                            hw_events.hardware_message_to_wire(
-                                hw_events.DeviceConnectedMessage(
-                                    device_id=remote_device_id,
-                                    device=_device_info(device),
-                                )
-                            ),
-                        )
-                    )
-                )
-
-                connected_envelope = await _next_envelope(
-                    stream, hw_events.DeviceConnectedMessage
-                )
-                connected = connected_envelope.message
-                assert connected.device_id == remote_device_id
-                assert connected_envelope.headers[TRANSPORT_KIND_HEADER] == "websocket"
-                assert connected_envelope.headers[TRANSPORT_ID_HEADER] == "controller-ws"
-                assert (
-                    connected_envelope.headers[TRANSPORT_REMOTE_ID_HEADER]
-                    == "bedroom-pi"
-                )
-                assert (
-                    connected_envelope.headers[TRANSPORT_LANE_HEADER]
-                    == "hardware_events"
-                )
-
-                await hardware_bus.send(
-                    hw_events.SetImageMessage(
-                        device_id=remote_device_id,
-                        slot_id="0,0",
-                        image=b"\x01\x02\x03",
-                    )
-                )
-                _, lane, payload = parse_websocket_envelope(
-                    json.loads(await websocket.recv())
-                )
-                command = hw_events.hardware_message_from_wire(payload)
-                assert lane == "hardware_events"
-                assert isinstance(command, hw_events.SetImageMessage)
-                assert command.device_id == remote_device_id
-                assert command.slot_id == "0,0"
-                assert command.image == b"\x01\x02\x03"
-
-                await websocket.send(
-                    json.dumps(
-                        build_websocket_envelope(
-                            "bedroom-pi",
-                            "hardware_events",
-                            hw_events.hardware_message_to_wire(
-                                hw_events.KeyDownMessage(
-                                    device_id=remote_device_id,
-                                    key_id="0,0",
-                                )
-                            ),
-                        )
-                    )
-                )
-                key_down = (
-                    await _next_envelope(stream, hw_events.KeyDownMessage)
-                ).message
-                assert key_down.device_id == remote_device_id
-                assert key_down.key_id == "0,0"
-
-            disconnected = (
-                await _next_envelope(stream, hw_events.DeviceDisconnectedMessage)
-            ).message
-            assert disconnected.device_id == remote_device_id
-
-        tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_websocket_transport_client_applies_commands_to_local_devices(
-    unused_tcp_port: int,
-) -> None:
-    hardware_bus = EventBus()
-    client = websocket_transport_component.factory(
-        _component_context(
-            websocket_transport_component,
-            raw_config={
-                "transport_id": "bedroom-pi",
-                "mode": "client",
-                "bindings": {
-                    "hardware": {
-                        "lane": "hardware_events",
-                        "uri": f"ws://127.0.0.1:{unused_tcp_port}/hardware",
-                    }
-                },
-            },
-            lanes={"hardware_events": hardware_bus},
-        )
-    )
-
-    local_device = StubDevice()
-    remote_device_id = hw_events.build_remote_device_id("bedroom-pi", local_device.id)
-    received_connected = anyio.Event()
-
-    async def handler(websocket) -> None:
-        raw = json.loads(await websocket.recv())
-        remote_transport_id, lane, payload = parse_websocket_envelope(raw)
-        message = hw_events.hardware_message_from_wire(payload)
-        assert remote_transport_id == "bedroom-pi"
-        assert lane == "hardware_events"
-        assert isinstance(message, hw_events.DeviceConnectedMessage)
-        assert message.device_id == remote_device_id
-        received_connected.set()
-
-        await websocket.send(
-            json.dumps(
-                build_websocket_envelope(
-                    "controller-ws",
-                    "hardware_events",
-                    hw_events.hardware_message_to_wire(
-                        hw_events.SetImageMessage(
-                            device_id=remote_device_id,
-                            slot_id="0,0",
-                            image=b"\x10\x20",
-                        )
-                    ),
-                )
-            )
-        )
-        await anyio.sleep(0.1)
-
-    async with (
-        serve(handler, "127.0.0.1", unused_tcp_port),
-        hardware_bus.subscribe() as stream,
-        anyio.create_task_group() as tg,
-    ):
-        await client.start(RunContext(tg=tg, stopping=anyio.Event()))
-        await anyio.sleep(0.1)
-
-        await hardware_bus.send(
-            hw_events.DeviceConnectedMessage(
-                device_id=local_device.id,
-                device=_device_info(local_device),
-            )
-        )
-
-        with anyio.fail_after(3):
-            await received_connected.wait()
-
-        command = (await _next_envelope(stream, hw_events.SetImageMessage)).message
-        assert command.device_id == local_device.id
-        assert command.slot_id == "0,0"
-        assert command.image == b"\x10\x20"
-
-        tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_mqtt_transport_forwards_plugin_messages() -> None:
-    plugin_bus = EventBus()
+async def test_mqtt_transport_forwards_deckr_messages_unchanged() -> None:
+    plugin_bus = EventBus("plugin_messages")
     transport = mqtt_transport_component.factory(
         _component_context(
             mqtt_transport_component,
@@ -348,7 +118,7 @@ async def test_mqtt_transport_forwards_plugin_messages() -> None:
     )
     binding = transport._bindings[0]
     client = _FakeMqttClient()
-    outbound_message = _host_message("deckr.ready", payload={"value": 1})
+    outbound_message = _plugin_message("deckr.ready", 1)
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(transport._bus_to_mqtt_loop, client, binding)
@@ -361,40 +131,85 @@ async def test_mqtt_transport_forwards_plugin_messages() -> None:
     assert client.published == [
         (
             "deckr/v1",
-            json.dumps(
-                build_mqtt_envelope(
-                    "python-mqtt",
-                    "plugin_messages",
-                    outbound_message.to_dict(),
-                )
-            ),
+            json.dumps(build_mqtt_frame("python-mqtt", outbound_message)),
             2,
         )
     ]
 
-    inbound_message = _host_message("deckr.inbound", payload={"value": 7})
+    inbound_message = _plugin_message("deckr.inbound", 7)
     async with (
         plugin_bus.subscribe() as stream,
         anyio.create_task_group() as tg,
     ):
         tg.start_soon(transport._mqtt_to_bus_loop, client, binding)
         await client.messages.inject(
-            json.dumps(
-                build_mqtt_envelope(
-                    "remote-mqtt",
-                    "plugin_messages",
-                    inbound_message.to_dict(),
-                )
-            ),
+            json.dumps(build_mqtt_frame("remote-mqtt", inbound_message)),
             topic="deckr/v1",
         )
-        received_envelope = await _next_envelope(stream, HostMessage)
-        received = received_envelope.message
+        received = await _next_message(stream, "deckr.inbound")
         tg.cancel_scope.cancel()
 
-    assert received.type == "deckr.inbound"
-    assert received.payload == {"value": 7}
-    assert received_envelope.headers[TRANSPORT_KIND_HEADER] == "mqtt"
-    assert received_envelope.headers[TRANSPORT_ID_HEADER] == "python-mqtt"
-    assert received_envelope.headers[TRANSPORT_REMOTE_ID_HEADER] == "remote-mqtt"
-    assert received_envelope.headers[TRANSPORT_LANE_HEADER] == "plugin_messages"
+    assert received == inbound_message
+
+
+@pytest.mark.asyncio
+async def test_websocket_transport_frames_deckr_messages(
+    unused_tcp_port: int,
+) -> None:
+    plugin_bus = EventBus("plugin_messages")
+    server = websocket_transport_component.factory(
+        _component_context(
+            websocket_transport_component,
+            raw_config={
+                "transport_id": "controller-ws",
+                "mode": "server",
+                "host": "127.0.0.1",
+                "port": unused_tcp_port,
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "path": "/plugin",
+                    }
+                },
+            },
+            lanes={"plugin_messages": plugin_bus},
+        )
+    )
+
+    inbound_message = _plugin_message("host.event", 1)
+    outbound_message = plugin_message(
+        sender=controller_address("controller-main"),
+        recipient=endpoint_target(host_address("python")),
+        message_type="controller.event",
+        payload={"value": 2},
+        subject=entity_subject("test"),
+    )
+
+    async with anyio.create_task_group() as tg:
+        await server.start(RunContext(tg=tg, stopping=anyio.Event()))
+        await anyio.sleep(0.1)
+
+        async with plugin_bus.subscribe() as stream, connect(
+            f"ws://127.0.0.1:{unused_tcp_port}/plugin"
+        ) as websocket:
+            await websocket.send(
+                json.dumps(build_websocket_frame("remote-ws", inbound_message))
+            )
+
+            received = await _next_message(stream, "host.event")
+            assert received == inbound_message
+
+            await plugin_bus.send(outbound_message)
+            frame = parse_websocket_frame(json.loads(await websocket.recv()))
+            assert frame.transport_id == "controller-ws"
+            assert frame.message == outbound_message
+
+        tg.cancel_scope.cancel()
+
+
+def test_transport_frames_validate_deckr_messages() -> None:
+    message = _plugin_message("schema.check", 3)
+    assert parse_mqtt_frame(build_mqtt_frame("mqtt-a", message)).message == message
+    assert parse_websocket_frame(
+        build_websocket_frame("ws-a", message)
+    ).message == message

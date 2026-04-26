@@ -5,6 +5,15 @@ from pathlib import Path
 import anyio
 import pytest
 
+from deckr.contracts.messages import (
+    DeckrMessage,
+    controller_address,
+    controllers_broadcast,
+    endpoint_target,
+    entity_subject,
+    host_address,
+    message_targets_endpoint,
+)
 from deckr.core.component import BaseComponent, ComponentManager
 from deckr.core.components import (
     ComponentActivationResult,
@@ -15,14 +24,20 @@ from deckr.core.components import (
     resolve_component_instance_specs,
 )
 from deckr.core.config import ConfigDocument
-from deckr.hardware.events import hardware_transport_message_schema
-from deckr.pluginhost.messages import HostMessage
+from deckr.hardware.events import hardware_message_schema
+from deckr.pluginhost.messages import (
+    HOST_ONLINE,
+    PluginMessageBody,
+    plugin_host_subject,
+    plugin_message,
+    plugin_payload,
+)
 
 
 def _core_wire_schemas() -> dict[str, dict]:
     return {
-        "deckr.pluginhost.host_message": HostMessage.schema_dict(),
-        "hardware.transport_message": hardware_transport_message_schema(),
+        "deckr.message.plugin_messages.v1": DeckrMessage.schema_dict(),
+        "deckr.message.hardware_events.v1": hardware_message_schema(),
     }
 
 
@@ -269,75 +284,78 @@ async def test_activate_components_provides_prebuilt_lanes_and_exact_config(
         tg.cancel_scope.cancel()
 
 
-def test_host_message_is_pydantic_and_schema_exportable() -> None:
-    message = HostMessage(
-        from_id="host:python",
-        to_id="all_controllers",
-        type="hostOnline",
+def test_deckr_message_is_pydantic_and_schema_exportable() -> None:
+    message = plugin_message(
+        sender=host_address("python"),
+        recipient=controllers_broadcast(),
+        message_type=HOST_ONLINE,
         payload={"hostId": "python"},
+        subject=plugin_host_subject("python"),
     )
 
     payload = message.to_dict()
 
-    assert payload["from"] == "host:python"
-    assert payload["to"] == "all_controllers"
+    assert payload["sender"] == "host:python"
+    assert payload["recipient"] == {
+        "targetType": "broadcast",
+        "scope": "controllers",
+        "endpointFamily": "controller",
+    }
     assert payload["messageId"]
-    assert HostMessage.from_dict(payload) == message
+    assert payload["protocolVersion"] == "1"
+    assert payload["lane"] == "plugin_messages"
+    assert payload["messageType"] == HOST_ONLINE
+    assert DeckrMessage.from_dict(payload) == message
+    assert plugin_payload(message) == {"hostId": "python"}
 
     schemas = _core_wire_schemas()
-    assert "deckr.pluginhost.host_message" in schemas
-    assert "hardware.transport_message" in schemas
+    assert "deckr.message.plugin_messages.v1" in schemas
+    assert "deckr.message.hardware_events.v1" in schemas
 
 
-def test_host_message_from_dict_requires_message_id() -> None:
-    with pytest.raises(ValueError, match="messageId is required"):
-        HostMessage.from_dict(
-            {
-                "from": "host:python",
-                "to": "controller:controller-main",
-                "type": "hostOnline",
-                "payload": {"hostId": "python"},
-            }
-        )
+def test_plugin_body_payload_is_immutable_json() -> None:
+    source_payload = {"value": {"nested": [1]}}
+    body = PluginMessageBody(payload=source_payload)
+
+    source_payload["value"] = {"nested": [2]}
+
+    assert body.payload == {"value": {"nested": (1,)}}
+    with pytest.raises(TypeError):
+        body.payload["added"] = True  # type: ignore[index]
+    assert body.to_dict()["payload"] == {"value": {"nested": [1]}}
 
 
-def test_host_message_routing_requires_canonical_addresses() -> None:
-    controller_message = HostMessage(
-        from_id="host:python",
-        to_id="controller:controller-main",
-        type="hostOnline",
+def test_deckr_message_routing_uses_targets_not_legacy_strings() -> None:
+    controller_message = plugin_message(
+        sender=host_address("python"),
+        recipient=controller_address("controller-main"),
+        message_type=HOST_ONLINE,
         payload={"hostId": "python"},
+        subject=entity_subject("plugin_host", hostId="python"),
     )
-    assert controller_message.for_controller("controller-main") is True
-    assert controller_message.for_controller("controller-other") is False
-
-    bare_controller = HostMessage(
-        from_id="host:python",
-        to_id="controller",
-        type="hostOnline",
-        payload={"hostId": "python"},
+    assert message_targets_endpoint(
+        controller_message, controller_address("controller-main")
     )
-    assert bare_controller.for_controller("controller-main") is False
+    assert not message_targets_endpoint(
+        controller_message, controller_address("controller-other")
+    )
 
-    host_message = HostMessage(
-        from_id="controller:controller-main",
-        to_id="host:python",
-        type="requestActions",
+    host_message = plugin_message(
+        sender=controller_address("controller-main"),
+        recipient=endpoint_target(host_address("python")),
+        message_type="requestActions",
         payload={},
+        subject=entity_subject("plugin_actions"),
     )
-    assert host_message.for_host("python") is True
+    assert message_targets_endpoint(host_message, host_address("python"))
 
-    bare_host = HostMessage(
-        from_id="controller:controller-main",
-        to_id="python",
-        type="requestActions",
-        payload={},
-    )
-    assert bare_host.for_host("python") is False
+    with pytest.raises(ValueError):
+        endpoint_target("python")
 
 
-def test_extract_device_id_rejects_legacy_context_shape() -> None:
-    with pytest.raises(ValueError, match="Invalid contextId"):
-        from deckr.pluginhost.messages import extract_device_id
+def test_context_id_routing_extractors_are_removed() -> None:
+    from deckr.pluginhost import messages
 
-        extract_device_id("device-1.0,0")
+    assert not hasattr(messages, "extract_device_id")
+    assert not hasattr(messages, "extract_slot_id")
+    assert not hasattr(messages, "extract_controller_id")
