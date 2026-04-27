@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from deckr.runtime import Deckr
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
+CORE_NON_COMPONENT_CONFIG_NAMESPACES = frozenset({"lane_contracts", "plugins"})
 
 
 class ComponentCardinality(StrEnum):
@@ -342,12 +343,107 @@ def resolve_component_instance_specs(
     return specs
 
 
+def _component_candidate_prefix(path: tuple[str, ...]) -> str | None:
+    if not path:
+        return None
+    if path[0] == "controller":
+        return "deckr.controller"
+    if path[0] in {"drivers", "plugin_hosts", "transports"} and len(path) >= 2:
+        return f"deckr.{path[0]}.{path[1]}"
+    return "deckr." + ".".join(path)
+
+
+def _configured_component_prefixes(
+    document: ConfigDocument,
+    *,
+    known_prefixes: set[str],
+) -> set[str]:
+    configured: set[str] = set()
+
+    def walk(path: tuple[str, ...], value: Mapping[str, Any]) -> None:
+        prefix = _component_candidate_prefix(path)
+        if prefix in known_prefixes:
+            configured.add(prefix)
+            return
+
+        instances = value.get("instances")
+        if isinstance(instances, Mapping):
+            if prefix is not None:
+                configured.add(prefix)
+            return
+
+        if path and any(not isinstance(item, Mapping) for item in value.values()):
+            if prefix is not None:
+                configured.add(prefix)
+            return
+
+        for name, item in value.items():
+            if not path and name in CORE_NON_COMPONENT_CONFIG_NAMESPACES:
+                continue
+            if isinstance(item, Mapping):
+                walk((*path, str(name)), item)
+
+    deckr_config = document.deckr
+    if isinstance(deckr_config, Mapping):
+        walk((), deckr_config)
+    return configured
+
+
+def _component_config_prefixes(
+    *,
+    discovered_component_ids: list[str] | tuple[str, ...] | None = None,
+    definitions: ComponentDefinitions | None = None,
+) -> set[str]:
+    if definitions is not None:
+        return {
+            definition.manifest.config_prefix
+            for definition in _definition_mapping(definitions).values()
+        }
+
+    prefixes: set[str] = set()
+    for component_id in sorted(set(discovered_component_ids or ())):
+        definition = load_component_definition(component_id)
+        if definition is not None:
+            prefixes.add(definition.manifest.config_prefix)
+    return prefixes
+
+
+def _validate_configured_component_prefixes(
+    document: ConfigDocument,
+    *,
+    discovered_component_ids: list[str] | tuple[str, ...] | None = None,
+    definitions: ComponentDefinitions | None = None,
+) -> None:
+    known_prefixes = _component_config_prefixes(
+        discovered_component_ids=discovered_component_ids,
+        definitions=definitions,
+    )
+    configured_prefixes = _configured_component_prefixes(
+        document,
+        known_prefixes=known_prefixes,
+    )
+    missing = sorted(configured_prefixes - known_prefixes)
+    if not missing:
+        return
+    prefixes = ", ".join(missing)
+    raise ValueError(
+        "Configuration references component prefix(es) with no installed "
+        f"deckr.components entry point: {prefixes}. Install the owning package "
+        "or remove the component configuration."
+    )
+
+
 def configured_component_instance_specs(
     document: ConfigDocument,
 ) -> list[ComponentInstanceSpec]:
+    discovered_component_ids = available_component_ids()
+    _validate_configured_component_prefixes(
+        document,
+        discovered_component_ids=discovered_component_ids,
+    )
     return resolve_component_instance_specs(
         document,
-        discovered_component_ids=available_component_ids(),
+        discovered_component_ids=discovered_component_ids,
     )
 
 
@@ -1033,6 +1129,8 @@ def resolve_component_host_plan(
     *,
     definitions: ComponentDefinitions | None = None,
 ) -> ComponentHostPlan:
+    if definitions is not None:
+        _validate_configured_component_prefixes(document, definitions=definitions)
     specs = tuple(
         configured_component_instance_specs(document)
         if definitions is None

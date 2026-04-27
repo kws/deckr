@@ -13,6 +13,7 @@ from deckr.components import (
     ComponentInstanceSpec,
     ComponentManifest,
     ResolvedLaneSet,
+    configured_component_instance_specs,
     resolve_component_host_plan,
     resolve_component_instance_specs,
     start_components,
@@ -211,6 +212,76 @@ def test_resolve_component_specs_skip_unconfigured_singletons(
     )
 
     assert specs == []
+
+
+def test_configured_component_specs_rejects_uninstalled_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.plugin_hosts.python",
+            config_prefix="deckr.plugin_hosts.python",
+            cardinality=ComponentCardinality.MULTI_INSTANCE,
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+
+    monkeypatch.setattr(
+        "deckr.components._host.available_component_ids",
+        lambda: ["deckr.plugin_hosts.python"],
+    )
+    monkeypatch.setattr(
+        "deckr.components._host.load_component_definition",
+        lambda component_id: host,
+    )
+
+    document = _document(
+        {
+            "deckr": {
+                "controller": {"id": "controller-main"},
+                "drivers": {
+                    "mirabox": {"manager_id": "mirabox-main"},
+                },
+                "plugin_hosts": {
+                    "python": {
+                        "instances": {
+                            "main": {"host_id": "python"},
+                        }
+                    }
+                },
+            }
+        }
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        configured_component_instance_specs(document)
+
+    message = str(exc_info.value)
+    assert "deckr.controller" in message
+    assert "deckr.drivers.mirabox" in message
+
+
+def test_configured_component_specs_rejects_uninstalled_multi_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("deckr.components._host.available_component_ids", lambda: [])
+
+    document = _document(
+        {
+            "deckr": {
+                "plugin_hosts": {
+                    "python": {
+                        "instances": {
+                            "main": {"host_id": "python"},
+                        }
+                    }
+                },
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="deckr.plugin_hosts.python"):
+        configured_component_instance_specs(document)
 
 
 @pytest.mark.asyncio
