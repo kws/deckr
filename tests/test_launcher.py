@@ -235,6 +235,7 @@ def test_cli_delegates_to_launcher(
         captured["config_env"] = config_env
 
     monkeypatch.setattr(cli_mod, "launch", fake_launch)
+    monkeypatch.setattr(cli_mod, "configure_process_logging", lambda level: None)
 
     runner = CliRunner()
     spec = LauncherSpec(default_config_text="[deckr]\n")
@@ -246,6 +247,69 @@ def test_cli_delegates_to_launcher(
     assert captured["config_path"] == str((tmp_path / "deckr.toml").resolve())
     assert captured["spec"] is spec
     assert captured["config_env"] is None
+
+
+def test_cli_configures_default_console_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_configure_process_logging(level: str) -> None:
+        captured["level"] = level
+
+    def fake_launch(config_path, *, spec=None, config_env=None) -> None:
+        captured["launched"] = True
+
+    monkeypatch.setattr(
+        cli_mod,
+        "configure_process_logging",
+        fake_configure_process_logging,
+    )
+    monkeypatch.setattr(cli_mod, "launch", fake_launch)
+
+    runner = CliRunner()
+    command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))
+
+    result = runner.invoke(command, [])
+
+    assert result.exit_code == 0
+    assert captured["level"] == "info"
+    assert captured["launched"] is True
+
+
+def test_cli_loads_logging_config_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    log_config = tmp_path / "logging.ini"
+    log_config.write_text("[loggers]\nkeys=root\n")
+
+    def fake_file_config(path: str, *, disable_existing_loggers: bool) -> None:
+        captured["path"] = path
+        captured["disable_existing_loggers"] = disable_existing_loggers
+
+    def fake_launch(config_path, *, spec=None, config_env=None) -> None:
+        captured["launched"] = True
+
+    monkeypatch.setattr(cli_mod.logging.config, "fileConfig", fake_file_config)
+    monkeypatch.setattr(
+        cli_mod,
+        "configure_process_logging",
+        lambda level: captured.setdefault("default_level", level),
+    )
+    monkeypatch.setattr(cli_mod, "launch", fake_launch)
+
+    runner = CliRunner()
+    command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))
+
+    result = runner.invoke(command, ["--log-config", str(log_config)])
+
+    assert result.exit_code == 0
+    assert captured["path"] == str(log_config.resolve())
+    assert captured["disable_existing_loggers"] is False
+    assert "default_level" not in captured
+    assert captured["launched"] is True
 
 
 def test_cli_passes_config_env_option(
@@ -264,6 +328,7 @@ def test_cli_passes_config_env_option(
         captured["config_env"] = config_env
 
     monkeypatch.setattr(cli_mod, "launch", fake_launch)
+    monkeypatch.setattr(cli_mod, "configure_process_logging", lambda level: None)
 
     runner = CliRunner()
     command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))
@@ -294,6 +359,7 @@ def test_cli_reports_leaf_exception_from_exception_group(
         )
 
     monkeypatch.setattr(cli_mod, "launch", fake_launch)
+    monkeypatch.setattr(cli_mod, "configure_process_logging", lambda level: None)
 
     runner = CliRunner()
     command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))
@@ -327,6 +393,7 @@ def test_cli_reports_multiple_leaf_exceptions_once(
         )
 
     monkeypatch.setattr(cli_mod, "launch", fake_launch)
+    monkeypatch.setattr(cli_mod, "configure_process_logging", lambda level: None)
 
     runner = CliRunner()
     command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))

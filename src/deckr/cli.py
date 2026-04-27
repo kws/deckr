@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging.config
 from collections.abc import Iterator
 from typing import Any
 
+from deckr.core.logging import configure_process_logging
 from deckr.launcher import LauncherSpec, default_config_document_text, launch
 
 
@@ -40,6 +42,13 @@ def _format_cli_error(exc: BaseException) -> str:
     return "Multiple errors occurred:\n" + "\n".join(f"- {message}" for message in messages)
 
 
+def _configure_cli_logging(log_config: str | None) -> None:
+    if log_config is None:
+        configure_process_logging("info")
+        return
+    logging.config.fileConfig(log_config, disable_existing_loggers=False)
+
+
 def build_cli(*, spec: LauncherSpec | None = None):
     click = _require_click()
     resolved_spec = spec or LauncherSpec(
@@ -72,15 +81,30 @@ def build_cli(*, spec: LauncherSpec | None = None):
             "before parsing. Defaults to DECKR_CONFIG_ENV when omitted."
         ),
     )
+    @click.option(
+        "--log-config",
+        "log_config",
+        type=click.Path(
+            exists=True,
+            dir_okay=False,
+            path_type=str,
+            resolve_path=True,
+        ),
+        default=None,
+        metavar="PATH",
+        help="Load Python logging configuration from an INI file.",
+    )
     def command(
         config_path: str | None,
         print_default_config: bool,
         config_env: bool | None,
+        log_config: str | None,
     ) -> None:
         if print_default_config:
             click.echo(resolved_spec.default_config_text or "")
             return
         try:
+            _configure_cli_logging(log_config)
             launch(config_path, spec=resolved_spec, config_env=config_env)
         except Exception as exc:
             raise click.ClickException(_format_cli_error(exc)) from exc
