@@ -464,6 +464,22 @@ hardware discovery facts to Deckr hardware subjects. Concrete hardware paths,
 HID paths, process ids, WebSocket sessions, MQTT topics, and transport ids must
 not become durable device identity.
 
+## Process Entrypoints And Logging
+
+Process-wide concerns belong at process entrypoints, not in reusable components.
+
+The standard `deckr` launcher may configure process logging because it is an
+entrypoint. By default it should install plain console logging suitable for local
+development and container logs. It may also accept an explicit logging
+configuration file from the CLI for deployments that need richer handlers,
+formatters, or file output.
+
+Components, component factories, embedded runtime helpers, and SDK surfaces must
+not configure root logging or mutate process-global logging policy. Embedded
+applications own their own logging setup. The exception is a true subprocess
+entrypoint, such as a plugin worker process, because that process has its own
+process boundary and needs its own entrypoint logging setup.
+
 ## Configuration
 
 Deckr should support configuration documents such as TOML, but the architecture
@@ -710,6 +726,9 @@ Each binding must declare:
   - for example `topic`, `path`, `channel`, `stream`, or similar
 - `schema_id` for extension lanes when the lane is not defined as a core Deckr
   lane
+- optional `remote_endpoints`
+  - explicit Deckr endpoint addresses known to be reachable through that
+    transport binding
 
 For core Deckr lanes, the lane name implies the core Deckr message contract from
 `deckr`. That contract must not be redefined in transport-local configuration.
@@ -722,6 +741,18 @@ schema id as the whole route policy for the lane.
 
 Transport bindings are explicit because hidden transport-to-lane assumptions are a
 major source of architectural drift.
+
+`remote_endpoints` is an explicit route assertion, not discovery magic. Each
+listed endpoint creates a lane-scoped `transport_route` claim for the binding's
+lane when the transport session is connected. The route claim must pass the
+lane's route policy. For example, a plugin-host or hardware-manager process that
+connects to a remote controller over WebSocket may declare
+`remote_endpoints = ["controller:controller-main"]` so broadcasts addressed to
+controllers can be forwarded to that transport client.
+
+Route hints are topology facts. They must not become durable application
+identity, and they must not be inferred from transport ids, paths, topics,
+component prefixes, Docker service names, or hostnames.
 
 The runtime host must never infer:
 
@@ -812,7 +843,8 @@ Supported substitution happens on the raw configuration text before TOML parsing
 [deckr.plugin_hosts.python.instances.main.runtime]
 bind_host = "${DECKR_PLUGINHOST_BIND_HOST:-0.0.0.0}"
 bind_port = ${DECKR_PLUGINHOST_BIND_PORT:-9000}
-plugin_ids = ${DECKR_PLUGIN_IDS:-[]}
+plugin_ids = ${DECKR_PLUGIN_IDS_TOML:-[]}
+excluded_plugin_ids = ${DECKR_EXCLUDED_PLUGIN_IDS_TOML:-[]}
 ```
 
 The replacement text is TOML source. Operators are responsible for quoting

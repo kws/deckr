@@ -37,11 +37,28 @@ its configuration only includes a plugin host component and the transports neede
 to reach the controller domain. The transport bindings still name lanes
 explicitly, for example `plugin_messages`.
 
+When the controller endpoint is remote, the plugin host's transport binding
+should declare the controller as a reachable remote endpoint:
+
+```toml
+[deckr.transports.websocket.instances.controller.bindings.plugin_messages]
+lane = "plugin_messages"
+uri = "ws://controller:8765/plugin-messages"
+remote_endpoints = ["controller:controller-main"]
+```
+
 ## Remote Driver Runtime
 
 A remote driver runtime likewise uses the same APIs, but includes a driver or
 hardware manager component plus explicit transport bindings for the hardware
 lane. It does not need a local controller or plugin host.
+
+```toml
+[deckr.transports.websocket.instances.controller.bindings.hardware_messages]
+lane = "hardware_messages"
+uri = "ws://controller:8765/hardware-messages"
+remote_endpoints = ["controller:controller-main"]
+```
 
 ## Embedded Or Manual Runtime
 

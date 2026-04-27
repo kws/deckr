@@ -419,6 +419,15 @@ implementation supports:
 - `transport_route`
   - an explicit route assertion made by a transport or bridge
 
+Transport bindings may carry explicit remote route hints, such as
+`remote_endpoints = ["controller:controller-main"]`. Those hints are translated
+into `transport_route` claims only for the binding's lane and only while the
+transport client/session is connected. They are useful when a remote peer must
+receive broadcasts before it has sent any message from the endpoint in question.
+For example, a hardware-manager-only process can route
+`controllers` broadcasts to a remote controller when its hardware lane binding
+declares the controller endpoint as reachable.
+
 Remote claims are accepted only when the lane policy allows the claimed endpoint
 family. For core lanes:
 
