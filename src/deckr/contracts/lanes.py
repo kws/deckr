@@ -209,6 +209,7 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "pageAppear",
         "pageDisappear",
         "pluginExtension",
+        "replacePage",
         "requestActions",
         "requestSettings",
         "setImage",
@@ -220,6 +221,7 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "sleepScreen",
         "touchSwipe",
         "touchTap",
+        "updatePage",
         "wakeScreen",
         "willAppear",
         "willDisappear",
@@ -263,7 +265,10 @@ PLUGIN_MESSAGES_DELIVERY = replace(
         "sender",
         "recipient",
         "subject.contextId",
+        "subject.bindingId",
+        "subject.pageSessionId",
         "subject.actionUuid",
+        "subject.actionInstanceId",
         "subject.hostId",
     ),
     message_families=(
@@ -283,6 +288,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                 "recipient",
                 "subject.hostId",
                 "subject.contextId",
+                "subject.pageSessionId",
             ),
         ),
         MessageFamilyDelivery(
@@ -313,7 +319,13 @@ PLUGIN_MESSAGES_DELIVERY = replace(
             idempotency=(
                 IdempotencySemantics.NOT_REPLAYED_SEQUENCE_DUPLICATE_SUPPRESSION
             ),
-            ordering_keys=("sender", "recipient", "subject.contextId"),
+            ordering_keys=(
+                "sender",
+                "recipient",
+                "subject.contextId",
+                "subject.bindingId",
+                "subject.pageSessionId",
+            ),
         ),
         MessageFamilyDelivery(
             family=MessageFamily.COMMAND,
@@ -322,6 +334,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                     "closePage",
                     "openPage",
                     "pluginExtension",
+                    "replacePage",
                     "requestSettings",
                     "setImage",
                     "setPage",
@@ -330,11 +343,18 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                     "showAlert",
                     "showOk",
                     "sleepScreen",
+                    "updatePage",
                     "wakeScreen",
                 }
             ),
             idempotency=(IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS),
-            ordering_keys=("sender", "recipient", "subject.contextId"),
+            ordering_keys=(
+                "sender",
+                "recipient",
+                "subject.contextId",
+                "subject.bindingId",
+                "subject.pageSessionId",
+            ),
         ),
         MessageFamilyDelivery(
             family=MessageFamily.REPLY,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import quote, unquote
 
 from pydantic import Field, field_serializer, field_validator
 
@@ -25,53 +24,33 @@ from deckr.contracts.messages import (
 )
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
-_RESERVED_EXTENSION_DATA_FIELDS = frozenset({"hostId", "contextId", "actionUuid"})
-
-
-def _encode_context_value(value: str) -> str:
-    return quote(value, safe="")
-
-
-def _decode_context_value(value: str) -> str:
-    return unquote(value)
-
-
-def build_context_id(controller_id: str, config_id: str, slot_id: str) -> str:
-    """Canonical controller-scoped context ID."""
-    return "|".join(
-        [
-            f"controller={_encode_context_value(controller_id)}",
-            f"config={_encode_context_value(config_id)}",
-            f"slot={_encode_context_value(slot_id)}",
-        ]
-    )
-
-
-def _parse_context_id(context_id: str) -> dict[str, str | None]:
-    """Parse canonical controller-scoped context IDs."""
-    parts: dict[str, str | None] = {
-        "controller_id": None,
-        "config_id": None,
-        "slot_id": None,
+_RESERVED_EXTENSION_DATA_FIELDS = frozenset(
+    {
+        "actionInstanceId",
+        "actionUuid",
+        "bindingId",
+        "configId",
+        "contextId",
+        "controlId",
+        "hostId",
+        "pageSessionId",
     }
-    for item in context_id.split("|"):
-        key, sep, value = item.partition("=")
-        if not sep:
-            raise ValueError(f"Invalid contextId {context_id!r}")
-        decoded = _decode_context_value(value)
-        if not decoded:
-            raise ValueError(f"Invalid contextId {context_id!r}")
-        if key == "controller":
-            parts["controller_id"] = decoded
-        elif key == "config":
-            parts["config_id"] = decoded
-        elif key == "slot":
-            parts["slot_id"] = decoded
-        else:
-            raise ValueError(f"Invalid contextId {context_id!r}")
-    if None in parts.values():
-        raise ValueError(f"Invalid contextId {context_id!r}")
-    return parts
+)
+
+
+def make_context_id() -> str:
+    """Generate an opaque controller-owned plugin context handle."""
+    return str(uuid.uuid4())
+
+
+def make_binding_id() -> str:
+    """Generate an opaque controller-owned control binding id."""
+    return str(uuid.uuid4())
+
+
+def make_page_session_id() -> str:
+    """Generate an opaque controller-owned dynamic page session id."""
+    return str(uuid.uuid4())
 
 
 class PluginMessageBody(DeckrModel):
@@ -154,6 +133,14 @@ class PageSelectBody(PluginMessageBody):
 
 
 class OpenPageBody(PluginMessageBody):
+    descriptor: DynamicPageDescriptor
+
+
+class UpdatePageBody(PluginMessageBody):
+    descriptor: DynamicPageDescriptor
+
+
+class ReplacePageBody(PluginMessageBody):
     descriptor: DynamicPageDescriptor
 
 
@@ -337,22 +324,21 @@ def plugin_message_for_controller(
 def context_subject(
     context_id: str,
     *,
+    config_id: str | None = None,
+    action_instance_id: str | None = None,
+    binding_id: str | None = None,
+    page_session_id: str | None = None,
     action_uuid: str | None = None,
 ) -> EntitySubject:
     identifiers: dict[str, str] = {"contextId": context_id}
-    try:
-        parsed = _parse_context_id(context_id)
-    except ValueError:
-        parsed = {}
-    controller_id = parsed.get("controller_id")
-    config_id = parsed.get("config_id")
-    slot_id = parsed.get("slot_id")
-    if controller_id is not None:
-        identifiers["controllerId"] = controller_id
     if config_id is not None:
         identifiers["configId"] = config_id
-    if slot_id is not None:
-        identifiers["slotId"] = slot_id
+    if action_instance_id is not None:
+        identifiers["actionInstanceId"] = action_instance_id
+    if binding_id is not None:
+        identifiers["bindingId"] = binding_id
+    if page_session_id is not None:
+        identifiers["pageSessionId"] = page_session_id
     if action_uuid is not None:
         identifiers["actionUuid"] = action_uuid
     return entity_subject("context", **identifiers)
@@ -363,18 +349,23 @@ def subject_context_id(subject: EntitySubject) -> str | None:
     return str(value) if value is not None else None
 
 
-def subject_controller_id(subject: EntitySubject) -> str | None:
-    value = subject.identifiers.get("controllerId")
-    return str(value) if value is not None else None
-
-
 def subject_config_id(subject: EntitySubject) -> str | None:
     value = subject.identifiers.get("configId")
     return str(value) if value is not None else None
 
 
-def subject_slot_id(subject: EntitySubject) -> str | None:
-    value = subject.identifiers.get("slotId")
+def subject_action_instance_id(subject: EntitySubject) -> str | None:
+    value = subject.identifiers.get("actionInstanceId")
+    return str(value) if value is not None else None
+
+
+def subject_binding_id(subject: EntitySubject) -> str | None:
+    value = subject.identifiers.get("bindingId")
+    return str(value) if value is not None else None
+
+
+def subject_page_session_id(subject: EntitySubject) -> str | None:
+    value = subject.identifiers.get("pageSessionId")
     return str(value) if value is not None else None
 
 
@@ -437,10 +428,10 @@ class TitleOptions(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
-class SlotBinding(DeckrModel):
-    """One slot bound to an action for static or dynamic pages."""
+class ControlBindingDescriptor(DeckrModel):
+    """One control bound to an action for static or dynamic pages."""
 
-    slot_id: str
+    control_id: str
     action_uuid: str
     settings: Mapping[str, Any]
     title_options: TitleOptions | None = None
@@ -464,7 +455,7 @@ class DynamicPageDescriptor(DeckrModel):
     """Plugin-generated page descriptor carried by openPage commands."""
 
     page_id: str
-    slots: tuple[SlotBinding, ...]
+    bindings: tuple[ControlBindingDescriptor, ...]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for plugin command payloads."""
@@ -500,6 +491,8 @@ HERE_ARE_SETTINGS = "hereAreSettings"
 SET_SETTINGS = "setSettings"
 SET_PAGE = "setPage"
 OPEN_PAGE = "openPage"
+UPDATE_PAGE = "updatePage"
+REPLACE_PAGE = "replacePage"
 CLOSE_PAGE = "closePage"
 SLEEP_SCREEN = "sleepScreen"
 WAKE_SCREEN = "wakeScreen"
@@ -523,6 +516,8 @@ DECKR_EXTENSION_COMMAND_MESSAGE_TYPES = frozenset(
     {
         SET_PAGE,
         OPEN_PAGE,
+        UPDATE_PAGE,
+        REPLACE_PAGE,
         CLOSE_PAGE,
         SLEEP_SCREEN,
         WAKE_SCREEN,
@@ -559,6 +554,8 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
     SET_SETTINGS: SettingsBody,
     SET_PAGE: PageSelectBody,
     OPEN_PAGE: OpenPageBody,
+    UPDATE_PAGE: UpdatePageBody,
+    REPLACE_PAGE: ReplacePageBody,
     CLOSE_PAGE: EmptyPluginBody,
     SLEEP_SCREEN: EmptyPluginBody,
     WAKE_SCREEN: EmptyPluginBody,
@@ -568,3 +565,5 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
 ActionsRegisteredBody.model_rebuild()
 TitleOptionsBody.model_rebuild()
 OpenPageBody.model_rebuild()
+UpdatePageBody.model_rebuild()
+ReplacePageBody.model_rebuild()

@@ -13,14 +13,19 @@ from deckr.pluginhost.messages import (
     SET_TITLE,
     WILL_APPEAR,
     ActionsRegisteredBody,
+    ControlBindingDescriptor,
     PluginExtensionBody,
     SettingsBody,
-    SlotBinding,
     TitleOptionsBody,
+    context_subject,
     plugin_actions_subject,
     plugin_body_dict,
     plugin_body_for_type,
     plugin_message,
+    subject_action_instance_id,
+    subject_binding_id,
+    subject_config_id,
+    subject_page_session_id,
 )
 
 
@@ -53,8 +58,8 @@ def test_controller_event_body_takes_context_from_subject_not_payload() -> None:
 
 
 def test_controller_event_body_accepts_frozen_json_settings() -> None:
-    binding = SlotBinding(
-        slot_id="0,0",
+    binding = ControlBindingDescriptor(
+        control_id="0,0",
         action_uuid="com.example.action",
         settings={
             "slots": ["0,0", "1,0"],
@@ -132,7 +137,7 @@ def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
             {
                 "extensionType": "com.example.demo",
                 "extensionSchemaId": "com.example.demo.v1",
-                "data": {"contextId": "ctx"},
+                "data": {"bindingId": "binding"},
             },
         )
 
@@ -146,6 +151,23 @@ def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
                 "data": {},
             },
         )
+
+
+def test_context_subject_carries_explicit_lifecycle_ids() -> None:
+    subject = context_subject(
+        "ctx-live",
+        config_id="device-a",
+        action_instance_id="instance-a",
+        binding_id="binding-a",
+        page_session_id="session-a",
+        action_uuid="action-a",
+    )
+
+    assert subject.identifiers["contextId"] == "ctx-live"
+    assert subject_config_id(subject) == "device-a"
+    assert subject_action_instance_id(subject) == "instance-a"
+    assert subject_binding_id(subject) == "binding-a"
+    assert subject_page_session_id(subject) == "session-a"
 
 
 def test_plugin_body_for_type_rejects_mismatched_body_instances() -> None:

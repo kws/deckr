@@ -6,8 +6,8 @@ from deckr.pluginhost.messages import (
     SET_IMAGE,
     SET_PAGE,
     ActionDescriptor,
+    ControlBindingDescriptor,
     DynamicPageDescriptor,
-    SlotBinding,
     TitleOptions,
 )
 
@@ -44,9 +44,9 @@ def test_title_options_omits_unset_fields_on_wire():
 def test_dynamic_page_descriptor_round_trip_on_wire():
     descriptor = DynamicPageDescriptor(
         page_id="page-1",
-        slots=[
-            SlotBinding(
-                slot_id="0,0",
+        bindings=[
+            ControlBindingDescriptor(
+                control_id="0,0",
                 action_uuid="com.example.action",
                 settings={"album": "Kind of Blue"},
                 title_options=TitleOptions(font_family="Inter"),
@@ -58,9 +58,9 @@ def test_dynamic_page_descriptor_round_trip_on_wire():
 
     assert wire == {
         "pageId": "page-1",
-        "slots": [
+        "bindings": [
             {
-                "slotId": "0,0",
+                "controlId": "0,0",
                 "actionUuid": "com.example.action",
                 "settings": {"album": "Kind of Blue"},
                 "titleOptions": {"fontFamily": "Inter"},
