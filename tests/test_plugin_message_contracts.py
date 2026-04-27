@@ -11,9 +11,11 @@ from deckr.pluginhost.messages import (
     PLUGIN_EXTENSION,
     SET_SETTINGS,
     SET_TITLE,
+    WILL_APPEAR,
     ActionsRegisteredBody,
     PluginExtensionBody,
     SettingsBody,
+    SlotBinding,
     TitleOptionsBody,
     plugin_actions_subject,
     plugin_body_dict,
@@ -48,6 +50,47 @@ def test_controller_event_body_takes_context_from_subject_not_payload() -> None:
             KEY_DOWN,
             {"event": {"event": "keyDown", "context": "ctx", "slotId": "0,0"}},
         )
+
+
+def test_controller_event_body_accepts_frozen_json_settings() -> None:
+    binding = SlotBinding(
+        slot_id="0,0",
+        action_uuid="com.example.action",
+        settings={
+            "slots": ["0,0", "1,0"],
+            "extra_mappings": {
+                "B1": {"action": "up"},
+                "3,0": {
+                    "action": "com.example.volume",
+                    "settings": {"zone_name": "Bedroom"},
+                },
+            },
+        },
+    )
+
+    body = plugin_body_for_type(
+        WILL_APPEAR,
+        {
+            "event": {
+                "slot": {
+                    "slotId": "0,0",
+                    "slotType": "key",
+                },
+            },
+            "settings": binding.settings,
+        },
+    )
+
+    assert body.to_dict()["settings"] == {
+        "slots": ["0,0", "1,0"],
+        "extra_mappings": {
+            "B1": {"action": "up"},
+            "3,0": {
+                "action": "com.example.volume",
+                "settings": {"zone_name": "Bedroom"},
+            },
+        },
+    }
 
 
 def test_action_descriptors_keep_registered_action_identity_as_payload_data() -> None:

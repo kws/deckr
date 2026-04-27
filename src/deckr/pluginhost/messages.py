@@ -93,6 +93,11 @@ class PluginExtensionBody(PluginMessageBody):
     extension_schema_id: str
     data: JsonObject = Field(default_factory=dict)
 
+    @field_validator("data", mode="before")
+    @classmethod
+    def _thaw_data(cls, value: Any) -> Any:
+        return thaw_json(value)
+
     @field_validator("data", mode="after")
     @classmethod
     def _freeze_data(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -118,6 +123,11 @@ class ActionsUnregisteredBody(PluginMessageBody):
 
 class SettingsBody(PluginMessageBody):
     settings: JsonObject = Field(default_factory=dict)
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _thaw_settings(cls, value: Any) -> Any:
+        return thaw_json(value)
 
     @field_validator("settings", mode="after")
     @classmethod
@@ -209,6 +219,11 @@ class PageDisappearEvent(DeckrModel):
 class ControllerEventBody(PluginMessageBody):
     event: Any
     settings: JsonObject = Field(default_factory=dict)
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _thaw_event_settings(cls, value: Any) -> Any:
+        return thaw_json(value)
 
     @field_validator("settings", mode="after")
     @classmethod
@@ -429,6 +444,11 @@ class SlotBinding(DeckrModel):
     action_uuid: str
     settings: Mapping[str, Any]
     title_options: TitleOptions | None = None
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _thaw_settings(cls, value: Any) -> Any:
+        return thaw_json(value)
 
     @field_validator("settings", mode="after")
     @classmethod
