@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -9,6 +11,8 @@ from typing import Any
 
 DEFAULT_CONFIG_FILENAME = "deckr.toml"
 _EMPTY_MAPPING = MappingProxyType({})
+_ENV_PLACEHOLDER_RE = re.compile(r"\$\{([^}]*)\}")
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _freeze(value: Any) -> Any:
@@ -17,6 +21,29 @@ def _freeze(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
         return tuple(_freeze(item) for item in value)
     return value
+
+
+def substitute_config_environment(
+    text: str,
+    env: Mapping[str, str],
+) -> str:
+    """Replace ${VAR} and ${VAR:-default} placeholders before TOML parsing."""
+
+    def replace(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        name, separator, default = inner.partition(":-")
+        if not separator and ":" in name:
+            raise ValueError(f"Invalid configuration environment placeholder: {inner!r}")
+        if not _ENV_NAME_RE.fullmatch(name):
+            raise ValueError(f"Invalid configuration environment variable name: {name!r}")
+        value = env.get(name)
+        if value:
+            return value
+        if separator:
+            return default
+        raise ValueError(f"Missing environment variable for configuration: {name}")
+
+    return _ENV_PLACEHOLDER_RE.sub(replace, text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,19 +87,30 @@ def _load_payload(
     path: Path | None,
     *,
     default_text: str | None,
+    expand_env: bool,
+    env: Mapping[str, str],
 ) -> tuple[dict[str, Any], Path | None]:
     if path is not None:
         resolved = path.expanduser().resolve()
-        payload = tomllib.loads(resolved.read_text())
+        text = resolved.read_text()
+        if expand_env:
+            text = substitute_config_environment(text, env)
+        payload = tomllib.loads(text)
         return payload, resolved
 
     candidate = (Path.cwd() / DEFAULT_CONFIG_FILENAME).resolve()
     if candidate.exists():
-        payload = tomllib.loads(candidate.read_text())
+        text = candidate.read_text()
+        if expand_env:
+            text = substitute_config_environment(text, env)
+        payload = tomllib.loads(text)
         return payload, candidate
 
     if default_text is not None:
-        return tomllib.loads(default_text), None
+        text = default_text
+        if expand_env:
+            text = substitute_config_environment(text, env)
+        return tomllib.loads(text), None
 
     return {"deckr": {}}, None
 
@@ -81,8 +119,15 @@ def load_config_document(
     path: Path | None,
     *,
     default_text: str | None = None,
+    expand_env: bool = False,
+    env: Mapping[str, str] | None = None,
 ) -> ConfigDocument:
-    payload, source_path = _load_payload(path, default_text=default_text)
+    payload, source_path = _load_payload(
+        path,
+        default_text=default_text,
+        expand_env=expand_env,
+        env=os.environ if env is None else env,
+    )
     if not isinstance(payload, dict):
         raise ValueError("Configuration document root must be a table")
 

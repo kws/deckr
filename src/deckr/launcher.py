@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,10 +63,24 @@ def resolve_config_path(config_path: str | Path | None) -> Path | None:
     return path.expanduser().resolve()
 
 
+def config_env_from_environment(env: dict[str, str] | None = None) -> bool:
+    source = os.environ if env is None else env
+    value = source.get("DECKR_CONFIG_ENV")
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"Invalid DECKR_CONFIG_ENV value: {value!r}")
+
+
 def load_launcher_document(
     config_path: str | Path | None,
     *,
     spec: LauncherSpec | None = None,
+    config_env: bool = False,
 ) -> ConfigDocument:
     resolved_spec = spec or LauncherSpec(
         default_config_text=default_config_document_text()
@@ -73,7 +88,11 @@ def load_launcher_document(
     path = resolve_config_path(config_path)
     if resolved_spec.load_document is not None:
         return resolved_spec.load_document(path)
-    return load_config_document(path, default_text=resolved_spec.default_config_text)
+    return load_config_document(
+        path,
+        default_text=resolved_spec.default_config_text,
+        expand_env=config_env,
+    )
 
 
 def validate_component_configuration(document: ConfigDocument) -> None:
@@ -100,11 +119,17 @@ def launch(
     config_path: str | Path | None,
     *,
     spec: LauncherSpec | None = None,
+    config_env: bool | None = None,
 ) -> None:
     resolved_spec = spec or LauncherSpec(
         default_config_text=default_config_document_text()
     )
-    document = load_launcher_document(config_path, spec=resolved_spec)
+    expand_env = config_env_from_environment() if config_env is None else config_env
+    document = load_launcher_document(
+        config_path,
+        spec=resolved_spec,
+        config_env=expand_env,
+    )
     if resolved_spec.require_components:
         validate_component_configuration(document)
     if resolved_spec.before_run is not None:

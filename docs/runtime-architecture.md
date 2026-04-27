@@ -795,6 +795,47 @@ Custom runtime hosts may choose their own configuration objects, but they must
 still honor the same manifest, prefix, lane model, and managed lane runtime
 contract.
 
+### Environment Substitution
+
+The standard Deckr launcher may optionally render environment variable
+placeholders before parsing a configuration document.
+
+This is a launcher/config loading feature, not a component feature. It must be
+explicitly enabled by the operator, for example with a launcher flag or an
+equivalent runtime-host option. A plain `deckr.toml` must not silently expand
+environment variables, because literal strings containing `${...}` should remain
+valid configuration values unless substitution was requested.
+
+Supported substitution happens on the raw configuration text before TOML parsing:
+
+```toml
+[deckr.plugin_hosts.python.instances.main.runtime]
+bind_host = "${DECKR_PLUGINHOST_BIND_HOST:-0.0.0.0}"
+bind_port = ${DECKR_PLUGINHOST_BIND_PORT:-9000}
+plugin_ids = ${DECKR_PLUGIN_IDS:-[]}
+```
+
+The replacement text is TOML source. Operators are responsible for quoting
+string values or providing full TOML literals for arrays, numbers, booleans, and
+inline tables.
+
+The runtime host must preserve the normal configuration boundary after
+substitution:
+
+- substitution is generic text rendering, not role-specific or
+  component-specific interpretation
+- substitution happens before top-level namespace validation, component
+  discovery, exact-prefix binding, and handoff to components
+- components still receive only their final resolved configuration mapping
+- missing variables without defaults fail visibly before components start
+- environment values must not become transport, endpoint, plugin, hardware, or
+  controller identity by accident; they are only configuration input
+
+This feature is intended for deployment systems such as Docker, Compose,
+Kubernetes, systemd, and secrets/config managers that commonly inject environment
+variables. It must not become a second defaults system or a way for the launcher
+to understand component-specific settings.
+
 ## Hard Rules
 
 - There is one component model.
