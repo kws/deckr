@@ -495,15 +495,17 @@ Broadcast scope must be explicit. Do not rely on MQTT topic fan-out, WebSocket
 server fan-out, or local subscriber fan-out as the application-level meaning of
 broadcast.
 
-Broadcast targets are not endpoint addresses. Names such as `all_hosts` and
-`all_controllers` are current protocol conveniences, but the long-term
-architecture should represent broadcast as an explicit target with:
+Broadcast targets are not endpoint addresses. The architecture represents
+broadcast as an explicit target with:
 
 - scope
 - domain
 - intended endpoint family
 - forwarding policy
 - optional hop limit
+
+String names such as `all_hosts` or `all_controllers` must not be treated as
+endpoint addresses.
 
 Receivers should be able to distinguish "this was addressed directly to me" from
 "this reached me through a broadcast scope" without interpreting transport
@@ -883,28 +885,65 @@ Modern event systems also reinforce the same split Deckr needs:
 Deckr may borrow these ideas without adopting any one external specification
 wholesale.
 
+## Current Alpha Status
+
+The current implementation has moved several bus and runtime primitives to the
+shape described by this document:
+
+- `DeckrMessage` is the logical Deckr envelope, while `TransportFrame` is outer
+  transport-local framing.
+- Core lanes are named `plugin_messages` and `hardware_messages`, with schema ids
+  supplied by `deckr`.
+- Extension lanes require explicit schema ids, and duplicate extension lane
+  contract declarations must be identical.
+- `LaneContract`, `LaneRoutePolicy`, and `LaneContractRegistry` define sender
+  families, recipient families, broadcast targets, delivery semantics, supported
+  message types, local-only message types, bridgeability, and schema ids.
+- Route claims are lane-scoped and policy checked. Local routes are
+  authoritative; remote claims carry a claim source and trust status.
+- Endpoint claim rejection, message rejection, message drop, route renewal, and
+  route expiry are visible route events.
+- Route records carry soft lease data, route capabilities, claim source, and
+  trust metadata.
+- The public `Deckr` runtime owns the lane contract registry, one shared route
+  table, one event bus per lane, the lane registry, route event access, and route
+  lease expiry for the shared route table.
+- MQTT and WebSocket transports use explicit per-lane bindings with direction and
+  schema validation. Core lane bindings may not override core schema ids.
+- Current core lane delivery is explicit: ephemeral, non-durable, at-most-once,
+  non-replayable, and local / connection FIFO only.
+- Expired messages, malformed parseable messages, unsupported messages, and slow
+  subscribers are rejected or dropped through shared bus and route-table
+  semantics rather than one-off transport behavior.
+- Request/reply uses Deckr message ids and `inReplyTo`; transport-local reply
+  topics, inboxes, callbacks, and sessions remain private delivery details.
+- Broadcast targets are explicit `BroadcastTarget` values and are checked against
+  lane route policy before route expansion.
+- Bridged endpoint claims require trusted bridge authority and bridgeable lane
+  policy. Core lanes remain non-bridgeable.
+
+This status is implementation context only. The sections above remain the
+normative architecture.
+
 ## Current Implementation Gaps
 
-The current implementation does not fully match this architecture.
+The current implementation still does not fully match this architecture.
 
 Known gaps:
 
-- plugin host messages use a protocol envelope as the in-process bus object
-- transport metadata and bus metadata are both called envelopes
-- hardware manager routing is encoded into device ids
-- device id currently does more than one job in remote hardware scenarios
-- hardware manager identity and transport identity are currently conflated in
-  remote hardware transports
-- plugin action addresses currently use delimiter-composed strings
-- context ids currently expose routing-relevant structure to plugin messages
-- broadcast targets are currently represented as pseudo-address strings such as
-  `all_hosts` and `all_controllers`
-- endpoint ids and runtime ids currently share normalization assumptions
-- broadcast and forwarding policy is still incomplete
-- local-only controller events share lanes with transported protocol messages
-- route leases and bridge authority are modeled in the route table, but the
-  managed lane runtime still needs to drive lease expiry in normal embedded
-  runtime hosts
+- hardware payloads and several controller and driver surfaces are still
+  slot-shaped, with public message bodies such as `keyDown`, `dialRotate`,
+  `touchTap`, `setImage`, and `clearSlot`
+- plugin action addresses currently use delimiter-composed strings such as
+  `host_id::action_uuid`
+- context ids currently expose controller/config/slot structure to plugin
+  messages instead of acting only as opaque controller-owned live handles
+- dynamic plugin pages do not yet have first-class action instance, binding
+  lease, and page-session identity
+- local-only controller events still share lanes with transported protocol
+  messages in some places
+- broadcast domains and multi-hop broadcast beyond explicitly trusted bridge
+  policy are not yet modeled
 - capability-aware route selection is not yet modeled
 - endpoint claim policy is currently lane/family/trust based; full
   authentication is not yet modeled
