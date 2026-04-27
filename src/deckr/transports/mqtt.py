@@ -158,6 +158,7 @@ class MqttTransportComponent(BaseComponent):
                         trusted_bridge=binding.config.trusted_bridge,
                         authority_id=binding.config.authority_id,
                     )
+                    await self._claim_binding_remote_endpoints(binding)
                     if binding.config.allows_ingress():
                         await client.subscribe(
                             binding.config.topic,
@@ -185,6 +186,20 @@ class MqttTransportComponent(BaseComponent):
                 backoff = min(backoff * 2.0, 10.0)
             else:
                 backoff = 1.0
+
+    async def _claim_binding_remote_endpoints(self, binding: _BindingRuntime) -> None:
+        for endpoint in binding.config.remote_endpoints:
+            await binding.bus.route_table.claim_endpoint(
+                endpoint=endpoint,
+                lane=binding.config.lane,
+                client_id=binding.client_id,
+                client_kind="remote",
+                transport_kind=TRANSPORT_KIND,
+                transport_id=self._transport_id,
+                claim_source="transport_route",
+                trusted_bridge=binding.config.trusted_bridge,
+                authority_id=binding.config.authority_id,
+            )
 
     async def _bus_to_mqtt_loop(self, client, binding: _BindingRuntime) -> None:
         async with binding.bus.subscribe() as stream:

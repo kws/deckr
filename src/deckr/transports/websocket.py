@@ -290,6 +290,10 @@ class WebSocketTransportComponent(BaseComponent):
                             trusted_bridge=binding.config.trusted_bridge,
                             authority_id=binding.config.authority_id,
                         )
+                        await self._claim_binding_remote_endpoints(
+                            binding,
+                            client_id=binding.client_id,
+                        )
                         if binding.config.allows_egress():
                             tg.start_soon(
                                 self._client_bus_to_websocket_loop,
@@ -538,6 +542,30 @@ class WebSocketTransportComponent(BaseComponent):
                     binding.config.trusted_bridge for binding in bindings
                 ),
                 authority_id=authority_id,
+            )
+            for binding in bindings:
+                await self._claim_binding_remote_endpoints(
+                    binding,
+                    client_id=client_id,
+                )
+
+    async def _claim_binding_remote_endpoints(
+        self,
+        binding: _BindingRuntime,
+        *,
+        client_id: str,
+    ) -> None:
+        for endpoint in binding.config.remote_endpoints:
+            await binding.bus.route_table.claim_endpoint(
+                endpoint=endpoint,
+                lane=binding.config.lane,
+                client_id=client_id,
+                client_kind="remote",
+                transport_kind=TRANSPORT_KIND,
+                transport_id=self._transport_id,
+                claim_source="transport_route",
+                trusted_bridge=binding.config.trusted_bridge,
+                authority_id=binding.config.authority_id,
             )
 
     async def _remove_connection(self, websocket) -> None:

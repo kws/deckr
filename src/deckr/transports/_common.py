@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 from deckr.components import ResolvedLaneSet
 from deckr.contracts.lanes import LaneContractRegistry
-from deckr.contracts.messages import CORE_LANE_SCHEMA_IDS
+from deckr.contracts.messages import CORE_LANE_SCHEMA_IDS, parse_endpoint_address
 
 
 class TransportDirection(StrEnum):
@@ -42,6 +42,7 @@ class TransportBindingConfigBase(_StrictConfigModel):
     lane: str
     direction: TransportDirection = TransportDirection.BIDIRECTIONAL
     schema_id: str | None = None
+    remote_endpoints: tuple[str, ...] = ()
     trusted_bridge: bool = False
     authority_id: str | None = None
     enabled: bool = True
@@ -90,6 +91,17 @@ def validate_binding_contracts(
                 f"must match resolved lane contract schema_id "
                 f"{contract.schema_id!r} for lane {binding.lane!r}"
             )
+        allowed_families = contract.route_policy.remote_claim_endpoint_families
+        for endpoint in binding.remote_endpoints:
+            parsed = parse_endpoint_address(endpoint)
+            if parsed.family not in allowed_families:
+                allowed_text = ", ".join(sorted(allowed_families)) or "<none>"
+                raise ValueError(
+                    f"Transport binding {binding_id!r} remote endpoint "
+                    f"{str(parsed)!r} uses endpoint family {parsed.family!r}; "
+                    f"allowed remote endpoint families for lane "
+                    f"{binding.lane!r}: {allowed_text}"
+                )
 
 
 def lanes_for_bindings(

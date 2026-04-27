@@ -16,6 +16,7 @@ from deckr.components import (
     RunContext,
     runtime_name_for,
 )
+from deckr.contracts.lanes import DEFAULT_LANE_CONTRACT_REGISTRY
 from deckr.contracts.messages import (
     DeckrMessage,
     controller_address,
@@ -137,6 +138,14 @@ class _SlowFakeWebSocket:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class _RecordingFakeWebSocket:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send(self, payload: str) -> None:
+        self.sent.append(payload)
 
 
 def _plugin_message(message_type: str, value: int) -> DeckrMessage:
@@ -295,6 +304,48 @@ async def test_mqtt_send_timeout_reports_drop_and_withdraws_route() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mqtt_remote_endpoint_hint_routes_broadcast() -> None:
+    plugin_bus = EventBus("plugin_messages")
+    transport = mqtt_transport_component.factory(
+        _component_context(
+            mqtt_transport_component,
+            raw_config={
+                "transport_id": "python-mqtt",
+                "hostname": "mqtt.example.net",
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "topic": "deckr/v1",
+                        "remote_endpoints": ["host:python"],
+                    }
+                },
+            },
+            lanes={"plugin_messages": plugin_bus},
+        )
+    )
+    binding = transport._bindings[0]
+    client = _FakeMqttClient()
+
+    await plugin_bus.route_table.client_connected(
+        client_id=binding.client_id,
+        client_kind="remote",
+        transport_kind="mqtt",
+        transport_id="python-mqtt",
+    )
+    await transport._claim_binding_remote_endpoints(binding)
+
+    outbound_message = _broadcast_plugin_message(REQUEST_ACTIONS, 2)
+    await transport._publish(client, binding, outbound_message)
+
+    assert len(client.published) == 1
+    topic, payload, qos = client.published[0]
+    assert topic == "deckr/v1"
+    assert qos == 0
+    frame = parse_mqtt_frame(json.loads(payload))
+    assert _without_route(frame.message) == outbound_message
+
+
+@pytest.mark.asyncio
 async def test_websocket_transport_frames_deckr_messages(
     unused_tcp_port: int,
 ) -> None:
@@ -405,6 +456,48 @@ async def test_websocket_client_send_timeout_reports_drop_and_withdraws_route() 
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_websocket_client_remote_endpoint_hint_routes_broadcast() -> None:
+    plugin_bus = EventBus("plugin_messages")
+    client = websocket_transport_component.factory(
+        _component_context(
+            websocket_transport_component,
+            raw_config={
+                "transport_id": "controller-ws",
+                "mode": "client",
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "uri": "ws://127.0.0.1/plugin",
+                        "remote_endpoints": ["host:python"],
+                    }
+                },
+            },
+            lanes={"plugin_messages": plugin_bus},
+        )
+    )
+    binding = client._bindings[0]
+    websocket = _RecordingFakeWebSocket()
+
+    await plugin_bus.route_table.client_connected(
+        client_id=binding.client_id,
+        client_kind="remote",
+        transport_kind="websocket",
+        transport_id="controller-ws",
+    )
+    await client._claim_binding_remote_endpoints(
+        binding,
+        client_id=binding.client_id,
+    )
+
+    outbound_message = _broadcast_plugin_message(REQUEST_ACTIONS, 2)
+    await client._send_to_client(websocket, binding, outbound_message)
+
+    assert len(websocket.sent) == 1
+    frame = parse_websocket_frame(json.loads(websocket.sent[0]))
+    assert _without_route(frame.message) == outbound_message
 
 
 @pytest.mark.asyncio
@@ -761,6 +854,24 @@ def test_transport_bindings_accept_local_bridge_authority_config() -> None:
     assert mqtt_transport._bindings[0].config.authority_id == "local-config"
     assert websocket_transport._bindings[0].config.trusted_bridge is True
     assert websocket_transport._bindings[0].config.authority_id == "local-config"
+
+
+def test_transport_remote_endpoint_hints_must_match_lane_route_policy() -> None:
+    with pytest.raises(ValueError, match="remote endpoint 'hardware_manager:deck'"):
+        websocket_transport_component.validate_resolved_lane_bindings(
+            raw_config={
+                "mode": "server",
+                "bindings": {
+                    "plugin": {
+                        "lane": "plugin_messages",
+                        "path": "/plugin",
+                        "remote_endpoints": ["hardware_manager:deck"],
+                    }
+                },
+            },
+            instance_id="main",
+            lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        )
 
 
 def test_mqtt_core_lane_bindings_reject_non_ephemeral_delivery_options() -> None:
