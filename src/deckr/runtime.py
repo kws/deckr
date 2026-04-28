@@ -14,7 +14,7 @@ from deckr.contracts.lanes import (
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.lanes import Lane, LaneRegistry, LaneSubstrate
 from deckr.state import StateStore
-from deckr.substrates.local import LocalSubstrate
+from deckr.substrates.nats import NatsSubstrate
 
 
 class Deckr:
@@ -29,7 +29,7 @@ class Deckr:
             lane_contracts,
             lanes=lanes,
         )
-        self._substrate = substrate or LocalSubstrate(lane_contracts=self._lane_contracts)
+        self._substrate = substrate or NatsSubstrate(lane_contracts=self._lane_contracts)
         self._lanes = LaneRegistry.from_names(
             tuple(sorted(set(CORE_LANE_NAMES) | set(lanes))),
             lane_contracts=self._lane_contracts,

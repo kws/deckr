@@ -21,7 +21,9 @@ from deckr.state import (
     EndpointPresence,
     HardwareInventory,
     HardwareInventoryDevice,
-    encode_key_token,
+    device_claim_key,
+    hardware_inventory_key,
+    presence_endpoint_key,
 )
 from deckr.substrates.nats import NatsSubstrate
 
@@ -83,7 +85,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
         lane = deckr.lane("hardware_messages").endpoint(endpoint)
         async with lane.subscribe() as messages:
             await state.put(
-                _presence_key("hardware_messages", "hardware_manager", manager_id),
+                presence_endpoint_key(lane="hardware_messages", endpoint=endpoint),
                 EndpointPresence(
                     endpoint=endpoint,
                     lane="hardware_messages",
@@ -94,7 +96,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
                 ),
             )
             await state.put(
-                _inventory_key(manager_id),
+                hardware_inventory_key(manager_id),
                 HardwareInventory(
                     managerId=manager_id,
                     managerEndpoint=endpoint,
@@ -129,13 +131,13 @@ async def _run_controller(args: argparse.Namespace) -> None:
     async with _deckr(args.url) as deckr:
         state = deckr.state(args.bucket)
         lane = deckr.lane("hardware_messages").endpoint(controller)
-        async with state.watch(_inventory_key(manager_id)) as changes:
+        async with state.watch(hardware_inventory_key(manager_id)) as changes:
             with anyio.fail_after(15):
                 change = await changes.receive()
             if change.entry is None:
                 raise RuntimeError("inventory watch did not yield current state")
             await state.create(
-                _claim_key(manager_id, device_id),
+                device_claim_key(manager_id=manager_id, device_id=device_id),
                 DeviceClaim(
                     claimedByEndpoint=controller,
                     claimedBySessionId=args.run_id,
@@ -168,33 +170,6 @@ def _deckr(url: str) -> Deckr:
     return Deckr(
         lane_contracts=registry,
         substrate=NatsSubstrate(url=url, lane_contracts=registry),
-    )
-
-
-def _presence_key(lane: str, family: str, endpoint_id: str) -> str:
-    return ".".join(
-        (
-            "presence",
-            "endpoint",
-            encode_key_token(lane),
-            encode_key_token(family),
-            encode_key_token(endpoint_id),
-        )
-    )
-
-
-def _inventory_key(manager_id: str) -> str:
-    return f"inventory.hardware.{encode_key_token(manager_id)}"
-
-
-def _claim_key(manager_id: str, device_id: str) -> str:
-    return ".".join(
-        (
-            "claim",
-            "device",
-            encode_key_token(manager_id),
-            encode_key_token(device_id),
-        )
     )
 
 

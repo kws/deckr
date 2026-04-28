@@ -5,7 +5,7 @@ import re
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
 import anyio
@@ -94,46 +94,6 @@ def state_value(value: Mapping[str, Any] | DeckrModel) -> Mapping[str, Any]:
     return freeze_json(dict(value))
 
 
-def state_expires_at(
-    value: Mapping[str, Any],
-    *,
-    ttl: float | None = None,
-    now: datetime | None = None,
-) -> datetime | None:
-    timestamp = value.get("timestamp")
-    ttl_seconds = value.get("ttlSeconds", value.get("ttl_seconds"))
-    payload_deadline: datetime | None = None
-    if timestamp is not None and ttl_seconds is not None:
-        parsed = _parse_timestamp(timestamp)
-        try:
-            seconds = float(ttl_seconds)
-        except (TypeError, ValueError):
-            seconds = 0
-        if seconds > 0:
-            payload_deadline = parsed + timedelta(seconds=seconds)
-
-    ttl_deadline = None
-    if ttl is not None and ttl > 0:
-        ttl_deadline = (now or datetime.now(UTC)) + timedelta(seconds=ttl)
-
-    deadlines = [deadline for deadline in (payload_deadline, ttl_deadline) if deadline]
-    if not deadlines:
-        return None
-    return min(deadlines)
-
-
-def _parse_timestamp(value: Any) -> datetime:
-    if isinstance(value, datetime):
-        timestamp = value
-    elif isinstance(value, str):
-        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    else:
-        raise ValueError("timestamp must be an ISO-8601 string or datetime")
-    if timestamp.tzinfo is None:
-        return timestamp.replace(tzinfo=UTC)
-    return timestamp.astimezone(UTC)
-
-
 class EndpointPresence(DeckrModel):
     endpoint: EndpointAddress
     lane: str
@@ -160,6 +120,16 @@ class HardwareInventoryDevice(DeckrModel):
     device_id: str = Field(alias="deviceId")
     hardware_type: str = Field(alias="hardwareType")
     fingerprint: str
+    descriptor: Mapping[str, Any] = Field(default_factory=dict)
+
+    @field_validator("descriptor", mode="after")
+    @classmethod
+    def _freeze_descriptor(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("descriptor")
+    def _serialize_descriptor(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
 
 
 class HardwareInventory(DeckrModel):
@@ -200,3 +170,63 @@ class DeviceClaim(DeckrModel):
     @field_serializer("timestamp")
     def _serialize_timestamp(self, value: datetime) -> str:
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def presence_endpoint_key(
+    *,
+    lane: str,
+    endpoint: str | EndpointAddress,
+) -> str:
+    parsed = (
+        endpoint
+        if isinstance(endpoint, EndpointAddress)
+        else EndpointAddress.model_validate(endpoint)
+    )
+    return ".".join(
+        (
+            "presence",
+            "endpoint",
+            encode_key_token(lane),
+            encode_key_token(parsed.family),
+            encode_key_token(parsed.endpoint_id),
+        )
+    )
+
+
+def hardware_inventory_key(manager_id: str) -> str:
+    return ".".join(("inventory", "hardware", encode_key_token(manager_id)))
+
+
+def device_claim_key(*, manager_id: str, device_id: str) -> str:
+    return ".".join(
+        (
+            "claim",
+            "device",
+            encode_key_token(manager_id),
+            encode_key_token(device_id),
+        )
+    )
+
+
+def parse_presence_endpoint_key(key: str) -> tuple[str, EndpointAddress] | None:
+    parts = key.split(".")
+    if len(parts) != 5 or parts[:2] != ["presence", "endpoint"]:
+        return None
+    lane = decode_key_token(parts[2])
+    family = decode_key_token(parts[3])
+    endpoint_id = decode_key_token(parts[4])
+    return lane, EndpointAddress.model_validate(f"{family}:{endpoint_id}")
+
+
+def parse_hardware_inventory_key(key: str) -> str | None:
+    parts = key.split(".")
+    if len(parts) != 3 or parts[:2] != ["inventory", "hardware"]:
+        return None
+    return decode_key_token(parts[2])
+
+
+def parse_device_claim_key(key: str) -> tuple[str, str] | None:
+    parts = key.split(".")
+    if len(parts) != 4 or parts[:2] != ["claim", "device"]:
+        return None
+    return decode_key_token(parts[2]), decode_key_token(parts[3])

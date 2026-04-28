@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
@@ -13,9 +13,12 @@ from deckr.components import (
     resolve_component_host_plan,
     start_components,
 )
+from deckr.contracts.lanes import LaneContractRegistry
 from deckr.core.config import ConfigDocument, load_config_document
 from deckr.core.util.anyio import add_signal_handler
+from deckr.lanes import LaneSubstrate
 from deckr.runtime import Deckr
+from deckr.substrates.nats import NatsSubstrate
 
 DocumentHook: TypeAlias = Callable[[ConfigDocument], None]
 DocumentLoader: TypeAlias = Callable[[Path | None], ConfigDocument]
@@ -35,11 +38,32 @@ _DEFAULT_CONFIG_DOCUMENT_TEXT = """# Deckr configuration document
 
 async def run_configured_deckr(document: ConfigDocument) -> None:
     plan = resolve_component_host_plan(document)
+    substrate = build_runtime_substrate(document, lane_contracts=plan.lane_contracts)
     async with Deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
+        substrate=substrate,
     ) as deckr, start_components(deckr, plan):
         await anyio.sleep_forever()
+
+
+def build_runtime_substrate(
+    document: ConfigDocument,
+    *,
+    lane_contracts: LaneContractRegistry,
+) -> LaneSubstrate:
+    source = document.namespace("deckr.runtime.substrate")
+    if source is None:
+        return NatsSubstrate(lane_contracts=lane_contracts)
+    if not isinstance(source, Mapping):
+        raise ValueError("[deckr.runtime.substrate] must be a table")
+    kind = str(source.get("kind", "nats")).strip().lower()
+    if kind == "nats":
+        url = str(source.get("url", "nats://127.0.0.1:4222")).strip()
+        if not url:
+            raise ValueError("[deckr.runtime.substrate].url must not be empty")
+        return NatsSubstrate(url=url, lane_contracts=lane_contracts)
+    raise ValueError(f"Unsupported Deckr runtime substrate kind: {kind!r}")
 
 
 @dataclass(frozen=True, slots=True)

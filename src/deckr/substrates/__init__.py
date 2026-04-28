@@ -1,5 +1,5 @@
 """Deckr lane substrate implementations."""
 
-from deckr.substrates.local import LocalSubstrate
+from deckr.substrates.nats import NatsSubstrate
 
-__all__ = ["LocalSubstrate"]
+__all__ = ["NatsSubstrate"]

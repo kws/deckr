@@ -4,7 +4,6 @@ import json
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from typing import Any
 
 import anyio
@@ -29,13 +28,18 @@ from deckr.state import (
     StateEntry,
     StateStore,
     encode_key_token,
-    state_expires_at,
     state_value,
 )
 
 logger = logging.getLogger(__name__)
 
 _LANE_PREFIX = "deckr.lane"
+_STATE_LEASE_TTL_SECONDS = 15.0
+_KV_OPERATION_HEADER = "KV-Operation"
+_KV_DELETE_OPERATION = "DEL"
+_KV_PURGE_OPERATION = "PURGE"
+_NATS_MARKER_REASON_HEADER = "Nats-Marker-Reason"
+_NATS_MARKER_MAX_AGE = "MaxAge"
 
 
 class NatsSubstrate:
@@ -45,12 +49,12 @@ class NatsSubstrate:
         url: str = "nats://127.0.0.1:4222",
         lane_contracts: LaneContractRegistry,
         buffer_size: int = 100,
-        state_sweep_interval: float = 0.25,
+        state_lease_ttl_seconds: float = _STATE_LEASE_TTL_SECONDS,
     ) -> None:
         self.url = url
         self._lane_contracts = lane_contracts
         self._buffer_size = buffer_size
-        self._state_sweep_interval = state_sweep_interval
+        self._state_lease_ttl_seconds = state_lease_ttl_seconds
         self._nc = None
         self._js = None
         self._reply_subjects: dict[str, str] = {}
@@ -162,7 +166,7 @@ class NatsSubstrate:
                 name=name,
                 js=self._js,
                 buffer_size=self._buffer_size,
-                sweep_interval=self._state_sweep_interval,
+                lease_ttl_seconds=self._state_lease_ttl_seconds,
             )
             self._states[name] = store
         return store
@@ -196,22 +200,16 @@ class NatsStateStore:
         name: str,
         js,
         buffer_size: int,
-        sweep_interval: float,
+        lease_ttl_seconds: float = _STATE_LEASE_TTL_SECONDS,
     ) -> None:
         self.name = name
         self._js = js
         self._buffer_size = buffer_size
-        self._sweep_interval = sweep_interval
+        self._lease_ttl_seconds = float(lease_ttl_seconds)
         self._kv = None
-        self._cache: dict[str, StateEntry] = {}
 
     async def get(self, key: str) -> StateEntry | None:
-        kv = await self._ensure_kv()
-        try:
-            entry = await kv.get(key)
-        except Exception:
-            return None
-        return _state_entry_from_kv(entry)
+        return await self._get_entry(key)
 
     async def items(self, prefix: str = "") -> tuple[StateEntry, ...]:
         kv = await self._ensure_kv()
@@ -238,7 +236,7 @@ class NatsStateStore:
         *,
         ttl: float | None = None,
     ) -> StateEntry:
-        del ttl
+        self._validate_ttl(ttl)
         kv = await self._ensure_kv()
         normalized = state_value(value)
         revision = await kv.put(key, _state_payload(normalized))
@@ -251,7 +249,7 @@ class NatsStateStore:
         *,
         ttl: float | None = None,
     ) -> StateEntry:
-        del ttl
+        self._validate_ttl(ttl)
         kv = await self._ensure_kv()
         normalized = state_value(value)
         try:
@@ -268,9 +266,12 @@ class NatsStateStore:
         revision: int,
         ttl: float | None = None,
     ) -> StateEntry:
-        del ttl
+        self._validate_ttl(ttl)
         kv = await self._ensure_kv()
         normalized = state_value(value)
+        current = await self._get_entry(key)
+        if current is None or current.revision != revision:
+            raise StateConflict(f"State key {key!r} revision changed")
         try:
             new_revision = await kv.update(
                 key,
@@ -283,6 +284,11 @@ class NatsStateStore:
 
     async def delete(self, key: str, *, revision: int | None = None) -> None:
         kv = await self._ensure_kv()
+        current = await self._get_entry(key)
+        if current is None:
+            return
+        if revision is not None and current.revision != revision:
+            raise StateConflict(f"State key {key!r} revision changed")
         try:
             if revision is None:
                 await kv.delete(key)
@@ -296,48 +302,39 @@ class NatsStateStore:
         self,
         prefix: str = "",
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[StateChange]]:
-        kv = await self._ensure_kv()
+        await self._ensure_kv()
         send, receive = anyio.create_memory_object_stream[StateChange](
             max_buffer_size=self._buffer_size
         )
-        watcher = await kv.watch(_kv_watch_pattern(prefix))
+        subject = f"{_kv_subject_prefix(self.name)}{_kv_watch_pattern(prefix)}"
 
-        async def pump() -> None:
-            async for update in watcher:
-                if update is None:
-                    continue
-                change = _state_change_from_kv(update)
-                if change is None or not change.key.startswith(prefix):
-                    continue
-                if change.entry is None:
-                    self._cache.pop(change.key, None)
-                else:
-                    self._cache[change.key] = change.entry
-                await send.send(change)
-
-        async def sweep() -> None:
-            while True:
-                await anyio.sleep(self._sweep_interval)
-                now = datetime.now(UTC)
-                for key, entry in tuple(self._cache.items()):
-                    if not key.startswith(prefix):
-                        continue
-                    expires_at = state_expires_at(entry.value)
-                    if expires_at is None or expires_at > now:
-                        continue
-                    self._cache.pop(key, None)
-                    await send.send(StateChange("expire", key, None))
-
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(pump)
-            tg.start_soon(sweep)
+        async def callback(msg) -> None:
             try:
-                yield receive
-            finally:
-                tg.cancel_scope.cancel()
-                await watcher.stop()
-                await send.aclose()
-                await receive.aclose()
+                change = _state_change_from_nats_msg(
+                    msg,
+                    subject_prefix=_kv_subject_prefix(self.name),
+                )
+                if change is None or not change.key.startswith(prefix):
+                    return
+                await send.send(change)
+            except Exception:
+                logger.exception("Dropped invalid NATS Deckr state update")
+
+        from nats.js import api
+
+        subscription = await self._js.subscribe(
+            subject,
+            cb=callback,
+            ordered_consumer=True,
+            deliver_policy=api.DeliverPolicy.LAST_PER_SUBJECT,
+            inactive_threshold=5 * 60,
+        )
+        try:
+            yield receive
+        finally:
+            await subscription.unsubscribe()
+            await send.aclose()
+            await receive.aclose()
 
     async def _ensure_kv(self):
         if self._kv is not None:
@@ -346,16 +343,80 @@ class NatsStateStore:
             self._kv = await self._js.key_value(self.name)
         except Exception:
             try:
-                self._kv = await self._js.create_key_value(bucket=self.name)
+                self._kv = await self._create_kv()
             except TypeError:
-                from nats.js.api import KeyValueConfig
-
-                self._kv = await self._js.create_key_value(
-                    config=KeyValueConfig(bucket=self.name)
-                )
+                self._kv = await self._create_kv_with_params()
             except Exception:
                 self._kv = await self._js.key_value(self.name)
+        await self._ensure_kv_stream_config(self._kv)
         return self._kv
+
+    async def _create_kv(self):
+        from nats.js.api import KeyValueConfig
+
+        return await self._js.create_key_value(
+            config=KeyValueConfig(
+                bucket=self.name,
+                history=1,
+                ttl=self._lease_ttl_seconds,
+            )
+        )
+
+    async def _create_kv_with_params(self):
+        return await self._js.create_key_value(
+            bucket=self.name,
+            history=1,
+            ttl=self._lease_ttl_seconds,
+        )
+
+    async def _ensure_kv_stream_config(self, kv) -> None:
+        stream_name = getattr(kv, "_stream", f"KV_{self.name}")
+        try:
+            info = await self._js.stream_info(stream_name)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not inspect NATS KV bucket {self.name!r}; delete and "
+                "recreate the development bucket if it was created by an older "
+                "Deckr build."
+            ) from exc
+        config = info.config
+        needs_update = (
+            getattr(config, "max_age", None) != self._lease_ttl_seconds
+            or getattr(config, "max_msgs_per_subject", None) != 1
+            or getattr(config, "allow_msg_ttl", None) is not True
+        )
+        if not needs_update:
+            return
+        config.max_age = self._lease_ttl_seconds
+        config.max_msgs_per_subject = 1
+        config.allow_msg_ttl = True
+        try:
+            await self._js.update_stream(config)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Existing NATS KV bucket {self.name!r} is not configured for "
+                f"Deckr's {self._lease_ttl_seconds:g}s broker-owned lease TTL. "
+                f"Delete the development bucket/stream KV_{self.name} and restart."
+            ) from exc
+
+    async def _get_entry(self, key: str) -> StateEntry | None:
+        kv = await self._ensure_kv()
+        try:
+            entry = await kv.get(key)
+        except Exception:
+            return None
+        return _state_entry_from_kv(entry)
+
+    def _validate_ttl(self, ttl: float | None) -> None:
+        if ttl is None:
+            return
+        if abs(float(ttl) - self._lease_ttl_seconds) <= 0.001:
+            return
+        raise ValueError(
+            "NATS current state uses the broker-owned bucket TTL "
+            f"({self._lease_ttl_seconds:g}s); per-key TTL {ttl!r} is not supported "
+            "during Sprint 1/2."
+        )
 
 
 def _subject_for(message: DeckrMessage) -> str:
@@ -430,15 +491,43 @@ def _state_entry_from_kv(entry) -> StateEntry:
     )
 
 
-def _state_change_from_kv(entry) -> StateChange | None:
-    operation = str(getattr(entry, "operation", "PUT")).upper()
-    key = str(entry.key)
-    if "DEL" in operation or "PURGE" in operation:
-        return StateChange("delete", key, None)
-    if entry.value is None:
+def _state_change_from_nats_msg(
+    msg,
+    *,
+    subject_prefix: str,
+) -> StateChange | None:
+    subject = str(msg.subject)
+    if not subject.startswith(subject_prefix):
         return None
-    state_entry = _state_entry_from_kv(entry)
-    return StateChange("put", key, state_entry)
+    key = subject[len(subject_prefix) :]
+    headers = getattr(msg, "headers", None) or getattr(msg, "header", None) or {}
+    marker_reason = headers.get(_NATS_MARKER_REASON_HEADER)
+    if marker_reason == _NATS_MARKER_MAX_AGE:
+        return StateChange("expire", key, None)
+    if marker_reason is not None:
+        return StateChange("delete", key, None)
+    operation = str(headers.get(_KV_OPERATION_HEADER, "")).upper()
+    if operation in {_KV_DELETE_OPERATION, _KV_PURGE_OPERATION}:
+        return StateChange("delete", key, None)
+    if msg.data is None:
+        return None
+    value = json.loads(msg.data.decode("utf-8")) if msg.data else {}
+    metadata = getattr(msg, "metadata", None)
+    sequence = getattr(metadata, "sequence", None)
+    revision = getattr(sequence, "stream", 0) if sequence is not None else 0
+    return StateChange(
+        "put",
+        key,
+        StateEntry(
+            key=key,
+            value=state_value(value),
+            revision=int(revision),
+        ),
+    )
+
+
+def _kv_subject_prefix(bucket: str) -> str:
+    return f"$KV.{bucket}."
 
 
 def _kv_watch_pattern(prefix: str) -> str:

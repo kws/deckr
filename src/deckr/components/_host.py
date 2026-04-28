@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -32,12 +32,15 @@ from deckr.contracts.lanes import (
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.config import ConfigDocument
 from deckr.lanes import Lane, LaneRegistry
+from deckr.state import StateStore
 
 if TYPE_CHECKING:
     from deckr.runtime import Deckr
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
-CORE_NON_COMPONENT_CONFIG_NAMESPACES = frozenset({"lane_contracts", "plugins"})
+CORE_NON_COMPONENT_CONFIG_NAMESPACES = frozenset(
+    {"lane_contracts", "plugins", "runtime"}
+)
 
 
 class ComponentCardinality(StrEnum):
@@ -70,9 +73,13 @@ class ComponentContext:
     raw_config: Mapping[str, Any]
     base_dir: Path
     lanes: LaneRegistry
+    state_for: Callable[[str], StateStore]
 
     def require_lane(self, name: str) -> Lane:
         return self.lanes.require(name)
+
+    def state(self, name: str = "deckr_state_v1") -> StateStore:
+        return self.state_for(name)
 
 
 class ComponentFactory(Protocol):
@@ -268,13 +275,21 @@ def configured_component_instance_specs(
     document: ConfigDocument,
 ) -> list[ComponentInstanceSpec]:
     discovered_component_ids = available_component_ids()
+    configured_prefixes = _configured_component_prefixes(
+        document,
+        known_prefixes=set(discovered_component_ids),
+    )
     _validate_configured_component_prefixes(
         document,
         discovered_component_ids=discovered_component_ids,
     )
     return resolve_component_instance_specs(
         document,
-        discovered_component_ids=discovered_component_ids,
+        discovered_component_ids=[
+            component_id
+            for component_id in discovered_component_ids
+            if component_id in configured_prefixes
+        ],
     )
 
 
@@ -425,12 +440,7 @@ def _component_config_prefixes(
             definition.manifest.config_prefix
             for definition in _definition_mapping(definitions).values()
         }
-    prefixes: set[str] = set()
-    for component_id in sorted(set(discovered_component_ids or ())):
-        definition = load_component_definition(component_id)
-        if definition is not None:
-            prefixes.add(definition.manifest.config_prefix)
-    return prefixes
+    return set(discovered_component_ids or ())
 
 
 def _validate_configured_component_prefixes(
@@ -960,6 +970,7 @@ async def _activate_component_plan(
             raw_config=spec.raw_config,
             base_dir=plan.base_dir,
             lanes=deckr.lanes,
+            state_for=deckr.state,
         )
         component = spec.definition.factory(context)
         if not isinstance(component, Component):

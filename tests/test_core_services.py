@@ -20,7 +20,9 @@ from deckr.contracts.lanes import LaneContract
 from deckr.contracts.messages import entity_subject
 from deckr.core.config import ConfigDocument
 from deckr.lanes import Lane
+from deckr.launcher import build_runtime_substrate
 from deckr.runtime import Deckr
+from deckr.substrates.nats import NatsSubstrate
 
 
 class _DummyComponent(BaseComponent):
@@ -128,6 +130,37 @@ def test_configured_component_specs_rejects_uninstalled_prefix(
         configured_component_instance_specs(document)
 
 
+def test_configured_component_specs_loads_only_configured_entrypoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.controller",
+            config_prefix="deckr.controller",
+        ),
+        factory=lambda context: _DummyComponent(name=context.runtime_name),
+    )
+
+    monkeypatch.setattr(
+        "deckr.components._host.available_component_ids",
+        lambda: ["deckr.controller", "deckr.drivers.elgato"],
+    )
+
+    def load(component_id: str):
+        if component_id == "deckr.drivers.elgato":
+            raise ModuleNotFoundError("deckr.transports")
+        if component_id == "deckr.controller":
+            return controller
+        raise AssertionError(component_id)
+
+    monkeypatch.setattr("deckr.components._host.load_component_definition", load)
+    document = _document({"deckr": {"controller": {"id": "controller-main"}}})
+
+    specs = configured_component_instance_specs(document)
+
+    assert [spec.component_id for spec in specs] == ["deckr.controller"]
+
+
 @pytest.mark.asyncio
 async def test_start_components_passes_lane_registry_to_component() -> None:
     seen: dict[str, object] = {}
@@ -178,6 +211,76 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
         )
 
     assert isinstance(seen["lane"], Lane)
+
+
+@pytest.mark.asyncio
+async def test_start_components_passes_current_state_to_component() -> None:
+    seen: dict[str, object] = {}
+
+    class StateComponent(_DummyComponent):
+        async def start(self, ctx) -> None:
+            return
+
+    def factory(context):
+        seen["state"] = context.state()
+        return StateComponent(name=context.runtime_name)
+
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="deckr.controller",
+            config_prefix="deckr.controller",
+        ),
+        factory=factory,
+    )
+    document = _document({"deckr": {"controller": {}}})
+    plan = resolve_component_host_plan(
+        document,
+        definitions={"deckr.controller": definition},
+    )
+    async with Deckr(
+        lane_contracts=plan.lane_contracts,
+        lanes=plan.lane_names,
+    ) as deckr, start_components(deckr, plan):
+        assert seen["state"] is deckr.state()
+
+
+def test_runtime_substrate_config_defaults_to_nats() -> None:
+    document = _document({"deckr": {}})
+    plan = resolve_component_host_plan(document, definitions={})
+
+    substrate = build_runtime_substrate(document, lane_contracts=plan.lane_contracts)
+
+    assert isinstance(substrate, NatsSubstrate)
+    assert substrate.url == "nats://127.0.0.1:4222"
+
+
+def test_runtime_substrate_config_rejects_local_substrate() -> None:
+    document = _document({"deckr": {"runtime": {"substrate": {"kind": "local"}}}})
+    plan = resolve_component_host_plan(document, definitions={})
+
+    with pytest.raises(ValueError, match="Unsupported Deckr runtime substrate"):
+        build_runtime_substrate(document, lane_contracts=plan.lane_contracts)
+
+
+def test_runtime_substrate_config_builds_nats_substrate() -> None:
+    document = _document(
+        {
+            "deckr": {
+                "runtime": {
+                    "substrate": {
+                        "kind": "nats",
+                        "url": "nats://nats.example:4222",
+                    }
+                }
+            }
+        }
+    )
+    plan = resolve_component_host_plan(document, definitions={})
+
+    substrate = build_runtime_substrate(document, lane_contracts=plan.lane_contracts)
+
+    assert isinstance(substrate, NatsSubstrate)
+    assert substrate.url == "nats://nats.example:4222"
 
 
 def test_deployment_lane_contract_uses_direct_v1_fields() -> None:

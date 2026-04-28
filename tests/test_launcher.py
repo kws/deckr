@@ -170,9 +170,10 @@ def test_run_configured_deckr_uses_public_runtime_and_component_host(
     )()
 
     class FakeDeckr:
-        def __init__(self, *, lane_contracts, lanes):
+        def __init__(self, *, lane_contracts, lanes, substrate):
             captured["lane_contracts"] = lane_contracts
             captured["lanes"] = lanes
+            captured["substrate"] = substrate
 
         async def __aenter__(self):
             captured["deckr_entered"] = True
@@ -201,6 +202,7 @@ def test_run_configured_deckr_uses_public_runtime_and_component_host(
 
     assert captured["lane_contracts"] == "contracts"
     assert captured["lanes"] == ("plugin_messages",)
+    assert captured["substrate"] is not None
     assert captured["start_components_plan"] is plan
     assert captured["deckr_entered"] is True
     assert captured["deckr_exited"] is True

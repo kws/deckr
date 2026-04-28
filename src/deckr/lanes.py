@@ -100,6 +100,17 @@ class EndpointLane:
         await self.lane._substrate.publish(message)
         return message
 
+    async def publish(self, message: DeckrMessage) -> DeckrMessage:
+        """Publish a prebuilt envelope through this endpoint-bound lane."""
+        if message.sender != self.endpoint:
+            raise ValueError(
+                f"Message sender {message.sender} does not match bound endpoint "
+                f"{self.endpoint}"
+            )
+        validate_message_for_contract(message, self.lane.contract)
+        await self.lane._substrate.publish(message)
+        return message
+
     async def request(
         self,
         *,
