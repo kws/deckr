@@ -5,10 +5,8 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from deckr.contracts.messages import (
-    BUILTIN_ACTION_PROVIDER_ID,
     CORE_LANE_SCHEMA_IDS,
     HARDWARE_MESSAGES_LANE,
-    LEGACY_BUILTIN_ACTION_PROVIDER_ID,
     PLUGIN_MESSAGES_LANE,
 )
 
@@ -51,7 +49,7 @@ class ExpiryHandling(StrEnum):
 
 class BackpressureHandling(StrEnum):
     DROP_SUBSCRIBER = "drop_subscriber"
-    DISCONNECT_OR_WITHDRAW_ROUTE = "disconnect_or_withdraw_route"
+    DISCONNECT = "disconnect"
     BLOCK = "block"
 
 
@@ -80,13 +78,6 @@ class IdempotencySemantics(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class MqttDeliveryConstraints:
-    max_qos: int = 0
-    retain: bool = False
-    persistent_session: bool = False
-
-
-@dataclass(frozen=True, slots=True)
 class MessageFamilyDelivery:
     family: MessageFamily
     message_types: frozenset[str] = frozenset()
@@ -104,26 +95,11 @@ class DeliverySemantics:
     ordering_keys: tuple[str, ...] = ()
     expiry: ExpiryHandling = ExpiryHandling.DROP_AND_REPORT
     local_backpressure: BackpressureHandling = BackpressureHandling.DROP_SUBSCRIBER
-    remote_backpressure: BackpressureHandling = (
-        BackpressureHandling.DISCONNECT_OR_WITHDRAW_ROUTE
-    )
+    remote_backpressure: BackpressureHandling = BackpressureHandling.DISCONNECT
     malformed_messages: MalformedMessageHandling = (
         MalformedMessageHandling.DROP_UNPARSEABLE_LOG_PARSEABLE_REJECTION
     )
-    mqtt: MqttDeliveryConstraints = field(default_factory=MqttDeliveryConstraints)
     message_families: tuple[MessageFamilyDelivery, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class LaneRoutePolicy:
-    remote_claim_endpoint_families: EndpointFamilies = frozenset()
-    allowed_sender_families: EndpointFamilies | None = None
-    allowed_recipient_families: EndpointFamilies | None = None
-    broadcast_targets: BroadcastTargets = field(default_factory=dict)
-    default_broadcast_hop_limit: int | None = None
-    bridgeable: bool | None = None
-    local_only_message_types: frozenset[str] = frozenset()
-    reserved_endpoint_ids: Mapping[str, EndpointFamilies] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +108,10 @@ class LaneContract:
     schema_id: str | None = None
     message_types: frozenset[str] = frozenset()
     delivery: DeliverySemantics | None = None
-    route_policy: LaneRoutePolicy = field(default_factory=LaneRoutePolicy)
+    allowed_sender_families: EndpointFamilies | None = None
+    allowed_recipient_families: EndpointFamilies | None = None
+    broadcast_targets: BroadcastTargets = field(default_factory=dict)
+    default_broadcast_hop_limit: int | None = None
 
 
 def unsupported_delivery_reason(delivery: DeliverySemantics | None) -> str | None:
@@ -152,22 +131,13 @@ def unsupported_delivery_reason(delivery: DeliverySemantics | None) -> str | Non
         return "only drop-and-report expiry handling is implemented"
     if delivery.local_backpressure != BackpressureHandling.DROP_SUBSCRIBER:
         return "only drop-subscriber local backpressure is implemented"
-    if (
-        delivery.remote_backpressure
-        != BackpressureHandling.DISCONNECT_OR_WITHDRAW_ROUTE
-    ):
-        return "only disconnect-or-withdraw remote backpressure is implemented"
+    if delivery.remote_backpressure != BackpressureHandling.DISCONNECT:
+        return "only disconnect remote backpressure is implemented"
     if (
         delivery.malformed_messages
         != MalformedMessageHandling.DROP_UNPARSEABLE_LOG_PARSEABLE_REJECTION
     ):
         return "only drop/log malformed-message handling is implemented"
-    if delivery.mqtt.max_qos != 0:
-        return "only MQTT QoS 0 is implemented"
-    if delivery.mqtt.retain:
-        return "retained MQTT delivery is not implemented"
-    if delivery.mqtt.persistent_session:
-        return "persistent MQTT sessions are not implemented"
     return None
 
 
@@ -201,8 +171,6 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "closePage",
         "dialRotate",
         "hereAreSettings",
-        "hostOffline",
-        "hostOnline",
         "keyDown",
         "keyUp",
         "openPage",
@@ -210,7 +178,6 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "pageDisappear",
         "pluginExtension",
         "replacePage",
-        "requestActions",
         "requestSettings",
         "setImage",
         "setPage",
@@ -231,8 +198,6 @@ PLUGIN_MESSAGE_TYPES = frozenset(
 HARDWARE_MESSAGE_TYPES = frozenset(
     {
         "clearSlot",
-        "deviceConnected",
-        "deviceDisconnected",
         "dialRotate",
         "keyDown",
         "keyUp",
@@ -252,11 +217,10 @@ CORE_EPHEMERAL_DELIVERY = DeliverySemantics(
     ordering=DeliveryOrdering.LOCAL_OR_CONNECTION_FIFO,
     expiry=ExpiryHandling.DROP_AND_REPORT,
     local_backpressure=BackpressureHandling.DROP_SUBSCRIBER,
-    remote_backpressure=BackpressureHandling.DISCONNECT_OR_WITHDRAW_ROUTE,
+    remote_backpressure=BackpressureHandling.DISCONNECT,
     malformed_messages=(
         MalformedMessageHandling.DROP_UNPARSEABLE_LOG_PARSEABLE_REJECTION
     ),
-    mqtt=MqttDeliveryConstraints(max_qos=0, retain=False, persistent_session=False),
 )
 
 PLUGIN_MESSAGES_DELIVERY = replace(
@@ -274,14 +238,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
     message_families=(
         MessageFamilyDelivery(
             family=MessageFamily.LIFECYCLE,
-            message_types=frozenset(
-                {
-                    "hostOnline",
-                    "hostOffline",
-                    "pageAppear",
-                    "pageDisappear",
-                }
-            ),
+            message_types=frozenset({"pageAppear", "pageDisappear"}),
             idempotency=IdempotencySemantics.IDEMPOTENT_LATEST_BY_SUBJECT,
             ordering_keys=(
                 "sender",
@@ -293,13 +250,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
         ),
         MessageFamilyDelivery(
             family=MessageFamily.DISCOVERY,
-            message_types=frozenset(
-                {
-                    "actionsRegistered",
-                    "actionsUnregistered",
-                    "requestActions",
-                }
-            ),
+            message_types=frozenset({"actionsRegistered", "actionsUnregistered"}),
             idempotency=IdempotencySemantics.IDEMPOTENT_LATEST_BY_SUBJECT,
             ordering_keys=("sender", "subject.hostId"),
         ),
@@ -347,7 +298,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                     "wakeScreen",
                 }
             ),
-            idempotency=(IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS),
+            idempotency=IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS,
             ordering_keys=(
                 "sender",
                 "recipient",
@@ -377,12 +328,6 @@ HARDWARE_MESSAGES_DELIVERY = replace(
     ),
     message_families=(
         MessageFamilyDelivery(
-            family=MessageFamily.DISCOVERY,
-            message_types=frozenset({"deviceConnected", "deviceDisconnected"}),
-            idempotency=IdempotencySemantics.IDEMPOTENT_LATEST_BY_SUBJECT,
-            ordering_keys=("sender", "subject.managerId", "subject.deviceId"),
-        ),
-        MessageFamilyDelivery(
             family=MessageFamily.INPUT,
             message_types=frozenset(
                 {
@@ -409,7 +354,7 @@ HARDWARE_MESSAGES_DELIVERY = replace(
             message_types=frozenset(
                 {"clearSlot", "setImage", "sleepScreen", "wakeScreen"}
             ),
-            idempotency=(IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS),
+            idempotency=IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS,
             ordering_keys=(
                 "sender",
                 "recipient",
@@ -427,39 +372,25 @@ CORE_LANE_CONTRACTS: Mapping[str, LaneContract] = {
         schema_id=CORE_LANE_SCHEMA_IDS[PLUGIN_MESSAGES_LANE],
         message_types=PLUGIN_MESSAGE_TYPES,
         delivery=PLUGIN_MESSAGES_DELIVERY,
-        route_policy=LaneRoutePolicy(
-            remote_claim_endpoint_families=frozenset({"controller", "host"}),
-            allowed_sender_families=frozenset({"controller", "host"}),
-            allowed_recipient_families=frozenset({"controller", "host"}),
-            broadcast_targets={
-                "plugin_hosts": "host",
-                "controllers": "controller",
-            },
-            default_broadcast_hop_limit=1,
-            bridgeable=False,
-            reserved_endpoint_ids={
-                BUILTIN_ACTION_PROVIDER_ID: frozenset({"host"}),
-                LEGACY_BUILTIN_ACTION_PROVIDER_ID: frozenset({"host"}),
-            },
-        ),
+        allowed_sender_families=frozenset({"controller", "host"}),
+        allowed_recipient_families=frozenset({"controller", "host"}),
+        broadcast_targets={
+            "plugin_hosts": "host",
+            "controllers": "controller",
+        },
+        default_broadcast_hop_limit=1,
     ),
     HARDWARE_MESSAGES_LANE: LaneContract(
         lane=HARDWARE_MESSAGES_LANE,
         schema_id=CORE_LANE_SCHEMA_IDS[HARDWARE_MESSAGES_LANE],
         message_types=HARDWARE_MESSAGE_TYPES,
         delivery=HARDWARE_MESSAGES_DELIVERY,
-        route_policy=LaneRoutePolicy(
-            remote_claim_endpoint_families=frozenset(
-                {"controller", "hardware_manager"}
-            ),
-            allowed_sender_families=frozenset({"controller", "hardware_manager"}),
-            allowed_recipient_families=frozenset({"controller", "hardware_manager"}),
-            broadcast_targets={
-                "controllers": "controller",
-            },
-            default_broadcast_hop_limit=1,
-            bridgeable=False,
-        ),
+        allowed_sender_families=frozenset({"controller", "hardware_manager"}),
+        allowed_recipient_families=frozenset({"controller", "hardware_manager"}),
+        broadcast_targets={
+            "controllers": "controller",
+        },
+        default_broadcast_hop_limit=1,
     ),
 }
 

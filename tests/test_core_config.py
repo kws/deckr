@@ -76,19 +76,15 @@ def test_load_config_document_preserves_env_placeholders_by_default(
     config_path = tmp_path / "deckr.toml"
     config_path.write_text(
         """
-[deckr.transports.websocket.instances.controller.bindings.plugin_messages]
-uri = "ws://${DECKR_HOST}:8765/plugin-messages"
+[deckr.substrates.nats.instances.controller]
+url = "nats://${DECKR_HOST}:4222"
 """.strip()
     )
 
     document = load_config_document(config_path)
 
-    assert document.namespace("deckr.transports.websocket.instances.controller") == {
-        "bindings": {
-            "plugin_messages": {
-                "uri": "ws://${DECKR_HOST}:8765/plugin-messages",
-            }
-        }
+    assert document.namespace("deckr.substrates.nats.instances.controller") == {
+        "url": "nats://${DECKR_HOST}:4222",
     }
 
 
@@ -125,16 +121,16 @@ def test_load_config_document_expands_process_environment(
     config_path = tmp_path / "deckr.toml"
     config_path.write_text(
         """
-[deckr.transports.websocket.instances.controller]
-port = ${DECKR_WEBSOCKET_PORT}
+[deckr.substrates.nats.instances.controller]
+port = ${DECKR_NATS_PORT}
 """.strip()
     )
-    monkeypatch.setenv("DECKR_WEBSOCKET_PORT", "8765")
+    monkeypatch.setenv("DECKR_NATS_PORT", "4222")
 
     document = load_config_document(config_path, expand_env=True)
 
-    assert document.namespace("deckr.transports.websocket.instances.controller") == {
-        "port": 8765
+    assert document.namespace("deckr.substrates.nats.instances.controller") == {
+        "port": 4222
     }
 
 

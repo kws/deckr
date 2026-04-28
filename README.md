@@ -107,6 +107,19 @@ does not apply to adapter-private protocols such as plugin worker attach,
 external runtime attach, Elgato-compatible plugin protocol adaptation, or
 concrete device protocols.
 
+The first NATS substrate surface is available behind the optional `deckr[nats]`
+extra. Use `Deckr.lane(...).endpoint(...)` for endpoint-bound lane messages and
+`Deckr.state(...)` for current-state declarations. A real-NATS smoke harness is
+available at `scripts/nats_smoke.py`.
+
+Run the smoke harness against the included JetStream-enabled NATS compose service:
+
+```bash
+docker compose -f docker/compose.nats-smoke.yaml up -d nats
+uv run --extra nats python scripts/nats_smoke.py --url nats://127.0.0.1:4222
+docker compose -f docker/compose.nats-smoke.yaml down -v
+```
+
 ## Package Boundaries
 
 The core architectural rule is that `deckr` stays reusable and controller-free.

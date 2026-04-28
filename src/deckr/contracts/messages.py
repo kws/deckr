@@ -14,8 +14,6 @@ PLUGIN_MESSAGES_LANE = "plugin_messages"
 CORE_LANE_NAMES = (HARDWARE_MESSAGES_LANE, PLUGIN_MESSAGES_LANE)
 
 DECKR_MESSAGE_PROTOCOL_VERSION = "1"
-DECKR_TRANSPORT_FRAME_VERSION = "1"
-
 HARDWARE_MESSAGES_SCHEMA_ID = "deckr.message.hardware_messages.v1"
 PLUGIN_MESSAGES_SCHEMA_ID = "deckr.message.plugin_messages.v1"
 CORE_LANE_SCHEMA_IDS = {
@@ -240,13 +238,6 @@ class TraceContext(DeckrModel):
     trace_state: str | None = None
 
 
-class RouteMetadata(DeckrModel):
-    origin_client_id: str | None = None
-    current_client_id: str | None = None
-    hop_count: int = 0
-    route_history: tuple[str, ...] = ()
-
-
 class DeckrMessage(DeckrModel):
     """Transport-neutral Deckr logical message envelope."""
 
@@ -267,7 +258,6 @@ class DeckrMessage(DeckrModel):
     in_reply_to: str | None = Field(default=None, alias="inReplyTo")
     causation_id: str | None = Field(default=None, alias="causationId")
     trace: TraceContext | None = None
-    route: RouteMetadata | None = None
     body: Mapping[str, Any]
 
     @field_validator("ttl_ms")
@@ -296,25 +286,6 @@ class DeckrMessage(DeckrModel):
     @classmethod
     def schema_dict(cls) -> dict[str, Any]:
         return cls.model_json_schema(by_alias=True)
-
-
-class TransportFrame(DeckrModel):
-    """Transport-local frame around one unchanged Deckr logical message."""
-
-    frame_version: Literal["1"] = Field(
-        default=DECKR_TRANSPORT_FRAME_VERSION,
-        alias="frameVersion",
-    )
-    transport_id: str | None = Field(default=None, alias="transportId")
-    client_id: str | None = Field(default=None, alias="clientId")
-    message: DeckrMessage
-
-    def to_dict(self) -> dict[str, Any]:
-        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> TransportFrame:
-        return cls.model_validate(dict(data))
 
 
 def message_targets_endpoint(

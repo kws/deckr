@@ -25,16 +25,13 @@ from deckr.contracts.lanes import (
     IdempotencySemantics,
     LaneContract,
     LaneContractRegistry,
-    LaneRoutePolicy,
     MalformedMessageHandling,
     MessageFamily,
     MessageFamilyDelivery,
-    MqttDeliveryConstraints,
 )
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.config import ConfigDocument
-from deckr.transports.bus import EventBus
-from deckr.transports.routes import RouteTable
+from deckr.lanes import Lane, LaneRegistry
 
 if TYPE_CHECKING:
     from deckr.runtime import Deckr
@@ -74,7 +71,7 @@ class ComponentContext:
     base_dir: Path
     lanes: LaneRegistry
 
-    def require_lane(self, name: str) -> EventBus:
+    def require_lane(self, name: str) -> Lane:
         return self.lanes.require(name)
 
 
@@ -198,42 +195,11 @@ class ComponentHost:
     lane_names: tuple[str, ...]
     lanes: LaneRegistry
 
-    def get_lane(self, name: str) -> EventBus | None:
+    def get_lane(self, name: str) -> Lane | None:
         return self.lanes.get(name)
 
     async def stop(self) -> None:
         await self.component_manager.stop()
-
-
-class LaneRegistry:
-    def __init__(self, buses: Mapping[str, EventBus]) -> None:
-        self._buses = dict(buses)
-
-    @classmethod
-    def from_names(
-        cls,
-        lane_names: set[str] | frozenset[str] | tuple[str, ...],
-        *,
-        route_table: RouteTable,
-    ) -> LaneRegistry:
-        names = set(CORE_LANE_NAMES)
-        names.update(lane_names)
-        return cls(
-            {name: EventBus(name, route_table=route_table) for name in sorted(names)}
-        )
-
-    def get(self, name: str) -> EventBus | None:
-        return self._buses.get(name)
-
-    def require(self, name: str) -> EventBus:
-        bus = self.get(name)
-        if bus is None:
-            raise LookupError(f"Required lane {name!r} is not available")
-        return bus
-
-    @property
-    def names(self) -> tuple[str, ...]:
-        return tuple(sorted(self._buses))
 
 
 class InactiveComponent(BaseComponent):
@@ -268,6 +234,94 @@ def load_component_definition(component_id: str) -> ComponentDefinition | None:
             )
         return definition
     return None
+
+
+def resolve_component_instance_specs(
+    document: ConfigDocument,
+    *,
+    discovered_component_ids: list[str] | tuple[str, ...] | None = None,
+    definitions: ComponentDefinitions | None = None,
+) -> list[ComponentInstanceSpec]:
+    if definitions is not None:
+        definition_map = _definition_mapping(definitions)
+        component_ids = sorted(definition_map)
+        definition_for = definition_map.get
+    else:
+        component_ids = sorted(set(discovered_component_ids or ()))
+        definition_for = load_component_definition
+
+    specs: list[ComponentInstanceSpec] = []
+    for component_id in component_ids:
+        definition = definition_for(component_id)
+        if definition is None:
+            continue
+        if definition.manifest.cardinality == ComponentCardinality.SINGLETON:
+            spec = _singleton_spec(document, definition)
+            if spec is not None:
+                specs.append(spec)
+            continue
+        specs.extend(_multi_instance_specs(document, definition))
+    return specs
+
+
+def configured_component_instance_specs(
+    document: ConfigDocument,
+) -> list[ComponentInstanceSpec]:
+    discovered_component_ids = available_component_ids()
+    _validate_configured_component_prefixes(
+        document,
+        discovered_component_ids=discovered_component_ids,
+    )
+    return resolve_component_instance_specs(
+        document,
+        discovered_component_ids=discovered_component_ids,
+    )
+
+
+def build_lane_contract_registry(
+    instance_specs: Sequence[ComponentInstanceSpec],
+    document: ConfigDocument,
+) -> LaneContractRegistry:
+    return _build_lane_contract_registry(instance_specs, document=document)
+
+
+def resolve_component_host_plan(
+    document: ConfigDocument,
+    *,
+    definitions: ComponentDefinitions | None = None,
+) -> ComponentHostPlan:
+    if definitions is not None:
+        _validate_configured_component_prefixes(document, definitions=definitions)
+    specs = tuple(
+        configured_component_instance_specs(document)
+        if definitions is None
+        else resolve_component_instance_specs(document, definitions=definitions)
+    )
+    lane_contracts = _build_lane_contract_registry(specs, document=document)
+    _validate_component_lane_bindings(specs, lane_contracts)
+    return ComponentHostPlan(
+        specs=specs,
+        lane_contracts=lane_contracts,
+        lane_names=_lane_names_for_specs(specs, lane_contracts=lane_contracts),
+        base_dir=document.base_dir,
+    )
+
+
+@asynccontextmanager
+async def start_components(
+    deckr: Deckr,
+    plan: ComponentHostPlan,
+) -> AsyncIterator[ComponentHost]:
+    _validate_runtime_for_plan(deckr, plan)
+    component_manager = ComponentManager()
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(component_manager.run)
+        host = await _activate_component_plan(deckr, plan, component_manager)
+        try:
+            yield host
+        finally:
+            await host.stop()
+            tg.cancel_scope.cancel()
 
 
 def _singleton_spec(
@@ -315,40 +369,12 @@ def _multi_instance_specs(
     return specs
 
 
-def resolve_component_instance_specs(
-    document: ConfigDocument,
-    *,
-    discovered_component_ids: list[str] | tuple[str, ...] | None = None,
-    definitions: ComponentDefinitions | None = None,
-) -> list[ComponentInstanceSpec]:
-    if definitions is not None:
-        definition_map = _definition_mapping(definitions)
-        component_ids = sorted(definition_map)
-        definition_for = definition_map.get
-    else:
-        component_ids = sorted(set(discovered_component_ids or ()))
-        definition_for = load_component_definition
-
-    specs: list[ComponentInstanceSpec] = []
-    for component_id in component_ids:
-        definition = definition_for(component_id)
-        if definition is None:
-            continue
-        if definition.manifest.cardinality == ComponentCardinality.SINGLETON:
-            spec = _singleton_spec(document, definition)
-            if spec is not None:
-                specs.append(spec)
-            continue
-        specs.extend(_multi_instance_specs(document, definition))
-    return specs
-
-
 def _component_candidate_prefix(path: tuple[str, ...]) -> str | None:
     if not path:
         return None
     if path[0] == "controller":
         return "deckr.controller"
-    if path[0] in {"drivers", "plugin_hosts", "transports"} and len(path) >= 2:
+    if path[0] in {"drivers", "plugin_hosts", "substrates"} and len(path) >= 2:
         return f"deckr.{path[0]}.{path[1]}"
     return "deckr." + ".".join(path)
 
@@ -399,7 +425,6 @@ def _component_config_prefixes(
             definition.manifest.config_prefix
             for definition in _definition_mapping(definitions).values()
         }
-
     prefixes: set[str] = set()
     for component_id in sorted(set(discovered_component_ids or ())):
         definition = load_component_definition(component_id)
@@ -433,20 +458,6 @@ def _validate_configured_component_prefixes(
     )
 
 
-def configured_component_instance_specs(
-    document: ConfigDocument,
-) -> list[ComponentInstanceSpec]:
-    discovered_component_ids = available_component_ids()
-    _validate_configured_component_prefixes(
-        document,
-        discovered_component_ids=discovered_component_ids,
-    )
-    return resolve_component_instance_specs(
-        document,
-        discovered_component_ids=discovered_component_ids,
-    )
-
-
 def _definition_mapping(definitions: ComponentDefinitions) -> dict[str, ComponentDefinition]:
     if isinstance(definitions, Mapping):
         return dict(definitions)
@@ -472,14 +483,6 @@ def _optional_string_set(value: Any, *, field_name: str) -> frozenset[str] | Non
     return _string_set(value, field_name=field_name)
 
 
-def _optional_bool(value: Any, *, field_name: str) -> bool | None:
-    if value is None:
-        return None
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a boolean")
-    return value
-
-
 def _optional_int(value: Any, *, field_name: str) -> int | None:
     if value is None:
         return None
@@ -503,24 +506,6 @@ def _broadcast_targets(value: Any, *, field_name: str) -> Mapping[str, str]:
             )
         targets[scope] = endpoint_family
     return targets
-
-
-def _reserved_endpoint_ids(
-    value: Any, *, field_name: str
-) -> Mapping[str, frozenset[str]]:
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{field_name} must be a table of endpoint id = families")
-    reserved: dict[str, frozenset[str]] = {}
-    for endpoint_id, families in value.items():
-        if not isinstance(endpoint_id, str) or not endpoint_id:
-            raise ValueError(f"{field_name} endpoint ids must be non-empty strings")
-        reserved[endpoint_id] = _string_set(
-            families,
-            field_name=f"{field_name}.{endpoint_id}",
-        )
-    return reserved
 
 
 def _string_tuple(value: Any, *, field_name: str) -> tuple[str, ...]:
@@ -550,31 +535,6 @@ def _optional_enum_value(enum_type, value: Any, *, field_name: str):
     if value is None:
         return None
     return _enum_value(enum_type, value, field_name=field_name)
-
-
-def _mqtt_delivery_constraints_from_mapping(
-    value: Any,
-    *,
-    field_name: str,
-) -> MqttDeliveryConstraints:
-    if value is None:
-        return MqttDeliveryConstraints()
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{field_name} must be a table")
-    max_qos = value.get("max_qos", 0)
-    if not isinstance(max_qos, int) or max_qos < 0 or max_qos > 2:
-        raise ValueError(f"{field_name}.max_qos must be an integer from 0 to 2")
-    retain = value.get("retain", False)
-    if not isinstance(retain, bool):
-        raise ValueError(f"{field_name}.retain must be a boolean")
-    persistent_session = value.get("persistent_session", False)
-    if not isinstance(persistent_session, bool):
-        raise ValueError(f"{field_name}.persistent_session must be a boolean")
-    return MqttDeliveryConstraints(
-        max_qos=max_qos,
-        retain=retain,
-        persistent_session=persistent_session,
-    )
 
 
 def _message_family_delivery_from_mapping(
@@ -635,6 +595,8 @@ def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | Non
         )
     if not isinstance(source, Mapping):
         raise ValueError(f"Lane contract {lane!r} delivery must be a table")
+    if source.get("mqtt") is not None:
+        raise ValueError("delivery.mqtt is not part of the v1 lane contract")
     return DeliverySemantics(
         persistence=(
             _optional_enum_value(
@@ -702,7 +664,7 @@ def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | Non
                 source.get("remote_backpressure"),
                 field_name="delivery.remote_backpressure",
             )
-            or BackpressureHandling.DISCONNECT_OR_WITHDRAW_ROUTE
+            or BackpressureHandling.DISCONNECT
         ),
         malformed_messages=(
             _optional_enum_value(
@@ -712,10 +674,6 @@ def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | Non
             )
             or MalformedMessageHandling.DROP_UNPARSEABLE_LOG_PARSEABLE_REJECTION
         ),
-        mqtt=_mqtt_delivery_constraints_from_mapping(
-            source.get("mqtt"),
-            field_name="delivery.mqtt",
-        ),
         message_families=_message_family_deliveries(
             source.get("message_families"),
             field_name="delivery.message_families",
@@ -723,16 +681,27 @@ def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | Non
     )
 
 
-def _route_policy_from_mapping(source: Mapping[str, Any]) -> LaneRoutePolicy:
+def _lane_contract_from_mapping(lane: str, source: Mapping[str, Any]) -> LaneContract:
+    schema_id = source.get("schema_id")
+    if schema_id is not None and not isinstance(schema_id, str):
+        raise ValueError(f"Lane contract {lane!r} schema_id must be a string")
     if source.get("delivery_semantics") is not None:
         raise ValueError(
-            "route_policy.delivery_semantics has been replaced by delivery"
+            f"Lane contract {lane!r} delivery_semantics has been replaced by delivery"
         )
-    return LaneRoutePolicy(
-        remote_claim_endpoint_families=_string_set(
-            source.get("remote_claim_endpoint_families"),
-            field_name="remote_claim_endpoint_families",
+    if source.get("route_policy") is not None:
+        raise ValueError(
+            f"Lane contract {lane!r} route_policy has been removed; use direct "
+            "lane contract fields"
+        )
+    return LaneContract(
+        lane=lane,
+        schema_id=schema_id,
+        message_types=_string_set(
+            source.get("message_types"),
+            field_name=f"Lane contract {lane!r} message_types",
         ),
+        delivery=_delivery_from_mapping(source.get("delivery"), lane=lane),
         allowed_sender_families=_optional_string_set(
             source.get("allowed_sender_families"),
             field_name="allowed_sender_families",
@@ -749,106 +718,10 @@ def _route_policy_from_mapping(source: Mapping[str, Any]) -> LaneRoutePolicy:
             source.get("default_broadcast_hop_limit"),
             field_name="default_broadcast_hop_limit",
         ),
-        bridgeable=_optional_bool(source.get("bridgeable"), field_name="bridgeable"),
-        local_only_message_types=_string_set(
-            source.get("local_only_message_types"),
-            field_name="local_only_message_types",
-        ),
-        reserved_endpoint_ids=_reserved_endpoint_ids(
-            source.get("reserved_endpoint_ids"),
-            field_name="reserved_endpoint_ids",
-        ),
-    )
-
-
-def _lane_contract_from_mapping(lane: str, source: Mapping[str, Any]) -> LaneContract:
-    schema_id = source.get("schema_id")
-    if schema_id is not None and not isinstance(schema_id, str):
-        raise ValueError(f"Lane contract {lane!r} schema_id must be a string")
-    if source.get("delivery_semantics") is not None:
-        raise ValueError(
-            f"Lane contract {lane!r} delivery_semantics has been replaced by delivery"
-        )
-    route_policy_source = source.get("route_policy", {})
-    if not isinstance(route_policy_source, Mapping):
-        raise ValueError(f"Lane contract {lane!r} route_policy must be a table")
-    return LaneContract(
-        lane=lane,
-        schema_id=schema_id,
-        message_types=_string_set(
-            source.get("message_types"),
-            field_name=f"Lane contract {lane!r} message_types",
-        ),
-        delivery=_delivery_from_mapping(source.get("delivery"), lane=lane),
-        route_policy=_route_policy_from_mapping(route_policy_source),
-    )
-
-
-def _merge_route_policy(
-    base: LaneRoutePolicy,
-    override: LaneRoutePolicy,
-) -> LaneRoutePolicy:
-    return LaneRoutePolicy(
-        remote_claim_endpoint_families=(
-            override.remote_claim_endpoint_families
-            or base.remote_claim_endpoint_families
-        ),
-        allowed_sender_families=(
-            override.allowed_sender_families
-            if override.allowed_sender_families is not None
-            else base.allowed_sender_families
-        ),
-        allowed_recipient_families=(
-            override.allowed_recipient_families
-            if override.allowed_recipient_families is not None
-            else base.allowed_recipient_families
-        ),
-        broadcast_targets=override.broadcast_targets or base.broadcast_targets,
-        default_broadcast_hop_limit=(
-            override.default_broadcast_hop_limit
-            if override.default_broadcast_hop_limit is not None
-            else base.default_broadcast_hop_limit
-        ),
-        bridgeable=(
-            override.bridgeable if override.bridgeable is not None else base.bridgeable
-        ),
-        local_only_message_types=(
-            override.local_only_message_types or base.local_only_message_types
-        ),
-        reserved_endpoint_ids={
-            **base.reserved_endpoint_ids,
-            **override.reserved_endpoint_ids,
-        },
-    )
-
-
-def _merge_lane_contract(base: LaneContract, override: LaneContract) -> LaneContract:
-    return LaneContract(
-        lane=base.lane,
-        schema_id=override.schema_id or base.schema_id,
-        message_types=override.message_types or base.message_types,
-        delivery=override.delivery or base.delivery,
-        route_policy=_merge_route_policy(base.route_policy, override.route_policy),
     )
 
 
 def _narrow_families(
-    base: frozenset[str],
-    override: frozenset[str],
-    *,
-    field_name: str,
-    lane: str,
-) -> frozenset[str]:
-    if not override:
-        return base
-    if not base or not override.issubset(base):
-        raise ValueError(
-            f"Deployment lane contract {lane!r} must not widen {field_name}"
-        )
-    return override
-
-
-def _narrow_optional_families(
     base: frozenset[str] | None,
     override: frozenset[str] | None,
     *,
@@ -895,20 +768,6 @@ def _narrow_default_broadcast_hop_limit(
     return override
 
 
-def _narrow_bridgeable(
-    base: bool | None,
-    override: bool | None,
-    *,
-    lane: str,
-) -> bool | None:
-    if override is None:
-        return base
-    base_allows_bridging = base is True
-    if override is True and not base_allows_bridging:
-        raise ValueError(f"Deployment lane contract {lane!r} must not widen bridgeable")
-    return override
-
-
 def _narrow_message_types(
     base: frozenset[str],
     override: frozenset[str],
@@ -937,61 +796,6 @@ def _narrow_delivery(
     return override
 
 
-def _narrow_route_policy(
-    base: LaneRoutePolicy,
-    override: LaneRoutePolicy,
-    *,
-    lane: str,
-) -> LaneRoutePolicy:
-    reserved_endpoint_ids = {
-        endpoint_id: families
-        for endpoint_id, families in base.reserved_endpoint_ids.items()
-    }
-    for endpoint_id, families in override.reserved_endpoint_ids.items():
-        reserved_endpoint_ids[endpoint_id] = (
-            reserved_endpoint_ids.get(endpoint_id, frozenset()) | families
-        )
-    return LaneRoutePolicy(
-        remote_claim_endpoint_families=_narrow_families(
-            base.remote_claim_endpoint_families,
-            override.remote_claim_endpoint_families,
-            field_name="remote_claim_endpoint_families",
-            lane=lane,
-        ),
-        allowed_sender_families=_narrow_optional_families(
-            base.allowed_sender_families,
-            override.allowed_sender_families,
-            field_name="allowed_sender_families",
-            lane=lane,
-        ),
-        allowed_recipient_families=_narrow_optional_families(
-            base.allowed_recipient_families,
-            override.allowed_recipient_families,
-            field_name="allowed_recipient_families",
-            lane=lane,
-        ),
-        broadcast_targets=_narrow_broadcast_targets(
-            base.broadcast_targets,
-            override.broadcast_targets,
-            lane=lane,
-        ),
-        default_broadcast_hop_limit=_narrow_default_broadcast_hop_limit(
-            base.default_broadcast_hop_limit,
-            override.default_broadcast_hop_limit,
-            lane=lane,
-        ),
-        bridgeable=_narrow_bridgeable(
-            base.bridgeable,
-            override.bridgeable,
-            lane=lane,
-        ),
-        local_only_message_types=(
-            base.local_only_message_types | override.local_only_message_types
-        ),
-        reserved_endpoint_ids=reserved_endpoint_ids,
-    )
-
-
 def _narrow_lane_contract(base: LaneContract, override: LaneContract) -> LaneContract:
     if override.schema_id is not None and base.schema_id not in {
         None,
@@ -1009,9 +813,26 @@ def _narrow_lane_contract(base: LaneContract, override: LaneContract) -> LaneCon
             lane=base.lane,
         ),
         delivery=_narrow_delivery(base.delivery, override.delivery, lane=base.lane),
-        route_policy=_narrow_route_policy(
-            base.route_policy,
-            override.route_policy,
+        allowed_sender_families=_narrow_families(
+            base.allowed_sender_families,
+            override.allowed_sender_families,
+            field_name="allowed_sender_families",
+            lane=base.lane,
+        ),
+        allowed_recipient_families=_narrow_families(
+            base.allowed_recipient_families,
+            override.allowed_recipient_families,
+            field_name="allowed_recipient_families",
+            lane=base.lane,
+        ),
+        broadcast_targets=_narrow_broadcast_targets(
+            base.broadcast_targets,
+            override.broadcast_targets,
+            lane=base.lane,
+        ),
+        default_broadcast_hop_limit=_narrow_default_broadcast_hop_limit(
+            base.default_broadcast_hop_limit,
+            override.default_broadcast_hop_limit,
             lane=base.lane,
         ),
     )
@@ -1076,13 +897,6 @@ def _build_lane_contract_registry(
     return LaneContractRegistry(contracts.values())
 
 
-def build_lane_contract_registry(
-    instance_specs: Sequence[ComponentInstanceSpec],
-    document: ConfigDocument,
-) -> LaneContractRegistry:
-    return _build_lane_contract_registry(instance_specs, document=document)
-
-
 def _lane_names_for_specs(
     instance_specs: Sequence[ComponentInstanceSpec],
     *,
@@ -1101,17 +915,6 @@ def _lane_names_for_specs(
     return tuple(sorted(lane_names))
 
 
-def build_lane_registry(
-    instance_specs: Sequence[ComponentInstanceSpec],
-    *,
-    route_table: RouteTable,
-) -> LaneRegistry:
-    return LaneRegistry.from_names(
-        _lane_names_for_specs(instance_specs),
-        route_table=route_table,
-    )
-
-
 def _validate_component_lane_bindings(
     specs: Sequence[ComponentInstanceSpec],
     lane_contracts: LaneContractRegistry,
@@ -1122,28 +925,6 @@ def _validate_component_lane_bindings(
             instance_id=spec.instance_id,
             lane_contracts=lane_contracts,
         )
-
-
-def resolve_component_host_plan(
-    document: ConfigDocument,
-    *,
-    definitions: ComponentDefinitions | None = None,
-) -> ComponentHostPlan:
-    if definitions is not None:
-        _validate_configured_component_prefixes(document, definitions=definitions)
-    specs = tuple(
-        configured_component_instance_specs(document)
-        if definitions is None
-        else resolve_component_instance_specs(document, definitions=definitions)
-    )
-    lane_contracts = _build_lane_contract_registry(specs, document=document)
-    _validate_component_lane_bindings(specs, lane_contracts)
-    return ComponentHostPlan(
-        specs=specs,
-        lane_contracts=lane_contracts,
-        lane_names=_lane_names_for_specs(specs, lane_contracts=lane_contracts),
-        base_dir=document.base_dir,
-    )
 
 
 def _validate_runtime_for_plan(deckr: Deckr, plan: ComponentHostPlan) -> None:
@@ -1198,20 +979,3 @@ async def _activate_component_plan(
         lane_names=plan.lane_names,
         lanes=deckr.lanes,
     )
-
-
-@asynccontextmanager
-async def start_components(
-    deckr: Deckr,
-    plan: ComponentHostPlan,
-) -> AsyncIterator[ComponentHost]:
-    _validate_runtime_for_plan(deckr, plan)
-    component_manager = ComponentManager()
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
-        host = await _activate_component_plan(deckr, plan, component_manager)
-        try:
-            yield host
-        finally:
-            await host.stop()
-            tg.cancel_scope.cancel()

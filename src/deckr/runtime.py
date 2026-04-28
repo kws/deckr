@@ -6,15 +6,15 @@ from types import TracebackType
 
 import anyio
 
-from deckr.components import LaneRegistry
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     LaneContract,
     LaneContractRegistry,
 )
 from deckr.contracts.messages import CORE_LANE_NAMES
-from deckr.transports.bus import EventBus
-from deckr.transports.routes import RouteEvent, RouteTable
+from deckr.lanes import Lane, LaneRegistry, LaneSubstrate
+from deckr.state import StateStore
+from deckr.substrates.local import LocalSubstrate
 
 
 class Deckr:
@@ -23,21 +23,18 @@ class Deckr:
         *,
         lane_contracts: LaneContractRegistry | Sequence[LaneContract] = (),
         lanes: Sequence[str] = (),
-        route_expiry_interval: float = 1.0,
+        substrate: LaneSubstrate | None = None,
     ) -> None:
-        if route_expiry_interval <= 0:
-            raise ValueError("route_expiry_interval must be greater than zero")
-
         self._lane_contracts = self._build_lane_contracts(
             lane_contracts,
             lanes=lanes,
         )
-        self._route_table = RouteTable(lane_contracts=self._lane_contracts)
+        self._substrate = substrate or LocalSubstrate(lane_contracts=self._lane_contracts)
         self._lanes = LaneRegistry.from_names(
             tuple(sorted(set(CORE_LANE_NAMES) | set(lanes))),
-            route_table=self._route_table,
+            lane_contracts=self._lane_contracts,
+            substrate=self._substrate,
         )
-        self._route_expiry_interval = route_expiry_interval
         self._task_group_cm: AbstractAsyncContextManager[anyio.abc.TaskGroup] | None = (
             None
         )
@@ -52,27 +49,26 @@ class Deckr:
         return self._lanes
 
     @property
-    def route_table(self) -> RouteTable:
-        return self._route_table
-
-    @property
     def is_running(self) -> bool:
         return self._task_group is not None
 
-    def bus(self, name: str) -> EventBus:
+    def lane(self, name: str) -> Lane:
         return self._lanes.require(name)
 
-    def route_events(
-        self,
-    ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[RouteEvent]]:
-        return self._route_table.subscribe()
+    def state(self, name: str = "deckr_state_v1") -> StateStore:
+        return self._substrate.state(name)
 
     async def __aenter__(self) -> Deckr:
         if self._task_group is not None:
             raise RuntimeError("Deckr runtime is already running")
+        connect = getattr(self._substrate, "connect", None)
+        if connect is not None:
+            await connect()
         self._task_group_cm = anyio.create_task_group()
         self._task_group = await self._task_group_cm.__aenter__()
-        self._task_group.start_soon(self._expire_routes)
+        start = getattr(self._substrate, "start", None)
+        if start is not None:
+            start(self._task_group)
         return self
 
     async def __aexit__(
@@ -83,18 +79,15 @@ class Deckr:
     ) -> bool | None:
         if self._task_group is not None:
             self._task_group.cancel_scope.cancel()
-        if self._task_group_cm is None:
-            return None
-        try:
-            return await self._task_group_cm.__aexit__(exc_type, exc, traceback)
-        finally:
-            self._task_group = None
-            self._task_group_cm = None
-
-    async def _expire_routes(self) -> None:
-        while True:
-            await self._route_table.expire_routes()
-            await anyio.sleep(self._route_expiry_interval)
+        result = None
+        if self._task_group_cm is not None:
+            result = await self._task_group_cm.__aexit__(exc_type, exc, traceback)
+        aclose = getattr(self._substrate, "aclose", None)
+        if aclose is not None:
+            await aclose()
+        self._task_group = None
+        self._task_group_cm = None
+        return result
 
     @staticmethod
     def _build_lane_contracts(
