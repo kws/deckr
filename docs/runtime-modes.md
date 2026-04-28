@@ -2,8 +2,7 @@
 
 Deckr runtime modes are ordinary composition over the same primitives:
 
-- `Deckr` owns lane contracts, one shared route table, lane buses, and route
-  lease expiry.
+- `Deckr` owns lane contracts and lane buses.
 - `resolve_component_host_plan(...)` resolves discovered or supplied component
   definitions into exact-prefix component instances.
 - `start_components(deckr, plan)` hosts those instances against the existing
@@ -15,7 +14,8 @@ rules.
 ## Full Stack Runtime
 
 A full-stack process creates `Deckr`, then starts controller, plugin host,
-hardware driver, and transport components from one component host plan.
+hardware manager, and any configured lane substrate or adapter components from
+one component host plan.
 
 ```python
 from deckr.components import resolve_component_host_plan, start_components
@@ -33,32 +33,15 @@ async with Deckr(lane_contracts=plan.lane_contracts, lanes=plan.lane_names) as d
 ## Skinny Plugin Host Runtime
 
 A skinny plugin host runtime uses the same `Deckr` and component host APIs, but
-its configuration only includes a plugin host component and the transports needed
-to reach the controller domain. The transport bindings still name lanes
-explicitly, for example `plugin_messages`.
-
-When the controller endpoint is remote, the plugin host's transport binding
-should declare the controller as a reachable remote endpoint:
-
-```toml
-[deckr.transports.websocket.instances.controller.bindings.plugin_messages]
-lane = "plugin_messages"
-uri = "ws://controller:8765/plugin-messages"
-remote_endpoints = ["controller:controller-main"]
-```
+its configuration only includes a plugin host component and the lane substrate
+needed to reach the controller domain. The old WebSocket/MQTT lane transport
+examples have been removed while the NATS substrate configuration is in-flight.
 
 ## Remote Driver Runtime
 
 A remote driver runtime likewise uses the same APIs, but includes a driver or
-hardware manager component plus explicit transport bindings for the hardware
-lane. It does not need a local controller or plugin host.
-
-```toml
-[deckr.transports.websocket.instances.controller.bindings.hardware_messages]
-lane = "hardware_messages"
-uri = "ws://controller:8765/hardware-messages"
-remote_endpoints = ["controller:controller-main"]
-```
+hardware manager component plus the lane substrate needed for
+`hardware_messages`. It does not need a local controller or plugin host.
 
 ## Embedded Or Manual Runtime
 

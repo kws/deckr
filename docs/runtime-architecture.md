@@ -29,9 +29,9 @@ The two external realities shaping this architecture are:
   and input events.
 
 The shared APIs and runtime primitives for this architecture belong in `deckr`.
-That includes the core message specifications, routing metadata, and wire-safe
-contracts that move across event lanes and across any transports attached to
-those lanes.
+That includes the core message specifications, endpoint identity rules,
+lane-level delivery metadata, and wire-safe contracts that move across event
+lanes and across the distributed lane substrate.
 
 ## Architectural Model
 
@@ -113,13 +113,14 @@ The current core lane set includes:
 - `plugin_messages`
 - `hardware_messages`
 
-The bus and routing requirements for these lanes are defined in
-[bus-architecture.md](bus-architecture.md). This document owns the generic
-component and lane model; the bus architecture document owns endpoint identity,
-entity subjects, client reachability, route claims, logical Deckr envelopes,
-broadcast semantics, delivery semantics, control-plane messages, and disconnect
-cleanup. The device, control, and capability contracts carried by the hardware
-lane are defined in
+The distributed lane substrate replacement is in-flight and currently tracked in
+the workspace planning note at
+[`../../notes/bus-planning.md`](../../notes/bus-planning.md). This document owns
+the generic component and lane model. The planning note owns the current NATS
+replacement direction, endpoint-bound lane handles, recipient filtering, KV
+current state, device claims, and action resolution until a new formal
+specification is written in `deckr`. The device, control, and capability
+contracts carried by the hardware lane are defined in
 [device-capabilities-architecture.md](device-capabilities-architecture.md).
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
@@ -140,44 +141,25 @@ Named event lanes are logical buses, not process-local implementation details.
 A lane may exist:
 
 - locally and in-memory within one process
-- across process boundaries via a transport component
-- across host or network boundaries via a transport component
+- across process boundaries via the distributed lane substrate
+- across host or network boundaries via the distributed lane substrate
 
-Transports and messaging substrates such as WebSocket, MQTT, NATS, Dapr-backed
-pub/sub, Redis, or future mechanisms are not different architectural classes.
-They are all just transport adapters or substrate integrations carrying the same
-lane semantics.
-
-No transport is primary or second-class in the architecture.
-
-A transport is also just a component.
+The v1 distributed lane substrate direction is NATS. The old home-grown
+WebSocket and MQTT lane transports are implementation cleanup targets rather
+than parallel architectures to preserve.
 
 The shared lane implementation is the application-facing bus for one Deckr
-runtime. It owns the common `send`/`subscribe` surface, in-process fan-out,
-subscriber lifecycle, and local backpressure policy. Remote transports attach to
-that shared lane implementation; they do not each create a separate
-application-facing bus with its own copy of those mechanics.
+runtime. The replacement API should expose endpoint-bound lane handles so the
+bus layer can stamp envelope senders and filter recipients centrally.
 
-A transport component:
+NATS may provide broker fan-out, request/reply inboxes, queue groups, ops-only
+Services, JetStream, KV watches, TTL, duplicate windows, WebSocket/MQTT-facing
+network edges, and leaf topology below Deckr. Application components still use
+Deckr lane handles, Deckr envelopes, Deckr endpoint addresses, and Deckr
+subjects.
 
-- consumes one or more named lanes
-- republishes those same lane semantics across a transport boundary
-- preserves lane meaning
-- translates only framing, delivery, and transport concerns
-
-A transport must not redefine the meaning of a lane just because it is crossing a
-process or network boundary.
-
-Transport-local publish/subscribe mechanics are allowed when required by the
-transport substrate. For example, MQTT has topics and WebSocket servers have
-connected sockets. Those mechanics are delivery details below the Deckr lane
-API, not a second lane API for application components.
-
-Using a richer substrate such as NATS or Dapr does not change this rule. Those
-systems may provide broker fan-out, request/reply inboxes, consumer or queue
-groups, durable streams, replay, redelivery, TTL, dead-letter handling, or
-edge/leaf topology below Deckr. Application components still use Deckr lane
-handles, Deckr envelopes, Deckr endpoint addresses, and Deckr subjects.
+Adapter-private WebSocket or MQTT protocols may still exist behind plugin,
+hardware, or third-party protocol boundaries. They are not Deckr lane transports.
 
 ### Managed Lane Runtime
 
@@ -188,19 +170,17 @@ It includes:
 
 - the lane registry
 - one application-facing event bus per lane
-- the shared route table for those lanes
-- core route lifecycle services such as route lease expiry
-- future generic bus infrastructure such as shared diagnostics or control-plane
-  dispatch, if those remain lane-generic
+- endpoint-bound lane handles
+- recipient filtering for local endpoints
+- current-state, diagnostics, or control-plane hooks that remain lane-generic
 
 The managed lane runtime belongs in `deckr`. It is not a transport, controller,
 driver, plugin host, or special discovered component.
 
 Every runtime host must either use the Deckr-provided managed lane runtime or
-explicitly provide equivalent behavior. In particular, route lease expiry must be
-driven exactly once per shared route table. Expiry must not depend on a
-transport, a controller, a plugin host, a message arriving, or the bundled Deckr
-launcher.
+explicitly provide equivalent behavior. Endpoint liveness and current-state
+expiry are being moved to the NATS/KV substrate design and must not be
+reimplemented as home-grown WebSocket/MQTT route leases.
 
 The Deckr launcher should use the same managed lane runtime API that embedding
 hosts use. It may add configuration loading, component discovery, signal
@@ -225,7 +205,8 @@ That object is a runtime host helper around the managed lane runtime. It should:
 - accept extension lane contracts explicitly
 - expose lane handles through one obvious API such as `bus(name)` or
   `lanes.require(name)`
-- expose the shared route table for diagnostics and route-event subscriptions
+- expose endpoint-bound lane handles, recipient filtering diagnostics, and
+  current-state hooks
 - start required generic bus services exactly once
 - stop those services through normal async context-manager cancellation
 
@@ -255,18 +236,19 @@ These modes are deployment shapes, not different architectures.
   - may use lane messaging directly, start components manually, or use component
     discovery
 - skinny plugin host runtime
-  - runs only the managed lane runtime, a plugin host, and the transports needed
-    to reach a controller domain
+  - runs only the managed lane runtime, a plugin host, and the lane substrate
+    needed to reach a controller domain
   - does not require a local controller or hardware driver
 - remote driver runtime
   - runs only the managed lane runtime, one or more hardware drivers or hardware
-    managers, and the transports needed to reach a controller domain
+    managers, and the lane substrate needed to reach a controller domain
   - does not require a local controller or plugin host
 
-Every mode must use the same managed lane runtime, lane contracts, route table,
-route lifecycle services, component model, and transport binding rules. A
-"skinny" runtime omits components; it does not get a thinner protocol, a different
-bus, or a role-specific discovery path.
+Every mode must use the same managed lane runtime, lane contracts,
+endpoint-bound send/subscribe API, recipient filtering, current-state behavior,
+component model, and substrate binding rules. A "skinny" runtime omits
+components; it does not get a thinner protocol, a different bus, or a
+role-specific discovery path.
 
 Component hosting must likewise have one mechanism. A runtime host may obtain
 components through entry-point discovery, direct application registration, tests,
@@ -288,16 +270,16 @@ AnyIO is part of the Python hosting contract for:
 - component lifecycle and `RunContext`
 - task groups, cancellation, and stop signals
 - in-process lane fan-out
-- route table synchronization and route-event streams
+- endpoint-bound lane subscription streams
 - local backpressure and timeout behavior
 
 Python hosts should either run Deckr inside an existing AnyIO-compatible async
 context or use `anyio.run(...)`. Frameworks built on asyncio can host Deckr
 through AnyIO's asyncio backend.
 
-The Deckr protocol is not AnyIO-specific. Message envelopes, lane names, route
-metadata, JSON Schema, endpoint addresses, subjects, and wire payloads must remain
-runtime-agnostic and usable by non-Python implementations.
+The Deckr protocol is not AnyIO-specific. Message envelopes, lane names,
+delivery metadata, JSON Schema, endpoint addresses, subjects, and wire payloads
+must remain runtime-agnostic and usable by non-Python implementations.
 
 Implementation code may temporarily use backend-specific libraries behind an
 adapter boundary, but backend-specific objects must not leak into Deckr's public
@@ -319,7 +301,7 @@ All core message contracts belong in `deckr`.
 These core contracts include:
 
 - the Deckr logical message envelope
-- endpoint and route metadata
+- endpoint and delivery metadata
 - endpoint addresses and entity subjects
 - core lane message body types
 - core event types
@@ -350,7 +332,7 @@ or similar transport-local concerns.
 
 That outer framing is not the lane message contract. It must never change the
 meaning or shape of the standardized Deckr message carried inside it, and it
-must not leak into application routing.
+must not leak into application-level addressing or delivery.
 
 ### Core and Extension Messages
 
@@ -521,12 +503,12 @@ components.
 For most component types, `consumes` and `publishes` are fixed lists declared by
 the component type itself.
 
-For configurable adapter components such as transports, the manifest may instead
-declare the component's lane binding capability, and instance configuration may
-then provide the exact lane bindings for that specific instance. In that case
-the runtime host must resolve the instance's actual `consumes` and `publishes`
-from those explicit bindings, not infer them from semantic role, transport type,
-or path naming.
+For configurable components whose lane participation is instance-specific, the
+manifest may instead declare the component's lane binding capability, and
+instance configuration may then provide the exact lane bindings for that specific
+instance. In that case the runtime host must resolve the instance's actual
+`consumes` and `publishes` from those explicit bindings, not infer them from
+semantic role, component type, or path naming.
 
 As a default convention, `config_prefix` should be the canonical Python import
 path of the component.
@@ -535,16 +517,15 @@ Examples:
 
 - `deckr.controller`
 - `deckr.plugin_hosts.python`
-- `deckr.transports.mqtt`
-- `deckr.transports.websocket`
-- `deckr.drivers.mqtt`
+- `deckr.drivers.elgato`
+- `deckr.drivers.mirabox`
 
 The runtime host must use the manifest's declared `config_prefix`. It must not
 try to infer meaning from path segments such as `plugin_hosts`, `drivers`, or
 `controller`.
 
-`deckr.plugin_hosts.python` and `deckr.transports.mqtt` are therefore two separate
-component types, not a parent component and a child component.
+`deckr.plugin_hosts.python` and `deckr.drivers.elgato` are therefore two
+separate component types, not a parent component and a child component.
 
 ### Exact Prefix Binding
 
@@ -568,8 +549,8 @@ This means:
 
 - `deckr.plugin_hosts.python` does not automatically receive configuration from
   `deckr.plugin_hosts`
-- `deckr.transports.mqtt` does not automatically receive configuration from
-  `deckr.plugin_hosts.python`
+- `deckr.drivers.elgato` does not automatically receive configuration from
+  `deckr.drivers`
 - dotted names are exact binding prefixes, not inheritance paths
 
 Implicit parent-scope inheritance is forbidden.
@@ -602,9 +583,8 @@ enabled/disabled convention.
 
 Component type identity and component instance identity are different concepts.
 
-`deckr.transports.mqtt` is not an instance of `deckr.plugin_hosts.python`; it is a
-distinct component type with its own manifest and its own exact
-`config_prefix`.
+`deckr.plugin_hosts.python` and `deckr.drivers.elgato` are distinct component
+types with their own manifests and exact `config_prefix` values.
 
 If a component type is `singleton`, there is at most one configured instance of
 that component type, and its configuration lives exactly at its declared
@@ -653,152 +633,31 @@ and `instance_id = "remote"`.
 This is the only permitted way to express multiplicity within the generic
 component model.
 
-### Transport Components
+### Lane Substrate Replacement
 
-Bus transports are not declared on lanes. Bus transports are declared as normal
-components.
+The old generic transport-component model for Deckr lanes is being removed in
+favor of the NATS substrate design currently tracked in
+[`../../notes/bus-planning.md`](../../notes/bus-planning.md).
 
-There is no separate transport registry, no transport-only discovery mechanism, and
-no runtime-host rule that says a transport automatically belongs to one semantic
-role.
+Removal targets include the home-grown WebSocket/MQTT lane transports,
+`remote_endpoints`, route-table route claims, route leases, route metadata, and
+trusted-bridge configuration. Those concepts should not be kept alive as a
+parallel lane transport architecture.
 
-A transport is modeled in three layers:
+The live design direction is:
 
-- transport component type
-- transport component instance
-- per-lane binding
+- Deckr lanes remain logical contracts.
+- NATS carries distributed lane traffic.
+- KV carries retained current state, device descriptors, endpoint reachability,
+  device claims, and action catalogs where appropriate.
+- Lane listeners register with their Deckr endpoint address.
+- The lane layer stamps envelope senders and filters received envelopes for the
+  local endpoint before application code sees them.
+- NATS subject, reply inbox, queue group, ops-only Service, JetStream, and KV
+  concepts remain substrate mechanics below the Deckr lane contract.
 
-Those layers must not be collapsed together.
-
-The meanings are:
-
-- transport component type
-  - the reusable implementation such as `deckr.transports.mqtt` or
-    `deckr.transports.websocket`
-  - discovered through the normal component mechanism
-  - declares its manifest, transport family, and whether its bindings are fixed
-    or configurable per instance
-- transport component instance
-  - one configured deployment of that transport type
-  - owns transport/session configuration such as hostname, port, credentials,
-    server/client mode, reconnect policy, and similar concerns
-- per-lane binding
-  - one explicit mapping between a logical Deckr lane and a concrete remote
-    transport address
-  - owns direction and remote addressing
-
-The shared lane bus and routing layer own app-facing fan-out, local
-subscription, endpoint reachability, route selection, and broadcast expansion.
-Transport instances attach to those shared services instead of reimplementing
-them per transport.
-
-For generic broker features beyond the local runtime, the transport instance may
-delegate mechanics to an external substrate, but only through an explicit
-component and per-lane binding. Delegation must not introduce a second component
-model, discovery model, endpoint identity model, or application-facing bus API.
-
-The recommended naming convention for reusable transport component types is:
-
-- `deckr.transports.websocket`
-- `deckr.transports.mqtt`
-- `deckr.transports.redis`
-
-This is only a naming convention for normal components. It is not a second
-architectural discovery model.
-
-A transport instance id is not a Deckr endpoint address. It identifies a
-transport runtime instance or session for diagnostics, loop prevention, and route
-bookkeeping. Application routing must use Deckr endpoint addresses and explicit
-subjects, not MQTT topics, WebSocket paths, connection ids, or transport ids.
-
-Transport configuration has two parts:
-
-- transport/session configuration
-- explicit `bindings`
-
-Each binding must declare:
-
-- `lane`
-  - the exact logical Deckr lane being transported
-- `direction`
-  - one of `ingress`, `egress`, or `bidirectional`
-- one transport-specific remote address
-  - for example `topic`, `path`, `channel`, `stream`, or similar
-- `schema_id` for extension lanes when the lane is not defined as a core Deckr
-  lane
-- optional `remote_endpoints`
-  - explicit Deckr endpoint addresses known to be reachable through that
-    transport binding
-
-For core Deckr lanes, the lane name implies the core Deckr message contract from
-`deckr`. That contract must not be redefined in transport-local configuration.
-
-For extension lanes, the binding must identify the extension message contract
-explicitly. During normal runtime activation, that schema id must match the
-resolved lane contract from the lane contract registry. Do not rely on
-convention or out-of-band knowledge, and do not treat a transport binding's
-schema id as the whole route policy for the lane.
-
-Transport bindings are explicit because hidden transport-to-lane assumptions are a
-major source of architectural drift.
-
-`remote_endpoints` is an explicit route assertion, not discovery magic. Each
-listed endpoint creates a lane-scoped `transport_route` claim for the binding's
-lane when the transport session is connected. The route claim must pass the
-lane's route policy. For example, a plugin-host or hardware-manager process that
-connects to a remote controller over WebSocket may declare
-`remote_endpoints = ["controller:controller-main"]` so broadcasts addressed to
-controllers can be forwarded to that transport client.
-
-Route hints are topology facts. They must not become durable application
-identity, and they must not be inferred from transport ids, paths, topics,
-component prefixes, Docker service names, or hostnames.
-
-The runtime host must never infer:
-
-- that MQTT implies `plugin_messages`
-- that WebSocket implies `hardware_messages`
-- that a component under `plugin_hosts` must transport plugin traffic
-- that a component under `drivers` must transport hardware traffic
-
-All such mappings must be explicit in the transport instance configuration.
-
-A recommended configuration shape for multi-instance transports is:
-
-- `[deckr.transports.<transport>.instances.<instance_id>]`
-  - transport/session configuration
-- `[deckr.transports.<transport>.instances.<instance_id>.bindings.<binding_id>]`
-  - one explicit lane binding
-
-For example:
-
-- `[deckr.transports.mqtt.instances.main]`
-- `[deckr.transports.mqtt.instances.main.bindings.plugin_messages]`
-- `[deckr.transports.mqtt.instances.main.bindings.hardware_messages]`
-
-In this model:
-
-- `instance_id` identifies the transport runtime instance
-- `binding_id` identifies one binding within that instance
-- `lane` identifies the Deckr logical lane contract
-
-The binding identifier is local to the transport instance. It is not the lane
-name, not the component name, and not a discovery key.
-
-This separation matters:
-
-- the same transport instance may carry multiple lanes
-- multiple bindings may use the same transport session
-- multiple transport instances may carry the same lane to different remote peers
-- transport topology must not leak back into component discovery
-
-The component itself remains responsible for parsing its own transport config,
-validating transport options, and deciding whether it should currently activate
-each configured binding.
-
-If a transport cannot establish its transport session, it may remain temporarily
-inactive and later begin participating when the remote endpoint becomes
-available. That is still component behavior, not runtime-host policy.
+This does not remove adapter-private WebSocket/MQTT protocols at plugin,
+hardware, or third-party integration boundaries.
 
 ### Shared Defaults
 
@@ -877,29 +736,26 @@ to understand component-specific settings.
 - Core lane names belong in `deckr`.
 - Lanes are logical runtime contracts and may be transported across transport
   boundaries.
-- Transports are peers architecturally; none are special-cased.
-- Shared lane infrastructure owns the application-facing send/subscribe/fan-out
-  API.
-- The managed lane runtime owns required generic bus infrastructure such as route
-  lease expiry.
+- The v1 distributed lane substrate direction is NATS.
+- Home-grown WebSocket/MQTT Deckr lane transports are removal targets.
+- Shared lane infrastructure owns the application-facing endpoint-bound
+  send/subscribe/fan-out API.
 - Required lane infrastructure must not depend on the bundled Deckr launcher.
 - Core bus infrastructure is not an auto-discovered component.
 - The public Python runtime API is AnyIO-native; backend-specific async objects
   must not leak into Deckr contracts.
-- Core Deckr message envelopes, route metadata, and payloads live in `deckr`.
+- Core Deckr message envelopes and payloads live in `deckr`.
 - Pydantic models in `deckr` are the canonical Python authoring format for core
   message contracts.
 - JSON Schema generated from those contracts is the interoperability artifact
   for non-Python implementations.
 - Transport-local framing may exist, but it must not redefine the carried Deckr
   message contract.
-- External messaging substrates must sit behind explicit transport adapter or
-  bridge boundaries.
-- Adopting NATS, Dapr, Redis, MQTT, WebSocket, or another substrate must not
-  replace Deckr lanes, envelopes, endpoint addresses, subjects, discovery, or
-  component lifecycle semantics.
-- Transport-local identity must not leak into application-level routing.
-- Endpoint identity and route reachability are distinct from component lifecycle
+- NATS must not replace Deckr lanes, envelopes, endpoint addresses, subjects,
+  discovery, or component lifecycle semantics.
+- Substrate-local identity must not leak into application-level addressing or
+  delivery.
+- Endpoint identity and endpoint reachability are distinct from component lifecycle
   identity.
 - Endpoint addresses are distinct from the domain entity subjects carried by
   lane messages.
@@ -910,10 +766,11 @@ to understand component-specific settings.
 - The runtime host does not interpret "enabled" or "disabled" for components.
 - Runtime context may carry only generic runtime-host metadata and lane handles
   as a generic primitive.
-- Transports are declared as normal components, not as lane-local special cases.
-- Transport instances own explicit per-lane bindings.
-- The runtime host must not infer lane bindings from transport kind, role name,
-  or config path.
+- External protocol adapters may be components, but the NATS lane substrate must
+  not preserve the old generic transport-route model.
+- Distributed lane substrate configuration must be explicit.
+- The runtime host must not infer lane bindings from substrate kind, role name, or
+  config path.
 - Implicit parent-prefix inheritance is forbidden.
 - Type identity and instance identity are separate.
 - Lifecycle identity and protocol address identity are separate.

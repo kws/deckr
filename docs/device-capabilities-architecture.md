@@ -332,7 +332,7 @@ controlCommand
 ```
 
 Readable or requestable state should use explicit capability state messages and
-request/reply correlation through the Deckr envelope.
+request/reply pairing through `inReplyTo` in the Deckr envelope.
 
 Typed convenience models may exist for common core capability values when they
 are true specializations of the canonical message shape. They must not become
