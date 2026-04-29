@@ -119,9 +119,11 @@ the workspace planning note at
 the generic component and lane model. The planning note owns the current NATS
 replacement direction, endpoint-bound lane handles, recipient filtering, KV
 current state, device claims, and action resolution until a new formal
-specification is written in `deckr`. The device, control, and capability
-contracts carried by the hardware lane are defined in
-[device-capabilities-architecture.md](device-capabilities-architecture.md).
+specification is written in `deckr`. The future device, control, and capability
+model carried by the hardware lane is planned in
+[`../../notes/device-capability-model.md`](../../notes/device-capability-model.md).
+The current implemented hardware message surface remains the slot-shaped
+`deckr.hardware.messages` contract until that capability work lands.
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
 not create new core lanes ad hoc inside a controller, plugin host, driver, or
