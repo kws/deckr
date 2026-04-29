@@ -9,10 +9,11 @@ from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
 import anyio
-from pydantic import Field, field_serializer, field_validator
+from pydantic import Field, field_serializer, field_validator, model_validator
 
 from deckr.contracts.messages import EndpointAddress
 from deckr.contracts.models import DeckrModel, freeze_json, thaw_json
+from deckr.hardware.descriptors import DeviceDescriptor, DeviceRef
 
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
@@ -121,19 +122,8 @@ class EndpointPresence(DeckrModel):
 
 
 class HardwareInventoryDevice(DeckrModel):
-    device_id: str = Field(alias="deviceId")
-    hardware_type: str = Field(alias="hardwareType")
-    fingerprint: str
-    descriptor: Mapping[str, Any] = Field(default_factory=dict)
-
-    @field_validator("descriptor", mode="after")
-    @classmethod
-    def _freeze_descriptor(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return freeze_json(value)
-
-    @field_serializer("descriptor")
-    def _serialize_descriptor(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return thaw_json(value)
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    descriptor: DeviceDescriptor
 
 
 class HardwareInventory(DeckrModel):
@@ -163,6 +153,27 @@ class HardwareInventory(DeckrModel):
             key: item.model_dump(by_alias=True, exclude_none=True, mode="json")
             for key, item in value.items()
         }
+
+    @model_validator(mode="after")
+    def _validate_devices(self) -> HardwareInventory:
+        for key, item in self.devices.items():
+            if item.device_ref.manager_id != self.manager_id:
+                raise ValueError(
+                    "hardware inventory device references must match managerId"
+                )
+            if item.device_ref.device_id != key:
+                raise ValueError(
+                    "hardware inventory device map keys must match deviceRef.deviceId"
+                )
+            if item.descriptor.device_id != item.device_ref.device_id:
+                raise ValueError(
+                    "hardware inventory descriptor deviceId must match deviceRef"
+                )
+            if item.device_ref.fingerprint not in {None, item.descriptor.fingerprint}:
+                raise ValueError(
+                    "hardware inventory deviceRef fingerprint must match descriptor"
+                )
+        return self
 
 
 class DeviceClaim(DeckrModel):

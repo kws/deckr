@@ -4,9 +4,11 @@ import importlib
 import sys
 
 import pytest
+from descriptor_fixtures import descriptor_payloads
 from pydantic import ValidationError
 
 from deckr.hardware import messages as hw_messages
+from deckr.hardware.descriptors import CapabilityRef, DeviceDescriptor, DeviceRef
 
 
 def test_legacy_hardware_events_module_is_not_importable():
@@ -15,98 +17,128 @@ def test_legacy_hardware_events_module_is_not_importable():
         importlib.import_module("deckr.hardware.events")
 
 
-def _stub_device_info() -> hw_messages.HardwareDevice:
-    return hw_messages.HardwareDevice(
-        id="local-device",
-        fingerprint="fingerprint:local-device",
-        hid="hid:local-device",
-        name="Stub Device",
-        slots=[
-            hw_messages.HardwareSlot(
-                id="0,0",
-                coordinates=hw_messages.HardwareCoordinates(column=0, row=0),
-                image_format=hw_messages.HardwareImageFormat(width=72, height=72),
-                gestures=["key_down", "key_up"],
-            )
-        ],
+def _descriptor() -> DeviceDescriptor:
+    return DeviceDescriptor.model_validate(
+        descriptor_payloads()["stream_deck_bitmap_grid"]
     )
 
 
-def test_device_connected_serializes_inside_deckr_envelope():
-    device = _stub_device_info()
-    message = hw_messages.hardware_input_message(
+def test_device_available_serializes_descriptor_inside_deckr_envelope():
+    descriptor = _descriptor()
+    message = hw_messages.device_available_message(
         manager_id="manager-main",
-        device_id=device.id,
-        body=hw_messages.DeviceConnectedMessage(device=device),
+        descriptor=descriptor,
     )
     wire = message.to_dict()
 
     assert wire["lane"] == "hardware_messages"
-    assert wire["messageType"] == "deviceConnected"
+    assert wire["messageType"] == "deviceAvailable"
     assert wire["sender"] == "hardware_manager:manager-main"
     assert wire["recipient"]["targetType"] == "broadcast"
     assert wire["subject"]["identifiers"] == {
         "managerId": "manager-main",
-        "deviceId": "local-device",
+        "deviceId": descriptor.device_id,
     }
-    assert wire["body"]["device"]["hid"] == "hid:local-device"
-    assert wire["body"]["device"]["fingerprint"] == "fingerprint:local-device"
-    assert wire["body"]["device"]["slots"][0]["imageFormat"]["width"] == 72
+    assert wire["body"]["descriptor"]["fingerprint"] == descriptor.fingerprint
+    assert "hid" not in wire["body"]["descriptor"]
+    assert "slots" not in wire["body"]["descriptor"]
+    assert wire["body"]["descriptor"]["controls"][0]["inputCapabilities"]
 
     parsed = hw_messages.hardware_body_from_message(type(message).from_dict(wire))
-    assert isinstance(parsed, hw_messages.DeviceConnectedMessage)
-    assert parsed.device.id == device.id
-    assert parsed.device.fingerprint == device.fingerprint
-    assert parsed.device.slots[0].gestures == ("key_down", "key_up")
+    assert isinstance(parsed, hw_messages.DeviceAvailableMessage)
+    assert parsed.descriptor == descriptor
 
 
-def test_hardware_device_fingerprint_is_required():
-    with pytest.raises(ValidationError):
-        hw_messages.HardwareDevice.model_validate(
-            {
-                "id": "local-device",
-                "hid": "hid:local-device",
-                "slots": [],
-            }
-        )
-
-
-def test_set_image_command_round_trips_binary_payload():
-    message = hw_messages.hardware_command_message(
-        controller_id="controller-main",
+def test_control_input_targets_exact_capability():
+    message = hw_messages.control_input_message(
         manager_id="manager-main",
-        message_type=hw_messages.SET_IMAGE,
-        device_id="local-device",
-        control_id="0,0",
-        control_kind="slot",
-        body=hw_messages.SetImageMessage(
-            slot_id="0,0",
-            image=b"\x00\xff\x10",
-        ),
+        device_id="deck",
+        fingerprint="fingerprint:deck",
+        control_id="key.0.0",
+        capability_id="button.press",
+        event_type="press",
+        value={"eventType": "press"},
+        sequence=1,
     )
-
     wire = message.to_dict()
 
-    assert wire["messageType"] == "setImage"
-    assert wire["recipient"]["endpoint"] == "hardware_manager:manager-main"
-    assert wire["subject"]["identifiers"]["deviceId"] == "local-device"
-    assert wire["subject"]["identifiers"]["controlId"] == "0,0"
-    assert hw_messages.hardware_control_ref_from_subject(message.subject) == (
-        hw_messages.HardwareControlRef(
-            manager_id="manager-main",
-            device_id="local-device",
-            control_id="0,0",
-            control_kind="slot",
-        )
-    )
-    assert isinstance(wire["body"]["image"], str)
+    assert wire["messageType"] == "controlInput"
+    assert wire["subject"]["kind"] == "hardware_capability"
+    assert wire["subject"]["identifiers"] == {
+        "managerId": "manager-main",
+        "deviceId": "deck",
+        "controlId": "key.0.0",
+        "capabilityId": "button.press",
+    }
+    assert wire["body"]["deviceRef"] == {
+        "managerId": "manager-main",
+        "deviceId": "deck",
+        "fingerprint": "fingerprint:deck",
+    }
+    assert wire["body"]["eventType"] == "press"
+    assert wire["body"]["value"] == {"eventType": "press"}
 
     parsed = hw_messages.hardware_body_from_message(type(message).from_dict(wire))
-    assert parsed == hw_messages.SetImageMessage(slot_id="0,0", image=b"\x00\xff\x10")
+    assert parsed == hw_messages.ControlInputMessage(
+        deviceRef=DeviceRef(
+            managerId="manager-main",
+            deviceId="deck",
+            fingerprint="fingerprint:deck",
+        ),
+        controlId="key.0.0",
+        capabilityId="button.press",
+        eventType="press",
+        value={"eventType": "press"},
+        sequence=1,
+        occurredAt=parsed.occurred_at,
+    )
+
+
+def test_control_command_round_trips_schema_validated_params():
+    message = hw_messages.control_command_message(
+        controller_id="controller-main",
+        manager_id="manager-main",
+        device_id="deck",
+        control_id="key.0.0",
+        capability_id="raster.bitmap",
+        command_type="set_frame",
+        params={
+            "commandType": "set_frame",
+            "image": "AP8Q",
+            "encoding": "jpeg",
+        },
+    )
+    wire = message.to_dict()
+
+    assert wire["messageType"] == "controlCommand"
+    assert wire["recipient"]["endpoint"] == "hardware_manager:manager-main"
+    assert wire["subject"]["identifiers"]["deviceId"] == "deck"
+    assert wire["subject"]["identifiers"]["controlId"] == "key.0.0"
+    assert wire["subject"]["identifiers"]["capabilityId"] == "raster.bitmap"
+    assert hw_messages.hardware_capability_ref_from_subject(message.subject) == (
+        CapabilityRef(
+            deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+            controlId="key.0.0",
+            capabilityId="raster.bitmap",
+        )
+    )
+
+    parsed = hw_messages.hardware_body_from_message(type(message).from_dict(wire))
+    assert parsed == hw_messages.ControlCommandMessage(
+        deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+        controlId="key.0.0",
+        capabilityId="raster.bitmap",
+        commandType="set_frame",
+        params={
+            "commandType": "set_frame",
+            "image": "AP8Q",
+            "encoding": "jpeg",
+        },
+    )
 
 
 def test_hardware_refs_are_not_endpoint_addresses():
-    ref = hw_messages.HardwareDeviceRef(manager_id="manager-main", device_id="deck")
+    ref = DeviceRef(managerId="manager-main", deviceId="deck")
     subject = hw_messages.hardware_subject_for_device(ref)
 
     assert subject.identifiers["managerId"] == "manager-main"
@@ -116,17 +148,54 @@ def test_hardware_refs_are_not_endpoint_addresses():
 
 def test_hardware_bodies_reject_routing_metadata():
     with pytest.raises(ValidationError):
-        hw_messages.KeyDownMessage.model_validate(
+        hw_messages.ControlInputMessage.model_validate(
             {
-                "deviceId": "local-device",
-                "keyId": "0,0",
-                "internalMetadata": {"source": "transport"},
+                "deviceRef": {"managerId": "manager-main", "deviceId": "deck"},
+                "controlId": "key.0.0",
+                "capabilityId": "button.press",
+                "eventType": "press",
+                "recipient": "controller:main",
             }
         )
 
 
-def test_encoded_remote_device_ids_are_not_contract_helpers():
-    assert not hasattr(hw_messages, "build_remote_device_id")
-    assert not hasattr(hw_messages, "parse_remote_device_id")
-    assert not hasattr(hw_messages, "hardware_manager_id_from_message")
-    assert not hasattr(hw_messages, "hardware_event_message")
+def test_old_slot_and_gesture_wire_names_are_absent():
+    old_names = {
+        "HardwareDevice",
+        "HardwareSlot",
+        "HardwareCoordinates",
+        "HardwareImageFormat",
+        "KeyDownMessage",
+        "KeyUpMessage",
+        "DialRotateMessage",
+        "TouchTapMessage",
+        "TouchSwipeMessage",
+        "SetImageMessage",
+        "ClearSlotMessage",
+        "SleepScreenMessage",
+        "WakeScreenMessage",
+        "KEY_DOWN",
+        "KEY_UP",
+        "DIAL_ROTATE",
+        "TOUCH_TAP",
+        "TOUCH_SWIPE",
+        "SET_IMAGE",
+        "CLEAR_SLOT",
+        "SLEEP_SCREEN",
+        "WAKE_SCREEN",
+    }
+
+    for name in old_names:
+        assert not hasattr(hw_messages, name), name
+    for message_type in hw_messages.HARDWARE_BODY_BY_MESSAGE_TYPE:
+        assert message_type not in {
+            "keyDown",
+            "keyUp",
+            "dialRotate",
+            "touchTap",
+            "touchSwipe",
+            "setImage",
+            "clearSlot",
+            "sleepScreen",
+            "wakeScreen",
+        }

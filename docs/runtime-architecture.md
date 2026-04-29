@@ -116,11 +116,12 @@ The current core lane set includes:
 The distributed lane substrate is NATS. This document owns the generic component
 and lane model. The NATS bus specification owns endpoint-bound lane handles,
 recipient filtering, KV current state, device claims, action resolution, and
-broker diagnostics in [`nats-bus.md`](nats-bus.md). The future device, control,
-and capability model carried by the hardware lane is planned in
+broker diagnostics in [`nats-bus.md`](nats-bus.md). The v1 device, control, and
+capability descriptor contracts are implemented in
+`deckr.hardware.descriptors`, with the architecture background in
 [`../../notes/device-capability-model.md`](../../notes/device-capability-model.md).
 The current implemented hardware message surface remains the slot-shaped
-`deckr.hardware.messages` contract until that capability work lands.
+`deckr.hardware.messages` contract until the hardware message migration lands.
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
 not create new core lanes ad hoc inside a controller, plugin host, driver, or

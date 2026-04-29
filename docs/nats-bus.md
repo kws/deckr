@@ -309,8 +309,11 @@ Inventory is usable only while matching manager endpoint presence exists with th
 same `sessionId`. If manager presence disappears or changes session, dependent
 live device state becomes unavailable.
 
-The current descriptor field carries the implemented slot-shaped hardware
-descriptor until the device/control/capability model replaces it.
+The canonical v1 descriptor contracts are implemented in
+`deckr.hardware.descriptors`, with generated JSON Schema artifacts in
+`schemas/hardware`. Current hardware managers still publish the implemented
+slot-shaped descriptor here until the hardware message and manager-adoption
+work moves inventory to `DeviceDescriptor`.
 
 ## Device Claims
 

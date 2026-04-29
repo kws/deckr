@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, JsonValue, field_serializer, field_validator
 
 from deckr.contracts.messages import (
     HARDWARE_MESSAGES_LANE,
@@ -15,158 +17,146 @@ from deckr.contracts.messages import (
     entity_subject,
     hardware_manager_address,
 )
-from deckr.contracts.models import DeckrModel
-
-
-class HardwareCoordinates(DeckrModel):
-    column: int
-    row: int
-
-
-class HardwareImageFormat(DeckrModel):
-    width: int
-    height: int
-    format: str = "JPEG"
-    rotation: int = 0
-    flip_x: bool = False
-    flip_y: bool = False
-    format_options: dict[str, Any] = Field(default_factory=dict)
-
-
-class HardwareSlot(DeckrModel):
-    id: str
-    coordinates: HardwareCoordinates
-    image_format: HardwareImageFormat | None = None
-    slot_type: str = "key"
-    gestures: tuple[str, ...] = Field(default_factory=tuple)
-
-
-class HardwareDevice(DeckrModel):
-    id: str
-    fingerprint: str
-    hid: str
-    slots: tuple[HardwareSlot, ...]
-    name: str | None = None
-
-
-class HardwareDeviceRef(DeckrModel):
-    manager_id: str
-    device_id: str
-
-
-class HardwareControlRef(HardwareDeviceRef):
-    control_id: str
-    control_kind: str
-
-
-class DeviceConnectedMessage(DeckrModel):
-    device: HardwareDevice
-
-
-class DeviceDisconnectedMessage(DeckrModel):
-    pass
-
-
-class KeyDownMessage(DeckrModel):
-    key_id: str
-
-
-class KeyUpMessage(DeckrModel):
-    key_id: str
-
-
-class DialRotateMessage(DeckrModel):
-    dial_id: str
-    direction: Literal["clockwise", "counterclockwise"]
-
-
-class TouchTapMessage(DeckrModel):
-    touch_id: str
-
-
-class TouchSwipeMessage(DeckrModel):
-    touch_id: str
-    direction: Literal["left", "right"]
-
-
-class SetImageMessage(DeckrModel):
-    slot_id: str
-    image: bytes
-
-
-class ClearSlotMessage(DeckrModel):
-    slot_id: str
-
-
-class SleepScreenMessage(DeckrModel):
-    pass
-
-
-class WakeScreenMessage(DeckrModel):
-    pass
-
-
-HardwareInputMessage = (
-    DeviceConnectedMessage
-    | DeviceDisconnectedMessage
-    | KeyDownMessage
-    | KeyUpMessage
-    | DialRotateMessage
-    | TouchTapMessage
-    | TouchSwipeMessage
+from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
+from deckr.hardware.descriptors import (
+    CapabilityRef,
+    DeviceDescriptor,
+    DeviceRef,
+    DeviceSourceReference,
 )
 
-HardwareCommandMessage = (
-    SetImageMessage
-    | ClearSlotMessage
-    | SleepScreenMessage
-    | WakeScreenMessage
+DEVICE_AVAILABLE = "deviceAvailable"
+DEVICE_DESCRIPTOR_CHANGED = "deviceDescriptorChanged"
+DEVICE_UNAVAILABLE = "deviceUnavailable"
+CONTROL_INPUT = "controlInput"
+CONTROL_COMMAND = "controlCommand"
+
+# Reserved wire names for capability state and command reply messages (bodies TBD).
+CAPABILITY_STATE_CHANGED = "capabilityStateChanged"
+CAPABILITY_STATE_REQUEST = "capabilityStateRequest"
+CAPABILITY_STATE_REPLY = "capabilityStateReply"
+COMMAND_ACCEPTED = "commandAccepted"
+COMMAND_REJECTED = "commandRejected"
+COMMAND_REPLY = "commandReply"
+
+CommandRejectionReason = Literal[
+    "malformed",
+    "unsupported",
+    "expired",
+    "unauthorized",
+    "stale",
+    "rejected",
+]
+CapabilityStateStatus = Literal["ok", "unavailable", "unsupported", "rejected"]
+
+
+def _now_utc() -> datetime:
+    return datetime.now(UTC)
+
+
+def _require_non_empty(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty")
+    return normalized
+
+
+class DeviceAvailableMessage(DeckrModel):
+    descriptor: DeviceDescriptor
+
+
+class DeviceDescriptorChangedMessage(DeckrModel):
+    descriptor: DeviceDescriptor
+
+
+class DeviceUnavailableMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    reason: str | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value, field_name="reason")
+
+
+class ControlInputMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    control_id: str = Field(alias="controlId")
+    capability_id: str = Field(alias="capabilityId")
+    event_type: str = Field(alias="eventType")
+    value: JsonValue | None = None
+    sequence: int | None = None
+    occurred_at: datetime = Field(default_factory=_now_utc, alias="occurredAt")
+    sources: tuple[DeviceSourceReference, ...] = Field(default_factory=tuple)
+
+    @field_validator("control_id", "capability_id", "event_type")
+    @classmethod
+    def _validate_text(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="control input target")
+
+    @field_validator("sequence")
+    @classmethod
+    def _validate_sequence(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("sequence must be non-negative")
+        return value
+
+    @field_validator("value", mode="after")
+    @classmethod
+    def _freeze_value(cls, value: JsonValue | None) -> Any:
+        if value is None:
+            return None
+        return freeze_json(value)
+
+    @field_serializer("value")
+    def _serialize_value(self, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_serializer("occurred_at")
+    def _serialize_occurred_at(self, value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+class ControlCommandMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    control_id: str = Field(alias="controlId")
+    capability_id: str = Field(alias="capabilityId")
+    command_type: str = Field(alias="commandType")
+    params: JsonObject = Field(default_factory=dict)
+
+    @field_validator("control_id", "capability_id", "command_type")
+    @classmethod
+    def _validate_text(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="control command target")
+
+    @field_validator("params", mode="after")
+    @classmethod
+    def _freeze_params(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("params")
+    def _serialize_params(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+HardwareTransportMessage = (
+    DeviceAvailableMessage
+    | DeviceDescriptorChangedMessage
+    | DeviceUnavailableMessage
+    | ControlInputMessage
+    | ControlCommandMessage
 )
-
-HardwareTransportMessage = HardwareInputMessage | HardwareCommandMessage
-
-HARDWARE_INPUT_MESSAGE_TYPES = (
-    DeviceConnectedMessage,
-    DeviceDisconnectedMessage,
-    KeyDownMessage,
-    KeyUpMessage,
-    DialRotateMessage,
-    TouchTapMessage,
-    TouchSwipeMessage,
-)
-
-HARDWARE_COMMAND_MESSAGE_TYPES = (
-    SetImageMessage,
-    ClearSlotMessage,
-    SleepScreenMessage,
-    WakeScreenMessage,
-)
-
-
-DEVICE_CONNECTED = "deviceConnected"
-DEVICE_DISCONNECTED = "deviceDisconnected"
-KEY_DOWN = "keyDown"
-KEY_UP = "keyUp"
-DIAL_ROTATE = "dialRotate"
-TOUCH_TAP = "touchTap"
-TOUCH_SWIPE = "touchSwipe"
-SET_IMAGE = "setImage"
-CLEAR_SLOT = "clearSlot"
-SLEEP_SCREEN = "sleepScreen"
-WAKE_SCREEN = "wakeScreen"
 
 HARDWARE_BODY_BY_MESSAGE_TYPE: dict[str, type[HardwareTransportMessage]] = {
-    DEVICE_CONNECTED: DeviceConnectedMessage,
-    DEVICE_DISCONNECTED: DeviceDisconnectedMessage,
-    KEY_DOWN: KeyDownMessage,
-    KEY_UP: KeyUpMessage,
-    DIAL_ROTATE: DialRotateMessage,
-    TOUCH_TAP: TouchTapMessage,
-    TOUCH_SWIPE: TouchSwipeMessage,
-    SET_IMAGE: SetImageMessage,
-    CLEAR_SLOT: ClearSlotMessage,
-    SLEEP_SCREEN: SleepScreenMessage,
-    WAKE_SCREEN: WakeScreenMessage,
+    DEVICE_AVAILABLE: DeviceAvailableMessage,
+    DEVICE_DESCRIPTOR_CHANGED: DeviceDescriptorChangedMessage,
+    DEVICE_UNAVAILABLE: DeviceUnavailableMessage,
+    CONTROL_INPUT: ControlInputMessage,
+    CONTROL_COMMAND: ControlCommandMessage,
 }
 HARDWARE_MESSAGE_TYPE_BY_BODY = {
     body_type: message_type
@@ -174,88 +164,45 @@ HARDWARE_MESSAGE_TYPE_BY_BODY = {
 }
 
 
-def hardware_subject(
-    *,
-    manager_id: str,
-    device_id: str,
-    control_id: str | None = None,
-    control_kind: str | None = None,
-) -> EntitySubject:
-    identifiers: dict[str, str] = {
-        "managerId": manager_id,
-        "deviceId": device_id,
-    }
-    if control_id is not None:
-        identifiers["controlId"] = control_id
-    if control_kind is not None:
-        identifiers["controlKind"] = control_kind
+def hardware_subject_for_device(ref: DeviceRef) -> EntitySubject:
     return entity_subject(
-        "hardware_control" if control_id is not None else "hardware_device",
-        **identifiers,
+        "hardware_device",
+        managerId=ref.manager_id,
+        deviceId=ref.device_id,
     )
 
 
-def hardware_subject_for_device(ref: HardwareDeviceRef) -> EntitySubject:
-    return hardware_subject(manager_id=ref.manager_id, device_id=ref.device_id)
-
-
-def hardware_subject_for_control(ref: HardwareControlRef) -> EntitySubject:
-    return hardware_subject(
-        manager_id=ref.manager_id,
-        device_id=ref.device_id,
-        control_id=ref.control_id,
-        control_kind=ref.control_kind,
+def hardware_subject_for_capability(ref: CapabilityRef) -> EntitySubject:
+    device = ref.device_ref
+    if device is None:
+        raise ValueError("capability subject requires deviceRef")
+    control_id = ref.control_id
+    if control_id is None:
+        raise ValueError("capability subject requires controlId")
+    return entity_subject(
+        "hardware_capability",
+        managerId=device.manager_id,
+        deviceId=device.device_id,
+        controlId=control_id,
+        capabilityId=ref.capability_id,
     )
 
 
-def subject_manager_id(subject: EntitySubject) -> str | None:
-    return subject.identifiers.get("managerId")
-
-
-def subject_device_id(subject: EntitySubject) -> str | None:
-    return subject.identifiers.get("deviceId")
-
-
-def subject_control_id(subject: EntitySubject) -> str | None:
-    return subject.identifiers.get("controlId")
-
-
-def subject_control_kind(subject: EntitySubject) -> str | None:
-    return subject.identifiers.get("controlKind")
-
-
-def hardware_device_ref_from_subject(subject: EntitySubject) -> HardwareDeviceRef | None:
-    manager_id = subject_manager_id(subject)
-    device_id = subject_device_id(subject)
-    if manager_id is None or device_id is None:
+def hardware_capability_ref_from_subject(subject: EntitySubject) -> CapabilityRef | None:
+    if subject.kind != "hardware_capability":
         return None
-    return HardwareDeviceRef(manager_id=manager_id, device_id=device_id)
-
-
-def hardware_control_ref_from_subject(
-    subject: EntitySubject,
-) -> HardwareControlRef | None:
-    manager_id = subject_manager_id(subject)
-    device_id = subject_device_id(subject)
-    control_id = subject_control_id(subject)
-    control_kind = subject_control_kind(subject)
-    if (
-        manager_id is None
-        or device_id is None
-        or control_id is None
-        or control_kind is None
-    ):
+    ids = subject.identifiers
+    manager_id = ids.get("managerId")
+    device_id = ids.get("deviceId")
+    control_id = ids.get("controlId")
+    capability_id = ids.get("capabilityId")
+    if manager_id is None or device_id is None or control_id is None or capability_id is None:
         return None
-    return HardwareControlRef(
-        manager_id=manager_id,
-        device_id=device_id,
-        control_id=control_id,
-        control_kind=control_kind,
+    return CapabilityRef(
+        deviceRef=DeviceRef(managerId=manager_id, deviceId=device_id),
+        controlId=control_id,
+        capabilityId=capability_id,
     )
-
-
-def hardware_device_ref_from_message(message: DeckrMessage) -> HardwareDeviceRef | None:
-    return hardware_device_ref_from_subject(message.subject)
 
 
 def hardware_body_to_dict(body: HardwareTransportMessage) -> dict[str, Any]:
@@ -266,7 +213,26 @@ def hardware_body_from_message(message: DeckrMessage) -> HardwareTransportMessag
     body_type = HARDWARE_BODY_BY_MESSAGE_TYPE.get(message.message_type)
     if body_type is None:
         raise ValueError(f"Unsupported hardware message type {message.message_type!r}")
-    return body_type.model_validate(message.body)
+    return body_type.model_validate(thaw_json(dict(message.body)))
+
+
+def hardware_device_ref_from_message(message: DeckrMessage) -> DeviceRef | None:
+    """Return the manager-local device ref for capability-targeted hardware traffic."""
+    if message.message_type == CONTROL_INPUT:
+        body = ControlInputMessage.model_validate(thaw_json(dict(message.body)))
+        return body.device_ref
+    if message.message_type == DEVICE_AVAILABLE:
+        body = DeviceAvailableMessage.model_validate(thaw_json(dict(message.body)))
+        manager_id = message.subject.identifiers.get("managerId")
+        if manager_id is None:
+            return None
+        descriptor = body.descriptor
+        return DeviceRef(
+            managerId=manager_id,
+            deviceId=descriptor.device_id,
+            fingerprint=descriptor.fingerprint,
+        )
+    return None
 
 
 def hardware_message(
@@ -292,114 +258,171 @@ def hardware_message(
     )
 
 
-def _hardware_input_envelope(
-    *,
-    manager_id: str,
-    message_type: str,
-    device_id: str,
-    body: HardwareInputMessage,
-    control_id: str | None = None,
-    control_kind: str | None = None,
-) -> DeckrMessage:
+def device_available_message(*, manager_id: str, descriptor: DeviceDescriptor) -> DeckrMessage:
+    body = DeviceAvailableMessage(descriptor=descriptor)
     return hardware_message(
         sender=hardware_manager_address(manager_id),
         recipient=controllers_broadcast(),
-        message_type=message_type,
+        message_type=DEVICE_AVAILABLE,
         body=body,
-        subject=hardware_subject(
-            manager_id=manager_id,
-            device_id=device_id,
-            control_id=control_id,
-            control_kind=control_kind,
+        subject=hardware_subject_for_device(
+            DeviceRef(managerId=manager_id, deviceId=descriptor.device_id),
         ),
     )
 
 
-def hardware_input_message(
-    *,
-    manager_id: str,
-    device_id: str,
-    body: HardwareInputMessage,
+def device_descriptor_changed_message(
+    *, manager_id: str, descriptor: DeviceDescriptor
 ) -> DeckrMessage:
-    message_type = HARDWARE_MESSAGE_TYPE_BY_BODY[type(body)]
-    control_id: str | None = None
-    control_kind: str | None = None
-    if isinstance(body, KeyDownMessage | KeyUpMessage):
-        control_id = body.key_id
-        control_kind = "key"
-    elif isinstance(body, DialRotateMessage):
-        control_id = body.dial_id
-        control_kind = "dial"
-    elif isinstance(body, TouchTapMessage | TouchSwipeMessage):
-        control_id = body.touch_id
-        control_kind = "touch"
-    return _hardware_input_envelope(
-        manager_id=manager_id,
-        message_type=message_type,
-        device_id=device_id,
+    body = DeviceDescriptorChangedMessage(descriptor=descriptor)
+    return hardware_message(
+        sender=hardware_manager_address(manager_id),
+        recipient=controllers_broadcast(),
+        message_type=DEVICE_DESCRIPTOR_CHANGED,
         body=body,
-        control_id=control_id,
-        control_kind=control_kind,
+        subject=hardware_subject_for_device(
+            DeviceRef(managerId=manager_id, deviceId=descriptor.device_id),
+        ),
     )
 
 
-def hardware_command_message(
+def control_input_message(
+    *,
+    manager_id: str,
+    device_id: str,
+    fingerprint: str,
+    control_id: str,
+    capability_id: str,
+    event_type: str,
+    value: JsonValue | None = None,
+    sequence: int | None = None,
+    occurred_at: datetime | None = None,
+    sources: tuple[DeviceSourceReference, ...] = (),
+) -> DeckrMessage:
+    device_ref = DeviceRef(
+        managerId=manager_id,
+        deviceId=device_id,
+        fingerprint=fingerprint,
+    )
+    body = ControlInputMessage(
+        deviceRef=device_ref,
+        controlId=control_id,
+        capabilityId=capability_id,
+        eventType=event_type,
+        value=value,
+        sequence=sequence,
+        occurredAt=occurred_at or _now_utc(),
+        sources=sources,
+    )
+    return hardware_message(
+        sender=hardware_manager_address(manager_id),
+        recipient=controllers_broadcast(),
+        message_type=CONTROL_INPUT,
+        body=body,
+        subject=hardware_subject_for_capability(
+            CapabilityRef(
+                deviceRef=DeviceRef(managerId=manager_id, deviceId=device_id),
+                controlId=control_id,
+                capabilityId=capability_id,
+            )
+        ),
+    )
+
+
+def control_command_for_capability(
+    *,
+    controller_id: str,
+    ref: CapabilityRef,
+    command_type: str,
+    params: JsonObject | None = None,
+) -> DeckrMessage:
+    device = ref.device_ref
+    if device is None:
+        raise ValueError("capability command requires deviceRef")
+    control_id = ref.control_id
+    if control_id is None:
+        raise ValueError("capability command requires controlId")
+    return control_command_message(
+        controller_id=controller_id,
+        manager_id=device.manager_id,
+        device_id=device.device_id,
+        control_id=control_id,
+        capability_id=ref.capability_id,
+        command_type=command_type,
+        params=params,
+    )
+
+
+def control_command_message(
     *,
     controller_id: str,
     manager_id: str,
-    message_type: str,
     device_id: str,
-    body: HardwareCommandMessage,
-    control_id: str | None = None,
-    control_kind: str | None = None,
+    control_id: str,
+    capability_id: str,
+    command_type: str,
+    params: JsonObject | None = None,
 ) -> DeckrMessage:
+    device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
+    body = ControlCommandMessage(
+        deviceRef=device_ref,
+        controlId=control_id,
+        capabilityId=capability_id,
+        commandType=command_type,
+        params=dict(params or {}),
+    )
     return hardware_message(
         sender=f"controller:{controller_id}",
-        recipient=hardware_manager_address(manager_id),
-        message_type=message_type,
+        recipient=endpoint_target(hardware_manager_address(manager_id)),
+        message_type=CONTROL_COMMAND,
         body=body,
-        subject=hardware_subject(
-            manager_id=manager_id,
-            device_id=device_id,
-            control_id=control_id,
-            control_kind=control_kind,
+        subject=hardware_subject_for_capability(
+            CapabilityRef(
+                deviceRef=device_ref,
+                controlId=control_id,
+                capabilityId=capability_id,
+            )
         ),
-    )
-
-
-def hardware_command_for_device(
-    *,
-    controller_id: str,
-    ref: HardwareDeviceRef,
-    message_type: str,
-    body: HardwareCommandMessage,
-) -> DeckrMessage:
-    return hardware_command_message(
-        controller_id=controller_id,
-        manager_id=ref.manager_id,
-        message_type=message_type,
-        device_id=ref.device_id,
-        body=body,
-    )
-
-
-def hardware_command_for_control(
-    *,
-    controller_id: str,
-    ref: HardwareControlRef,
-    message_type: str,
-    body: HardwareCommandMessage,
-) -> DeckrMessage:
-    return hardware_command_message(
-        controller_id=controller_id,
-        manager_id=ref.manager_id,
-        message_type=message_type,
-        device_id=ref.device_id,
-        control_id=ref.control_id,
-        control_kind=ref.control_kind,
-        body=body,
     )
 
 
 def hardware_message_schema() -> dict[str, Any]:
     return DeckrMessage.model_json_schema(by_alias=True)
+
+
+__all__ = [
+    "CAPABILITY_STATE_CHANGED",
+    "CAPABILITY_STATE_REPLY",
+    "CAPABILITY_STATE_REQUEST",
+    "COMMAND_ACCEPTED",
+    "COMMAND_REJECTED",
+    "COMMAND_REPLY",
+    "CONTROL_COMMAND",
+    "CONTROL_INPUT",
+    "CapabilityStateStatus",
+    "CommandRejectionReason",
+    "ControlCommandMessage",
+    "ControlInputMessage",
+    "DEVICE_AVAILABLE",
+    "DEVICE_DESCRIPTOR_CHANGED",
+    "DEVICE_UNAVAILABLE",
+    "DeviceAvailableMessage",
+    "DeviceDescriptorChangedMessage",
+    "DeviceUnavailableMessage",
+    "HARDWARE_BODY_BY_MESSAGE_TYPE",
+    "HARDWARE_MESSAGE_TYPE_BY_BODY",
+    "HardwareTransportMessage",
+    "control_command_for_capability",
+    "control_command_message",
+    "control_input_message",
+    "device_available_message",
+    "device_descriptor_changed_message",
+    "hardware_body_from_message",
+    "hardware_body_to_dict",
+    "hardware_capability_ref_from_subject",
+    "hardware_device_ref_from_message",
+    "hardware_message",
+    "hardware_message_schema",
+    "hardware_subject_for_capability",
+    "hardware_subject_for_device",
+]
