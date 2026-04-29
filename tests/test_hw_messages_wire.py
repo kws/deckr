@@ -137,6 +137,42 @@ def test_control_command_round_trips_schema_validated_params():
     )
 
 
+def test_device_level_capability_command_omits_control_id():
+    message = hw_messages.control_command_for_capability(
+        controller_id="controller-main",
+        ref=CapabilityRef(
+            deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+            capabilityId="device.power",
+        ),
+        command_type="wake",
+        params={"commandType": "wake"},
+    )
+    wire = message.to_dict()
+
+    assert wire["messageType"] == "controlCommand"
+    assert wire["subject"]["kind"] == "hardware_capability"
+    assert wire["subject"]["identifiers"] == {
+        "managerId": "manager-main",
+        "deviceId": "deck",
+        "capabilityId": "device.power",
+    }
+    assert "controlId" not in wire["body"]
+    assert hw_messages.hardware_capability_ref_from_subject(message.subject) == (
+        CapabilityRef(
+            deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+            capabilityId="device.power",
+        )
+    )
+
+    parsed = hw_messages.hardware_body_from_message(type(message).from_dict(wire))
+    assert parsed == hw_messages.ControlCommandMessage(
+        deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+        capabilityId="device.power",
+        commandType="wake",
+        params={"commandType": "wake"},
+    )
+
+
 def test_hardware_refs_are_not_endpoint_addresses():
     ref = DeviceRef(managerId="manager-main", deviceId="deck")
     subject = hw_messages.hardware_subject_for_device(ref)

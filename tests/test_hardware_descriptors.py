@@ -249,6 +249,7 @@ def test_device_descriptor_schema_shape_is_interoperable() -> None:
     capability_schema = artifacts[CAPABILITY_DESCRIPTOR_SCHEMA_ID]
     family_schema = capability_schema["properties"]["family"]
     assert family_schema["anyOf"][0]["enum"] == [
+        "deckr.device.power",
         "deckr.input.button",
         "deckr.input.encoder",
         "deckr.input.touch",

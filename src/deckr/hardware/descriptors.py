@@ -33,9 +33,11 @@ DECKR_INPUT_BUTTON = "deckr.input.button"
 DECKR_INPUT_ENCODER = "deckr.input.encoder"
 DECKR_INPUT_TOUCH = "deckr.input.touch"
 DECKR_OUTPUT_RASTER = "deckr.output.raster"
+DECKR_DEVICE_POWER = "deckr.device.power"
 
 CORE_CAPABILITY_FAMILIES = frozenset(
     {
+        DECKR_DEVICE_POWER,
         DECKR_INPUT_BUTTON,
         DECKR_INPUT_ENCODER,
         DECKR_INPUT_TOUCH,
@@ -44,6 +46,7 @@ CORE_CAPABILITY_FAMILIES = frozenset(
 )
 
 CORE_CAPABILITY_TYPES_BY_FAMILY: Mapping[str, frozenset[str]] = {
+    DECKR_DEVICE_POWER: frozenset({"screen"}),
     DECKR_INPUT_BUTTON: frozenset({"activation", "momentary"}),
     DECKR_INPUT_ENCODER: frozenset({"relative"}),
     DECKR_INPUT_TOUCH: frozenset({"gesture"}),
@@ -55,6 +58,7 @@ BUTTON_MOMENTARY_EVENTS = ("down", "up")
 ENCODER_RELATIVE_EVENTS = ("rotate",)
 TOUCH_GESTURE_EVENTS = ("tap", "swipe")
 RASTER_COMMAND_TYPES = ("set_frame", "clear")
+POWER_COMMAND_TYPES = ("sleep", "wake")
 
 DESCRIPTOR_SCHEMA_VERSION = "1"
 DEVICE_DESCRIPTOR_SCHEMA_ID = "deckr.hardware.device_descriptor.v1"
@@ -319,7 +323,7 @@ class CapabilitySchema(DeckrModel):
     """A JSON Schema fragment carried by a capability descriptor."""
 
     schema_id: str | None = Field(default=None, alias="schemaId")
-    json_schema: JsonObject = Field(alias="schema")
+    json_schema: Mapping[str, Any] = Field(alias="schema")
 
     @field_validator("schema_id")
     @classmethod
@@ -546,6 +550,12 @@ class CapabilityDescriptor(DeckrModel):
                 allowed = ", ".join(RASTER_COMMAND_TYPES)
                 raise ValueError(
                     f"deckr.output.raster bitmap commands must be in: {allowed}"
+                )
+        elif self.family == DECKR_DEVICE_POWER and self.command_types:
+            if not set(self.command_types).issubset(POWER_COMMAND_TYPES):
+                allowed = ", ".join(POWER_COMMAND_TYPES)
+                raise ValueError(
+                    f"deckr.device.power screen commands must be in: {allowed}"
                 )
 
     def _validate_button_events(self) -> None:
@@ -914,6 +924,7 @@ __all__ = [
     "CORE_CAPABILITY_FAMILIES",
     "CORE_CAPABILITY_TYPES_BY_FAMILY",
     "CONTROL_DESCRIPTOR_SCHEMA_ID",
+    "DECKR_DEVICE_POWER",
     "DECKR_INPUT_BUTTON",
     "DECKR_INPUT_ENCODER",
     "DECKR_INPUT_TOUCH",
@@ -921,6 +932,7 @@ __all__ = [
     "DESCRIPTOR_SCHEMA_VERSION",
     "DEVICE_DESCRIPTOR_SCHEMA_ID",
     "ENCODER_RELATIVE_EVENTS",
+    "POWER_COMMAND_TYPES",
     "RASTER_COMMAND_TYPES",
     "TOUCH_GESTURE_EVENTS",
     "CapabilityAccess",

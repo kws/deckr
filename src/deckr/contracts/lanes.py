@@ -195,15 +195,17 @@ PLUGIN_MESSAGE_TYPES = frozenset(
 
 HARDWARE_MESSAGE_TYPES = frozenset(
     {
-        "clearSlot",
-        "dialRotate",
-        "keyDown",
-        "keyUp",
-        "setImage",
-        "sleepScreen",
-        "touchSwipe",
-        "touchTap",
-        "wakeScreen",
+        "capabilityStateChanged",
+        "capabilityStateReply",
+        "capabilityStateRequest",
+        "commandAccepted",
+        "commandRejected",
+        "commandReply",
+        "controlCommand",
+        "controlInput",
+        "deviceAvailable",
+        "deviceDescriptorChanged",
+        "deviceUnavailable",
     }
 )
 
@@ -315,6 +317,7 @@ HARDWARE_MESSAGES_DELIVERY = replace(
         "subject.managerId",
         "subject.deviceId",
         "subject.controlId",
+        "subject.capabilityId",
         "messageType",
         "body.sequence",
     ),
@@ -323,11 +326,11 @@ HARDWARE_MESSAGES_DELIVERY = replace(
             family=MessageFamily.INPUT,
             message_types=frozenset(
                 {
-                    "dialRotate",
-                    "keyDown",
-                    "keyUp",
-                    "touchSwipe",
-                    "touchTap",
+                    "capabilityStateChanged",
+                    "controlInput",
+                    "deviceAvailable",
+                    "deviceDescriptorChanged",
+                    "deviceUnavailable",
                 }
             ),
             idempotency=(
@@ -338,14 +341,13 @@ HARDWARE_MESSAGES_DELIVERY = replace(
                 "subject.managerId",
                 "subject.deviceId",
                 "subject.controlId",
+                "subject.capabilityId",
                 "body.sequence",
             ),
         ),
         MessageFamilyDelivery(
             family=MessageFamily.COMMAND,
-            message_types=frozenset(
-                {"clearSlot", "setImage", "sleepScreen", "wakeScreen"}
-            ),
+            message_types=frozenset({"capabilityStateRequest", "controlCommand"}),
             idempotency=IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS,
             ordering_keys=(
                 "sender",
@@ -353,7 +355,21 @@ HARDWARE_MESSAGES_DELIVERY = replace(
                 "subject.managerId",
                 "subject.deviceId",
                 "subject.controlId",
+                "subject.capabilityId",
             ),
+        ),
+        MessageFamilyDelivery(
+            family=MessageFamily.REPLY,
+            message_types=frozenset(
+                {
+                    "capabilityStateReply",
+                    "commandAccepted",
+                    "commandRejected",
+                    "commandReply",
+                }
+            ),
+            idempotency=IdempotencySemantics.CORRELATE_IN_REPLY_TO_TIMEOUT,
+            ordering_keys=("inReplyTo",),
         ),
     ),
 )

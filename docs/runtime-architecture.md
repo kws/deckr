@@ -120,8 +120,9 @@ broker diagnostics in [`nats-bus.md`](nats-bus.md). The v1 device, control, and
 capability descriptor contracts are implemented in
 `deckr.hardware.descriptors`, with the architecture background in
 [`../../notes/device-capability-model.md`](../../notes/device-capability-model.md).
-The current implemented hardware message surface remains the slot-shaped
-`deckr.hardware.messages` contract until the hardware message migration lands.
+Hardware discovery, input, output, device-level commands, state, and command
+reply placeholders use capability-targeted contracts in
+`deckr.hardware.messages`.
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
 not create new core lanes ad hoc inside a controller, plugin host, driver, or

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import sys
 import uuid
 from datetime import UTC, datetime
@@ -12,8 +13,18 @@ import anyio
 from deckr.contracts.lanes import CORE_LANE_CONTRACTS, LaneContractRegistry
 from deckr.contracts.messages import (
     controller_address,
-    entity_subject,
     hardware_manager_address,
+)
+from deckr.hardware import messages as hw_messages
+from deckr.hardware.descriptors import (
+    DECKR_INPUT_BUTTON,
+    DECKR_OUTPUT_RASTER,
+    CapabilityDescriptor,
+    CapabilityRef,
+    ControlDescriptor,
+    ControlGeometry,
+    DeviceDescriptor,
+    DeviceRef,
 )
 from deckr.runtime import Deckr
 from deckr.state import (
@@ -82,6 +93,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
     manager_id = f"smoke_manager_{args.run_id}"
     device_id = f"deck_{args.run_id}"
     endpoint = hardware_manager_address(manager_id)
+    descriptor = _device_descriptor(device_id, fingerprint=f"smoke:{args.run_id}")
     async with _deckr(args.url) as deckr:
         state = deckr.state(args.bucket)
         lane = deckr.lane("hardware_messages").endpoint(endpoint)
@@ -107,9 +119,12 @@ async def _run_manager(args: argparse.Namespace) -> None:
                     ttlSeconds=15,
                     devices={
                         device_id: HardwareInventoryDevice(
-                            deviceId=device_id,
-                            hardwareType="smoke_deck",
-                            fingerprint=f"smoke:{args.run_id}",
+                            deviceRef=DeviceRef(
+                                managerId=manager_id,
+                                deviceId=device_id,
+                                fingerprint=descriptor.fingerprint,
+                            ),
+                            descriptor=descriptor,
                         )
                     },
                 ),
@@ -118,10 +133,19 @@ async def _run_manager(args: argparse.Namespace) -> None:
                 request = await messages.receive()
             if request.recipient.endpoint != endpoint:
                 raise RuntimeError("manager received a message for the wrong endpoint")
+            device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
             await lane.reply_to(
                 request,
-                message_type="wakeScreen",
-                body={"ok": True, "runId": args.run_id},
+                message_type=hw_messages.COMMAND_REPLY,
+                body=hw_messages.hardware_body_to_dict(
+                    hw_messages.CommandReplyMessage(
+                        deviceRef=device_ref,
+                        controlId="0,0",
+                        capabilityId="raster.bitmap",
+                        commandType="set_frame",
+                        result={"ok": True, "runId": args.run_id},
+                    )
+                ),
             )
 
 
@@ -148,15 +172,31 @@ async def _run_controller(args: argparse.Namespace) -> None:
                 ),
             )
             async with lane.subscribe() as controller_messages:
+                device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
+                capability_ref = CapabilityRef(
+                    deviceRef=device_ref,
+                    controlId="0,0",
+                    capabilityId="raster.bitmap",
+                )
                 reply = await lane.request(
                     recipient=manager,
-                    subject=entity_subject(
-                        "hardwareControl",
-                        managerId=manager_id,
-                        deviceId=device_id,
+                    subject=hw_messages.hardware_subject_for_capability(
+                        capability_ref
                     ),
-                    message_type="setImage",
-                    body={"slot": 0, "image": "smoke"},
+                    message_type=hw_messages.CONTROL_COMMAND,
+                    body=hw_messages.hardware_body_to_dict(
+                        hw_messages.ControlCommandMessage(
+                            deviceRef=device_ref,
+                            controlId="0,0",
+                            capabilityId="raster.bitmap",
+                            commandType="set_frame",
+                            params={
+                                "commandType": "set_frame",
+                                "image": base64.b64encode(b"smoke").decode("ascii"),
+                                "encoding": "jpeg",
+                            },
+                        )
+                    ),
                     timeout=10,
                 )
                 with anyio.move_on_after(0.25) as scope:
@@ -191,6 +231,47 @@ def _deckr(url: str) -> Deckr:
     return Deckr(
         lane_contracts=registry,
         substrate=NatsSubstrate(url=url, lane_contracts=registry),
+    )
+
+
+def _device_descriptor(device_id: str, *, fingerprint: str) -> DeviceDescriptor:
+    return DeviceDescriptor(
+        deviceId=device_id,
+        displayName="Smoke Deck",
+        fingerprint=fingerprint,
+        controls=(
+            ControlDescriptor(
+                controlId="0,0",
+                kind="key",
+                geometry=ControlGeometry(x=0, y=0, width=1, height=1, unit="grid"),
+                inputCapabilities=(
+                    CapabilityDescriptor(
+                        capabilityId="button.momentary",
+                        family=DECKR_INPUT_BUTTON,
+                        type="momentary",
+                        direction="input",
+                        access=("emits",),
+                        eventTypes=("down", "up"),
+                    ),
+                ),
+                outputCapabilities=(
+                    CapabilityDescriptor.model_validate(
+                        {
+                            "capabilityId": "raster.bitmap",
+                            "family": DECKR_OUTPUT_RASTER,
+                            "type": "bitmap",
+                            "direction": "output",
+                            "access": ["settable"],
+                            "commandTypes": ["set_frame", "clear"],
+                            "constraints": [
+                                {"type": "fixed", "subject": "width", "value": 72},
+                                {"type": "fixed", "subject": "height", "value": 72},
+                            ],
+                        }
+                    ),
+                ),
+            ),
+        ),
     )
 
 

@@ -288,14 +288,61 @@ Example:
   "ttlSeconds": 15,
   "devices": {
     "device-1": {
-      "deviceId": "device-1",
-      "hardwareType": "streamdeck_xl",
-      "fingerprint": "stable-device-fingerprint",
+      "deviceRef": {
+        "managerId": "mirabox",
+        "deviceId": "device-1",
+        "fingerprint": "stable-device-fingerprint"
+      },
       "descriptor": {
-        "id": "device-1",
-        "name": "Stream Deck XL",
+        "deviceId": "device-1",
         "fingerprint": "stable-device-fingerprint",
-        "slots": []
+        "displayName": "MiraBox Stream Dock",
+        "manufacturer": "MiraBox",
+        "model": "Stream Dock",
+        "controls": [
+          {
+            "controlId": "key-0-0",
+            "kind": "button",
+            "label": "Key 1",
+            "geometry": {
+              "x": 0,
+              "y": 0,
+              "width": 1,
+              "height": 1,
+              "unit": "grid"
+            },
+            "inputCapabilities": [
+              {
+                "capabilityId": "press",
+                "family": "deckr.input.button",
+                "type": "activation",
+                "direction": "input",
+                "access": ["emits"],
+                "eventTypes": ["press"]
+              }
+            ],
+            "outputCapabilities": [
+              {
+                "capabilityId": "raster.bitmap",
+                "family": "deckr.output.raster",
+                "type": "bitmap",
+                "direction": "output",
+                "access": ["settable"],
+                "commandTypes": ["set_frame", "clear"]
+              }
+            ]
+          }
+        ],
+        "capabilities": [
+          {
+            "capabilityId": "device.power",
+            "family": "deckr.device.power",
+            "type": "screen",
+            "direction": "command",
+            "access": ["invokable"],
+            "commandTypes": ["sleep", "wake"]
+          }
+        ]
       }
     }
   }
@@ -311,9 +358,9 @@ live device state becomes unavailable.
 
 The canonical v1 descriptor contracts are implemented in
 `deckr.hardware.descriptors`, with generated JSON Schema artifacts in
-`schemas/hardware`. Current hardware managers still publish the implemented
-slot-shaped descriptor here until the hardware message and manager-adoption
-work moves inventory to `DeviceDescriptor`.
+`schemas/hardware`. Inventory records use manager-scoped `DeviceRef` values and
+carry the same `DeviceDescriptor` shape published by `deviceAvailable` and
+`deviceDescriptorChanged` messages on the `hardware_messages` lane.
 
 ## Device Claims
 

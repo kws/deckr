@@ -175,9 +175,7 @@
       "description": "A JSON Schema fragment carried by a capability descriptor.",
       "properties": {
         "schema": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
+          "additionalProperties": true,
           "title": "Schema",
           "type": "object"
         },
@@ -391,6 +389,7 @@
       "anyOf": [
         {
           "enum": [
+            "deckr.device.power",
             "deckr.input.button",
             "deckr.input.encoder",
             "deckr.input.touch",

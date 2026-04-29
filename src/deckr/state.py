@@ -125,6 +125,10 @@ class HardwareInventoryDevice(DeckrModel):
     device_ref: DeviceRef = Field(alias="deviceRef")
     descriptor: DeviceDescriptor
 
+    @field_serializer("descriptor")
+    def _serialize_descriptor(self, value: DeviceDescriptor) -> dict[str, Any]:
+        return thaw_json(value.model_dump(by_alias=True, exclude_none=True, mode="json"))
+
 
 class HardwareInventory(DeckrModel):
     manager_id: str = Field(alias="managerId")

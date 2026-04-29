@@ -123,14 +123,21 @@ class ControlInputMessage(DeckrModel):
 
 class ControlCommandMessage(DeckrModel):
     device_ref: DeviceRef = Field(alias="deviceRef")
-    control_id: str = Field(alias="controlId")
+    control_id: str | None = Field(default=None, alias="controlId")
     capability_id: str = Field(alias="capabilityId")
     command_type: str = Field(alias="commandType")
     params: JsonObject = Field(default_factory=dict)
 
-    @field_validator("control_id", "capability_id", "command_type")
+    @field_validator("capability_id", "command_type")
     @classmethod
     def _validate_text(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="control command target")
+
+    @field_validator("control_id")
+    @classmethod
+    def _validate_control_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _require_non_empty(value, field_name="control command target")
 
     @field_validator("params", mode="after")
@@ -143,12 +150,88 @@ class ControlCommandMessage(DeckrModel):
         return thaw_json(value)
 
 
+class CapabilityStateChangedMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    capability_id: str = Field(alias="capabilityId")
+    value: JsonValue | None = None
+    control_id: str | None = Field(default=None, alias="controlId")
+    state_type: str | None = Field(default=None, alias="stateType")
+    sequence: int | None = None
+    occurred_at: datetime = Field(default_factory=_now_utc, alias="occurredAt")
+
+    @field_serializer("occurred_at")
+    def _serialize_occurred_at(self, value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+class CapabilityStateRequestMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    capability_id: str = Field(alias="capabilityId")
+    control_id: str | None = Field(default=None, alias="controlId")
+    state_type: str | None = Field(default=None, alias="stateType")
+    params: JsonObject = Field(default_factory=dict)
+
+    @field_validator("params", mode="after")
+    @classmethod
+    def _freeze_params(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("params")
+    def _serialize_params(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+class CapabilityStateReplyMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    capability_id: str = Field(alias="capabilityId")
+    status: CapabilityStateStatus = "ok"
+    value: JsonValue | None = None
+    control_id: str | None = Field(default=None, alias="controlId")
+    state_type: str | None = Field(default=None, alias="stateType")
+    error: str | None = None
+
+
+class CommandAcceptedMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    control_id: str | None = Field(default=None, alias="controlId")
+    capability_id: str = Field(alias="capabilityId")
+    command_type: str = Field(alias="commandType")
+    accepted_at: datetime = Field(default_factory=_now_utc, alias="acceptedAt")
+
+    @field_serializer("accepted_at")
+    def _serialize_accepted_at(self, value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+class CommandRejectedMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    control_id: str | None = Field(default=None, alias="controlId")
+    capability_id: str = Field(alias="capabilityId")
+    command_type: str = Field(alias="commandType")
+    reason: CommandRejectionReason
+    message: str | None = None
+
+
+class CommandReplyMessage(DeckrModel):
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    control_id: str | None = Field(default=None, alias="controlId")
+    capability_id: str = Field(alias="capabilityId")
+    command_type: str = Field(alias="commandType")
+    result: JsonValue | None = None
+
+
 HardwareTransportMessage = (
     DeviceAvailableMessage
     | DeviceDescriptorChangedMessage
     | DeviceUnavailableMessage
     | ControlInputMessage
     | ControlCommandMessage
+    | CapabilityStateChangedMessage
+    | CapabilityStateRequestMessage
+    | CapabilityStateReplyMessage
+    | CommandAcceptedMessage
+    | CommandRejectedMessage
+    | CommandReplyMessage
 )
 
 HARDWARE_BODY_BY_MESSAGE_TYPE: dict[str, type[HardwareTransportMessage]] = {
@@ -157,6 +240,12 @@ HARDWARE_BODY_BY_MESSAGE_TYPE: dict[str, type[HardwareTransportMessage]] = {
     DEVICE_UNAVAILABLE: DeviceUnavailableMessage,
     CONTROL_INPUT: ControlInputMessage,
     CONTROL_COMMAND: ControlCommandMessage,
+    CAPABILITY_STATE_CHANGED: CapabilityStateChangedMessage,
+    CAPABILITY_STATE_REQUEST: CapabilityStateRequestMessage,
+    CAPABILITY_STATE_REPLY: CapabilityStateReplyMessage,
+    COMMAND_ACCEPTED: CommandAcceptedMessage,
+    COMMAND_REJECTED: CommandRejectedMessage,
+    COMMAND_REPLY: CommandReplyMessage,
 }
 HARDWARE_MESSAGE_TYPE_BY_BODY = {
     body_type: message_type
@@ -176,15 +265,16 @@ def hardware_subject_for_capability(ref: CapabilityRef) -> EntitySubject:
     device = ref.device_ref
     if device is None:
         raise ValueError("capability subject requires deviceRef")
-    control_id = ref.control_id
-    if control_id is None:
-        raise ValueError("capability subject requires controlId")
+    identifiers = {
+        "managerId": device.manager_id,
+        "deviceId": device.device_id,
+        "capabilityId": ref.capability_id,
+    }
+    if ref.control_id is not None:
+        identifiers["controlId"] = ref.control_id
     return entity_subject(
         "hardware_capability",
-        managerId=device.manager_id,
-        deviceId=device.device_id,
-        controlId=control_id,
-        capabilityId=ref.capability_id,
+        **identifiers,
     )
 
 
@@ -196,7 +286,7 @@ def hardware_capability_ref_from_subject(subject: EntitySubject) -> CapabilityRe
     device_id = ids.get("deviceId")
     control_id = ids.get("controlId")
     capability_id = ids.get("capabilityId")
-    if manager_id is None or device_id is None or control_id is None or capability_id is None:
+    if manager_id is None or device_id is None or capability_id is None:
         return None
     return CapabilityRef(
         deviceRef=DeviceRef(managerId=manager_id, deviceId=device_id),
@@ -218,11 +308,25 @@ def hardware_body_from_message(message: DeckrMessage) -> HardwareTransportMessag
 
 def hardware_device_ref_from_message(message: DeckrMessage) -> DeviceRef | None:
     """Return the manager-local device ref for capability-targeted hardware traffic."""
-    if message.message_type == CONTROL_INPUT:
-        body = ControlInputMessage.model_validate(thaw_json(dict(message.body)))
+    if message.message_type in {
+        CAPABILITY_STATE_CHANGED,
+        CAPABILITY_STATE_REPLY,
+        CAPABILITY_STATE_REQUEST,
+        COMMAND_ACCEPTED,
+        COMMAND_REJECTED,
+        COMMAND_REPLY,
+        CONTROL_INPUT,
+        CONTROL_COMMAND,
+        DEVICE_UNAVAILABLE,
+    }:
+        body = HARDWARE_BODY_BY_MESSAGE_TYPE[message.message_type].model_validate(
+            thaw_json(dict(message.body))
+        )
         return body.device_ref
-    if message.message_type == DEVICE_AVAILABLE:
-        body = DeviceAvailableMessage.model_validate(thaw_json(dict(message.body)))
+    if message.message_type in {DEVICE_AVAILABLE, DEVICE_DESCRIPTOR_CHANGED}:
+        body = HARDWARE_BODY_BY_MESSAGE_TYPE[message.message_type].model_validate(
+            thaw_json(dict(message.body))
+        )
         manager_id = message.subject.identifiers.get("managerId")
         if manager_id is None:
             return None
@@ -290,7 +394,7 @@ def control_input_message(
     *,
     manager_id: str,
     device_id: str,
-    fingerprint: str,
+    fingerprint: str | None = None,
     control_id: str,
     capability_id: str,
     event_type: str,
@@ -329,6 +433,28 @@ def control_input_message(
     )
 
 
+def device_unavailable_message(
+    *,
+    manager_id: str,
+    device_id: str,
+    fingerprint: str | None = None,
+    reason: str | None = None,
+) -> DeckrMessage:
+    device_ref = DeviceRef(
+        managerId=manager_id,
+        deviceId=device_id,
+        fingerprint=fingerprint,
+    )
+    body = DeviceUnavailableMessage(deviceRef=device_ref, reason=reason)
+    return hardware_message(
+        sender=hardware_manager_address(manager_id),
+        recipient=controllers_broadcast(),
+        message_type=DEVICE_UNAVAILABLE,
+        body=body,
+        subject=hardware_subject_for_device(device_ref),
+    )
+
+
 def control_command_for_capability(
     *,
     controller_id: str,
@@ -340,8 +466,6 @@ def control_command_for_capability(
     if device is None:
         raise ValueError("capability command requires deviceRef")
     control_id = ref.control_id
-    if control_id is None:
-        raise ValueError("capability command requires controlId")
     return control_command_message(
         controller_id=controller_id,
         manager_id=device.manager_id,
@@ -358,9 +482,9 @@ def control_command_message(
     controller_id: str,
     manager_id: str,
     device_id: str,
-    control_id: str,
     capability_id: str,
     command_type: str,
+    control_id: str | None = None,
     params: JsonObject | None = None,
 ) -> DeckrMessage:
     device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
@@ -400,7 +524,13 @@ __all__ = [
     "CONTROL_COMMAND",
     "CONTROL_INPUT",
     "CapabilityStateStatus",
+    "CapabilityStateChangedMessage",
+    "CapabilityStateReplyMessage",
+    "CapabilityStateRequestMessage",
+    "CommandAcceptedMessage",
+    "CommandRejectedMessage",
     "CommandRejectionReason",
+    "CommandReplyMessage",
     "ControlCommandMessage",
     "ControlInputMessage",
     "DEVICE_AVAILABLE",
@@ -417,6 +547,7 @@ __all__ = [
     "control_input_message",
     "device_available_message",
     "device_descriptor_changed_message",
+    "device_unavailable_message",
     "hardware_body_from_message",
     "hardware_body_to_dict",
     "hardware_capability_ref_from_subject",
