@@ -27,6 +27,7 @@ from deckr.state import (
     StateConflict,
     StateEntry,
     StateStore,
+    StateUnavailable,
     encode_key_token,
     state_value,
 )
@@ -212,13 +213,25 @@ class NatsStateStore:
         return await self._get_entry(key)
 
     async def items(self, prefix: str = "") -> tuple[StateEntry, ...]:
-        kv = await self._ensure_kv()
+        kv = await self._available_kv()
         filter_pattern = _kv_watch_pattern(prefix)
         try:
             keys = await kv.keys(filters=[filter_pattern])
         except TypeError:
-            keys = await kv.keys()
-        except Exception:
+            try:
+                keys = await kv.keys()
+            except Exception as exc:
+                if _is_key_missing(exc):
+                    keys = ()
+                else:
+                    raise StateUnavailable(
+                        f"Could not list state keys with prefix {prefix!r}"
+                    ) from exc
+        except Exception as exc:
+            if not _is_key_missing(exc):
+                raise StateUnavailable(
+                    f"Could not list state keys with prefix {prefix!r}"
+                ) from exc
             keys = ()
         entries: list[StateEntry] = []
         for key in keys:
@@ -237,9 +250,12 @@ class NatsStateStore:
         ttl: float | None = None,
     ) -> StateEntry:
         self._validate_ttl(ttl)
-        kv = await self._ensure_kv()
+        kv = await self._available_kv()
         normalized = state_value(value)
-        revision = await kv.put(key, _state_payload(normalized))
+        try:
+            revision = await kv.put(key, _state_payload(normalized))
+        except Exception as exc:
+            raise StateUnavailable(f"Could not put state key {key!r}") from exc
         return StateEntry(key=key, value=normalized, revision=int(revision))
 
     async def create(
@@ -250,12 +266,14 @@ class NatsStateStore:
         ttl: float | None = None,
     ) -> StateEntry:
         self._validate_ttl(ttl)
-        kv = await self._ensure_kv()
+        kv = await self._available_kv()
         normalized = state_value(value)
         try:
             revision = await kv.create(key, _state_payload(normalized))
         except Exception as exc:
-            raise StateConflict(f"State key {key!r} already exists") from exc
+            if _is_revision_conflict(exc):
+                raise StateConflict(f"State key {key!r} already exists") from exc
+            raise StateUnavailable(f"Could not create state key {key!r}") from exc
         return StateEntry(key=key, value=normalized, revision=int(revision))
 
     async def update(
@@ -267,7 +285,7 @@ class NatsStateStore:
         ttl: float | None = None,
     ) -> StateEntry:
         self._validate_ttl(ttl)
-        kv = await self._ensure_kv()
+        kv = await self._available_kv()
         normalized = state_value(value)
         current = await self._get_entry(key)
         if current is None or current.revision != revision:
@@ -279,11 +297,13 @@ class NatsStateStore:
                 last=revision,
             )
         except Exception as exc:
-            raise StateConflict(f"State key {key!r} revision changed") from exc
+            if _is_revision_conflict(exc):
+                raise StateConflict(f"State key {key!r} revision changed") from exc
+            raise StateUnavailable(f"Could not update state key {key!r}") from exc
         return StateEntry(key=key, value=normalized, revision=int(new_revision))
 
     async def delete(self, key: str, *, revision: int | None = None) -> None:
-        kv = await self._ensure_kv()
+        kv = await self._available_kv()
         current = await self._get_entry(key)
         if current is None:
             return
@@ -295,14 +315,18 @@ class NatsStateStore:
             else:
                 await kv.delete(key, last=revision)
         except Exception as exc:
-            raise StateConflict(f"State key {key!r} revision changed") from exc
+            if _is_key_missing(exc):
+                return
+            if _is_revision_conflict(exc):
+                raise StateConflict(f"State key {key!r} revision changed") from exc
+            raise StateUnavailable(f"Could not delete state key {key!r}") from exc
 
     @asynccontextmanager
     async def watch(
         self,
         prefix: str = "",
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[StateChange]]:
-        await self._ensure_kv()
+        await self._available_kv()
         send, receive = anyio.create_memory_object_stream[StateChange](
             max_buffer_size=self._buffer_size
         )
@@ -322,13 +346,18 @@ class NatsStateStore:
 
         from nats.js import api
 
-        subscription = await self._js.subscribe(
-            subject,
-            cb=callback,
-            ordered_consumer=True,
-            deliver_policy=api.DeliverPolicy.LAST_PER_SUBJECT,
-            inactive_threshold=5 * 60,
-        )
+        try:
+            subscription = await self._js.subscribe(
+                subject,
+                cb=callback,
+                ordered_consumer=True,
+                deliver_policy=api.DeliverPolicy.LAST_PER_SUBJECT,
+                inactive_threshold=5 * 60,
+            )
+        except Exception as exc:
+            raise StateUnavailable(
+                f"Could not watch state prefix {prefix!r}"
+            ) from exc
         try:
             yield receive
         finally:
@@ -350,6 +379,14 @@ class NatsStateStore:
                 self._kv = await self._js.key_value(self.name)
         await self._ensure_kv_stream_config(self._kv)
         return self._kv
+
+    async def _available_kv(self):
+        try:
+            return await self._ensure_kv()
+        except Exception as exc:
+            raise StateUnavailable(
+                f"NATS current-state bucket {self.name!r} is unavailable"
+            ) from exc
 
     async def _create_kv(self):
         from nats.js.api import KeyValueConfig
@@ -400,11 +437,13 @@ class NatsStateStore:
             ) from exc
 
     async def _get_entry(self, key: str) -> StateEntry | None:
-        kv = await self._ensure_kv()
+        kv = await self._available_kv()
         try:
             entry = await kv.get(key)
-        except Exception:
-            return None
+        except Exception as exc:
+            if _is_key_missing(exc):
+                return None
+            raise StateUnavailable(f"Could not get state key {key!r}") from exc
         return _state_entry_from_kv(entry)
 
     def _validate_ttl(self, ttl: float | None) -> None:
@@ -536,6 +575,38 @@ def _kv_watch_pattern(prefix: str) -> str:
     if prefix.endswith("."):
         return f"{prefix}>"
     return prefix
+
+
+def _exception_names(exc: BaseException) -> set[str]:
+    names: set[str] = set()
+    current: BaseException | None = exc
+    while current is not None:
+        names.add(type(current).__name__)
+        current = current.__cause__
+    return names
+
+
+def _is_key_missing(exc: BaseException) -> bool:
+    names = _exception_names(exc)
+    if names & {"KeyNotFoundError", "KeyDeletedError", "NoKeysError", "NotFoundError"}:
+        return True
+    message = str(exc).lower()
+    return message in {"missing", "not found", "key not found"}
+
+
+def _is_revision_conflict(exc: BaseException) -> bool:
+    names = _exception_names(exc)
+    if "KeyWrongLastSequenceError" in names:
+        return True
+    if getattr(exc, "err_code", None) == 10071:
+        return True
+    message = str(exc).lower()
+    return (
+        message in {"exists", "revision changed"}
+        or "wrong last" in message
+        or "wrong sequence" in message
+        or "revision changed" in message
+    )
 
 
 __all__ = [

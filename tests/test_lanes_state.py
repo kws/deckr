@@ -14,13 +14,16 @@ from deckr.pluginhost.messages import plugin_message
 from deckr.runtime import Deckr
 from deckr.state import (
     StateConflict,
+    StateUnavailable,
     decode_key_token,
     device_claim_key,
     encode_key_token,
     hardware_inventory_key,
     parse_device_claim_key,
     parse_hardware_inventory_key,
+    parse_plugin_action_catalog_key,
     parse_presence_endpoint_key,
+    plugin_action_catalog_key,
     presence_endpoint_key,
 )
 from deckr.substrates.nats import NatsStateStore, _headers_for, _subject_for
@@ -245,6 +248,46 @@ async def test_nats_state_watch_maps_delete_and_max_age_marker() -> None:
     assert expire_change.entry is None
 
 
+@pytest.mark.asyncio
+async def test_nats_state_reports_substrate_failures_as_unavailable() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+    fake_js.kv.fail_get = RuntimeError("broker unavailable")
+
+    with pytest.raises(StateUnavailable):
+        await store.get("claim.device.main.deck")
+
+
+@pytest.mark.asyncio
+async def test_nats_state_create_reports_non_conflict_failures_as_unavailable() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+    fake_js.kv.fail_create = RuntimeError("broker unavailable")
+
+    with pytest.raises(StateUnavailable):
+        await store.create("claim.device.main.deck", {"owner": "controller"})
+
+
+@pytest.mark.asyncio
+async def test_nats_state_delete_missing_key_is_idempotent() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+
+    await store.delete("claim.device.main.missing")
+
+
 def test_key_token_encoding_round_trips_nats_safe_and_fallback_tokens() -> None:
     assert encode_key_token("deck_1") == "deck_1"
     assert decode_key_token("deck_1") == "deck_1"
@@ -263,6 +306,7 @@ def test_state_key_helpers_round_trip_encoded_tokens() -> None:
     )
     inventory_key = hardware_inventory_key("room/a")
     claim_key = device_claim_key(manager_id="room/a", device_id="deck:one")
+    catalog_key = plugin_action_catalog_key("host/main")
 
     assert parse_presence_endpoint_key(presence_key) == (
         "hardware_messages",
@@ -270,6 +314,7 @@ def test_state_key_helpers_round_trip_encoded_tokens() -> None:
     )
     assert parse_hardware_inventory_key(inventory_key) == "room/a"
     assert parse_device_claim_key(claim_key) == ("room/a", "deck:one")
+    assert parse_plugin_action_catalog_key(catalog_key) == "host/main"
 
 
 def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() -> None:
@@ -317,8 +362,12 @@ class _FakeKv:
         self._pre = f"$KV.{js.bucket}."
         self._revision = 0
         self._entries: dict[str, _FakeKvEntry] = {}
+        self.fail_get: Exception | None = None
+        self.fail_create: Exception | None = None
 
     async def get(self, key: str) -> _FakeKvEntry:
+        if self.fail_get is not None:
+            raise self.fail_get
         entry = self._entries.get(key)
         if entry is None:
             raise RuntimeError("missing")
@@ -340,6 +389,8 @@ class _FakeKv:
 
     async def create(self, key: str, value: bytes, **kwargs) -> int:
         del kwargs
+        if self.fail_create is not None:
+            raise self.fail_create
         if key in self._entries:
             raise RuntimeError("exists")
         return await self.put(key, value)

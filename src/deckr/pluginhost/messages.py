@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import Field, field_serializer, field_validator
@@ -89,15 +90,6 @@ class PluginExtensionBody(PluginMessageBody):
     @field_serializer("data")
     def _serialize_data(self, value: Mapping[str, Any]) -> dict[str, Any]:
         return thaw_json(value)
-
-
-class ActionsRegisteredBody(PluginMessageBody):
-    action_uuids: tuple[str, ...] = Field(alias="actionUuids")
-    actions: tuple[ActionDescriptor, ...]
-
-
-class ActionsUnregisteredBody(PluginMessageBody):
-    action_uuids: tuple[str, ...] = Field(alias="actionUuids")
 
 
 class SettingsBody(PluginMessageBody):
@@ -378,12 +370,6 @@ def plugin_host_subject(host_id: str) -> EntitySubject:
     return entity_subject("plugin_host", hostId=host_id)
 
 
-def plugin_actions_subject(host_id: str | None = None) -> EntitySubject:
-    if host_id is None:
-        return entity_subject("plugin_actions")
-    return entity_subject("plugin_actions", hostId=host_id)
-
-
 class ActionDescriptor(DeckrModel):
     """Action identity advertised by a plugin host."""
 
@@ -412,6 +398,37 @@ class ActionDescriptor(DeckrModel):
     def to_dict(self) -> dict[str, Any]:
         """Serialize for action registration payloads."""
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+class PluginActionCatalog(DeckrModel):
+    """Current action catalog advertised by one plugin host endpoint."""
+
+    host_id: str = Field(alias="hostId")
+    host_endpoint: EndpointAddress = Field(alias="hostEndpoint")
+    session_id: str = Field(alias="sessionId")
+    timestamp: datetime
+    ttl_seconds: int = Field(alias="ttlSeconds")
+    actions: Mapping[str, ActionDescriptor] = Field(default_factory=dict)
+
+    @field_serializer("timestamp")
+    def _serialize_timestamp(self, value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    @field_validator("actions", mode="after")
+    @classmethod
+    def _freeze_actions(
+        cls, value: Mapping[str, ActionDescriptor]
+    ) -> Mapping[str, ActionDescriptor]:
+        return freeze_json(value)
+
+    @field_serializer("actions")
+    def _serialize_actions(
+        self, value: Mapping[str, ActionDescriptor]
+    ) -> dict[str, dict[str, Any]]:
+        return {
+            key: item.model_dump(by_alias=True, exclude_none=True, mode="json")
+            for key, item in value.items()
+        }
 
 
 class TitleOptions(DeckrModel):
@@ -468,11 +485,6 @@ def make_dynamic_page_id() -> str:
 
 
 # Message type constants
-ACTIONS_REGISTERED = "actionsRegistered"
-REQUEST_ACTIONS = "requestActions"
-ACTIONS_UNREGISTERED = "actionsUnregistered"
-HOST_ONLINE = "hostOnline"
-HOST_OFFLINE = "hostOffline"
 WILL_APPEAR = "willAppear"
 WILL_DISAPPEAR = "willDisappear"
 KEY_UP = "keyUp"
@@ -531,11 +543,6 @@ COMMAND_MESSAGE_TYPES = (
 
 
 PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
-    ACTIONS_REGISTERED: ActionsRegisteredBody,
-    ACTIONS_UNREGISTERED: ActionsUnregisteredBody,
-    REQUEST_ACTIONS: EmptyPluginBody,
-    HOST_ONLINE: EmptyPluginBody,
-    HOST_OFFLINE: EmptyPluginBody,
     WILL_APPEAR: WillAppearBody,
     WILL_DISAPPEAR: WillDisappearBody,
     KEY_UP: KeyEventBody,
@@ -562,7 +569,6 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
     PLUGIN_EXTENSION: PluginExtensionBody,
 }
 
-ActionsRegisteredBody.model_rebuild()
 TitleOptionsBody.model_rebuild()
 OpenPageBody.model_rebuild()
 UpdatePageBody.model_rebuild()

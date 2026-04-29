@@ -166,13 +166,9 @@ class LaneContractRegistry:
 
 PLUGIN_MESSAGE_TYPES = frozenset(
     {
-        "actionsRegistered",
-        "actionsUnregistered",
         "closePage",
         "dialRotate",
         "hereAreSettings",
-        "hostOffline",
-        "hostOnline",
         "keyDown",
         "keyUp",
         "openPage",
@@ -180,7 +176,6 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "pageDisappear",
         "pluginExtension",
         "replacePage",
-        "requestActions",
         "requestSettings",
         "setImage",
         "setPage",
@@ -250,12 +245,6 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                 "subject.contextId",
                 "subject.pageSessionId",
             ),
-        ),
-        MessageFamilyDelivery(
-            family=MessageFamily.DISCOVERY,
-            message_types=frozenset({"actionsRegistered", "actionsUnregistered"}),
-            idempotency=IdempotencySemantics.IDEMPOTENT_LATEST_BY_SUBJECT,
-            ordering_keys=("sender", "subject.hostId"),
         ),
         MessageFamilyDelivery(
             family=MessageFamily.INPUT,

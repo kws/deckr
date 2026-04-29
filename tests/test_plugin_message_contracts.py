@@ -1,27 +1,24 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import ValidationError
 
-from deckr.contracts.messages import controller_address, host_address
+from deckr.contracts.messages import host_address
 from deckr.pluginhost.messages import (
-    ACTIONS_REGISTERED,
-    HOST_ONLINE,
     KEY_DOWN,
     PLUGIN_EXTENSION,
     SET_SETTINGS,
     SET_TITLE,
     WILL_APPEAR,
-    ActionsRegisteredBody,
     ControlBindingDescriptor,
+    PluginActionCatalog,
     PluginExtensionBody,
     SettingsBody,
     TitleOptionsBody,
     context_subject,
-    plugin_actions_subject,
-    plugin_body_dict,
     plugin_body_for_type,
-    plugin_message,
     subject_action_instance_id,
     subject_binding_id,
     subject_config_id,
@@ -30,8 +27,8 @@ from deckr.pluginhost.messages import (
 
 
 def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
-    with pytest.raises(ValidationError):
-        plugin_body_for_type(HOST_ONLINE, {"hostId": "python"})
+    with pytest.raises(ValueError):
+        plugin_body_for_type("hostOnline", {"hostId": "python"})
 
     with pytest.raises(ValidationError):
         plugin_body_for_type(SET_TITLE, {"text": "Demo", "contextId": "ctx"})
@@ -98,22 +95,24 @@ def test_controller_event_body_accepts_frozen_json_settings() -> None:
     }
 
 
-def test_action_descriptors_keep_registered_action_identity_as_payload_data() -> None:
-    message = plugin_message(
-        sender=host_address("python"),
-        recipient=controller_address("main"),
-        message_type=ACTIONS_REGISTERED,
-        body={
-            "actionUuids": ["demo.action"],
-            "actions": [{"uuid": "demo.action", "name": "Demo"}],
-        },
-        subject=plugin_actions_subject("python"),
+def test_plugin_action_catalog_serializes_actions_by_uuid() -> None:
+    catalog = PluginActionCatalog(
+        hostId="python",
+        hostEndpoint=host_address("python"),
+        sessionId="session-1",
+        timestamp=datetime(2026, 4, 29, tzinfo=UTC),
+        ttlSeconds=15,
+        actions={"demo.action": {"uuid": "demo.action", "name": "Demo"}},
     )
 
-    body = plugin_body_dict(message)
-
-    assert body["actionUuids"] == ["demo.action"]
-    assert body["actions"] == [{"uuid": "demo.action", "name": "Demo"}]
+    assert catalog.model_dump(by_alias=True, mode="json") == {
+        "hostId": "python",
+        "hostEndpoint": "host:python",
+        "sessionId": "session-1",
+        "timestamp": "2026-04-29T00:00:00Z",
+        "ttlSeconds": 15,
+        "actions": {"demo.action": {"uuid": "demo.action", "name": "Demo"}},
+    }
 
 
 def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
@@ -193,11 +192,8 @@ def test_plugin_body_for_type_rejects_mismatched_body_instances() -> None:
 
 
 def test_typed_plugin_body_schemas_are_exportable() -> None:
-    actions_schema = ActionsRegisteredBody.model_json_schema(by_alias=True)
     extension_schema = PluginExtensionBody.model_json_schema(by_alias=True)
 
-    assert actions_schema["additionalProperties"] is False
-    assert "actionUuids" in actions_schema["properties"]
     assert extension_schema["additionalProperties"] is False
     assert {
         "extensionType",
