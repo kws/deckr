@@ -72,6 +72,8 @@ async def _run_orchestrator(args: argparse.Namespace) -> int:
             await manager.wait()
     if controller_status != 0 or manager_status != 0:
         return 1
+    if args.check_ttl:
+        await _wait_for_ttl_cleanup(args, run_id=run_id)
     print(f"NATS smoke passed run_id={run_id}")
     return 0
 
@@ -91,7 +93,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
                     lane="hardware_messages",
                     sessionId=args.run_id,
                     timestamp=datetime.now(UTC),
-                    ttlSeconds=30,
+                    ttlSeconds=15,
                     metadata={"runtime": "deckr-nats-smoke"},
                 ),
             )
@@ -102,7 +104,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
                     managerEndpoint=endpoint,
                     sessionId=args.run_id,
                     timestamp=datetime.now(UTC),
-                    ttlSeconds=30,
+                    ttlSeconds=15,
                     devices={
                         device_id: HardwareInventoryDevice(
                             deviceId=device_id,
@@ -142,7 +144,7 @@ async def _run_controller(args: argparse.Namespace) -> None:
                     claimedByEndpoint=controller,
                     claimedBySessionId=args.run_id,
                     timestamp=datetime.now(UTC),
-                    ttlSeconds=30,
+                    ttlSeconds=15,
                 ),
             )
             async with lane.subscribe() as controller_messages:
@@ -165,6 +167,25 @@ async def _run_controller(args: argparse.Namespace) -> None:
                 raise RuntimeError("controller received a message not addressed to it")
 
 
+async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> None:
+    manager_id = f"smoke_manager_{run_id}"
+    device_id = f"deck_{run_id}"
+    manager = hardware_manager_address(manager_id)
+    keys = (
+        presence_endpoint_key(lane="hardware_messages", endpoint=manager),
+        hardware_inventory_key(manager_id),
+        device_claim_key(manager_id=manager_id, device_id=device_id),
+    )
+    async with _deckr(args.url) as deckr:
+        state = deckr.state(args.bucket)
+        with anyio.fail_after(args.ttl_wait):
+            while True:
+                entries = [await state.get(key) for key in keys]
+                if all(entry is None for entry in entries):
+                    return
+                await anyio.sleep(0.5)
+
+
 def _deckr(url: str) -> Deckr:
     registry = LaneContractRegistry(CORE_LANE_CONTRACTS.values())
     return Deckr(
@@ -179,6 +200,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--bucket", default="deckr_state_v1_smoke")
     parser.add_argument("--run-id")
     parser.add_argument("--role", choices=("manager", "controller"))
+    parser.add_argument(
+        "--check-ttl",
+        action="store_true",
+        help="Wait for smoke presence, inventory, and claim keys to expire.",
+    )
+    parser.add_argument("--ttl-wait", type=float, default=25.0)
     return parser.parse_args()
 
 

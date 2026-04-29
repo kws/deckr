@@ -34,8 +34,8 @@ async with Deckr(lane_contracts=plan.lane_contracts, lanes=plan.lane_names) as d
 
 A skinny plugin host runtime uses the same `Deckr` and component host APIs, but
 its configuration only includes a plugin host component and the lane substrate
-needed to reach the controller domain. The old WebSocket/MQTT lane transport
-examples have been removed while the NATS substrate configuration is in-flight.
+needed to reach the controller domain. Distributed runtimes use the NATS
+substrate; the old WebSocket/MQTT lane transport examples have been removed.
 
 ## Remote Driver Runtime
 

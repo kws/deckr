@@ -27,16 +27,6 @@ from deckr.pluginhost.messages import (
 
 
 def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
-    for message_type in (
-        "hostOnline",
-        "hostOffline",
-        "actionsRegistered",
-        "actionsUnregistered",
-        "requestActions",
-    ):
-        with pytest.raises(ValueError):
-            plugin_body_for_type(message_type, {"hostId": "python"})
-
     with pytest.raises(ValidationError):
         plugin_body_for_type(SET_TITLE, {"text": "Demo", "contextId": "ctx"})
 

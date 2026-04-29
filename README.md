@@ -21,10 +21,12 @@ The normative architecture reference now lives in:
 
 Those documents are the source of truth for the current architecture. They are
 explicitly normative, alpha-stage, and intentionally non-backward-compatible.
-The distributed bus replacement is still in-flight and currently lives in the
-workspace planning note at
-[`../notes/bus-planning.md`](../notes/bus-planning.md). Once implementation
-settles, write a new formal `deckr` specification instead of resurrecting the
+The distributed bus replacement has closed on NATS as the Deckr distributed
+substrate: Core NATS carries lane traffic and JetStream KV carries current
+state. Operational details currently live in the workspace planning and runbook
+notes at [`../notes/bus-planning.md`](../notes/bus-planning.md) and
+[`../notes/nats-operations.md`](../notes/nats-operations.md). Write any future
+formal `deckr` specification from that NATS/KV model instead of resurrecting the
 old route-table architecture.
 
 The controller now lives in its own sibling repository:
@@ -81,7 +83,7 @@ Deckr’s target architecture is:
 - one discovery model
 - named event lanes as the only generic wiring primitive
 - shared lane infrastructure for application-facing send/subscribe/fan-out
-- NATS as the planned distributed lane substrate rather than Deckr-specific
+- NATS as the distributed lane substrate rather than Deckr-specific
   WebSocket/MQTT lane transports
 - core message and endpoint identity contracts defined in `deckr`
 - standard messaging substrates used before Deckr builds generic broker features
@@ -96,10 +98,10 @@ If you are looking for the design rules around discovery, lane ownership,
 lane substrate configuration, wire-safe schemas, configuration namespacing, and
 alpha policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
 
-The Deckr lane substrate is being replaced with NATS. During that work, use the
-workspace planning note at [`../notes/bus-planning.md`](../notes/bus-planning.md)
-for current lane substrate direction, endpoint-bound lane handles, recipient
-filtering, KV current state, device claims, and action resolution.
+The Deckr distributed lane substrate is NATS. Use the workspace planning note at
+[`../notes/bus-planning.md`](../notes/bus-planning.md) for endpoint-bound lane
+handles, recipient filtering, KV current state, device claims, and action
+resolution until those details are promoted into a formal `deckr` spec.
 
 The old home-grown WebSocket/MQTT lane transports, route table, route leases,
 route metadata, and remote-endpoint hint architecture are removal targets. This
@@ -107,16 +109,18 @@ does not apply to adapter-private protocols such as plugin worker attach,
 external runtime attach, Elgato-compatible plugin protocol adaptation, or
 concrete device protocols.
 
-The first NATS substrate surface is available behind the optional `deckr[nats]`
-extra. Use `Deckr.lane(...).endpoint(...)` for endpoint-bound lane messages and
+The NATS substrate surface is available behind the optional `deckr[nats]` extra.
+Use `Deckr.lane(...).endpoint(...)` for endpoint-bound lane messages and
 `Deckr.state(...)` for current-state declarations. A real-NATS smoke harness is
-available at `scripts/nats_smoke.py`.
+available at `scripts/nats_smoke.py`, and `scripts/nats_state_report.py`
+summarizes the broker's current Deckr communication state.
 
 Run the smoke harness against the included JetStream-enabled NATS compose service:
 
 ```bash
 docker compose -f docker/compose.nats-smoke.yaml up -d nats
-uv run --extra nats python scripts/nats_smoke.py --url nats://127.0.0.1:4222
+uv run --extra nats python scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
+uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
 docker compose -f docker/compose.nats-smoke.yaml down -v
 ```
 

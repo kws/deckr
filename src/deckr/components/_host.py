@@ -41,6 +41,25 @@ COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
 CORE_NON_COMPONENT_CONFIG_NAMESPACES = frozenset(
     {"lane_contracts", "plugins", "runtime"}
 )
+REMOVED_TRANSPORT_CONFIG_PREFIXES = frozenset(
+    {
+        "deckr.transports.bus",
+        "deckr.transports.mqtt",
+        "deckr.transports.routes",
+        "deckr.transports.websocket",
+    }
+)
+REMOVED_LANE_CONTRACT_FIELDS = frozenset(
+    {
+        "mqtt",
+        "remote_endpoints",
+        "route_policy",
+        "route_table",
+        "routes",
+        "transport_route",
+        "websocket",
+    }
+)
 
 
 class ComponentCardinality(StrEnum):
@@ -457,6 +476,18 @@ def _validate_configured_component_prefixes(
         document,
         known_prefixes=known_prefixes,
     )
+    removed = sorted(
+        prefix
+        for prefix in configured_prefixes
+        if prefix in REMOVED_TRANSPORT_CONFIG_PREFIXES
+    )
+    if removed:
+        prefixes = ", ".join(removed)
+        raise ValueError(
+            "Configuration uses removed Deckr lane transport prefix(es): "
+            f"{prefixes}. Use [deckr.runtime.substrate] kind = \"nats\" and "
+            "Deckr endpoint-bound lanes with JetStream KV current state."
+        )
     missing = sorted(configured_prefixes - known_prefixes)
     if not missing:
         return
@@ -605,8 +636,10 @@ def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | Non
         )
     if not isinstance(source, Mapping):
         raise ValueError(f"Lane contract {lane!r} delivery must be a table")
-    if source.get("mqtt") is not None:
-        raise ValueError("delivery.mqtt is not part of the v1 lane contract")
+    removed = sorted(key for key in REMOVED_LANE_CONTRACT_FIELDS if key in source)
+    if removed:
+        keys = ", ".join(f"delivery.{key}" for key in removed)
+        raise ValueError(f"{keys} are not part of the v1 lane contract")
     return DeliverySemantics(
         persistence=(
             _optional_enum_value(
@@ -699,10 +732,12 @@ def _lane_contract_from_mapping(lane: str, source: Mapping[str, Any]) -> LaneCon
         raise ValueError(
             f"Lane contract {lane!r} delivery_semantics has been replaced by delivery"
         )
-    if source.get("route_policy") is not None:
+    removed = sorted(key for key in REMOVED_LANE_CONTRACT_FIELDS if key in source)
+    if removed:
+        keys = ", ".join(removed)
         raise ValueError(
-            f"Lane contract {lane!r} route_policy has been removed; use direct "
-            "lane contract fields"
+            f"Lane contract {lane!r} removed field(s) {keys} are not part of "
+            "the v1 lane contract; use direct NATS-backed lane contract fields"
         )
     return LaneContract(
         lane=lane,

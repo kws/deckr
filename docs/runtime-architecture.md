@@ -113,12 +113,12 @@ The current core lane set includes:
 - `plugin_messages`
 - `hardware_messages`
 
-The distributed lane substrate replacement is in-flight and currently tracked in
-the workspace planning note at
+The distributed lane substrate is NATS and is currently tracked in
+the workspace planning and operations notes at
 [`../../notes/bus-planning.md`](../../notes/bus-planning.md). This document owns
-the generic component and lane model. The planning note owns the current NATS
-replacement direction, endpoint-bound lane handles, recipient filtering, KV
-current state, device claims, and action resolution until a new formal
+the generic component and lane model. The planning and operations notes own
+endpoint-bound lane handles, recipient filtering, KV current state, device
+claims, action resolution, and broker diagnostics until a new formal
 specification is written in `deckr`. The future device, control, and capability
 model carried by the hardware lane is planned in
 [`../../notes/device-capability-model.md`](../../notes/device-capability-model.md).
@@ -146,9 +146,8 @@ A lane may exist:
 - across process boundaries via the distributed lane substrate
 - across host or network boundaries via the distributed lane substrate
 
-The v1 distributed lane substrate direction is NATS. The old home-grown
-WebSocket and MQTT lane transports are implementation cleanup targets rather
-than parallel architectures to preserve.
+The v1 distributed lane substrate is NATS. The old home-grown WebSocket and
+MQTT lane transports are removed architecture, not parallel runtime paths.
 
 The shared lane implementation is the application-facing bus for one Deckr
 runtime. The replacement API should expose endpoint-bound lane handles so the
@@ -637,16 +636,16 @@ component model.
 
 ### Lane Substrate Replacement
 
-The old generic transport-component model for Deckr lanes is being removed in
+The old generic transport-component model for Deckr lanes has been removed in
 favor of the NATS substrate design currently tracked in
 [`../../notes/bus-planning.md`](../../notes/bus-planning.md).
 
-Removal targets include the home-grown WebSocket/MQTT lane transports,
+Removed targets include the home-grown WebSocket/MQTT lane transports,
 `remote_endpoints`, route-table route claims, route leases, route metadata, and
 trusted-bridge configuration. Those concepts should not be kept alive as a
 parallel lane transport architecture.
 
-The live design direction is:
+The live design is:
 
 - Deckr lanes remain logical contracts.
 - NATS carries distributed lane traffic.
@@ -738,8 +737,8 @@ to understand component-specific settings.
 - Core lane names belong in `deckr`.
 - Lanes are logical runtime contracts and may be transported across transport
   boundaries.
-- The v1 distributed lane substrate direction is NATS.
-- Home-grown WebSocket/MQTT Deckr lane transports are removal targets.
+- The v1 distributed lane substrate is NATS.
+- Home-grown WebSocket/MQTT Deckr lane transports are removed runtime paths.
 - Shared lane infrastructure owns the application-facing endpoint-bound
   send/subscribe/fan-out API.
 - Required lane infrastructure must not depend on the bundled Deckr launcher.

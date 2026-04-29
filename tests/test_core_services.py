@@ -130,6 +130,27 @@ def test_configured_component_specs_rejects_uninstalled_prefix(
         configured_component_instance_specs(document)
 
 
+@pytest.mark.parametrize(
+    ("namespace", "detail"),
+    [
+        ("websocket", {"instances": {"main": {"mode": "server"}}}),
+        ("mqtt", {"instances": {"main": {"hostname": "mqtt"}}}),
+        ("bus", {"instances": {"main": {}}}),
+        ("routes", {"instances": {"main": {}}}),
+    ],
+)
+def test_configured_component_specs_rejects_removed_lane_transport_prefixes(
+    monkeypatch: pytest.MonkeyPatch,
+    namespace: str,
+    detail: dict[str, object],
+) -> None:
+    monkeypatch.setattr("deckr.components._host.available_component_ids", lambda: [])
+    document = _document({"deckr": {"transports": {namespace: detail}}})
+
+    with pytest.raises(ValueError, match="removed Deckr lane transport"):
+        configured_component_instance_specs(document)
+
+
 def test_configured_component_specs_loads_only_configured_entrypoints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -339,5 +360,55 @@ def test_deployment_lane_contract_rejects_removed_route_policy() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="route_policy has been removed"):
+    with pytest.raises(ValueError, match="removed field\\(s\\) route_policy"):
+        resolve_component_host_plan(document, definitions={})
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "mqtt",
+        "remote_endpoints",
+        "route_table",
+        "routes",
+        "transport_route",
+        "websocket",
+    ],
+)
+def test_deployment_lane_contract_rejects_removed_transport_fields(
+    field: str,
+) -> None:
+    document = _document(
+        {
+            "deckr": {
+                "lane_contracts": {
+                    "acme.events": {
+                        "schema_id": "acme.events.v1",
+                        field: {},
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match=field):
+        resolve_component_host_plan(document, definitions={})
+
+
+@pytest.mark.parametrize("field", ["mqtt", "websocket", "remote_endpoints"])
+def test_deployment_lane_contract_rejects_removed_delivery_fields(field: str) -> None:
+    document = _document(
+        {
+            "deckr": {
+                "lane_contracts": {
+                    "acme.events": {
+                        "schema_id": "acme.events.v1",
+                        "delivery": {field: {}},
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match=field):
         resolve_component_host_plan(document, definitions={})
