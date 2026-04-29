@@ -113,14 +113,11 @@ The current core lane set includes:
 - `plugin_messages`
 - `hardware_messages`
 
-The distributed lane substrate is NATS and is currently tracked in
-the workspace planning and operations notes at
-[`../../notes/bus-planning.md`](../../notes/bus-planning.md). This document owns
-the generic component and lane model. The planning and operations notes own
-endpoint-bound lane handles, recipient filtering, KV current state, device
-claims, action resolution, and broker diagnostics until a new formal
-specification is written in `deckr`. The future device, control, and capability
-model carried by the hardware lane is planned in
+The distributed lane substrate is NATS. This document owns the generic component
+and lane model. The NATS bus specification owns endpoint-bound lane handles,
+recipient filtering, KV current state, device claims, action resolution, and
+broker diagnostics in [`nats-bus.md`](nats-bus.md). The future device, control,
+and capability model carried by the hardware lane is planned in
 [`../../notes/device-capability-model.md`](../../notes/device-capability-model.md).
 The current implemented hardware message surface remains the slot-shaped
 `deckr.hardware.messages` contract until that capability work lands.
@@ -637,8 +634,7 @@ component model.
 ### Lane Substrate Replacement
 
 The old generic transport-component model for Deckr lanes has been removed in
-favor of the NATS substrate design currently tracked in
-[`../../notes/bus-planning.md`](../../notes/bus-planning.md).
+favor of the NATS substrate design specified in [`nats-bus.md`](nats-bus.md).
 
 Removed targets include the home-grown WebSocket/MQTT lane transports,
 `remote_endpoints`, route-table route claims, route leases, route metadata, and

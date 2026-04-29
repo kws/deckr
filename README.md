@@ -18,16 +18,15 @@ The normative architecture reference now lives in:
 
 - [docs/runtime-architecture.md](docs/runtime-architecture.md)
 - [docs/runtime-modes.md](docs/runtime-modes.md)
+- [docs/nats-bus.md](docs/nats-bus.md)
 
 Those documents are the source of truth for the current architecture. They are
 explicitly normative, alpha-stage, and intentionally non-backward-compatible.
 The distributed bus replacement has closed on NATS as the Deckr distributed
 substrate: Core NATS carries lane traffic and JetStream KV carries current
-state. Operational details currently live in the workspace planning and runbook
-notes at [`../notes/bus-planning.md`](../notes/bus-planning.md) and
-[`../notes/nats-operations.md`](../notes/nats-operations.md). Write any future
-formal `deckr` specification from that NATS/KV model instead of resurrecting the
-old route-table architecture.
+state. The supported NATS/KV contract now lives in
+[docs/nats-bus.md](docs/nats-bus.md). Future bus ideas live outside this package
+until they become implementor- or user-relevant specification.
 
 The controller now lives in its own sibling repository:
 
@@ -43,6 +42,7 @@ src/deckr/
   plugin/      Plugin-facing contracts, rendering types, and protocol types
   runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
 docs/
+  nats-bus.md
   runtime-architecture.md
   runtime-modes.md
 tests/
@@ -98,10 +98,10 @@ If you are looking for the design rules around discovery, lane ownership,
 lane substrate configuration, wire-safe schemas, configuration namespacing, and
 alpha policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
 
-The Deckr distributed lane substrate is NATS. Use the workspace planning note at
-[`../notes/bus-planning.md`](../notes/bus-planning.md) for endpoint-bound lane
-handles, recipient filtering, KV current state, device claims, and action
-resolution until those details are promoted into a formal `deckr` spec.
+The Deckr distributed lane substrate is NATS. Read
+[docs/nats-bus.md](docs/nats-bus.md) for endpoint-bound lane handles, recipient
+filtering, KV current state, device claims, action resolution, and broker
+diagnostics.
 
 The old home-grown WebSocket/MQTT lane transports, route table, route leases,
 route metadata, and remote-endpoint hint architecture are removal targets. This
@@ -154,13 +154,12 @@ Python plugin runtime control-plane messages.
 
 The current implementation still has known protocol-shape gaps, especially
 around `plugin_messages`, remote hardware delivery, context ids, action
-addresses, and broadcast pseudo-addresses. The intended lane substrate model is
-currently in [`../notes/bus-planning.md`](../notes/bus-planning.md), not in a
-formal `deckr` specification yet.
+addresses, and broadcast pseudo-addresses. The supported lane substrate and
+current-state model is defined in [docs/nats-bus.md](docs/nats-bus.md).
 
 `deckr.pluginhost.messages` currently contains shared plugin-host message models
 used by controllers, plugin hosts, lane substrate adapters, and non-Python
-implementations. Its public API shape should follow the bus planning direction
+implementations. Its public API shape should follow the NATS bus specification
 rather than preserve mistaken implementation details.
 
 In particular, endpoint addresses such as `controller:<controller_id>`,
