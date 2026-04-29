@@ -43,6 +43,7 @@ It covers:
 - control descriptors
 - capability descriptors
 - structured device, control, and capability references
+- driver-selected default status indicator metadata
 - connection facts and source metadata
 - capability directions, access flags, schemas, constraints, and units
 - hardware message implications for discovery, input, commands, and state
@@ -129,6 +130,7 @@ A device descriptor must include:
 - structured connections
 - optional parent device reference
 - optional suggested area or placement metadata
+- optional default status indicator reference
 - controls
 - device-level capabilities
 - source references where useful for diagnostics
@@ -153,6 +155,29 @@ Connection facts are not routing identities. Examples include:
 
 These facts are useful for diagnostics, matching hints, and driver behavior.
 They must not become Deckr endpoint addresses or durable controller binding ids.
+
+A device descriptor may identify one driver-selected default status indicator.
+This is a structured reference to an output capability on the device or one of
+its controls, not a boolean flag. The referenced capability may be a raster
+surface, text display, indicator light, haptic actuator, or another output that
+the driver knows is suitable for short status feedback.
+
+The default status indicator is for device-local or controller-directed status
+such as "unclaimed", "offline", "controller unavailable", "claim pending",
+"broker unavailable", or "attention needed" before the normal user binding and
+rendering path is usable. The hardware manager owns the per-device choice
+because only the driver knows which surface is visible, safe, non-destructive,
+and meaningful for that device. Controllers must not infer a default status
+target from "first raster output", "first LED", slot order, HID layout, or
+vendor assumptions. If no default status indicator is declared, there is no
+generic status surface for that device.
+
+The reference must target a real output capability in the descriptor. It must
+not create a second routing path or give managers knowledge of plugin contexts.
+Once the controller has claimed the device and established normal bindings, the
+controller remains responsible for user-facing output policy. Manager-local
+status output should be limited to states where the normal infrastructure is not
+yet usable or has become unavailable.
 
 ## Controls
 
@@ -261,6 +286,7 @@ Minimum v1 core capability families:
 - `deckr.input.encoder`
 - `deckr.input.touch`
 - `deckr.output.raster`
+- `deckr.output.indicator`
 - `deckr.device.power`
 - `deckr.device.brightness`
 - `deckr.state.battery`
@@ -272,13 +298,19 @@ Future capability families may include:
 - `deckr.input.axis`
 - `deckr.input.pointer`
 - `deckr.output.text`
-- `deckr.output.indicator`
 - `deckr.output.haptic`
 - `deckr.output.audio`
 - `deckr.state.connectivity`
 
 Third-party capability families must use globally owned names. They must not use
 short unqualified identifiers that could collide with Deckr core contracts.
+
+`deckr.output.indicator` covers simple status lights and LEDs. A single-color
+LED is a valid output capability even when it cannot render arbitrary pixels or
+text. Its schema should describe the commands and values it actually supports,
+such as on/off, brightness, blink pattern, or fixed named states. RGB or
+multi-zone indicators can use the same family with richer schemas, but a driver
+must not pretend a single-color LED is a raster surface.
 
 ## Device References And Subjects
 
@@ -382,6 +414,12 @@ This supports:
 - output targeting based on available raster, text, indicator, brightness, or
   other output capabilities
 
+The default status indicator is not a binding selector shortcut. It is a
+driver-authored hint for status output before, between, or outside normal
+controller-owned bindings. A controller may use it for controller-level status
+policy, but it must still send ordinary capability-targeted commands to the
+referenced output capability.
+
 ## Plugin Model
 
 Plugin-facing APIs are controller mediated.
@@ -442,6 +480,7 @@ Minimum v1 device descriptor:
 - manufacturer/model/version fields
 - structured identifiers/connections
 - optional parent device
+- optional default status indicator reference
 - controls
 - device-level capabilities
 
@@ -473,14 +512,15 @@ Minimum v1 core capability families:
 - relative encoder
 - touch tap/swipe compatible input
 - raster output
+- indicator output, including single-color LEDs
 - screen power
 - brightness
 - battery state
 - diagnostic state
 
 This covers today's Elgato, MiraBox, and MQTT drivers while making it clear how
-to add faders, haptics, text displays, LEDs, browser controls, phone widgets,
-and richer HID devices later.
+to add faders, haptics, text displays, browser controls, phone widgets, and
+richer HID devices later.
 
 ## Hard Rules
 
@@ -489,6 +529,8 @@ and richer HID devices later.
 - `hid` must not be a required core device field.
 - Core descriptors must separate identity, topology, controls, capabilities,
   connection facts, and raw source metadata.
+- Default status indicators must be explicit driver-authored capability
+  references, not controller guesses or slot/order conventions.
 - Device descriptors must be owned by `deckr` as wire-safe contracts.
 - Capabilities must declare direction, access, schemas, constraints, and units
   where relevant.
