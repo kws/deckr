@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
@@ -103,6 +104,32 @@ def _require_non_empty(value: str, *, field_name: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} must not be empty")
     return normalized
+
+
+def _require_finite(value: float | None, *, field_name: str) -> float | None:
+    if value is not None and not math.isfinite(value):
+        raise ValueError(f"{field_name} must be finite")
+    return value
+
+
+def _require_json_wire_safe(value: Any, *, field_name: str) -> None:
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _require_json_wire_safe(item, field_name=field_name)
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            _require_json_wire_safe(item, field_name=field_name)
+        return
+    if value is None or isinstance(value, str | bool | int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{field_name} must not contain NaN or Infinity")
+        return
+    raise ValueError(
+        f"{field_name} contains unsupported JSON value type: {type(value).__name__}"
+    )
 
 
 def _require_not_endpoint_address(value: str, *, field_name: str) -> str:
@@ -290,6 +317,25 @@ class CapabilityRef(DeckrModel):
         return _require_contract_token(value, field_name="capability_id")
 
 
+class DescriptorCapabilityRef(DeckrModel):
+    """Reference to a capability owned by the enclosing ``DeviceDescriptor``."""
+
+    control_id: str | None = Field(default=None, alias="controlId")
+    capability_id: str = Field(alias="capabilityId")
+
+    @field_validator("control_id")
+    @classmethod
+    def _validate_control_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty(value, field_name="control_id")
+
+    @field_validator("capability_id")
+    @classmethod
+    def _validate_capability_id(cls, value: str) -> str:
+        return _require_contract_token(value, field_name="capability_id")
+
+
 class ControlGeometry(DeckrModel):
     """A control's placement on a logical or physical surface."""
 
@@ -300,6 +346,11 @@ class ControlGeometry(DeckrModel):
     unit: ControlGeometryUnit = "grid"
     rotation: int | None = None
     layer: int | None = None
+
+    @field_validator("x", "y", "width", "height")
+    @classmethod
+    def _validate_finite(cls, value: float | None) -> float | None:
+        return _require_finite(value, field_name="geometry value")
 
     @model_validator(mode="after")
     def _validate_geometry(self) -> ControlGeometry:
@@ -341,6 +392,7 @@ class CapabilitySchema(DeckrModel):
             raise ValueError(
                 "capability schema must include a JSON Schema contract keyword"
             )
+        _require_json_wire_safe(value, field_name="capability schema")
         return freeze_json(value)
 
     @field_serializer("json_schema")
@@ -371,6 +423,11 @@ class CapabilityConstraint(DeckrModel):
         if value is None:
             return None
         return _require_contract_token(value, field_name="constraint subject")
+
+    @field_validator("minimum", "maximum", "step")
+    @classmethod
+    def _validate_finite_number(cls, value: float | None) -> float | None:
+        return _require_finite(value, field_name="capability constraint number")
 
     @field_validator("value", mode="after")
     @classmethod
@@ -429,6 +486,7 @@ class CapabilityUnit(DeckrModel):
     @field_validator("scale")
     @classmethod
     def _validate_scale(cls, value: float) -> float:
+        _require_finite(value, field_name="capability unit scale")
         if value <= 0:
             raise ValueError("capability unit scale must be positive")
         return value
@@ -439,7 +497,7 @@ class CapabilityProjection(DeckrModel):
 
     projection_type: ProjectionType = Field(default="projection", alias="type")
     owner: ProjectionOwner
-    source: CapabilityRef
+    source: DescriptorCapabilityRef
     description: str | None = None
 
     @field_validator("description")
@@ -540,23 +598,18 @@ class CapabilityDescriptor(DeckrModel):
             self._validate_button_events()
         elif self.family == DECKR_INPUT_ENCODER and self.event_types != ENCODER_RELATIVE_EVENTS:
             raise ValueError("deckr.input.encoder relative capabilities emit rotate")
-        elif self.family == DECKR_INPUT_TOUCH and not set(self.event_types).issubset(
-            TOUCH_GESTURE_EVENTS
-        ):
-            allowed = ", ".join(TOUCH_GESTURE_EVENTS)
-            raise ValueError(f"deckr.input.touch gesture events must be in: {allowed}")
-        elif self.family == DECKR_OUTPUT_RASTER and self.command_types:
-            if not set(self.command_types).issubset(RASTER_COMMAND_TYPES):
-                allowed = ", ".join(RASTER_COMMAND_TYPES)
-                raise ValueError(
-                    f"deckr.output.raster bitmap commands must be in: {allowed}"
-                )
-        elif self.family == DECKR_DEVICE_POWER and self.command_types:
-            if not set(self.command_types).issubset(POWER_COMMAND_TYPES):
-                allowed = ", ".join(POWER_COMMAND_TYPES)
-                raise ValueError(
-                    f"deckr.device.power screen commands must be in: {allowed}"
-                )
+        elif self.family == DECKR_INPUT_TOUCH and self.event_types != TOUCH_GESTURE_EVENTS:
+            raise ValueError(
+                "deckr.input.touch gesture capabilities emit tap and swipe"
+            )
+        elif self.family == DECKR_OUTPUT_RASTER and self.command_types != RASTER_COMMAND_TYPES:
+            raise ValueError(
+                "deckr.output.raster bitmap capabilities support set_frame and clear"
+            )
+        elif self.family == DECKR_DEVICE_POWER and self.command_types != POWER_COMMAND_TYPES:
+            raise ValueError(
+                "deckr.device.power screen capabilities support sleep and wake"
+            )
 
     def _validate_button_events(self) -> None:
         if self.capability_type == "activation":
@@ -689,7 +742,7 @@ class DeviceDescriptor(DeckrModel):
     identifiers: tuple[DeviceIdentifier, ...] = Field(default_factory=tuple)
     connections: tuple[DeviceConnection, ...] = Field(default_factory=tuple)
     parent: DeviceRef | None = None
-    default_status_indicator: CapabilityRef | None = Field(
+    default_status_indicator: DescriptorCapabilityRef | None = Field(
         default=None,
         alias="defaultStatusIndicator",
     )
@@ -823,9 +876,9 @@ class DeviceDescriptor(DeckrModel):
             )
         return tuple(result)
 
-    def _resolve_capability(self, ref: CapabilityRef) -> CapabilityDescriptor | None:
-        if ref.device_ref is not None and ref.device_ref.device_id != self.device_id:
-            return None
+    def _resolve_capability(
+        self, ref: DescriptorCapabilityRef
+    ) -> CapabilityDescriptor | None:
         if ref.control_id is None:
             for capability in self.capabilities:
                 if capability.capability_id == ref.capability_id:
@@ -953,6 +1006,7 @@ __all__ = [
     "DeviceIdentifier",
     "DeviceRef",
     "DeviceSourceReference",
+    "DescriptorCapabilityRef",
     "ProjectionOwner",
     "ProjectionType",
     "capability_descriptor_schema",

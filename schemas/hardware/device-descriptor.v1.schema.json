@@ -247,7 +247,7 @@
           "type": "string"
         },
         "source": {
-          "$ref": "#/$defs/CapabilityRef"
+          "$ref": "#/$defs/DescriptorCapabilityRef"
         },
         "type": {
           "default": "projection",
@@ -264,44 +264,6 @@
         "source"
       ],
       "title": "CapabilityProjection",
-      "type": "object"
-    },
-    "CapabilityRef": {
-      "additionalProperties": false,
-      "description": "Reference to a device-level or control-level capability.",
-      "properties": {
-        "capabilityId": {
-          "title": "Capabilityid",
-          "type": "string"
-        },
-        "controlId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Controlid"
-        },
-        "deviceRef": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DeviceRef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "required": [
-        "capabilityId"
-      ],
-      "title": "CapabilityRef",
       "type": "object"
     },
     "CapabilitySchema": {
@@ -574,6 +536,33 @@
       "title": "ControlGeometry",
       "type": "object"
     },
+    "DescriptorCapabilityRef": {
+      "additionalProperties": false,
+      "description": "Reference to a capability owned by the enclosing ``DeviceDescriptor``.",
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        }
+      },
+      "required": [
+        "capabilityId"
+      ],
+      "title": "DescriptorCapabilityRef",
+      "type": "object"
+    },
     "DeviceConnection": {
       "additionalProperties": false,
       "description": "Structured protocol or transport facts about a device connection.",
@@ -794,7 +783,7 @@
     "defaultStatusIndicator": {
       "anyOf": [
         {
-          "$ref": "#/$defs/CapabilityRef"
+          "$ref": "#/$defs/DescriptorCapabilityRef"
         },
         {
           "type": "null"

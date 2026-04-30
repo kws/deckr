@@ -195,6 +195,92 @@ def test_hardware_bodies_reject_routing_metadata():
         )
 
 
+def test_hardware_message_rejects_mismatched_body_instance():
+    with pytest.raises(TypeError, match="requires body type ControlInputMessage"):
+        hw_messages.hardware_body_for_type(
+            hw_messages.CONTROL_INPUT,
+            hw_messages.DeviceUnavailableMessage(
+                deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+            ),
+        )
+
+
+def test_hardware_message_builder_validates_message_type_body_pair():
+    with pytest.raises(TypeError, match="requires body type ControlInputMessage"):
+        hw_messages.hardware_message(
+            sender="hardware_manager:manager-main",
+            recipient="controller:main",
+            message_type=hw_messages.CONTROL_INPUT,
+            body=hw_messages.DeviceUnavailableMessage(
+                deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+            ),
+            subject=hw_messages.hardware_subject_for_device(
+                DeviceRef(managerId="manager-main", deviceId="deck")
+            ),
+        )
+
+
+def test_capability_state_and_reply_messages_validate_targets_and_sequence():
+    with pytest.raises(ValidationError, match="capability state target"):
+        hw_messages.CapabilityStateChangedMessage.model_validate(
+            {
+                "deviceRef": {"managerId": "manager-main", "deviceId": "deck"},
+                "capabilityId": "",
+                "sequence": 1,
+            }
+        )
+
+    with pytest.raises(ValidationError, match="sequence"):
+        hw_messages.CapabilityStateChangedMessage.model_validate(
+            {
+                "deviceRef": {"managerId": "manager-main", "deviceId": "deck"},
+                "capabilityId": "battery.level",
+                "sequence": -1,
+            }
+        )
+
+    with pytest.raises(ValidationError, match="command reply"):
+        hw_messages.CommandReplyMessage.model_validate(
+            {
+                "deviceRef": {"managerId": "manager-main", "deviceId": "deck"},
+                "capabilityId": "raster.bitmap",
+                "commandType": "",
+            }
+        )
+
+
+def test_hardware_messages_reject_non_finite_json_values():
+    with pytest.raises(ValidationError, match="NaN or Infinity"):
+        hw_messages.ControlInputMessage.model_validate(
+            {
+                "deviceRef": {"managerId": "manager-main", "deviceId": "deck"},
+                "controlId": "key.0.0",
+                "capabilityId": "button.press",
+                "eventType": "press",
+                "value": {"level": float("nan")},
+            }
+        )
+
+
+def test_hardware_message_schema_exports_typed_bodies():
+    schema = hw_messages.hardware_message_schema()
+
+    assert schema["$id"] == "deckr.message.hardware_messages.v1"
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert "oneOf" in schema
+    control_input_variant = next(
+        variant
+        for variant in schema["oneOf"]
+        if variant["allOf"][1]["properties"]["messageType"]["const"]
+        == hw_messages.CONTROL_INPUT
+    )
+
+    variant_properties = control_input_variant["allOf"][1]["properties"]
+    assert variant_properties["lane"]["const"] == "hardware_messages"
+    assert variant_properties["body"]["$ref"] == "#/$defs/ControlInputMessage"
+    assert schema["$defs"]["ControlInputMessage"]["additionalProperties"] is False
+
+
 def test_old_slot_and_gesture_wire_names_are_absent():
     old_names = {
         "HardwareDevice",
@@ -219,6 +305,7 @@ def test_old_slot_and_gesture_wire_names_are_absent():
         "CLEAR_SLOT",
         "SLEEP_SCREEN",
         "WAKE_SCREEN",
+        "HardwareTransportMessage",
     }
 
     for name in old_names:

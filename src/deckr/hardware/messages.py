@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -8,6 +9,7 @@ from pydantic import Field, JsonValue, field_serializer, field_validator
 
 from deckr.contracts.messages import (
     HARDWARE_MESSAGES_LANE,
+    HARDWARE_MESSAGES_SCHEMA_ID,
     DeckrMessage,
     EndpointAddress,
     EntitySubject,
@@ -63,6 +65,18 @@ def _require_non_empty(value: str, *, field_name: str) -> str:
     return normalized
 
 
+def _require_optional_non_empty(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _require_non_empty(value, field_name=field_name)
+
+
+def _require_non_negative(value: int | None, *, field_name: str) -> int | None:
+    if value is not None and value < 0:
+        raise ValueError(f"{field_name} must be non-negative")
+    return value
+
+
 class DeviceAvailableMessage(DeckrModel):
     descriptor: DeviceDescriptor
 
@@ -101,9 +115,7 @@ class ControlInputMessage(DeckrModel):
     @field_validator("sequence")
     @classmethod
     def _validate_sequence(cls, value: int | None) -> int | None:
-        if value is not None and value < 0:
-            raise ValueError("sequence must be non-negative")
-        return value
+        return _require_non_negative(value, field_name="sequence")
 
     @field_validator("value", mode="after")
     @classmethod
@@ -159,6 +171,32 @@ class CapabilityStateChangedMessage(DeckrModel):
     sequence: int | None = None
     occurred_at: datetime = Field(default_factory=_now_utc, alias="occurredAt")
 
+    @field_validator("capability_id")
+    @classmethod
+    def _validate_capability_id(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="capability state target")
+
+    @field_validator("control_id", "state_type")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        return _require_optional_non_empty(value, field_name="capability state target")
+
+    @field_validator("sequence")
+    @classmethod
+    def _validate_sequence(cls, value: int | None) -> int | None:
+        return _require_non_negative(value, field_name="sequence")
+
+    @field_validator("value", mode="after")
+    @classmethod
+    def _freeze_value(cls, value: JsonValue | None) -> Any:
+        if value is None:
+            return None
+        return freeze_json(value)
+
+    @field_serializer("value")
+    def _serialize_value(self, value: Any) -> Any:
+        return thaw_json(value)
+
     @field_serializer("occurred_at")
     def _serialize_occurred_at(self, value: datetime) -> str:
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
@@ -170,6 +208,16 @@ class CapabilityStateRequestMessage(DeckrModel):
     control_id: str | None = Field(default=None, alias="controlId")
     state_type: str | None = Field(default=None, alias="stateType")
     params: JsonObject = Field(default_factory=dict)
+
+    @field_validator("capability_id")
+    @classmethod
+    def _validate_capability_id(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="capability state target")
+
+    @field_validator("control_id", "state_type")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        return _require_optional_non_empty(value, field_name="capability state target")
 
     @field_validator("params", mode="after")
     @classmethod
@@ -190,6 +238,27 @@ class CapabilityStateReplyMessage(DeckrModel):
     state_type: str | None = Field(default=None, alias="stateType")
     error: str | None = None
 
+    @field_validator("capability_id")
+    @classmethod
+    def _validate_capability_id(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="capability state target")
+
+    @field_validator("control_id", "state_type", "error")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        return _require_optional_non_empty(value, field_name="capability state reply")
+
+    @field_validator("value", mode="after")
+    @classmethod
+    def _freeze_value(cls, value: JsonValue | None) -> Any:
+        if value is None:
+            return None
+        return freeze_json(value)
+
+    @field_serializer("value")
+    def _serialize_value(self, value: Any) -> Any:
+        return thaw_json(value)
+
 
 class CommandAcceptedMessage(DeckrModel):
     device_ref: DeviceRef = Field(alias="deviceRef")
@@ -197,6 +266,16 @@ class CommandAcceptedMessage(DeckrModel):
     capability_id: str = Field(alias="capabilityId")
     command_type: str = Field(alias="commandType")
     accepted_at: datetime = Field(default_factory=_now_utc, alias="acceptedAt")
+
+    @field_validator("capability_id", "command_type")
+    @classmethod
+    def _validate_text(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="command acknowledgement")
+
+    @field_validator("control_id")
+    @classmethod
+    def _validate_control_id(cls, value: str | None) -> str | None:
+        return _require_optional_non_empty(value, field_name="command acknowledgement")
 
     @field_serializer("accepted_at")
     def _serialize_accepted_at(self, value: datetime) -> str:
@@ -211,6 +290,16 @@ class CommandRejectedMessage(DeckrModel):
     reason: CommandRejectionReason
     message: str | None = None
 
+    @field_validator("capability_id", "command_type")
+    @classmethod
+    def _validate_text(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="command rejection")
+
+    @field_validator("control_id", "message")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        return _require_optional_non_empty(value, field_name="command rejection")
+
 
 class CommandReplyMessage(DeckrModel):
     device_ref: DeviceRef = Field(alias="deviceRef")
@@ -219,8 +308,28 @@ class CommandReplyMessage(DeckrModel):
     command_type: str = Field(alias="commandType")
     result: JsonValue | None = None
 
+    @field_validator("capability_id", "command_type")
+    @classmethod
+    def _validate_text(cls, value: str) -> str:
+        return _require_non_empty(value, field_name="command reply")
 
-HardwareTransportMessage = (
+    @field_validator("control_id")
+    @classmethod
+    def _validate_control_id(cls, value: str | None) -> str | None:
+        return _require_optional_non_empty(value, field_name="command reply")
+
+    @field_validator("result", mode="after")
+    @classmethod
+    def _freeze_result(cls, value: JsonValue | None) -> Any:
+        if value is None:
+            return None
+        return freeze_json(value)
+
+    @field_serializer("result")
+    def _serialize_result(self, value: Any) -> Any:
+        return thaw_json(value)
+
+HardwareMessageBody = (
     DeviceAvailableMessage
     | DeviceDescriptorChangedMessage
     | DeviceUnavailableMessage
@@ -234,7 +343,7 @@ HardwareTransportMessage = (
     | CommandReplyMessage
 )
 
-HARDWARE_BODY_BY_MESSAGE_TYPE: dict[str, type[HardwareTransportMessage]] = {
+HARDWARE_BODY_BY_MESSAGE_TYPE: dict[str, type[HardwareMessageBody]] = {
     DEVICE_AVAILABLE: DeviceAvailableMessage,
     DEVICE_DESCRIPTOR_CHANGED: DeviceDescriptorChangedMessage,
     DEVICE_UNAVAILABLE: DeviceUnavailableMessage,
@@ -251,6 +360,7 @@ HARDWARE_MESSAGE_TYPE_BY_BODY = {
     body_type: message_type
     for message_type, body_type in HARDWARE_BODY_BY_MESSAGE_TYPE.items()
 }
+_HARDWARE_BODY_TYPES = tuple(HARDWARE_BODY_BY_MESSAGE_TYPE.values())
 
 
 def hardware_subject_for_device(ref: DeviceRef) -> EntitySubject:
@@ -295,15 +405,34 @@ def hardware_capability_ref_from_subject(subject: EntitySubject) -> CapabilityRe
     )
 
 
-def hardware_body_to_dict(body: HardwareTransportMessage) -> dict[str, Any]:
+def hardware_body_for_type(
+    message_type: str,
+    body: HardwareMessageBody | Mapping[str, Any],
+) -> HardwareMessageBody:
+    body_type = HARDWARE_BODY_BY_MESSAGE_TYPE.get(message_type)
+    if body_type is None:
+        raise ValueError(f"Unsupported hardware message type {message_type!r}")
+    if isinstance(body, _HARDWARE_BODY_TYPES):
+        if not isinstance(body, body_type):
+            raise TypeError(
+                f"{message_type!r} requires body type {body_type.__name__}, "
+                f"got {type(body).__name__}"
+            )
+        return body
+    if isinstance(body, DeckrModel):
+        raise TypeError(
+            f"{message_type!r} requires body type {body_type.__name__}, "
+            f"got {type(body).__name__}"
+        )
+    return body_type.model_validate(thaw_json(dict(body)))
+
+
+def hardware_body_to_dict(body: HardwareMessageBody) -> dict[str, Any]:
     return body.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
-def hardware_body_from_message(message: DeckrMessage) -> HardwareTransportMessage:
-    body_type = HARDWARE_BODY_BY_MESSAGE_TYPE.get(message.message_type)
-    if body_type is None:
-        raise ValueError(f"Unsupported hardware message type {message.message_type!r}")
-    return body_type.model_validate(thaw_json(dict(message.body)))
+def hardware_body_from_message(message: DeckrMessage) -> HardwareMessageBody:
+    return hardware_body_for_type(message.message_type, message.body)
 
 
 def hardware_device_ref_from_message(message: DeckrMessage) -> DeviceRef | None:
@@ -344,19 +473,20 @@ def hardware_message(
     sender: str | EndpointAddress,
     recipient: str | EndpointAddress | MessageTarget,
     message_type: str,
-    body: HardwareTransportMessage,
+    body: HardwareMessageBody | Mapping[str, Any],
     subject: EntitySubject,
     in_reply_to: str | None = None,
     causation_id: str | None = None,
 ) -> DeckrMessage:
     target = recipient if not isinstance(recipient, str | EndpointAddress) else endpoint_target(recipient)
+    parsed_body = hardware_body_for_type(message_type, body)
     return DeckrMessage(
         lane=HARDWARE_MESSAGES_LANE,
         messageType=message_type,
         sender=sender,
         recipient=target,
         subject=subject,
-        body=hardware_body_to_dict(body),
+        body=hardware_body_to_dict(parsed_body),
         inReplyTo=in_reply_to,
         causationId=causation_id,
     )
@@ -511,7 +641,65 @@ def control_command_message(
 
 
 def hardware_message_schema() -> dict[str, Any]:
-    return DeckrMessage.model_json_schema(by_alias=True)
+    definitions: dict[str, Any] = {}
+    envelope_ref = _add_schema_model(definitions, DeckrMessage)
+    variants: list[dict[str, Any]] = []
+    for message_type, body_type in HARDWARE_BODY_BY_MESSAGE_TYPE.items():
+        body_ref = _add_schema_model(definitions, body_type)
+        variants.append(
+            {
+                "allOf": [
+                    envelope_ref,
+                    {
+                        "type": "object",
+                        "required": ["lane", "messageType", "body"],
+                        "properties": {
+                            "lane": {"const": HARDWARE_MESSAGES_LANE},
+                            "messageType": {"const": message_type},
+                            "body": body_ref,
+                        },
+                    },
+                ]
+            }
+        )
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": HARDWARE_MESSAGES_SCHEMA_ID,
+        "title": "Deckr hardware_messages Lane Message",
+        "x-deckr-schema-version": "1",
+        "oneOf": variants,
+        "$defs": definitions,
+    }
+
+
+def _add_schema_model(
+    definitions: dict[str, Any],
+    model: type[DeckrModel],
+) -> dict[str, str]:
+    schema = model.model_json_schema(
+        by_alias=True,
+        ref_template="#/$defs/{model}",
+    )
+    for name, definition in schema.pop("$defs", {}).items():
+        _add_schema_definition(definitions, name, definition)
+    schema.pop("$schema", None)
+    name = model.__name__
+    _add_schema_definition(definitions, name, schema)
+    return {"$ref": f"#/$defs/{name}"}
+
+
+def _add_schema_definition(
+    definitions: dict[str, Any],
+    name: str,
+    definition: Mapping[str, Any],
+) -> None:
+    schema = deepcopy(dict(definition))
+    existing = definitions.get(name)
+    if existing is not None:
+        if existing != schema:
+            raise RuntimeError(f"Conflicting schema definition {name!r}")
+        return
+    definitions[name] = schema
 
 
 __all__ = [
@@ -541,7 +729,8 @@ __all__ = [
     "DeviceUnavailableMessage",
     "HARDWARE_BODY_BY_MESSAGE_TYPE",
     "HARDWARE_MESSAGE_TYPE_BY_BODY",
-    "HardwareTransportMessage",
+    "HardwareMessageBody",
+    "hardware_body_for_type",
     "control_command_for_capability",
     "control_command_message",
     "control_input_message",

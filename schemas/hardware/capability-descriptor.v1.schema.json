@@ -112,7 +112,7 @@
           "type": "string"
         },
         "source": {
-          "$ref": "#/$defs/CapabilityRef"
+          "$ref": "#/$defs/DescriptorCapabilityRef"
         },
         "type": {
           "default": "projection",
@@ -129,44 +129,6 @@
         "source"
       ],
       "title": "CapabilityProjection",
-      "type": "object"
-    },
-    "CapabilityRef": {
-      "additionalProperties": false,
-      "description": "Reference to a device-level or control-level capability.",
-      "properties": {
-        "capabilityId": {
-          "title": "Capabilityid",
-          "type": "string"
-        },
-        "controlId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Controlid"
-        },
-        "deviceRef": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DeviceRef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "required": [
-        "capabilityId"
-      ],
-      "title": "CapabilityRef",
       "type": "object"
     },
     "CapabilitySchema": {
@@ -234,15 +196,15 @@
       "title": "CapabilityUnit",
       "type": "object"
     },
-    "DeviceRef": {
+    "DescriptorCapabilityRef": {
       "additionalProperties": false,
-      "description": "Reference to a manager-local device in a hardware manager context.",
+      "description": "Reference to a capability owned by the enclosing ``DeviceDescriptor``.",
       "properties": {
-        "deviceId": {
-          "title": "Deviceid",
+        "capabilityId": {
+          "title": "Capabilityid",
           "type": "string"
         },
-        "fingerprint": {
+        "controlId": {
           "anyOf": [
             {
               "type": "string"
@@ -252,18 +214,13 @@
             }
           ],
           "default": null,
-          "title": "Fingerprint"
-        },
-        "managerId": {
-          "title": "Managerid",
-          "type": "string"
+          "title": "Controlid"
         }
       },
       "required": [
-        "managerId",
-        "deviceId"
+        "capabilityId"
       ],
-      "title": "DeviceRef",
+      "title": "DescriptorCapabilityRef",
       "type": "object"
     },
     "DeviceSourceReference": {

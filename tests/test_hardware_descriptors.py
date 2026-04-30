@@ -11,11 +11,14 @@ from pydantic import ValidationError
 from deckr.hardware.descriptors import (
     CAPABILITY_DESCRIPTOR_SCHEMA_ID,
     CONTROL_DESCRIPTOR_SCHEMA_ID,
+    DECKR_DEVICE_POWER,
     DECKR_INPUT_BUTTON,
+    DECKR_INPUT_TOUCH,
     DECKR_OUTPUT_RASTER,
     DEVICE_DESCRIPTOR_SCHEMA_ID,
     CapabilityDescriptor,
     CapabilitySchema,
+    ControlGeometry,
     DeviceDescriptor,
     descriptor_schema_artifacts,
 )
@@ -146,6 +149,30 @@ def test_projection_sources_must_reference_real_capabilities() -> None:
         DeviceDescriptor.model_validate(payload)
 
 
+def test_descriptor_local_capability_refs_reject_foreign_device_refs() -> None:
+    payload = copy.deepcopy(descriptor_payloads()["stream_deck_bitmap_grid"])
+    payload["defaultStatusIndicator"] = {
+        "deviceRef": {"managerId": "manager-main", "deviceId": "stream-deck-mini"},
+        "controlId": "key.0.0",
+        "capabilityId": "raster.bitmap",
+    }
+
+    with pytest.raises(ValidationError, match="deviceRef"):
+        DeviceDescriptor.model_validate(payload)
+
+
+def test_projection_source_refs_are_descriptor_local() -> None:
+    payload = copy.deepcopy(descriptor_payloads()["momentary_button_with_press_projection"])
+    projected = payload["controls"][0]["inputCapabilities"][1]
+    projected["projection"]["source"]["deviceRef"] = {
+        "managerId": "manager-main",
+        "deviceId": "momentary-button",
+    }
+
+    with pytest.raises(ValidationError, match="deviceRef"):
+        DeviceDescriptor.model_validate(payload)
+
+
 def test_source_references_must_reference_existing_connections() -> None:
     payload = copy.deepcopy(descriptor_payloads()["mqtt_zigbee_button"])
     payload["sources"][0]["connectionId"] = "missing"
@@ -206,6 +233,61 @@ def test_core_button_types_have_distinct_event_semantics() -> None:
 
     with pytest.raises(ValidationError, match="activation capabilities emit press only"):
         CapabilityDescriptor.model_validate(payload)
+
+
+def test_core_touch_raster_and_power_capabilities_require_full_known_type_lists() -> None:
+    touch_payload = {
+        "capabilityId": "touch.gesture",
+        "family": DECKR_INPUT_TOUCH,
+        "type": "gesture",
+        "direction": "input",
+        "access": ["emits"],
+        "eventTypes": ["tap"],
+    }
+    with pytest.raises(ValidationError, match="emit tap and swipe"):
+        CapabilityDescriptor.model_validate(touch_payload)
+
+    raster_payload = {
+        "capabilityId": "raster.bitmap",
+        "family": DECKR_OUTPUT_RASTER,
+        "type": "bitmap",
+        "direction": "output",
+        "access": ["settable"],
+    }
+    with pytest.raises(ValidationError, match="support set_frame and clear"):
+        CapabilityDescriptor.model_validate(raster_payload)
+
+    power_payload = {
+        "capabilityId": "device.power",
+        "family": DECKR_DEVICE_POWER,
+        "type": "screen",
+        "direction": "command",
+        "access": ["invokable"],
+        "commandTypes": ["sleep"],
+    }
+    with pytest.raises(ValidationError, match="support sleep and wake"):
+        CapabilityDescriptor.model_validate(power_payload)
+
+
+def test_geometry_and_embedded_schemas_reject_non_wire_safe_values() -> None:
+    with pytest.raises(ValidationError, match="geometry value must be finite"):
+        ControlGeometry.model_validate({"x": float("inf"), "y": 0})
+
+    with pytest.raises(ValidationError, match="NaN or Infinity"):
+        CapabilitySchema.model_validate(
+            {
+                "schemaId": "com.example.number.v1",
+                "schema": {"type": "number", "maximum": float("nan")},
+            }
+        )
+
+    with pytest.raises(ValidationError, match="unsupported JSON value type"):
+        CapabilitySchema.model_validate(
+            {
+                "schemaId": "com.example.object.v1",
+                "schema": {"type": object()},
+            }
+        )
 
 
 def test_capability_schema_requires_contract_keywords() -> None:

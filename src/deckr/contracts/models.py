@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
@@ -32,6 +33,12 @@ def freeze_json(value: Any) -> Any:
         )
     if isinstance(value, list | tuple):
         return tuple(freeze_json(item) for item in value)
+    if value is None or isinstance(value, str | bool | int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("JSON values must not contain NaN or Infinity")
+        return value
     return value
 
 
