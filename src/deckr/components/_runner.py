@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
 import anyio
 
@@ -8,6 +10,8 @@ from deckr.components._defs import (
     ComponentLifecycleEvent,
     ComponentLifecycleEventType,
     ComponentState,
+    ComponentStatus,
+    ReadinessState,
     RunContext,
     RunningComponent,
 )
@@ -36,6 +40,7 @@ async def component_runner(
     component: Component,
     stopping: anyio.Event,
     on_started: Callable[[], Awaitable[None]] | None = None,
+    status_reporter: _ManagerStatusReporter | None = None,
 ) -> None:
     """Run a component with its own task group.
 
@@ -51,7 +56,7 @@ async def component_runner(
     try:
         # One TaskGroup per component: the component "controls its own concurrency"
         async with anyio.create_task_group() as tg:
-            ctx = RunContext(tg=tg, stopping=stopping)
+            ctx = RunContext(tg=tg, stopping=stopping, status=status_reporter)
             await component.start(ctx)
             started = True
 
@@ -80,6 +85,26 @@ async def component_runner(
         raise
 
 
+class _ManagerStatusReporter:
+    def __init__(self, manager: ComponentManager, component_name: str) -> None:
+        self._manager = manager
+        self._component_name = component_name
+
+    async def report(
+        self,
+        readiness_state: ReadinessState,
+        *,
+        reasons: Sequence[str] = (),
+        diagnostics: Mapping[str, object] | None = None,
+    ) -> None:
+        await self._manager._report_component_readiness(
+            self._component_name,
+            readiness_state,
+            reasons=reasons,
+            diagnostics=diagnostics,
+        )
+
+
 class ComponentManager(Component):
     """Registry and lifecycle manager for components.
 
@@ -100,6 +125,7 @@ class ComponentManager(Component):
             max_buffer_size=10000
         )
         self._subscribers = SubscribableQueue[ComponentLifecycleEvent]()
+        self._status_subscribers = SubscribableQueue[ComponentStatus]()
         self._tg: anyio.TaskGroup | None = None
 
     async def run(self) -> None:
@@ -184,6 +210,16 @@ class ComponentManager(Component):
         # For thread-safety, we'd need the lock, but anyio is single-threaded
         rc = self._running.get(name)
         return rc.state if rc else None
+
+    def get_component_status(self, name: str) -> ComponentStatus | None:
+        rc = self._running.get(name)
+        return _status_from_running(rc) if rc is not None else None
+
+    def list_component_statuses(self) -> list[ComponentStatus]:
+        return [
+            _status_from_running(rc)
+            for _name, rc in sorted(self._running.items(), key=lambda item: item[0])
+        ]
 
     def list_components(self) -> list[str]:
         """List all registered component names.
@@ -299,17 +335,23 @@ class ComponentManager(Component):
                             state=ComponentState.STARTING,
                         )
                         self._running[component.name] = rc
+                        status = _status_from_running(rc)
 
                     started.set()
+                    await self._push_status(status)
 
                     # Run the component (this calls component.start() and then sleeps)
                     # We'll update state to RUNNING after start() succeeds
                     async def set_running():
                         async with self._lock:
                             if component.name in self._running:
-                                self._running[
-                                    component.name
-                                ].state = ComponentState.RUNNING
+                                rc = self._running[component.name]
+                                rc.state = ComponentState.RUNNING
+                                status = _status_from_running(rc)
+                            else:
+                                status = None
+                        if status is not None:
+                            await self._push_status(status)
                         try:
                             await self._subscribers.push(
                                 ComponentLifecycleEvent(
@@ -319,7 +361,12 @@ class ComponentManager(Component):
                         except SubscribableQueue.SubscriberBufferFullError:
                             pass
 
-                    await component_runner(component, stopping, on_started=set_running)
+                    await component_runner(
+                        component,
+                        stopping,
+                        on_started=set_running,
+                        status_reporter=_ManagerStatusReporter(self, component.name),
+                    )
 
             except BaseException as e:
                 # Check if this is an expected cancellation (normal shutdown)
@@ -343,6 +390,11 @@ class ComponentManager(Component):
                     rc = self._running.get(component.name)
                     if rc:
                         rc.state = ComponentState.FAILED
+                        status = _status_from_running(rc)
+                    else:
+                        status = None
+                if status is not None:
+                    await self._push_status(status)
 
                 # Emit CRASHED event for cleanup
                 try:
@@ -393,6 +445,7 @@ class ComponentManager(Component):
 
         # Update state to STOPPING
         rc.state = ComponentState.STOPPING
+        await self._push_status(_status_from_running(rc))
 
         # Graceful phase: signal stop and wait for component.stop()
         rc.stopping.set()
@@ -412,10 +465,12 @@ class ComponentManager(Component):
                 pass
 
             rc.state = ComponentState.STOPPED
+            await self._push_status(_status_from_running(rc))
 
         except Exception as e:
             logger.error(f"Error stopping component '{name}': {e}", exc_info=True)
             rc.state = ComponentState.FAILED
+            await self._push_status(_status_from_running(rc))
         finally:
             # Always cancel the scope to kill the component's task group, even if
             # we timed out or were cancelled by an outer shutdown timeout
@@ -498,3 +553,49 @@ class ComponentManager(Component):
     async def subscribe(self) -> AsyncIterator[ComponentLifecycleEvent]:
         async for event in self._subscribers.subscribe():
             yield event
+
+    async def subscribe_status(self) -> AsyncIterator[ComponentStatus]:
+        async for status in self._status_subscribers.subscribe():
+            yield status
+
+    async def _report_component_readiness(
+        self,
+        name: str,
+        readiness_state: ReadinessState,
+        *,
+        reasons: Sequence[str] = (),
+        diagnostics: Mapping[str, object] | None = None,
+    ) -> None:
+        normalized_reasons = tuple(_normalize_status_reason(reason) for reason in reasons)
+        normalized_diagnostics = dict(diagnostics or {})
+        async with self._lock:
+            rc = self._running.get(name)
+            if rc is None:
+                return
+            rc.readiness_state = readiness_state
+            rc.readiness_reasons = normalized_reasons
+            rc.diagnostics = normalized_diagnostics
+            status = _status_from_running(rc)
+        await self._push_status(status)
+
+    async def _push_status(self, status: ComponentStatus) -> None:
+        try:
+            await self._status_subscribers.push(status)
+        except SubscribableQueue.SubscriberBufferFullError:
+            pass
+
+
+def _normalize_status_reason(reason: str) -> str:
+    if not reason:
+        raise ValueError("component readiness reason must not be empty")
+    return reason
+
+
+def _status_from_running(rc: RunningComponent) -> ComponentStatus:
+    return ComponentStatus(
+        runtime_name=rc.component.name,
+        lifecycle_state=rc.state,
+        readiness_state=rc.readiness_state,
+        readiness_reasons=rc.readiness_reasons,
+        diagnostics=dict(rc.diagnostics),
+    )

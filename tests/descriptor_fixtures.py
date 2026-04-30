@@ -199,7 +199,7 @@ def stream_deck_bitmap_grid() -> dict[str, Any]:
                         _momentary_capability(),
                         _activation_capability(
                             projection={
-                                "owner": "driver",
+                                "owner": "hardware_manager",
                                 "source": {
                                     "controlId": control_id,
                                     "capabilityId": "button.momentary",
@@ -305,7 +305,7 @@ def mirabox_compound_dial_touch_surface() -> dict[str, Any]:
                     _activation_capability(
                         "encoder.press",
                         projection={
-                            "owner": "driver",
+                            "owner": "hardware_manager",
                             "source": {
                                 "controlId": "dial.0",
                                 "capabilityId": "encoder.button",

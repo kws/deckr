@@ -256,3 +256,15 @@ def test_device_descriptor_schema_shape_is_interoperable() -> None:
         "deckr.output.raster",
     ]
     assert family_schema["anyOf"][1]["pattern"].startswith("^(?!deckr")
+
+
+def test_projection_owner_schema_uses_v1_component_vocabulary() -> None:
+    artifacts = descriptor_schema_artifacts()
+    capability_schema = artifacts[CAPABILITY_DESCRIPTOR_SCHEMA_ID]
+    projection_schema = capability_schema["$defs"]["CapabilityProjection"]
+
+    assert projection_schema["properties"]["owner"]["enum"] == [
+        "hardware_manager",
+        "adapter",
+        "component",
+    ]

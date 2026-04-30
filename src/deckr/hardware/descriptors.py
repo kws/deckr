@@ -26,7 +26,7 @@ CapabilityAccess = Literal[
 CapabilityDirection = Literal["input", "output", "state", "command"]
 ConnectionStatus = Literal["connected", "available", "unavailable", "unknown"]
 ControlGeometryUnit = Literal["grid", "pixel", "normalized", "millimeter"]
-ProjectionOwner = Literal["hardware_manager", "driver", "adapter", "component"]
+ProjectionOwner = Literal["hardware_manager", "adapter", "component"]
 ProjectionType = Literal["projection", "derivation"]
 
 DECKR_INPUT_BUTTON = "deckr.input.button"

@@ -105,7 +105,6 @@
         "owner": {
           "enum": [
             "hardware_manager",
-            "driver",
             "adapter",
             "component"
           ],

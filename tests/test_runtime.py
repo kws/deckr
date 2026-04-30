@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from memory_lane_substrate import memory_deckr
 
 from deckr.contracts.lanes import LaneContract
 from deckr.lanes import Lane
@@ -9,7 +10,7 @@ from deckr.runtime import Deckr
 
 @pytest.mark.asyncio
 async def test_deckr_creates_core_endpoint_bound_lanes() -> None:
-    async with Deckr() as deckr:
+    async with memory_deckr() as deckr:
         plugin_lane = deckr.lane("plugin_messages")
         hardware_lane = deckr.lane("hardware_messages")
 
@@ -20,7 +21,7 @@ async def test_deckr_creates_core_endpoint_bound_lanes() -> None:
 
 @pytest.mark.asyncio
 async def test_deckr_rejects_duplicate_start() -> None:
-    deckr = Deckr()
+    deckr = memory_deckr()
     assert deckr.is_running is False
     async with deckr:
         assert deckr.is_running is True
@@ -43,6 +44,6 @@ def test_extension_lanes_require_matching_explicit_contracts() -> None:
     with pytest.raises(ValueError, match="require explicit lanes"):
         Deckr(lane_contracts=(contract,))
 
-    deckr = Deckr(lane_contracts=(contract,), lanes=(lane,))
+    deckr = memory_deckr(lane_contracts=(contract,), lanes=(lane,))
     assert deckr.lane(lane).name == lane
     assert deckr.lane_contracts.contract_for(lane) == contract

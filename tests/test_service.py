@@ -12,6 +12,7 @@ from deckr.components import (
     ComponentLifecycleEventType,
     ComponentManager,
     ComponentState,
+    ReadinessState,
     RunContext,
 )
 
@@ -149,6 +150,16 @@ class ComponentWithoutName:
 
     async def stop(self) -> None:
         pass
+
+
+@dataclass
+class ReportingComponent(MockComponent):
+    """Component that reports runtime-local readiness during start."""
+
+    async def start(self, ctx: RunContext) -> None:
+        await ctx.report_unready("worker_starting")
+        await ctx.report_ready(diagnostics={"worker": "ok"})
+        await super().start(ctx)
 
 
 @dataclass
@@ -629,6 +640,26 @@ class TestComponentManagerPublicSurface:
 
         assert event.component is component
         assert not hasattr(event, "plugin")
+
+    @pytest.mark.asyncio
+    async def test_component_status_reports_runtime_local_readiness(
+        self, manager_context
+    ):
+        async with manager_context as (manager, tg):
+            component = ReportingComponent(name="test1")
+
+            await manager.add_component(component)
+            await manager.wait_for_state("test1", ComponentState.RUNNING, timeout=1.0)
+
+            status = manager.get_component_status("test1")
+
+            assert status is not None
+            assert status.runtime_name == "test1"
+            assert status.lifecycle_state == ComponentState.RUNNING
+            assert status.readiness_state == ReadinessState.READY
+            assert status.readiness_reasons == ()
+            assert status.diagnostics == {"worker": "ok"}
+            assert manager.list_component_statuses() == [status]
 
 
 class TestComponentManagerResourceCleanup:

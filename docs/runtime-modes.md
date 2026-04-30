@@ -37,10 +37,10 @@ its configuration only includes a plugin host component and the lane substrate
 needed to reach the controller domain. Distributed runtimes use the NATS
 substrate; the old WebSocket/MQTT lane transport examples have been removed.
 
-## Remote Driver Runtime
+## Remote Hardware Manager Runtime
 
-A remote driver runtime likewise uses the same APIs, but includes a driver or
-hardware manager component plus the lane substrate needed for
+A remote hardware manager runtime likewise uses the same APIs, but includes one
+or more hardware manager components plus the lane substrate needed for
 `hardware_messages`. It does not need a local controller or plugin host.
 
 ## Embedded Or Manual Runtime

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import anyio
 import pytest
+from memory_lane_substrate import memory_deckr
 
 from deckr.contracts.messages import (
     controller_address,
@@ -11,7 +12,6 @@ from deckr.contracts.messages import (
     plugin_hosts_broadcast,
 )
 from deckr.pluginhost.messages import plugin_message
-from deckr.runtime import Deckr
 from deckr.state import (
     StateConflict,
     StateUnavailable,
@@ -47,7 +47,7 @@ async def _receive(stream):
 
 @pytest.mark.asyncio
 async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> None:
-    async with Deckr() as deckr:
+    async with memory_deckr() as deckr:
         host = deckr.lane("plugin_messages").endpoint(host_address("python"))
         controller = deckr.lane("plugin_messages").endpoint(controller_address("main"))
         other = deckr.lane("plugin_messages").endpoint(controller_address("other"))
@@ -69,7 +69,7 @@ async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> Non
 
 @pytest.mark.asyncio
 async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
-    async with Deckr() as deckr:
+    async with memory_deckr() as deckr:
         controller = deckr.lane("plugin_messages").endpoint(controller_address("main"))
         host_a = deckr.lane("plugin_messages").endpoint(host_address("a"))
         host_b = deckr.lane("plugin_messages").endpoint(host_address("b"))
@@ -99,7 +99,7 @@ async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
 
 @pytest.mark.asyncio
 async def test_lane_validation_rejects_wrong_sender_family() -> None:
-    async with Deckr() as deckr:
+    async with memory_deckr() as deckr:
         worker = deckr.lane("plugin_messages").endpoint(endpoint_address("worker", "x"))
         with pytest.raises(ValueError, match="Sender family"):
             await worker.send(
@@ -112,7 +112,7 @@ async def test_lane_validation_rejects_wrong_sender_family() -> None:
 
 @pytest.mark.asyncio
 async def test_endpoint_request_uses_deckr_correlation() -> None:
-    async with Deckr() as deckr:
+    async with memory_deckr() as deckr:
         host = deckr.lane("plugin_messages").endpoint(host_address("python"))
         controller = deckr.lane("plugin_messages").endpoint(controller_address("main"))
         ready = anyio.Event()
@@ -144,7 +144,7 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
 
 @pytest.mark.asyncio
 async def test_endpoint_publish_accepts_prebuilt_message_from_bound_sender() -> None:
-    async with Deckr() as deckr:
+    async with memory_deckr() as deckr:
         host = deckr.lane("plugin_messages").endpoint(host_address("python"))
         controller = deckr.lane("plugin_messages").endpoint(controller_address("main"))
         message = plugin_message(
@@ -331,7 +331,7 @@ def test_state_key_helpers_round_trip_encoded_tokens() -> None:
 def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() -> None:
     # Build through the public lane API so sender stamping and validation stay covered.
     async def build():
-        async with Deckr() as deckr:
+        async with memory_deckr() as deckr:
             host = deckr.lane("plugin_messages").endpoint(host_address("python"))
             controller = deckr.lane("plugin_messages").endpoint(
                 controller_address("main")

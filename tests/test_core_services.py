@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
+from memory_lane_substrate import memory_deckr
 
 from deckr.components import (
     BaseComponent,
@@ -21,7 +22,6 @@ from deckr.contracts.messages import entity_subject
 from deckr.core.config import ConfigDocument
 from deckr.lanes import Lane
 from deckr.launcher import build_runtime_substrate
-from deckr.runtime import Deckr
 from deckr.substrates.nats import NatsSubstrate
 
 
@@ -40,7 +40,7 @@ def _document(raw: dict) -> ConfigDocument:
 @asynccontextmanager
 async def _running_components(document: ConfigDocument):
     plan = resolve_component_host_plan(document)
-    async with Deckr(
+    async with memory_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan) as host:
@@ -216,7 +216,7 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
         document,
         definitions={"deckr.plugin_hosts.python": definition},
     )
-    async with Deckr(
+    async with memory_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan) as host:
@@ -258,7 +258,7 @@ async def test_start_components_passes_current_state_to_component() -> None:
         document,
         definitions={"deckr.controller": definition},
     )
-    async with Deckr(
+    async with memory_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan):

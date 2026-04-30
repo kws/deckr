@@ -91,8 +91,8 @@ Deckr’s target architecture is:
 - stable endpoint addresses and explicit subjects that are separate from
   component runtime ids, transport ids, sessions, topics, and paths
 
-Controllers, drivers, plugin hosts, and protocol adapters are semantic roles, not
-different architectural kinds.
+Controllers, hardware managers, plugin hosts, and protocol adapters are semantic
+roles, not different architectural kinds.
 
 If you are looking for the design rules around discovery, lane ownership,
 lane substrate configuration, wire-safe schemas, configuration namespacing, and

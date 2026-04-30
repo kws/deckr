@@ -43,15 +43,15 @@ uniformly through a single entry-point based mechanism.
 There are not separate architectural discovery systems for:
 
 - controllers
-- drivers
+- hardware managers
 - plugin hosts
 - transports
 - "special" runtime services
 
 Those are semantic roles, not different runtime kinds.
 
-A controller is a component. A driver is a component. A plugin host is a
-component. Any future third-party participant is also just a component.
+A controller is a component. A hardware manager is a component. A plugin host is
+a component. Any future third-party participant is also just a component.
 
 If a design introduces a second generic discovery abstraction because one role
 "feels special", that design is wrong.
@@ -94,7 +94,7 @@ handles before starting any component. No component may rely on another
 component having already started in order for a core lane to exist.
 
 The runtime host does not care whether a component is "really" a controller,
-driver, or plugin host. The only generic concern is the lane contract it
+hardware manager, or plugin host. The only generic concern is the lane contract it
 declares.
 
 This means the architecture is defined by lane interaction, not by role-specific
@@ -125,8 +125,8 @@ reply placeholders use capability-targeted contracts in
 `deckr.hardware.messages`.
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
-not create new core lanes ad hoc inside a controller, plugin host, driver, or
-transport package.
+not create new core lanes ad hoc inside a controller, plugin host, hardware
+manager, or transport package.
 
 Third-party extension lanes are allowed, but they must use globally namespaced
 identifiers owned by the extending system. Extension lanes must not squat on
@@ -175,7 +175,7 @@ It includes:
 - current-state, diagnostics, or control-plane hooks that remain lane-generic
 
 The managed lane runtime belongs in `deckr`. It is not a transport, controller,
-driver, plugin host, or special discovered component.
+hardware manager, plugin host, or special discovered component.
 
 Every runtime host must either use the Deckr-provided managed lane runtime or
 explicitly provide equivalent behavior. Endpoint liveness and current-state
@@ -195,15 +195,15 @@ The public Python API should make this the normal path:
 
 ```python
 async with Deckr() as deckr:
-    plugin_bus = deckr.bus("plugin_messages")
-    hardware_bus = deckr.bus("hardware_messages")
+    plugin_messages = deckr.lane("plugin_messages")
+    hardware_messages = deckr.lane("hardware_messages")
 ```
 
 That object is a runtime host helper around the managed lane runtime. It should:
 
 - create the core lane set by default
 - accept extension lane contracts explicitly
-- expose lane handles through one obvious API such as `bus(name)` or
+- expose lane handles through one obvious API such as `lane(name)` or
   `lanes.require(name)`
 - expose endpoint-bound lane handles, recipient filtering diagnostics, and
   current-state hooks
@@ -228,7 +228,7 @@ These modes are deployment shapes, not different architectures.
 
 - full-stack runtime
   - runs a managed Deckr instance plus component hosting
-  - may start controller, plugin hosts, hardware drivers, transports, and other
+  - may start controller, plugin hosts, hardware managers, transports, and other
     local services in one process
 - embedded application runtime
   - creates a managed Deckr instance inside another application such as a web
@@ -238,10 +238,10 @@ These modes are deployment shapes, not different architectures.
 - skinny plugin host runtime
   - runs only the managed lane runtime, a plugin host, and the lane substrate
     needed to reach a controller domain
-  - does not require a local controller or hardware driver
-- remote driver runtime
-  - runs only the managed lane runtime, one or more hardware drivers or hardware
-    managers, and the lane substrate needed to reach a controller domain
+  - does not require a local controller or hardware manager
+- remote hardware manager runtime
+  - runs only the managed lane runtime, one or more hardware manager components,
+    and the lane substrate needed to reach a controller domain
   - does not require a local controller or plugin host
 
 Every mode must use the same managed lane runtime, lane contracts,
@@ -259,7 +259,8 @@ binding, `RunContext`, `ComponentManager`, and lifecycle supervision.
 The bundled launcher may expose convenient presets or examples for these modes,
 but presets must be expressed as ordinary component composition and explicit
 transport bindings. They must not introduce hidden lane inference such as
-"plugin host mode means plugin traffic" or "driver mode means hardware traffic."
+"plugin host mode means plugin traffic" or
+"hardware manager mode means hardware traffic."
 
 ### AnyIO Runtime Boundary
 
@@ -633,6 +634,23 @@ and `instance_id = "remote"`.
 This is the only permitted way to express multiplicity within the generic
 component model.
 
+### Runtime-Local Component Status
+
+Component lifecycle status is runtime-host local. `ComponentManager` exposes
+`ComponentStatus` snapshots keyed by runtime component name. A status contains
+the component lifecycle state, readiness state, readiness reasons, and
+diagnostics.
+
+Readiness is local operator visibility, not a Deckr protocol fact. A ready
+component may expose no endpoints, and a running component with reachable
+endpoints may still report unready for its own local reasons. Endpoint
+reachability remains lane/current-state protocol state, and device, action,
+binding, page, and settings availability remain domain state.
+
+Components may report readiness through `RunContext.status` or the convenience
+reporting helpers. Components that never report readiness remain in
+`unknown` readiness.
+
 ### Lane Substrate Replacement
 
 The old generic transport-component model for Deckr lanes has been removed in
@@ -773,7 +791,8 @@ to understand component-specific settings.
 - Implicit parent-prefix inheritance is forbidden.
 - Type identity and instance identity are separate.
 - Lifecycle identity and protocol address identity are separate.
-- Role names such as controller, driver, and plugin host are descriptive only.
+- Role names such as controller, hardware manager, and plugin host are
+  descriptive only.
 - Replaceability alone is not a reason to introduce a new generic runtime layer.
 - Do not add shims, aliases, compatibility wrappers, or dual abstractions.
 - Do not preserve broken abstractions for migration purposes.
