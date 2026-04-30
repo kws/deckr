@@ -165,9 +165,9 @@ binding output.
 In particular, endpoint addresses such as `controller:<controller_id>`,
 `host:<host_id>`, and `hardware_manager:<manager_id>` are protocol addressing
 identities. They are not launcher runtime names, plugin runtime ids, WebSocket
-connection ids, MQTT topics, or concrete hardware ids. Device, slot, action,
-context, profile, and page references are subjects carried by lane messages, not
-transport locators.
+connection ids, MQTT topics, or concrete hardware ids. Device, control,
+capability, action, context, profile, and page references are subjects carried
+by lane messages, not transport locators.
 
 `deckr.python_plugin` defines only the Python plugin SDK surface. Other plugin
 formats should define their own SDK/protocol surfaces instead of importing this

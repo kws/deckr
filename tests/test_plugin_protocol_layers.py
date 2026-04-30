@@ -1,5 +1,6 @@
 """Tests for the explicit core-vs-extension plugin protocol split."""
 
+from deckr.pluginhost import messages as plugin_messages
 from deckr.pluginhost.messages import (
     BINDING_ATTACHED,
     BINDING_OUTPUT,
@@ -27,6 +28,15 @@ def test_v1_message_types_are_registered_with_lane_contract():
     assert BINDING_ATTACHED in PLUGIN_MESSAGE_TYPES
     assert CAPABILITY_INPUT in PLUGIN_MESSAGE_TYPES
     assert BINDING_OUTPUT in PLUGIN_MESSAGE_TYPES
+
+
+def test_removed_power_commands_are_not_plugin_lane_contracts():
+    from deckr.contracts.lanes import PLUGIN_MESSAGE_TYPES
+
+    assert "sleepScreen" not in PLUGIN_MESSAGE_TYPES
+    assert "wakeScreen" not in PLUGIN_MESSAGE_TYPES
+    assert not hasattr(plugin_messages, "SLEEP_SCREEN")
+    assert not hasattr(plugin_messages, "WAKE_SCREEN")
 
 
 def test_title_options_round_trip_on_wire():

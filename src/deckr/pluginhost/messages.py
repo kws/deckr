@@ -808,8 +808,6 @@ OPEN_PAGE = "openPage"
 UPDATE_PAGE = "updatePage"
 REPLACE_PAGE = "replacePage"
 CLOSE_PAGE = "closePage"
-SLEEP_SCREEN = "sleepScreen"
-WAKE_SCREEN = "wakeScreen"
 PLUGIN_EXTENSION = "pluginExtension"
 
 
@@ -830,8 +828,6 @@ DECKR_EXTENSION_COMMAND_MESSAGE_TYPES = frozenset(
         UPDATE_PAGE,
         REPLACE_PAGE,
         CLOSE_PAGE,
-        SLEEP_SCREEN,
-        WAKE_SCREEN,
     }
 )
 
@@ -858,8 +854,6 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
     UPDATE_PAGE: UpdatePageBody,
     REPLACE_PAGE: ReplacePageBody,
     CLOSE_PAGE: EmptyPluginBody,
-    SLEEP_SCREEN: EmptyPluginBody,
-    WAKE_SCREEN: EmptyPluginBody,
     PLUGIN_EXTENSION: PluginExtensionBody,
 }
 

@@ -1,5 +1,5 @@
 import logging
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import anyio
 
@@ -35,7 +35,7 @@ SHUTDOWN_TIMEOUT_PER_COMPONENT = 2.0
 async def component_runner(
     component: Component,
     stopping: anyio.Event,
-    on_started: Awaitable[None] | None = None,
+    on_started: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     """Run a component with its own task group.
 
@@ -45,7 +45,7 @@ async def component_runner(
     Args:
         component: The component to run
         stopping: Event to signal component should stop
-        on_started: Optional awaitable to execute after component.start() succeeds
+        on_started: Optional callback to execute after component.start() succeeds
     """
     started = False
     try:
@@ -57,7 +57,7 @@ async def component_runner(
 
             # Component started successfully - execute callback if provided
             if on_started:
-                await on_started
+                await on_started()
 
             # Keep the runner alive until manager cancels it.
             # When cancelled, the TaskGroup unwinds and cancels all component tasks.
@@ -85,7 +85,7 @@ class ComponentManager(Component):
 
     Manages component lifecycle (start, stop, crash detection) with proper
     state tracking, error handling, and resource cleanup. Similar to OSGi
-    lifecycle management but without service discovery.
+    lifecycle management but without a generic object registry.
     """
 
     name = "ComponentManager"
@@ -103,7 +103,7 @@ class ComponentManager(Component):
         self._tg: anyio.TaskGroup | None = None
 
     async def run(self) -> None:
-        """Start the service manager event loop.
+        """Start the component manager event loop.
 
         This should be run in a task group. The manager will process
         component lifecycle events until cancelled.
@@ -130,10 +130,10 @@ class ComponentManager(Component):
         await self._event_send.aclose()
 
     async def add_component(self, component: Component) -> None:
-        """Add a component to the service registry.
+        """Add a component to the runtime registry.
 
         Args:
-            plugin: The component to add
+            component: The component to add
 
         Raises:
             ValueError: If component is missing name attribute
@@ -159,12 +159,12 @@ class ComponentManager(Component):
         )
 
     async def remove_component(self, component: Component) -> None:
-        """Remove a component from the service registry.
+        """Remove a component from the runtime registry.
 
         This is idempotent - removing a non-existent component is a no-op.
 
         Args:
-            plugin: The component to remove
+            component: The component to remove
         """
         await self._event_send.send(
             ComponentLifecycleEvent(component, ComponentLifecycleEventType.REMOVED)
@@ -246,7 +246,7 @@ class ComponentManager(Component):
 
         with anyio.move_on_after(timeout) as scope:
             async for event in self.subscribe():
-                if event.plugin.name != name:
+                if event.component.name != name:
                     continue
                 if event.event_type == ComponentLifecycleEventType.CRASHED:
                     # Fail fast: component crashed before reaching target
@@ -319,24 +319,7 @@ class ComponentManager(Component):
                         except SubscribableQueue.SubscriberBufferFullError:
                             pass
 
-                    # Create the coroutine and pass it - component_runner will await it after start() succeeds
-                    # If component.start() fails, we'll await it in the finally block to prevent warnings
-                    set_running_coro = set_running()
-                    coro_awaited = False
-                    try:
-                        await component_runner(
-                            component, stopping, on_started=set_running_coro
-                        )
-                        coro_awaited = True  # component_runner awaited it successfully
-                    finally:
-                        # Ensure coroutine is awaited even if component_runner fails early
-                        # This prevents "coroutine was never awaited" warnings
-                        if not coro_awaited:
-                            try:
-                                await set_running_coro
-                            except (RuntimeError, StopAsyncIteration):
-                                # Coroutine was already awaited or completed - ignore
-                                pass
+                    await component_runner(component, stopping, on_started=set_running)
 
             except BaseException as e:
                 # Check if this is an expected cancellation (normal shutdown)
@@ -387,7 +370,7 @@ class ComponentManager(Component):
         # Start runner
         if self._tg is None:
             raise RuntimeError(
-                "ServiceManager.run() must be called before adding components"
+                "ComponentManager.run() must be called before adding components"
             )
 
         self._tg.start_soon(_runner_wrapper, name=f"component:{component.name}")
@@ -447,9 +430,12 @@ class ComponentManager(Component):
             async for event in self._event_receive:
                 try:
                     if event.event_type == ComponentLifecycleEventType.ADDED:
-                        await self._start_component(event.plugin)
-                    elif event.event_type == ComponentLifecycleEventType.REMOVED or event.event_type == ComponentLifecycleEventType.CRASHED:
-                        await self._stop_component(event.plugin.name)
+                        await self._start_component(event.component)
+                    elif event.event_type in {
+                        ComponentLifecycleEventType.REMOVED,
+                        ComponentLifecycleEventType.CRASHED,
+                    }:
+                        await self._stop_component(event.component.name)
 
                     try:
                         await self._subscribers.push(event)
@@ -460,7 +446,7 @@ class ComponentManager(Component):
                     # Log but don't crash the event loop
                     logger.error(
                         f"Error processing {event.event_type} event for "
-                        f"'{event.plugin.name}': {e}",
+                        f"'{event.component.name}': {e}",
                         exc_info=True,
                     )
         except anyio.get_cancelled_exc_class():
@@ -475,7 +461,7 @@ class ComponentManager(Component):
         except Exception as e:
             # Unexpected error in event loop
             logger.critical(
-                f"Fatal error in service manager event loop: {e}", exc_info=True
+                f"Fatal error in component manager event loop: {e}", exc_info=True
             )
             try:
                 await self._event_send.aclose()

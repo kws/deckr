@@ -41,7 +41,7 @@ class RunContext:
 
 @runtime_checkable
 class Component(Protocol):
-    """A component is a service that can be started and stopped."""
+    """A runtime participant that can be started and stopped."""
 
     name: str
 
@@ -81,5 +81,5 @@ class RunningComponent:
 
 @dataclass(frozen=True)
 class ComponentLifecycleEvent:
-    plugin: Component
+    component: Component
     event_type: ComponentLifecycleEventType

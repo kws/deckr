@@ -182,9 +182,7 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "requestSettings",
         "setPage",
         "setSettings",
-        "sleepScreen",
         "updatePage",
-        "wakeScreen",
     }
 )
 
@@ -280,9 +278,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                     "requestSettings",
                     "setPage",
                     "setSettings",
-                    "sleepScreen",
                     "updatePage",
-                    "wakeScreen",
                 }
             ),
             idempotency=IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS,

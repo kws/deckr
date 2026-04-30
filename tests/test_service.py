@@ -1,4 +1,4 @@
-"""Comprehensive tests for ServiceManager component lifecycle management."""
+"""Comprehensive tests for ComponentManager lifecycle management."""
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -8,6 +8,8 @@ import pytest
 import pytest_asyncio
 
 from deckr.components import (
+    ComponentLifecycleEvent,
+    ComponentLifecycleEventType,
     ComponentManager,
     ComponentState,
     RunContext,
@@ -30,7 +32,7 @@ async def wait_for_removed(
 
 @asynccontextmanager
 async def _manager_context():
-    """Internal async context manager for ServiceManager lifecycle."""
+    """Internal async context manager for ComponentManager lifecycle."""
     manager = ComponentManager()
 
     async with anyio.create_task_group() as tg:
@@ -61,13 +63,13 @@ async def _manager_context():
 
 
 class ManagerContext:
-    """Async context manager for ServiceManager lifecycle in tests."""
+    """Async context manager for ComponentManager lifecycle in tests."""
 
     def __init__(self):
         self._cm = _manager_context()
 
     async def __aenter__(self):
-        """Enter the context manager and start the ServiceManager."""
+        """Enter the context manager and start the ComponentManager."""
         return await self._cm.__aenter__()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -82,7 +84,7 @@ class ManagerContext:
 
 @pytest_asyncio.fixture
 def manager_context():
-    """Fixture that provides a ServiceManager in a task group with proper cleanup."""
+    """Fixture that provides a ComponentManager in a task group with proper cleanup."""
     return ManagerContext()
 
 
@@ -239,7 +241,7 @@ class StoppingAwareComponent:
         pass
 
 
-class TestServiceManagerSuccess:
+class TestComponentManagerSuccess:
     """Test successful component lifecycle scenarios."""
 
     @pytest.mark.asyncio
@@ -326,7 +328,7 @@ class TestServiceManagerSuccess:
             await wait_for_removed(manager, "test1")
 
 
-class TestServiceManagerErrors:
+class TestComponentManagerErrors:
     """Test error scenarios and edge cases."""
 
     @pytest.mark.asyncio
@@ -430,7 +432,7 @@ class TestServiceManagerErrors:
             assert manager.get_component_state("test1") is None
 
 
-class TestServiceManagerRaceConditions:
+class TestComponentManagerRaceConditions:
     """Test race condition scenarios."""
 
     @pytest.mark.asyncio
@@ -545,7 +547,7 @@ class TestServiceManagerRaceConditions:
             assert manager.get_component_state("test1") is None
 
 
-class TestServiceManagerStateManagement:
+class TestComponentManagerStateManagement:
     """Test state management and query APIs."""
 
     @pytest.mark.asyncio
@@ -613,7 +615,23 @@ class TestServiceManagerStateManagement:
             assert state is None
 
 
-class TestServiceManagerResourceCleanup:
+class TestComponentManagerPublicSurface:
+    """Public component lifecycle API checks."""
+
+    def test_lifecycle_event_names_component(self):
+        """Lifecycle events expose a generic component, not a plugin field."""
+        component = MockComponent(name="test1")
+
+        event = ComponentLifecycleEvent(
+            component=component,
+            event_type=ComponentLifecycleEventType.ADDED,
+        )
+
+        assert event.component is component
+        assert not hasattr(event, "plugin")
+
+
+class TestComponentManagerResourceCleanup:
     """Test resource cleanup scenarios."""
 
     @pytest.mark.asyncio
@@ -684,7 +702,7 @@ class TestServiceManagerResourceCleanup:
             assert True
 
 
-class TestServiceManagerTaskCancellation:
+class TestComponentManagerTaskCancellation:
     """Test that component tasks are properly cancelled when components are removed."""
 
     @pytest.mark.asyncio
@@ -918,7 +936,7 @@ class TestServiceManagerTaskCancellation:
             assert comp2.task_running
 
 
-class TestServiceManagerEdgeCases:
+class TestComponentManagerEdgeCases:
     """Test edge cases and boundary conditions."""
 
     @pytest.mark.asyncio
