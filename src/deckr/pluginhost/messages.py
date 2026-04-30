@@ -103,6 +103,14 @@ CapabilityViewKind = Literal["raw", "native", "projected", "derived", "extension
 CapabilityProvenance = Literal["native", "projection", "derivation", "extension"]
 CapabilityDirection = Literal["input", "output", "state", "command"]
 TemplateRoleCardinality = Literal["single", "collection"]
+SettingsScope = Literal["plugin", "action_instance"]
+SettingsProvenance = Literal[
+    "config_default",
+    "user_override",
+    "template_override",
+    "runtime",
+    "stale_schema",
+]
 
 
 def _require_text(value: str, *, field_name: str) -> str:
@@ -433,8 +441,188 @@ class BindingOutputBody(PluginMessageBody):
         return thaw_json(value)
 
 
-class SettingsBody(PluginMessageBody):
+class SettingsSchemaMetadata(DeckrModel):
+    """Schema metadata attached to editable settings targets."""
+
+    schema_id: str | None = Field(default=None, alias="schemaId")
+    json_schema: JsonObject | None = Field(default=None, alias="schema")
+    stale: bool = False
+
+    @field_validator("json_schema", mode="before")
+    @classmethod
+    def _thaw_schema(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("json_schema", mode="after")
+    @classmethod
+    def _freeze_schema(
+        cls, value: Mapping[str, Any] | None
+    ) -> Mapping[str, Any] | None:
+        return freeze_json(value) if value is not None else None
+
+    @field_serializer("json_schema")
+    def _serialize_schema(
+        self, value: Mapping[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return thaw_json(value) if value is not None else None
+
+
+class SettingsTargetRef(DeckrModel):
+    """Durable settings identity independent of live context or binding handles."""
+
+    scope: SettingsScope
+    controller_id: str = Field(alias="controllerId")
+    config_id: str = Field(alias="configId")
+    plugin_id: str | None = Field(default=None, alias="pluginId")
+    action_id: str | None = Field(default=None, alias="actionId")
+    action_instance_id: str | None = Field(default=None, alias="actionInstanceId")
+    stable_id: str | None = Field(default=None, alias="stableId")
+
+    @model_validator(mode="after")
+    def _validate_scope_fields(self) -> SettingsTargetRef:
+        if self.scope == "plugin":
+            if not self.plugin_id:
+                raise ValueError("plugin settings target requires pluginId")
+            if self.action_id or self.action_instance_id or self.stable_id:
+                raise ValueError("plugin settings target must not include action ids")
+        if self.scope == "action_instance":
+            missing = [
+                name
+                for name, value in {
+                    "pluginId": self.plugin_id,
+                    "actionId": self.action_id,
+                    "actionInstanceId": self.action_instance_id,
+                }.items()
+                if not value
+            ]
+            if missing:
+                raise ValueError(
+                    "action instance settings target missing: "
+                    + ", ".join(missing)
+                )
+        return self
+
+    def key(self) -> str:
+        parts = [
+            f"scope={self.scope}",
+            f"controller={self.controller_id}",
+            f"config={self.config_id}",
+            f"plugin={self.plugin_id or ''}",
+        ]
+        if self.scope == "action_instance":
+            parts.extend(
+                [
+                    f"action={self.action_id or ''}",
+                    f"instance={self.action_instance_id or ''}",
+                    f"stable={self.stable_id or ''}",
+                ]
+            )
+        return "|".join(parts)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for settings command payloads."""
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+class SettingsTargetDescription(DeckrModel):
+    """Editor-facing description of one editable settings target."""
+
+    target: SettingsTargetRef
+    plugin_id: str = Field(alias="pluginId")
+    action_id: str | None = Field(default=None, alias="actionId")
+    label: str | None = None
+    placement: JsonObject = Field(default_factory=dict)
+    schema_metadata: SettingsSchemaMetadata = Field(
+        default_factory=SettingsSchemaMetadata,
+        alias="schemaMetadata",
+    )
+    provenance: tuple[SettingsProvenance, ...] = Field(default_factory=tuple)
+
+    @field_validator("placement", mode="before")
+    @classmethod
+    def _thaw_placement(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("placement", mode="after")
+    @classmethod
+    def _freeze_placement(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("placement")
+    def _serialize_placement(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+class SettingsSnapshot(DeckrModel):
+    """Current settings value and metadata for a target."""
+
+    target: SettingsTargetRef
     settings: JsonObject = Field(default_factory=dict)
+    provenance: tuple[SettingsProvenance, ...] = Field(default_factory=tuple)
+    schema_metadata: SettingsSchemaMetadata = Field(
+        default_factory=SettingsSchemaMetadata,
+        alias="schemaMetadata",
+    )
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _thaw_settings(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("settings", mode="after")
+    @classmethod
+    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("settings")
+    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+class SettingsRequestBody(PluginMessageBody):
+    target: SettingsTargetRef
+
+
+class SettingsPatchBody(PluginMessageBody):
+    target: SettingsTargetRef
+    settings: JsonObject = Field(default_factory=dict)
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _thaw_settings(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("settings", mode="after")
+    @classmethod
+    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("settings")
+    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+class SettingsReplaceBody(SettingsPatchBody):
+    pass
+
+
+class SettingsSnapshotBody(PluginMessageBody):
+    target: SettingsTargetRef
+    settings: JsonObject = Field(default_factory=dict)
+    provenance: tuple[SettingsProvenance, ...] = Field(default_factory=tuple)
+    schema_metadata: SettingsSchemaMetadata = Field(
+        default_factory=SettingsSchemaMetadata,
+        alias="schemaMetadata",
+    )
+
+    @classmethod
+    def from_snapshot(cls, snapshot: SettingsSnapshot) -> SettingsSnapshotBody:
+        return cls(
+            target=snapshot.target,
+            settings=snapshot.settings,
+            provenance=snapshot.provenance,
+            schemaMetadata=snapshot.schema_metadata,
+        )
 
     @field_validator("settings", mode="before")
     @classmethod
@@ -598,6 +786,11 @@ class ActionDescriptor(DeckrModel):
     controllers: tuple[str, ...] | None = None
     property_inspector_path: str | None = None
     manifest_defaults: JsonObject | None = None
+    settings_schema: JsonObject | None = Field(default=None, alias="settingsSchema")
+    plugin_settings_schema: JsonObject | None = Field(
+        default=None,
+        alias="pluginSettingsSchema",
+    )
 
     @field_validator("requirements", mode="after")
     @classmethod
@@ -637,16 +830,31 @@ class ActionDescriptor(DeckrModel):
             )
         return value
 
-    @field_validator("manifest_defaults", mode="after")
+    @field_validator(
+        "manifest_defaults",
+        "settings_schema",
+        "plugin_settings_schema",
+        mode="before",
+    )
     @classmethod
-    def _freeze_manifest_defaults(
+    def _thaw_json_object(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator(
+        "manifest_defaults",
+        "settings_schema",
+        "plugin_settings_schema",
+        mode="after",
+    )
+    @classmethod
+    def _freeze_json_object(
         cls,
         value: Mapping[str, Any] | None,
     ) -> Mapping[str, Any] | None:
         return freeze_json(value) if value is not None else None
 
-    @field_serializer("manifest_defaults")
-    def _serialize_manifest_defaults(
+    @field_serializer("manifest_defaults", "settings_schema", "plugin_settings_schema")
+    def _serialize_json_object(
         self,
         value: Mapping[str, Any] | None,
     ) -> dict[str, Any] | None:
@@ -800,9 +1008,10 @@ PAGE_SESSION_OPENED = "pageSessionOpened"
 PAGE_SESSION_CLOSED = "pageSessionClosed"
 CAPABILITY_INPUT = "capabilityInput"
 BINDING_OUTPUT = "bindingOutput"
-REQUEST_SETTINGS = "requestSettings"
-HERE_ARE_SETTINGS = "hereAreSettings"
-SET_SETTINGS = "setSettings"
+SETTINGS_REQUEST = "settingsRequest"
+SETTINGS_PATCH = "settingsPatch"
+SETTINGS_REPLACE = "settingsReplace"
+SETTINGS_SNAPSHOT = "settingsSnapshot"
 SET_PAGE = "setPage"
 OPEN_PAGE = "openPage"
 UPDATE_PAGE = "updatePage"
@@ -815,8 +1024,9 @@ PLUGIN_EXTENSION = "pluginExtension"
 CORE_COMMAND_MESSAGE_TYPES = frozenset(
     {
         BINDING_OUTPUT,
-        REQUEST_SETTINGS,
-        SET_SETTINGS,
+        SETTINGS_REQUEST,
+        SETTINGS_PATCH,
+        SETTINGS_REPLACE,
     }
 )
 
@@ -846,9 +1056,10 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
     PAGE_SESSION_CLOSED: PageSessionLifecycleBody,
     CAPABILITY_INPUT: CapabilityInputBody,
     BINDING_OUTPUT: BindingOutputBody,
-    REQUEST_SETTINGS: EmptyPluginBody,
-    HERE_ARE_SETTINGS: SettingsBody,
-    SET_SETTINGS: SettingsBody,
+    SETTINGS_REQUEST: SettingsRequestBody,
+    SETTINGS_PATCH: SettingsPatchBody,
+    SETTINGS_REPLACE: SettingsReplaceBody,
+    SETTINGS_SNAPSHOT: SettingsSnapshotBody,
     SET_PAGE: PageSelectBody,
     OPEN_PAGE: OpenPageBody,
     UPDATE_PAGE: UpdatePageBody,

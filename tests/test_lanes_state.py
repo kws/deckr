@@ -29,6 +29,17 @@ from deckr.state import (
 from deckr.substrates.nats import NatsStateStore, _headers_for, _subject_for
 
 
+def _settings_target() -> dict[str, str]:
+    return {
+        "scope": "action_instance",
+        "controllerId": "main",
+        "configId": "device-config",
+        "pluginId": "demo.plugin",
+        "actionId": "demo.action",
+        "actionInstanceId": "instance-a",
+    }
+
+
 async def _receive(stream):
     with anyio.fail_after(1):
         return await stream.receive()
@@ -44,8 +55,8 @@ async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> Non
             sent = await host.send(
                 recipient=controller_address("main"),
                 subject=entity_subject("settings", contextId="ctx"),
-                message_type="requestSettings",
-                body={},
+                message_type="settingsRequest",
+                body={"target": _settings_target()},
             )
             received = await _receive(controller_stream)
             with anyio.move_on_after(0.05) as scope:
@@ -94,8 +105,8 @@ async def test_lane_validation_rejects_wrong_sender_family() -> None:
             await worker.send(
                 recipient=controller_address("main"),
                 subject=entity_subject("settings", contextId="ctx"),
-                message_type="requestSettings",
-                body={},
+                message_type="settingsRequest",
+                body={"target": _settings_target()},
             )
 
 
@@ -112,8 +123,8 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
                 request = await _receive(stream)
                 await controller.reply_to(
                     request,
-                    message_type="hereAreSettings",
-                    body={"settings": {"theme": "dark"}},
+                    message_type="settingsSnapshot",
+                    body={"target": _settings_target(), "settings": {"theme": "dark"}},
                 )
 
         async with anyio.create_task_group() as tg:
@@ -122,12 +133,12 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
             reply = await host.request(
                 recipient=controller_address("main"),
                 subject=entity_subject("settings", contextId="ctx"),
-                message_type="requestSettings",
-                body={},
+                message_type="settingsRequest",
+                body={"target": _settings_target()},
             )
             tg.cancel_scope.cancel()
 
-    assert reply.message_type == "hereAreSettings"
+    assert reply.message_type == "settingsSnapshot"
     assert reply.in_reply_to is not None
 
 
@@ -140,8 +151,8 @@ async def test_endpoint_publish_accepts_prebuilt_message_from_bound_sender() -> 
             sender=host.endpoint,
             recipient=controller.endpoint,
             subject=entity_subject("settings", contextId="ctx"),
-            message_type="requestSettings",
-            body={},
+            message_type="settingsRequest",
+            body={"target": _settings_target()},
         )
         async with controller.subscribe() as stream:
             await host.publish(message)
@@ -329,8 +340,8 @@ def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() ->
                 return await host.send(
                     recipient=controller_address("main"),
                     subject=entity_subject("settings", contextId="ctx"),
-                    message_type="requestSettings",
-                    body={},
+                    message_type="settingsRequest",
+                    body={"target": _settings_target()},
                 )
 
     message = anyio.run(build)

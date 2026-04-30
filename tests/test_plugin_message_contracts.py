@@ -10,7 +10,7 @@ from deckr.pluginhost.messages import (
     BINDING_OUTPUT,
     CAPABILITY_INPUT,
     PLUGIN_EXTENSION,
-    SET_SETTINGS,
+    SETTINGS_PATCH,
     ActionDescriptor,
     BindingMetadata,
     CapabilityInputBody,
@@ -23,7 +23,9 @@ from deckr.pluginhost.messages import (
     PageChildBindingDescriptor,
     PluginActionCatalog,
     PluginExtensionBody,
-    SettingsBody,
+    SettingsPatchBody,
+    SettingsSnapshotBody,
+    SettingsTargetRef,
     context_subject,
     plugin_body_for_type,
     subject_action_instance_id,
@@ -31,6 +33,18 @@ from deckr.pluginhost.messages import (
     subject_config_id,
     subject_page_session_id,
 )
+
+
+def _settings_target() -> SettingsTargetRef:
+    return SettingsTargetRef(
+        scope="action_instance",
+        controllerId="controller-main",
+        configId="device-config-1",
+        pluginId="demo.plugin",
+        actionId="demo.action",
+        actionInstanceId="instance-1",
+        stableId="weather",
+    )
 
 
 def _binding_metadata() -> BindingMetadata:
@@ -68,7 +82,14 @@ def _binding_metadata() -> BindingMetadata:
 
 def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
     with pytest.raises(ValidationError):
-        plugin_body_for_type(SET_SETTINGS, {"settings": {}, "actionUuid": "other"})
+        plugin_body_for_type(
+            SETTINGS_PATCH,
+            {
+                "target": _settings_target().to_dict(),
+                "settings": {},
+                "actionUuid": "other",
+            },
+        )
 
     with pytest.raises(ValidationError):
         plugin_body_for_type(
@@ -103,7 +124,7 @@ def test_plugin_action_catalog_serializes_actions_by_uuid() -> None:
     }
 
 
-def test_action_descriptor_carries_capability_requirements_and_page_templates() -> None:
+def test_action_descriptor_carries_capability_requirements_page_templates_and_settings_schema() -> None:
     descriptor = ActionDescriptor(
         uuid="demo.pager",
         name="Pager",
@@ -147,6 +168,8 @@ def test_action_descriptor_carries_capability_requirements_and_page_templates() 
                 ],
             )
         ],
+        settingsSchema={"type": "object", "properties": {"title": {"type": "string"}}},
+        pluginSettingsSchema={"type": "object", "properties": {"token": {"type": "string"}}},
     )
 
     assert descriptor.to_dict()["requirements"][0]["preferences"] == [
@@ -161,6 +184,50 @@ def test_action_descriptor_carries_capability_requirements_and_page_templates() 
     assert descriptor.to_dict()["dynamicPageTemplates"][0]["roles"][0]["roleId"] == (
         "content"
     )
+    assert descriptor.to_dict()["settingsSchema"]["properties"]["title"]["type"] == (
+        "string"
+    )
+    assert descriptor.to_dict()["pluginSettingsSchema"]["properties"]["token"]["type"] == (
+        "string"
+    )
+
+
+def test_settings_target_and_snapshot_are_target_based() -> None:
+    target = _settings_target()
+    body = SettingsSnapshotBody(
+        target=target,
+        settings={"title": "Weather"},
+        provenance=("user_override",),
+        schemaMetadata={
+            "schemaId": "demo.settings.v1",
+            "schema": {"type": "object"},
+            "stale": False,
+        },
+    )
+
+    wire = body.to_dict()
+
+    assert wire == {
+        "target": {
+            "scope": "action_instance",
+            "controllerId": "controller-main",
+            "configId": "device-config-1",
+            "pluginId": "demo.plugin",
+            "actionId": "demo.action",
+            "actionInstanceId": "instance-1",
+            "stableId": "weather",
+        },
+        "settings": {"title": "Weather"},
+        "provenance": ["user_override"],
+        "schemaMetadata": {
+            "schemaId": "demo.settings.v1",
+            "schema": {"type": "object"},
+            "stale": False,
+        },
+    }
+    assert "contextId" not in target.key()
+    assert "bindingId" not in target.key()
+    assert "pageSessionId" not in target.key()
 
 
 def test_action_descriptor_rejects_duplicate_requirement_names() -> None:
@@ -309,9 +376,9 @@ def test_context_subject_carries_explicit_lifecycle_ids() -> None:
 
 
 def test_plugin_body_for_type_rejects_mismatched_body_instances() -> None:
-    with pytest.raises(TypeError, match="requires body type SettingsBody"):
+    with pytest.raises(TypeError, match="requires body type SettingsPatchBody"):
         plugin_body_for_type(
-            SET_SETTINGS,
+            SETTINGS_PATCH,
             PluginExtensionBody(
                 extension_type="com.example.demo",
                 extension_schema_id="com.example.demo.v1",
@@ -322,7 +389,10 @@ def test_plugin_body_for_type_rejects_mismatched_body_instances() -> None:
     with pytest.raises(TypeError, match="requires body type PluginExtensionBody"):
         plugin_body_for_type(
             PLUGIN_EXTENSION,
-            SettingsBody(settings={"title": "wrong model"}),
+            SettingsPatchBody(
+                target=_settings_target(),
+                settings={"title": "wrong model"},
+            ),
         )
 
 
