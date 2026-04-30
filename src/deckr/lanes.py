@@ -10,6 +10,8 @@ import anyio
 from deckr.contracts.lanes import LaneContract, LaneContractRegistry
 from deckr.contracts.messages import (
     CORE_LANE_NAMES,
+    HARDWARE_MESSAGES_LANE,
+    PLUGIN_MESSAGES_LANE,
     BroadcastTarget,
     DeckrMessage,
     EndpointAddress,
@@ -18,6 +20,7 @@ from deckr.contracts.messages import (
     MessageTarget,
     endpoint_target,
     message_is_expired,
+    message_targets_endpoint,
     parse_endpoint_address,
 )
 from deckr.state import StateStore
@@ -210,13 +213,6 @@ class LaneRegistry:
         return tuple(sorted(self._lanes))
 
 
-def message_targets_endpoint(message: DeckrMessage, endpoint: EndpointAddress) -> bool:
-    recipient = message.recipient
-    if isinstance(recipient, EndpointTarget):
-        return recipient.endpoint == endpoint
-    return recipient.endpoint_family == endpoint.family
-
-
 def validate_message_for_contract(
     message: DeckrMessage,
     contract: LaneContract,
@@ -230,6 +226,7 @@ def validate_message_for_contract(
             f"Message type {message.message_type!r} is not supported on "
             f"lane {message.lane!r}"
         )
+    _validate_core_lane_body(message)
     if (
         contract.allowed_sender_families is not None
         and message.sender.family not in contract.allowed_sender_families
@@ -299,6 +296,18 @@ def _validate_recipient_family(
         return
     if family not in contract.allowed_recipient_families:
         raise ValueError(f"Recipient family {family!r} is not allowed on lane {lane!r}")
+
+
+def _validate_core_lane_body(message: DeckrMessage) -> None:
+    if message.lane == PLUGIN_MESSAGES_LANE:
+        from deckr.pluginhost.messages import plugin_body
+
+        plugin_body(message)
+        return
+    if message.lane == HARDWARE_MESSAGES_LANE:
+        from deckr.hardware.messages import hardware_body_from_message
+
+        hardware_body_from_message(message)
 
 
 def _coerce_target(target: str | EndpointAddress | MessageTarget) -> MessageTarget:

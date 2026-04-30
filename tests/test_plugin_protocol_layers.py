@@ -7,7 +7,6 @@ from deckr.pluginhost.messages import (
     CAPABILITY_INPUT,
     CORE_COMMAND_MESSAGE_TYPES,
     DECKR_EXTENSION_COMMAND_MESSAGE_TYPES,
-    SET_PAGE,
     SETTINGS_PATCH,
     SETTINGS_REQUEST,
     SETTINGS_SNAPSHOT,
@@ -22,8 +21,8 @@ def test_core_and_extension_command_sets_are_explicit():
     assert BINDING_OUTPUT in CORE_COMMAND_MESSAGE_TYPES
     assert SETTINGS_REQUEST in CORE_COMMAND_MESSAGE_TYPES
     assert SETTINGS_PATCH in CORE_COMMAND_MESSAGE_TYPES
-    assert SET_PAGE in DECKR_EXTENSION_COMMAND_MESSAGE_TYPES
-    assert SET_PAGE not in CORE_COMMAND_MESSAGE_TYPES
+    assert "setPage" not in DECKR_EXTENSION_COMMAND_MESSAGE_TYPES
+    assert "setPage" not in CORE_COMMAND_MESSAGE_TYPES
     assert BINDING_ATTACHED not in CORE_COMMAND_MESSAGE_TYPES
 
 
@@ -44,11 +43,13 @@ def test_removed_power_commands_are_not_plugin_lane_contracts():
     assert "requestSettings" not in PLUGIN_MESSAGE_TYPES
     assert "setSettings" not in PLUGIN_MESSAGE_TYPES
     assert "hereAreSettings" not in PLUGIN_MESSAGE_TYPES
+    assert "setPage" not in PLUGIN_MESSAGE_TYPES
     assert not hasattr(plugin_messages, "SLEEP_SCREEN")
     assert not hasattr(plugin_messages, "WAKE_SCREEN")
     assert not hasattr(plugin_messages, "REQUEST_SETTINGS")
     assert not hasattr(plugin_messages, "SET_SETTINGS")
     assert not hasattr(plugin_messages, "HERE_ARE_SETTINGS")
+    assert not hasattr(plugin_messages, "SET_PAGE")
 
 
 def test_title_options_round_trip_on_wire():
@@ -111,16 +112,16 @@ def test_dynamic_page_command_round_trip_on_wire():
 
 def test_action_descriptor_round_trip_on_wire():
     descriptor = ActionDescriptor(
-        uuid="com.example.plugin.action",
+        actionId="com.example.plugin.action",
         name="Example Action",
-        plugin_uuid="com.example.plugin",
+        pluginId="com.example.plugin",
         settingsSchema={"type": "object"},
     )
     wire = descriptor.to_dict()
     assert wire == {
-        "uuid": "com.example.plugin.action",
+        "actionId": "com.example.plugin.action",
         "name": "Example Action",
-        "pluginUuid": "com.example.plugin",
+        "pluginId": "com.example.plugin",
         "settingsSchema": {"type": "object"},
     }
     assert ActionDescriptor.model_validate(wire) == descriptor

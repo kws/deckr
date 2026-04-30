@@ -16,48 +16,33 @@ BroadcastTargets = Mapping[str, str]
 
 class DeliveryPersistence(StrEnum):
     EPHEMERAL = "ephemeral"
-    DURABLE = "durable"
-
-
-class DeliveryDurability(StrEnum):
-    NON_DURABLE = "non_durable"
-    DURABLE = "durable"
 
 
 class DeliveryGuarantee(StrEnum):
-    BEST_EFFORT = "best_effort"
     AT_MOST_ONCE = "at_most_once"
-    AT_LEAST_ONCE = "at_least_once"
 
 
 class DeliveryReplay(StrEnum):
     NONE = "none"
-    BROKER = "broker"
-    LANE = "lane"
 
 
 class DeliveryOrdering(StrEnum):
     LOCAL_OR_CONNECTION_FIFO = "local_or_connection_fifo"
-    GLOBAL = "global"
 
 
 class ExpiryHandling(StrEnum):
     DROP_AND_REPORT = "drop_and_report"
-    DROP = "drop"
-    DEAD_LETTER = "dead_letter"
 
 
 class BackpressureHandling(StrEnum):
     DROP_SUBSCRIBER = "drop_subscriber"
     DISCONNECT = "disconnect"
-    BLOCK = "block"
 
 
 class MalformedMessageHandling(StrEnum):
     DROP_UNPARSEABLE_LOG_PARSEABLE_REJECTION = (
         "drop_unparseable_log_parseable_rejection"
     )
-    DEAD_LETTER = "dead_letter"
 
 
 class MessageFamily(StrEnum):
@@ -88,7 +73,6 @@ class MessageFamilyDelivery:
 @dataclass(frozen=True, slots=True)
 class DeliverySemantics:
     persistence: DeliveryPersistence = DeliveryPersistence.EPHEMERAL
-    durability: DeliveryDurability = DeliveryDurability.NON_DURABLE
     guarantee: DeliveryGuarantee = DeliveryGuarantee.AT_MOST_ONCE
     replay: DeliveryReplay = DeliveryReplay.NONE
     ordering: DeliveryOrdering = DeliveryOrdering.LOCAL_OR_CONNECTION_FIFO
@@ -119,8 +103,6 @@ def unsupported_delivery_reason(delivery: DeliverySemantics | None) -> str | Non
         return None
     if delivery.persistence != DeliveryPersistence.EPHEMERAL:
         return "only ephemeral delivery is implemented"
-    if delivery.durability != DeliveryDurability.NON_DURABLE:
-        return "only non-durable delivery is implemented"
     if delivery.guarantee != DeliveryGuarantee.AT_MOST_ONCE:
         return "only at-most-once delivery is implemented"
     if delivery.replay != DeliveryReplay.NONE:
@@ -145,6 +127,8 @@ class LaneContractRegistry:
     def __init__(self, contracts: Iterable[LaneContract] = ()) -> None:
         self._contracts: dict[str, LaneContract] = {}
         for contract in contracts:
+            if contract.lane in self._contracts:
+                raise ValueError(f"Duplicate lane contract {contract.lane!r}")
             reason = unsupported_delivery_reason(contract.delivery)
             if reason is not None:
                 raise ValueError(
@@ -157,7 +141,7 @@ class LaneContractRegistry:
         contract = self._contracts.get(lane)
         if contract is not None:
             return contract
-        return LaneContract(lane=lane)
+        raise LookupError(f"Lane contract {lane!r} is not registered")
 
     @property
     def contracts(self) -> Mapping[str, LaneContract]:
@@ -178,7 +162,6 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "pageSessionOpened",
         "pluginExtension",
         "replacePage",
-        "setPage",
         "settingsPatch",
         "settingsReplace",
         "settingsRequest",
@@ -205,7 +188,6 @@ HARDWARE_MESSAGE_TYPES = frozenset(
 
 CORE_EPHEMERAL_DELIVERY = DeliverySemantics(
     persistence=DeliveryPersistence.EPHEMERAL,
-    durability=DeliveryDurability.NON_DURABLE,
     guarantee=DeliveryGuarantee.AT_MOST_ONCE,
     replay=DeliveryReplay.NONE,
     ordering=DeliveryOrdering.LOCAL_OR_CONNECTION_FIFO,
@@ -225,7 +207,6 @@ PLUGIN_MESSAGES_DELIVERY = replace(
         "subject.contextId",
         "subject.bindingId",
         "subject.pageSessionId",
-        "subject.actionUuid",
         "subject.actionInstanceId",
         "subject.hostId",
     ),
@@ -276,7 +257,6 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                     "openPage",
                     "pluginExtension",
                     "replacePage",
-                    "setPage",
                     "settingsPatch",
                     "settingsReplace",
                     "settingsRequest",

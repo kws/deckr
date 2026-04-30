@@ -35,7 +35,6 @@ from deckr.hardware.descriptors import CapabilityRef, ControlRef, DeviceRef
 _RESERVED_EXTENSION_DATA_FIELDS = frozenset(
     {
         "actionInstanceId",
-        "actionUuid",
         "bindingId",
         "configId",
         "contextId",
@@ -639,11 +638,6 @@ class SettingsSnapshotBody(PluginMessageBody):
         return thaw_json(value)
 
 
-class PageSelectBody(PluginMessageBody):
-    profile: str = "default"
-    page: int = 0
-
-
 def _target(
     recipient: str | EndpointAddress | MessageTarget,
 ) -> MessageTarget:
@@ -722,7 +716,6 @@ def context_subject(
     action_instance_id: str | None = None,
     binding_id: str | None = None,
     page_session_id: str | None = None,
-    action_uuid: str | None = None,
 ) -> EntitySubject:
     identifiers: dict[str, str] = {"contextId": context_id}
     if config_id is not None:
@@ -733,8 +726,6 @@ def context_subject(
         identifiers["bindingId"] = binding_id
     if page_session_id is not None:
         identifiers["pageSessionId"] = page_session_id
-    if action_uuid is not None:
-        identifiers["actionUuid"] = action_uuid
     return entity_subject("context", **identifiers)
 
 
@@ -763,11 +754,6 @@ def subject_page_session_id(subject: EntitySubject) -> str | None:
     return str(value) if value is not None else None
 
 
-def subject_action_uuid(subject: EntitySubject) -> str | None:
-    value = subject.identifiers.get("actionUuid")
-    return str(value) if value is not None else None
-
-
 def plugin_host_subject(host_id: str) -> EntitySubject:
     return entity_subject("plugin_host", hostId=host_id)
 
@@ -775,9 +761,9 @@ def plugin_host_subject(host_id: str) -> EntitySubject:
 class ActionDescriptor(DeckrModel):
     """Action identity advertised by a plugin host."""
 
-    uuid: str
+    action_id: str = Field(alias="actionId")
     name: str | None = None
-    plugin_uuid: str | None = None
+    plugin_id: str | None = Field(default=None, alias="pluginId")
     requirements: tuple[CapabilityRequirement, ...] | None = None
     dynamic_page_templates: tuple[DynamicPageTemplateDescriptor, ...] | None = Field(
         default=None,
@@ -791,6 +777,18 @@ class ActionDescriptor(DeckrModel):
         default=None,
         alias="pluginSettingsSchema",
     )
+
+    @field_validator("action_id")
+    @classmethod
+    def _validate_action_id(cls, value: str) -> str:
+        return _require_text(value, field_name="action id")
+
+    @field_validator("plugin_id")
+    @classmethod
+    def _validate_plugin_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_text(value, field_name="plugin id")
 
     @field_validator("requirements", mode="after")
     @classmethod
@@ -1012,7 +1010,6 @@ SETTINGS_REQUEST = "settingsRequest"
 SETTINGS_PATCH = "settingsPatch"
 SETTINGS_REPLACE = "settingsReplace"
 SETTINGS_SNAPSHOT = "settingsSnapshot"
-SET_PAGE = "setPage"
 OPEN_PAGE = "openPage"
 UPDATE_PAGE = "updatePage"
 REPLACE_PAGE = "replacePage"
@@ -1033,7 +1030,6 @@ CORE_COMMAND_MESSAGE_TYPES = frozenset(
 # Deckr-specific controller extensions beyond the core command set.
 DECKR_EXTENSION_COMMAND_MESSAGE_TYPES = frozenset(
     {
-        SET_PAGE,
         OPEN_PAGE,
         UPDATE_PAGE,
         REPLACE_PAGE,
@@ -1060,7 +1056,6 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
     SETTINGS_PATCH: SettingsPatchBody,
     SETTINGS_REPLACE: SettingsReplaceBody,
     SETTINGS_SNAPSHOT: SettingsSnapshotBody,
-    SET_PAGE: PageSelectBody,
     OPEN_PAGE: OpenPageBody,
     UPDATE_PAGE: UpdatePageBody,
     REPLACE_PAGE: ReplacePageBody,

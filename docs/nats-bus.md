@@ -417,9 +417,9 @@ Example:
   "ttlSeconds": 15,
   "actions": {
     "com.example.clock.digital": {
-      "uuid": "com.example.clock.digital",
+      "actionId": "com.example.clock.digital",
       "name": "Digital Clock",
-      "pluginUuid": "com.example.clock",
+      "pluginId": "com.example.clock",
       "controllers": [],
       "propertyInspectorPath": null,
       "manifestDefaults": {}

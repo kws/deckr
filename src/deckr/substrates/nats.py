@@ -191,6 +191,8 @@ class NatsSubstrate:
             raise ValueError("NATS message payload is not a Deckr envelope") from exc
         _validate_subject_hint(msg.subject, message)
         _validate_headers(getattr(msg, "headers", None), message)
+        contract = self._lane_contracts.contract_for(message.lane)
+        validate_message_for_contract(message, contract)
         return message
 
 

@@ -8,6 +8,7 @@ from deckr.contracts.messages import (
     controller_address,
     endpoint_address,
     entity_subject,
+    hardware_manager_address,
     host_address,
     plugin_hosts_broadcast,
 )
@@ -84,8 +85,12 @@ async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
             sent = await controller.send(
                 recipient=plugin_hosts_broadcast(),
                 subject=entity_subject("page", contextId="ctx"),
-                message_type="bindingOutput",
-                body={"title": "Ready"},
+                message_type="pluginExtension",
+                body={
+                    "extensionType": "test.broadcast",
+                    "extensionSchemaId": "test.broadcast.v1",
+                    "data": {"title": "Ready"},
+                },
             )
             received_a = await _receive(stream_a)
             received_b = await _receive(stream_b)
@@ -100,7 +105,9 @@ async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
 @pytest.mark.asyncio
 async def test_lane_validation_rejects_wrong_sender_family() -> None:
     async with memory_deckr() as deckr:
-        worker = deckr.lane("plugin_messages").endpoint(endpoint_address("worker", "x"))
+        worker = deckr.lane("plugin_messages").endpoint(
+            hardware_manager_address("x")
+        )
         with pytest.raises(ValueError, match="Sender family"):
             await worker.send(
                 recipient=controller_address("main"),

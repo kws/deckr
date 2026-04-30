@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field, RootModel, field_serializer, field_validator
 
-from deckr.contracts.models import DeckrModel, freeze_json, thaw_json
+from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
 HARDWARE_MESSAGES_LANE = "hardware_messages"
 PLUGIN_MESSAGES_LANE = "plugin_messages"
@@ -22,11 +22,9 @@ CORE_LANE_SCHEMA_IDS = {
 }
 
 BUILTIN_ACTION_PROVIDER_ID = "deckr.controller.builtin"
-LEGACY_BUILTIN_ACTION_PROVIDER_ID = "builtin"
 RESERVED_BUILTIN_PROVIDER_IDS = frozenset(
     {
         BUILTIN_ACTION_PROVIDER_ID,
-        LEGACY_BUILTIN_ACTION_PROVIDER_ID,
     }
 )
 
@@ -39,6 +37,27 @@ CORE_ENDPOINT_FAMILIES = frozenset(
 )
 
 BroadcastScope = str
+
+
+def _require_identity_part(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+    if not value:
+        raise ValueError(f"{field_name} must not be empty")
+    if value.strip() != value:
+        raise ValueError(
+            f"{field_name} must not contain leading or trailing whitespace"
+        )
+    if not value.strip():
+        raise ValueError(f"{field_name} must not be whitespace")
+    return value
+
+
+def _require_endpoint_family(value: str, *, field_name: str) -> str:
+    family = _require_identity_part(value, field_name=field_name)
+    if family not in CORE_ENDPOINT_FAMILIES:
+        raise ValueError(f"Unknown endpoint family {family!r}")
+    return family
 
 
 def _new_message_id() -> str:
@@ -59,11 +78,17 @@ class EndpointAddress(RootModel[str]):
     def _validate_root(cls, value: str) -> str:
         if not isinstance(value, str):
             raise TypeError("Endpoint address must be a string")
+        if value.strip() != value:
+            raise ValueError(
+                "Endpoint address must not contain leading or trailing whitespace"
+            )
         family, sep, endpoint_id = value.partition(":")
-        if not sep or not family or not endpoint_id:
+        if not sep:
             raise ValueError(
                 "Endpoint address must have shape '<endpoint_family>:<endpoint_id>'"
             )
+        _require_endpoint_family(family, field_name="Endpoint family")
+        _require_identity_part(endpoint_id, field_name="Endpoint id")
         if ":" in endpoint_id:
             raise ValueError("Endpoint id must not contain ':'")
         return value
@@ -81,9 +106,7 @@ class EndpointAddress(RootModel[str]):
 
 
 def endpoint_address(endpoint_family: str, endpoint_id: str) -> EndpointAddress:
-    family = endpoint_family.strip()
-    identifier = endpoint_id.strip()
-    return EndpointAddress.model_validate(f"{family}:{identifier}")
+    return EndpointAddress.model_validate(f"{endpoint_family}:{endpoint_id}")
 
 
 def controller_address(controller_id: str) -> EndpointAddress:
@@ -147,6 +170,30 @@ class BroadcastTarget(DeckrModel):
     endpoint_family: str
     domain: str | None = None
     hop_limit: int | None = None
+
+    @field_validator("scope")
+    @classmethod
+    def _validate_scope(cls, value: BroadcastScope) -> BroadcastScope:
+        return _require_identity_part(value, field_name="Broadcast scope")
+
+    @field_validator("endpoint_family")
+    @classmethod
+    def _validate_endpoint_family(cls, value: str) -> str:
+        return _require_endpoint_family(value, field_name="Broadcast endpoint family")
+
+    @field_validator("domain")
+    @classmethod
+    def _validate_domain(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_identity_part(value, field_name="Broadcast domain")
+
+    @field_validator("hop_limit")
+    @classmethod
+    def _validate_hop_limit(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("Broadcast hop limit must be non-negative")
+        return value
 
 
 MessageTarget = Annotated[
@@ -216,10 +263,25 @@ class EntitySubject(DeckrModel):
     kind: str
     identifiers: Mapping[str, str] = Field(default_factory=dict)
 
+    @field_validator("kind")
+    @classmethod
+    def _validate_kind(cls, value: str) -> str:
+        return _require_identity_part(value, field_name="Entity subject kind")
+
     @field_validator("identifiers", mode="after")
     @classmethod
     def _freeze_identifiers(cls, value: Mapping[str, str]) -> Mapping[str, str]:
-        return freeze_json(value)
+        return freeze_json(
+            {
+                _require_identity_part(key, field_name="Entity subject id field"): (
+                    _require_identity_part(
+                        item,
+                        field_name=f"Entity subject id {key!r}",
+                    )
+                )
+                for key, item in value.items()
+            }
+        )
 
     @field_serializer("identifiers")
     def _serialize_identifiers(self, value: Mapping[str, str]) -> dict[str, str]:
@@ -229,7 +291,7 @@ class EntitySubject(DeckrModel):
 def entity_subject(kind: str, **identifiers: str) -> EntitySubject:
     return EntitySubject(
         kind=kind,
-        identifiers={key: value for key, value in identifiers.items() if value},
+        identifiers=identifiers,
     )
 
 
@@ -258,7 +320,7 @@ class DeckrMessage(DeckrModel):
     in_reply_to: str | None = Field(default=None, alias="inReplyTo")
     causation_id: str | None = Field(default=None, alias="causationId")
     trace: TraceContext | None = None
-    body: Mapping[str, Any]
+    body: JsonObject
 
     @field_validator("ttl_ms")
     @classmethod

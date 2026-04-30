@@ -104,14 +104,14 @@ def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
         )
 
 
-def test_plugin_action_catalog_serializes_actions_by_uuid() -> None:
+def test_plugin_action_catalog_serializes_actions_by_action_id() -> None:
     catalog = PluginActionCatalog(
         hostId="python",
         hostEndpoint=host_address("python"),
         sessionId="session-1",
         timestamp=datetime(2026, 4, 29, tzinfo=UTC),
         ttlSeconds=15,
-        actions={"demo.action": {"uuid": "demo.action", "name": "Demo"}},
+        actions={"demo.action": {"actionId": "demo.action", "name": "Demo"}},
     )
 
     assert catalog.model_dump(by_alias=True, mode="json") == {
@@ -120,13 +120,13 @@ def test_plugin_action_catalog_serializes_actions_by_uuid() -> None:
         "sessionId": "session-1",
         "timestamp": "2026-04-29T00:00:00Z",
         "ttlSeconds": 15,
-        "actions": {"demo.action": {"uuid": "demo.action", "name": "Demo"}},
+        "actions": {"demo.action": {"actionId": "demo.action", "name": "Demo"}},
     }
 
 
 def test_action_descriptor_carries_capability_requirements_page_templates_and_settings_schema() -> None:
     descriptor = ActionDescriptor(
-        uuid="demo.pager",
+        actionId="demo.pager",
         name="Pager",
         requirements=[
             CapabilityRequirement(
@@ -238,7 +238,7 @@ def test_action_descriptor_rejects_duplicate_requirement_names() -> None:
 
     with pytest.raises(ValidationError, match="requirement names"):
         ActionDescriptor(
-            uuid="demo.action",
+            actionId="demo.action",
             requirements=[requirement, requirement],
         )
 
@@ -365,7 +365,6 @@ def test_context_subject_carries_explicit_lifecycle_ids() -> None:
         action_instance_id="instance-a",
         binding_id="binding-a",
         page_session_id="session-a",
-        action_uuid="action-a",
     )
 
     assert subject.identifiers["contextId"] == "ctx-live"

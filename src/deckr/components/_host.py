@@ -15,7 +15,6 @@ from deckr.components._runner import ComponentManager
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     BackpressureHandling,
-    DeliveryDurability,
     DeliveryGuarantee,
     DeliveryOrdering,
     DeliveryPersistence,
@@ -59,6 +58,23 @@ REMOVED_LANE_CONTRACT_FIELDS = frozenset(
         "transport_route",
         "websocket",
     }
+)
+DELIVERY_CONTRACT_FIELDS = frozenset(
+    {
+        "persistence",
+        "guarantee",
+        "replay",
+        "ordering",
+        "ordering_keys",
+        "expiry",
+        "local_backpressure",
+        "remote_backpressure",
+        "malformed_messages",
+        "message_families",
+    }
+)
+REMOVED_DELIVERY_CONTRACT_FIELDS = REMOVED_LANE_CONTRACT_FIELDS | frozenset(
+    {"durability"}
 )
 
 
@@ -636,9 +652,13 @@ def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | Non
         )
     if not isinstance(source, Mapping):
         raise ValueError(f"Lane contract {lane!r} delivery must be a table")
-    removed = sorted(key for key in REMOVED_LANE_CONTRACT_FIELDS if key in source)
+    removed = sorted(key for key in REMOVED_DELIVERY_CONTRACT_FIELDS if key in source)
     if removed:
         keys = ", ".join(f"delivery.{key}" for key in removed)
+        raise ValueError(f"{keys} are not part of the v1 lane contract")
+    unknown = sorted(set(source) - DELIVERY_CONTRACT_FIELDS)
+    if unknown:
+        keys = ", ".join(f"delivery.{key}" for key in unknown)
         raise ValueError(f"{keys} are not part of the v1 lane contract")
     return DeliverySemantics(
         persistence=(
@@ -648,14 +668,6 @@ def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | Non
                 field_name="delivery.persistence",
             )
             or DeliveryPersistence.EPHEMERAL
-        ),
-        durability=(
-            _optional_enum_value(
-                DeliveryDurability,
-                source.get("durability"),
-                field_name="delivery.durability",
-            )
-            or DeliveryDurability.NON_DURABLE
         ),
         guarantee=(
             _optional_enum_value(

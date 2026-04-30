@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from memory_lane_substrate import memory_deckr
 
-from deckr.contracts.lanes import LaneContract
+from deckr.contracts.lanes import LaneContract, LaneContractRegistry
 from deckr.lanes import Lane
 from deckr.runtime import Deckr
 
@@ -47,3 +47,13 @@ def test_extension_lanes_require_matching_explicit_contracts() -> None:
     deckr = memory_deckr(lane_contracts=(contract,), lanes=(lane,))
     assert deckr.lane(lane).name == lane
     assert deckr.lane_contracts.contract_for(lane) == contract
+
+
+def test_lane_contract_registry_rejects_duplicates_and_unknown_lanes() -> None:
+    contract = LaneContract(lane="acme.metrics.events")
+
+    with pytest.raises(ValueError, match="Duplicate lane contract"):
+        LaneContractRegistry((contract, contract))
+
+    with pytest.raises(LookupError, match="not registered"):
+        LaneContractRegistry().contract_for("acme.metrics.events")
