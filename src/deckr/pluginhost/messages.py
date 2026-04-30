@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -17,6 +19,7 @@ from pydantic import (
 
 from deckr.contracts.messages import (
     PLUGIN_MESSAGES_LANE,
+    PLUGIN_MESSAGES_SCHEMA_ID,
     BroadcastTarget,
     DeckrMessage,
     EndpointAddress,
@@ -30,19 +33,70 @@ from deckr.contracts.messages import (
     message_targets_endpoint,
 )
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
-from deckr.hardware.descriptors import CapabilityRef, ControlRef, DeviceRef
+from deckr.hardware.descriptors import (
+    CORE_CAPABILITY_FAMILIES,
+    CapabilityDirection,
+    CapabilityRef,
+    ControlRef,
+    DeviceRef,
+)
+from deckr.state import decode_key_token, encode_key_token
 
 _RESERVED_EXTENSION_DATA_FIELDS = frozenset(
     {
+        "actionId",
         "actionInstanceId",
+        "actionUuid",
+        "action_uuid",
         "bindingId",
+        "capabilityId",
         "configId",
-        "contextId",
         "controlId",
+        "controlRef",
+        "contextId",
+        "deviceRef",
         "hostId",
         "pageSessionId",
+        "pluginId",
+        "pluginUuid",
+        "plugin_uuid",
+        "uuid",
     }
 )
+
+_CONTRACT_NAME_PATTERN = r"^[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*$"
+_GLOBALLY_QUALIFIED_NAME_PATTERN = (
+    r"^[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
+)
+_EXTENSION_CAPABILITY_FAMILY_PATTERN = (
+    r"^(?!deckr\.)[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
+)
+_CONTRACT_NAME_RE = re.compile(_CONTRACT_NAME_PATTERN)
+_GLOBALLY_QUALIFIED_NAME_RE = re.compile(_GLOBALLY_QUALIFIED_NAME_PATTERN)
+_EXTENSION_CAPABILITY_FAMILY_RE = re.compile(_EXTENSION_CAPABILITY_FAMILY_PATTERN)
+
+
+def _reserved_extension_data_paths(
+    value: Any,
+    *,
+    path: str = "data",
+) -> tuple[str, ...]:
+    if isinstance(value, Mapping):
+        paths: list[str] = []
+        for key, item in value.items():
+            child_path = f"{path}.{key}"
+            if key in _RESERVED_EXTENSION_DATA_FIELDS:
+                paths.append(child_path)
+            paths.extend(_reserved_extension_data_paths(item, path=child_path))
+        return tuple(paths)
+    if isinstance(value, list | tuple):
+        paths: list[str] = []
+        for index, item in enumerate(value):
+            paths.extend(
+                _reserved_extension_data_paths(item, path=f"{path}[{index}]")
+            )
+        return tuple(paths)
+    return ()
 
 
 def make_context_id() -> str:
@@ -79,6 +133,11 @@ class PluginExtensionBody(PluginMessageBody):
     extension_schema_id: str
     data: JsonObject = Field(default_factory=dict)
 
+    @field_validator("extension_type", "extension_schema_id")
+    @classmethod
+    def _validate_extension_identity(cls, value: str) -> str:
+        return _require_globally_qualified_name(value, field_name="extension identity")
+
     @field_validator("data", mode="before")
     @classmethod
     def _thaw_data(cls, value: Any) -> Any:
@@ -87,7 +146,7 @@ class PluginExtensionBody(PluginMessageBody):
     @field_validator("data", mode="after")
     @classmethod
     def _freeze_data(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        reserved = _RESERVED_EXTENSION_DATA_FIELDS & set(value)
+        reserved = _reserved_extension_data_paths(value)
         if reserved:
             fields = ", ".join(sorted(reserved))
             raise ValueError(f"extension data must not contain routing fields: {fields}")
@@ -100,7 +159,6 @@ class PluginExtensionBody(PluginMessageBody):
 
 CapabilityViewKind = Literal["raw", "native", "projected", "derived", "extension"]
 CapabilityProvenance = Literal["native", "projection", "derivation", "extension"]
-CapabilityDirection = Literal["input", "output", "state", "command"]
 TemplateRoleCardinality = Literal["single", "collection"]
 SettingsScope = Literal["plugin", "action_instance"]
 SettingsProvenance = Literal[
@@ -113,10 +171,69 @@ SettingsProvenance = Literal[
 
 
 def _require_text(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{field_name} must not be empty")
     return normalized
+
+
+def _require_optional_text(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _require_text(value, field_name=field_name)
+
+
+def _require_non_negative(value: int | None, *, field_name: str) -> int | None:
+    if value is not None and value < 0:
+        raise ValueError(f"{field_name} must be non-negative")
+    return value
+
+
+def _require_contract_name(value: str, *, field_name: str) -> str:
+    normalized = _require_text(value, field_name=field_name)
+    if not _CONTRACT_NAME_RE.fullmatch(normalized):
+        raise ValueError(f"{field_name} must be a lowercase contract identifier")
+    return normalized
+
+
+def _require_globally_qualified_name(value: str, *, field_name: str) -> str:
+    normalized = _require_contract_name(value, field_name=field_name)
+    if not _GLOBALLY_QUALIFIED_NAME_RE.fullmatch(normalized):
+        raise ValueError(f"{field_name} must be globally namespaced")
+    return normalized
+
+
+def _require_capability_family(value: str, *, field_name: str) -> str:
+    normalized = _require_text(value, field_name=field_name)
+    if normalized in CORE_CAPABILITY_FAMILIES:
+        return normalized
+    if _EXTENSION_CAPABILITY_FAMILY_RE.fullmatch(normalized):
+        return normalized
+    raise ValueError(
+        f"{field_name} must be a Deckr core capability family or globally namespaced extension family"
+    )
+
+
+def _validate_contract_names(
+    values: tuple[str, ...],
+    *,
+    field_name: str,
+) -> tuple[str, ...]:
+    return tuple(
+        _require_contract_name(value, field_name=field_name) for value in values
+    )
+
+
+def _require_bound_capability_ref(
+    ref: CapabilityRef,
+    *,
+    field_name: str,
+) -> CapabilityRef:
+    if ref.device_ref is None or ref.control_id is None:
+        raise ValueError(f"{field_name} requires deviceRef and controlId")
+    return ref
 
 
 class CapabilityRequirementSelector(DeckrModel):
@@ -128,6 +245,37 @@ class CapabilityRequirementSelector(DeckrModel):
     direction: CapabilityDirection | None = None
     event_types: tuple[str, ...] = Field(default_factory=tuple, alias="eventTypes")
     command_types: tuple[str, ...] = Field(default_factory=tuple, alias="commandTypes")
+
+    @field_validator("capability_id")
+    @classmethod
+    def _validate_capability_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_contract_name(value, field_name="capability id")
+
+    @field_validator("family")
+    @classmethod
+    def _validate_family(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_capability_family(value, field_name="capability family")
+
+    @field_validator("capability_type")
+    @classmethod
+    def _validate_capability_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_contract_name(value, field_name="capability type")
+
+    @field_validator("event_types")
+    @classmethod
+    def _validate_event_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_contract_names(value, field_name="event type")
+
+    @field_validator("command_types")
+    @classmethod
+    def _validate_command_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_contract_names(value, field_name="command type")
 
     @model_validator(mode="after")
     def _require_selector_field(self) -> CapabilityRequirementSelector:
@@ -159,6 +307,16 @@ class CapabilityRequirement(DeckrModel):
     @classmethod
     def _validate_name(cls, value: str) -> str:
         return _require_text(value, field_name="requirement name")
+
+    @field_validator("event_types")
+    @classmethod
+    def _validate_event_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_contract_names(value, field_name="event type")
+
+    @field_validator("command_types")
+    @classmethod
+    def _validate_command_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_contract_names(value, field_name="command type")
 
     @field_validator("preferences", mode="after")
     @classmethod
@@ -282,6 +440,36 @@ class MatchedCapability(DeckrModel):
     provenance: CapabilityProvenance = "native"
     source: CapabilityRef | None = None
 
+    @field_validator("requirement_name", "role_id")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="matched capability metadata")
+
+    @field_validator("capability")
+    @classmethod
+    def _validate_capability(cls, value: CapabilityRef) -> CapabilityRef:
+        return _require_bound_capability_ref(value, field_name="matched capability")
+
+    @field_validator("family")
+    @classmethod
+    def _validate_family(cls, value: str) -> str:
+        return _require_capability_family(value, field_name="capability family")
+
+    @field_validator("capability_type")
+    @classmethod
+    def _validate_capability_type(cls, value: str) -> str:
+        return _require_contract_name(value, field_name="capability type")
+
+    @field_validator("event_types")
+    @classmethod
+    def _validate_event_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_contract_names(value, field_name="event type")
+
+    @field_validator("command_types")
+    @classmethod
+    def _validate_command_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_contract_names(value, field_name="command type")
+
 
 class BindingMetadata(DeckrModel):
     """Plugin-facing metadata for one active binding lease."""
@@ -304,6 +492,27 @@ class BindingMetadata(DeckrModel):
     )
     output_generation: int = Field(default=0, alias="outputGeneration")
 
+    @field_validator(
+        "action_id",
+        "action_instance_id",
+        "config_id",
+        "context_id",
+        "binding_id",
+    )
+    @classmethod
+    def _validate_required_ids(cls, value: str) -> str:
+        return _require_text(value, field_name="binding metadata id")
+
+    @field_validator("plugin_id", "page_session_id", "role_id", "item_key", "handler")
+    @classmethod
+    def _validate_optional_ids(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="binding metadata id")
+
+    @field_validator("output_generation")
+    @classmethod
+    def _validate_output_generation(cls, value: int) -> int:
+        return _require_non_negative(value, field_name="output generation") or 0
+
 
 class ActionInstanceMetadata(DeckrModel):
     """Plugin-facing metadata for one controller-owned action instance."""
@@ -313,6 +522,16 @@ class ActionInstanceMetadata(DeckrModel):
     action_instance_id: str = Field(alias="actionInstanceId")
     config_id: str = Field(alias="configId")
     context_id: str | None = Field(default=None, alias="contextId")
+
+    @field_validator("action_id", "action_instance_id", "config_id")
+    @classmethod
+    def _validate_required_ids(cls, value: str) -> str:
+        return _require_text(value, field_name="action instance metadata id")
+
+    @field_validator("plugin_id", "context_id")
+    @classmethod
+    def _validate_optional_ids(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="action instance metadata id")
 
 
 class PageSessionMetadata(DeckrModel):
@@ -327,6 +546,22 @@ class PageSessionMetadata(DeckrModel):
     owner_binding_id: str | None = Field(default=None, alias="ownerBindingId")
     bindings: tuple[BindingMetadata, ...] = Field(default_factory=tuple)
 
+    @field_validator(
+        "action_instance_id",
+        "config_id",
+        "page_id",
+        "page_session_id",
+        "context_id",
+    )
+    @classmethod
+    def _validate_required_ids(cls, value: str) -> str:
+        return _require_text(value, field_name="page session metadata id")
+
+    @field_validator("template_id", "owner_binding_id")
+    @classmethod
+    def _validate_optional_ids(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="page session metadata id")
+
 
 class CapabilityInputEvent(DeckrModel):
     """Capability-oriented plugin input event delivered to an active binding."""
@@ -340,10 +575,25 @@ class CapabilityInputEvent(DeckrModel):
     source: CapabilityRef | None = None
     view: CapabilityViewKind | None = None
 
+    @field_validator("capability")
+    @classmethod
+    def _validate_capability(cls, value: CapabilityRef) -> CapabilityRef:
+        return _require_bound_capability_ref(value, field_name="input capability")
+
     @field_validator("event_type")
     @classmethod
     def _validate_event_type(cls, value: str) -> str:
-        return _require_text(value, field_name="input event type")
+        return _require_contract_name(value, field_name="input event type")
+
+    @field_validator("sequence")
+    @classmethod
+    def _validate_sequence(cls, value: int | None) -> int | None:
+        return _require_non_negative(value, field_name="sequence")
+
+    @field_validator("producer")
+    @classmethod
+    def _validate_producer(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="producer")
 
     @field_validator("value", mode="after")
     @classmethod
@@ -420,10 +670,20 @@ class BindingOutputBody(PluginMessageBody):
     params: JsonObject = Field(default_factory=dict)
     generation: int
 
+    @field_validator("capability")
+    @classmethod
+    def _validate_capability(cls, value: CapabilityRef) -> CapabilityRef:
+        return _require_bound_capability_ref(value, field_name="output capability")
+
     @field_validator("command_type")
     @classmethod
     def _validate_command_type(cls, value: str) -> str:
-        return _require_text(value, field_name="output command type")
+        return _require_contract_name(value, field_name="output command type")
+
+    @field_validator("generation")
+    @classmethod
+    def _validate_generation(cls, value: int) -> int:
+        return _require_non_negative(value, field_name="generation") or 0
 
     @field_validator("params", mode="before")
     @classmethod
@@ -477,6 +737,19 @@ class SettingsTargetRef(DeckrModel):
     action_instance_id: str | None = Field(default=None, alias="actionInstanceId")
     stable_id: str | None = Field(default=None, alias="stableId")
 
+    @field_validator(
+        "controller_id",
+        "config_id",
+    )
+    @classmethod
+    def _validate_required_ids(cls, value: str) -> str:
+        return _require_text(value, field_name="settings target id")
+
+    @field_validator("plugin_id", "action_id", "action_instance_id", "stable_id")
+    @classmethod
+    def _validate_optional_ids(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="settings target id")
+
     @model_validator(mode="after")
     def _validate_scope_fields(self) -> SettingsTargetRef:
         if self.scope == "plugin":
@@ -503,24 +776,76 @@ class SettingsTargetRef(DeckrModel):
 
     def key(self) -> str:
         parts = [
-            f"scope={self.scope}",
-            f"controller={self.controller_id}",
-            f"config={self.config_id}",
-            f"plugin={self.plugin_id or ''}",
+            "settings",
+            "target",
+            encode_key_token(self.scope),
+            encode_key_token(self.controller_id),
+            encode_key_token(self.config_id),
+            encode_key_token(self.plugin_id or ""),
         ]
         if self.scope == "action_instance":
             parts.extend(
                 [
-                    f"action={self.action_id or ''}",
-                    f"instance={self.action_instance_id or ''}",
-                    f"stable={self.stable_id or ''}",
+                    encode_key_token(self.action_id or ""),
+                    encode_key_token(self.action_instance_id or ""),
+                    "1" if self.stable_id is not None else "0",
                 ]
             )
-        return "|".join(parts)
+            if self.stable_id is not None:
+                parts.append(encode_key_token(self.stable_id))
+        return ".".join(parts)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for settings command payloads."""
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+def settings_target_key(target: SettingsTargetRef) -> str:
+    return target.key()
+
+
+def parse_settings_target_key(key: str) -> SettingsTargetRef | None:
+    parts = key.split(".")
+    if len(parts) < 6 or parts[:2] != ["settings", "target"]:
+        return None
+    try:
+        scope = decode_key_token(parts[2])
+        controller_id = decode_key_token(parts[3])
+        config_id = decode_key_token(parts[4])
+        plugin_id = decode_key_token(parts[5])
+        if scope == "plugin" and len(parts) == 6:
+            return SettingsTargetRef(
+                scope="plugin",
+                controllerId=controller_id,
+                configId=config_id,
+                pluginId=plugin_id,
+            )
+        if scope != "action_instance":
+            return None
+        if len(parts) not in {9, 10}:
+            return None
+        stable_flag = parts[8]
+        if stable_flag == "0":
+            if len(parts) != 9:
+                return None
+            stable_id = None
+        elif stable_flag == "1":
+            if len(parts) != 10:
+                return None
+            stable_id = decode_key_token(parts[9])
+        else:
+            return None
+        return SettingsTargetRef(
+            scope="action_instance",
+            controllerId=controller_id,
+            configId=config_id,
+            pluginId=plugin_id,
+            actionId=decode_key_token(parts[6]),
+            actionInstanceId=decode_key_token(parts[7]),
+            stableId=stable_id,
+        )
+    except ValueError:
+        return None
 
 
 class SettingsTargetDescription(DeckrModel):
@@ -537,6 +862,24 @@ class SettingsTargetDescription(DeckrModel):
     )
     provenance: tuple[SettingsProvenance, ...] = Field(default_factory=tuple)
 
+    @field_validator("plugin_id")
+    @classmethod
+    def _validate_plugin_id(cls, value: str) -> str:
+        return _require_text(value, field_name="settings target plugin id")
+
+    @field_validator("action_id", "label")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="settings target description")
+
+    @model_validator(mode="after")
+    def _validate_target_mirror(self) -> SettingsTargetDescription:
+        if self.plugin_id != self.target.plugin_id:
+            raise ValueError("settings target description pluginId must match target")
+        if self.action_id != self.target.action_id:
+            raise ValueError("settings target description actionId must match target")
+        return self
+
     @field_validator("placement", mode="before")
     @classmethod
     def _thaw_placement(cls, value: Any) -> Any:
@@ -552,7 +895,7 @@ class SettingsTargetDescription(DeckrModel):
         return thaw_json(value)
 
 
-class SettingsSnapshot(DeckrModel):
+class SettingsSnapshot(PluginMessageBody):
     """Current settings value and metadata for a target."""
 
     target: SettingsTargetRef
@@ -576,6 +919,15 @@ class SettingsSnapshot(DeckrModel):
     @field_serializer("settings")
     def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
         return thaw_json(value)
+
+    @classmethod
+    def from_snapshot(cls, snapshot: SettingsSnapshot) -> SettingsSnapshot:
+        return cls(
+            target=snapshot.target,
+            settings=snapshot.settings,
+            provenance=snapshot.provenance,
+            schemaMetadata=snapshot.schema_metadata,
+        )
 
 
 class SettingsRequestBody(PluginMessageBody):
@@ -603,39 +955,6 @@ class SettingsPatchBody(PluginMessageBody):
 
 class SettingsReplaceBody(SettingsPatchBody):
     pass
-
-
-class SettingsSnapshotBody(PluginMessageBody):
-    target: SettingsTargetRef
-    settings: JsonObject = Field(default_factory=dict)
-    provenance: tuple[SettingsProvenance, ...] = Field(default_factory=tuple)
-    schema_metadata: SettingsSchemaMetadata = Field(
-        default_factory=SettingsSchemaMetadata,
-        alias="schemaMetadata",
-    )
-
-    @classmethod
-    def from_snapshot(cls, snapshot: SettingsSnapshot) -> SettingsSnapshotBody:
-        return cls(
-            target=snapshot.target,
-            settings=snapshot.settings,
-            provenance=snapshot.provenance,
-            schemaMetadata=snapshot.schema_metadata,
-        )
-
-    @field_validator("settings", mode="before")
-    @classmethod
-    def _thaw_settings(cls, value: Any) -> Any:
-        return thaw_json(value)
-
-    @field_validator("settings", mode="after")
-    @classmethod
-    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return freeze_json(value)
-
-    @field_serializer("settings")
-    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return thaw_json(value)
 
 
 def _target(
@@ -873,6 +1192,16 @@ class PluginActionCatalog(DeckrModel):
     ttl_seconds: int = Field(alias="ttlSeconds")
     actions: Mapping[str, ActionDescriptor] = Field(default_factory=dict)
 
+    @field_validator("host_id", "session_id")
+    @classmethod
+    def _validate_ids(cls, value: str) -> str:
+        return _require_text(value, field_name="plugin action catalog id")
+
+    @field_validator("ttl_seconds")
+    @classmethod
+    def _validate_ttl_seconds(cls, value: int) -> int:
+        return _require_non_negative(value, field_name="ttlSeconds") or 0
+
     @field_serializer("timestamp")
     def _serialize_timestamp(self, value: datetime) -> str:
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
@@ -883,6 +1212,19 @@ class PluginActionCatalog(DeckrModel):
         cls, value: Mapping[str, ActionDescriptor]
     ) -> Mapping[str, ActionDescriptor]:
         return freeze_json(value)
+
+    @model_validator(mode="after")
+    def _validate_identity(self) -> PluginActionCatalog:
+        expected_endpoint = host_address(self.host_id)
+        if self.host_endpoint != expected_endpoint:
+            raise ValueError("plugin action catalog hostEndpoint must match hostId")
+        for key, descriptor in self.actions.items():
+            action_id = _require_text(key, field_name="action catalog key")
+            if descriptor.action_id != action_id:
+                raise ValueError(
+                    "plugin action catalog map keys must match descriptor actionId"
+                )
+        return self
 
     @field_serializer("actions")
     def _serialize_actions(
@@ -1055,7 +1397,7 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
     SETTINGS_REQUEST: SettingsRequestBody,
     SETTINGS_PATCH: SettingsPatchBody,
     SETTINGS_REPLACE: SettingsReplaceBody,
-    SETTINGS_SNAPSHOT: SettingsSnapshotBody,
+    SETTINGS_SNAPSHOT: SettingsSnapshot,
     OPEN_PAGE: OpenPageBody,
     UPDATE_PAGE: UpdatePageBody,
     REPLACE_PAGE: ReplacePageBody,
@@ -1066,3 +1408,67 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
 OpenPageBody.model_rebuild()
 UpdatePageBody.model_rebuild()
 ReplacePageBody.model_rebuild()
+
+
+def plugin_message_schema() -> dict[str, Any]:
+    """Return the canonical ``plugin_messages`` lane JSON Schema artifact."""
+
+    definitions: dict[str, Any] = {}
+    envelope_ref = _add_schema_model(definitions, DeckrMessage)
+    variants: list[dict[str, Any]] = []
+    for message_type, body_type in PLUGIN_BODY_BY_MESSAGE_TYPE.items():
+        body_ref = _add_schema_model(definitions, body_type)
+        variants.append(
+            {
+                "allOf": [
+                    envelope_ref,
+                    {
+                        "type": "object",
+                        "required": ["lane", "messageType", "body"],
+                        "properties": {
+                            "lane": {"const": PLUGIN_MESSAGES_LANE},
+                            "messageType": {"const": message_type},
+                            "body": body_ref,
+                        },
+                    },
+                ]
+            }
+        )
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": PLUGIN_MESSAGES_SCHEMA_ID,
+        "title": "Deckr plugin_messages Lane Message",
+        "x-deckr-schema-version": "1",
+        "oneOf": variants,
+        "$defs": definitions,
+    }
+
+
+def _add_schema_model(
+    definitions: dict[str, Any],
+    model: type[DeckrModel],
+) -> dict[str, str]:
+    schema = model.model_json_schema(
+        by_alias=True,
+        ref_template="#/$defs/{model}",
+    )
+    for name, definition in schema.pop("$defs", {}).items():
+        _add_schema_definition(definitions, name, definition)
+    schema.pop("$schema", None)
+    name = model.__name__
+    _add_schema_definition(definitions, name, schema)
+    return {"$ref": f"#/$defs/{name}"}
+
+
+def _add_schema_definition(
+    definitions: dict[str, Any],
+    name: str,
+    definition: Mapping[str, Any],
+) -> None:
+    schema = deepcopy(dict(definition))
+    existing = definitions.get(name)
+    if existing is not None:
+        if existing != schema:
+            raise RuntimeError(f"Conflicting schema definition {name!r}")
+        return
+    definitions[name] = schema

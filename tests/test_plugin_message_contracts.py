@@ -24,10 +24,13 @@ from deckr.pluginhost.messages import (
     PluginActionCatalog,
     PluginExtensionBody,
     SettingsPatchBody,
-    SettingsSnapshotBody,
+    SettingsSnapshot,
+    SettingsTargetDescription,
     SettingsTargetRef,
     context_subject,
+    parse_settings_target_key,
     plugin_body_for_type,
+    plugin_message_schema,
     subject_action_instance_id,
     subject_binding_id,
     subject_config_id,
@@ -124,6 +127,28 @@ def test_plugin_action_catalog_serializes_actions_by_action_id() -> None:
     }
 
 
+def test_plugin_action_catalog_validates_host_and_action_identity() -> None:
+    with pytest.raises(ValidationError, match="hostEndpoint"):
+        PluginActionCatalog(
+            hostId="python",
+            hostEndpoint=host_address("other"),
+            sessionId="session-1",
+            timestamp=datetime(2026, 4, 29, tzinfo=UTC),
+            ttlSeconds=15,
+            actions={},
+        )
+
+    with pytest.raises(ValidationError, match="map keys"):
+        PluginActionCatalog(
+            hostId="python",
+            hostEndpoint=host_address("python"),
+            sessionId="session-1",
+            timestamp=datetime(2026, 4, 29, tzinfo=UTC),
+            ttlSeconds=15,
+            actions={"demo.other": {"actionId": "demo.action", "name": "Demo"}},
+        )
+
+
 def test_action_descriptor_carries_capability_requirements_page_templates_and_settings_schema() -> None:
     descriptor = ActionDescriptor(
         actionId="demo.pager",
@@ -194,7 +219,7 @@ def test_action_descriptor_carries_capability_requirements_page_templates_and_se
 
 def test_settings_target_and_snapshot_are_target_based() -> None:
     target = _settings_target()
-    body = SettingsSnapshotBody(
+    body = SettingsSnapshot(
         target=target,
         settings={"title": "Weather"},
         provenance=("user_override",),
@@ -228,6 +253,27 @@ def test_settings_target_and_snapshot_are_target_based() -> None:
     assert "contextId" not in target.key()
     assert "bindingId" not in target.key()
     assert "pageSessionId" not in target.key()
+    assert "|" not in target.key()
+    assert "=" not in target.key()
+    assert parse_settings_target_key(target.key()) == target
+
+
+def test_settings_target_description_mirrors_target_identity() -> None:
+    target = _settings_target()
+
+    with pytest.raises(ValidationError, match="pluginId"):
+        SettingsTargetDescription(
+            target=target,
+            pluginId="other.plugin",
+            actionId=target.action_id,
+        )
+
+    with pytest.raises(ValidationError, match="actionId"):
+        SettingsTargetDescription(
+            target=target,
+            pluginId=target.plugin_id,
+            actionId="other.action",
+        )
 
 
 def test_action_descriptor_rejects_duplicate_requirement_names() -> None:
@@ -312,6 +358,90 @@ def test_v1_capability_input_body_carries_binding_metadata() -> None:
     assert body.to_dict()["event"]["eventType"] == "press"
 
 
+def test_plugin_metadata_rejects_empty_ids_and_negative_sequences() -> None:
+    with pytest.raises(ValidationError, match="binding metadata id"):
+        BindingMetadata.model_validate(
+            {
+                **_binding_metadata().model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    mode="json",
+                ),
+                "bindingId": "",
+            }
+        )
+
+    with pytest.raises(ValidationError, match="sequence"):
+        plugin_body_for_type(
+            CAPABILITY_INPUT,
+            {
+                "binding": _binding_metadata().model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    mode="json",
+                ),
+                "event": {
+                    "capability": {
+                        "deviceRef": {
+                            "managerId": "manager-1",
+                            "deviceId": "device-1",
+                        },
+                        "controlId": "0,0",
+                        "capabilityId": "button.press",
+                    },
+                    "eventType": "press",
+                    "sequence": -1,
+                    "occurredAt": "2026-04-30T10:00:00Z",
+                },
+            },
+        )
+
+
+def test_plugin_capability_refs_for_binding_io_must_be_bound_to_control() -> None:
+    with pytest.raises(ValidationError, match="requires deviceRef and controlId"):
+        plugin_body_for_type(
+            CAPABILITY_INPUT,
+            {
+                "binding": _binding_metadata().model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    mode="json",
+                ),
+                "event": {
+                    "capability": {"capabilityId": "button.press"},
+                    "eventType": "press",
+                    "occurredAt": "2026-04-30T10:00:00Z",
+                },
+            },
+        )
+
+    with pytest.raises(ValidationError, match="requires deviceRef and controlId"):
+        plugin_body_for_type(
+            BINDING_OUTPUT,
+            {
+                "binding": _binding_metadata().model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    mode="json",
+                ),
+                "capability": {"capabilityId": "raster.bitmap"},
+                "commandType": "clear",
+                "generation": 1,
+            },
+        )
+
+
+def test_capability_requirement_selectors_reject_malformed_names() -> None:
+    with pytest.raises(ValidationError, match="capability family"):
+        CapabilityRequirementSelector(family="Deckr Button")
+
+    with pytest.raises(ValidationError, match="event type"):
+        CapabilityRequirementSelector(
+            family="deckr.input.button",
+            eventTypes=("Press!",),
+        )
+
+
 def test_v1_binding_output_body_targets_matched_capability() -> None:
     body = plugin_body_for_type(
         BINDING_OUTPUT,
@@ -357,6 +487,16 @@ def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
             },
         )
 
+    with pytest.raises(ValidationError):
+        plugin_body_for_type(
+            PLUGIN_EXTENSION,
+            {
+                "extensionType": "com.example.demo",
+                "extensionSchemaId": "com.example.demo.v1",
+                "data": {"actionId": "demo.action"},
+            },
+        )
+
 
 def test_context_subject_carries_explicit_lifecycle_ids() -> None:
     subject = context_subject(
@@ -397,6 +537,7 @@ def test_plugin_body_for_type_rejects_mismatched_body_instances() -> None:
 
 def test_typed_plugin_body_schemas_are_exportable() -> None:
     extension_schema = PluginExtensionBody.model_json_schema(by_alias=True)
+    lane_schema = plugin_message_schema()
 
     assert extension_schema["additionalProperties"] is False
     assert {
@@ -404,3 +545,17 @@ def test_typed_plugin_body_schemas_are_exportable() -> None:
         "extensionSchemaId",
         "data",
     }.issubset(extension_schema["properties"])
+    assert lane_schema["$id"] == "deckr.message.plugin_messages.v1"
+    assert lane_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    binding_output_variant = next(
+        variant
+        for variant in lane_schema["oneOf"]
+        if variant["allOf"][1]["properties"]["messageType"]["const"]
+        == BINDING_OUTPUT
+    )
+    assert binding_output_variant["allOf"][1]["properties"]["lane"]["const"] == (
+        "plugin_messages"
+    )
+    assert binding_output_variant["allOf"][1]["properties"]["body"]["$ref"] == (
+        "#/$defs/BindingOutputBody"
+    )

@@ -420,16 +420,15 @@ Example:
       "actionId": "com.example.clock.digital",
       "name": "Digital Clock",
       "pluginId": "com.example.clock",
-      "controllers": [],
-      "propertyInspectorPath": null,
-      "manifestDefaults": {}
+      "controllers": []
     }
   }
 }
 ```
 
-The action map is keyed by action UUID. The catalog is usable only while matching
-host endpoint presence exists with the same `sessionId`.
+The action map is keyed by `actionId`; each map key must match the descriptor's
+`actionId`, and `hostEndpoint` must equal `host:<hostId>`. The catalog is usable
+only while matching host endpoint presence exists with the same `sessionId`.
 
 Catalog loss, host presence loss, host session change, or catalog
 incompatibility makes affected actions unavailable and causes the controller to
