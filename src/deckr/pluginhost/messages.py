@@ -5,9 +5,15 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import Field, field_serializer, field_validator
+from pydantic import (
+    Field,
+    JsonValue,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from deckr.contracts.messages import (
     PLUGIN_MESSAGES_LANE,
@@ -24,6 +30,7 @@ from deckr.contracts.messages import (
     message_targets_endpoint,
 )
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
+from deckr.hardware.descriptors import CapabilityRef, ControlRef, DeviceRef
 
 _RESERVED_EXTENSION_DATA_FIELDS = frozenset(
     {
@@ -92,6 +99,340 @@ class PluginExtensionBody(PluginMessageBody):
         return thaw_json(value)
 
 
+CapabilityViewKind = Literal["raw", "native", "projected", "derived", "extension"]
+CapabilityProvenance = Literal["native", "projection", "derivation", "extension"]
+CapabilityDirection = Literal["input", "output", "state", "command"]
+TemplateRoleCardinality = Literal["single", "collection"]
+
+
+def _require_text(value: str, *, field_name: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty")
+    return normalized
+
+
+class CapabilityRequirementSelector(DeckrModel):
+    """One acceptable capability shape for a plugin requirement."""
+
+    capability_id: str | None = Field(default=None, alias="capabilityId")
+    family: str | None = None
+    capability_type: str | None = Field(default=None, alias="type")
+    direction: CapabilityDirection | None = None
+    event_types: tuple[str, ...] = Field(default_factory=tuple, alias="eventTypes")
+    command_types: tuple[str, ...] = Field(default_factory=tuple, alias="commandTypes")
+
+    @model_validator(mode="after")
+    def _require_selector_field(self) -> CapabilityRequirementSelector:
+        if not any(
+            (
+                self.capability_id,
+                self.family,
+                self.capability_type,
+                self.direction,
+                self.event_types,
+                self.command_types,
+            )
+        ):
+            raise ValueError("capability selector must include at least one criterion")
+        return self
+
+
+class CapabilityRequirement(DeckrModel):
+    """A named plugin input, output, state, config, or diagnostic requirement."""
+
+    name: str
+    required: bool = True
+    preferences: tuple[CapabilityRequirementSelector, ...]
+    event_types: tuple[str, ...] = Field(default_factory=tuple, alias="eventTypes")
+    command_types: tuple[str, ...] = Field(default_factory=tuple, alias="commandTypes")
+    views: tuple[CapabilityViewKind, ...] = Field(default_factory=tuple)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        return _require_text(value, field_name="requirement name")
+
+    @field_validator("preferences", mode="after")
+    @classmethod
+    def _validate_preferences(
+        cls, value: tuple[CapabilityRequirementSelector, ...]
+    ) -> tuple[CapabilityRequirementSelector, ...]:
+        if not value:
+            raise ValueError("capability requirement must include preferences")
+        return value
+
+
+class DynamicPageRoleDescriptor(DeckrModel):
+    """A semantic role in a plugin-declared dynamic page template."""
+
+    role_id: str = Field(alias="roleId")
+    cardinality: TemplateRoleCardinality = "single"
+    optional: bool = False
+    min_count: int | None = Field(default=None, alias="min")
+    preferred_count: int | None = Field(default=None, alias="preferred")
+    max_count: int | None = Field(default=None, alias="max")
+    requirements: tuple[CapabilityRequirement, ...]
+    layout: JsonObject = Field(default_factory=dict)
+
+    @field_validator("role_id")
+    @classmethod
+    def _validate_role_id(cls, value: str) -> str:
+        return _require_text(value, field_name="dynamic page role id")
+
+    @field_validator("requirements", mode="after")
+    @classmethod
+    def _validate_requirements(
+        cls, value: tuple[CapabilityRequirement, ...]
+    ) -> tuple[CapabilityRequirement, ...]:
+        if not value:
+            raise ValueError("dynamic page role must include capability requirements")
+        return value
+
+    @field_validator("layout", mode="before")
+    @classmethod
+    def _thaw_layout(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("layout", mode="after")
+    @classmethod
+    def _freeze_layout(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("layout")
+    def _serialize_layout(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+    @model_validator(mode="after")
+    def _validate_counts(self) -> DynamicPageRoleDescriptor:
+        counts = [
+            count
+            for count in (self.min_count, self.preferred_count, self.max_count)
+            if count is not None
+        ]
+        if any(count < 0 for count in counts):
+            raise ValueError("dynamic page role counts must be non-negative")
+        if (
+            self.min_count is not None
+            and self.max_count is not None
+            and self.min_count > self.max_count
+        ):
+            raise ValueError("dynamic page role min must not exceed max")
+        if (
+            self.preferred_count is not None
+            and self.min_count is not None
+            and self.preferred_count < self.min_count
+        ):
+            raise ValueError("dynamic page role preferred must be at least min")
+        if (
+            self.preferred_count is not None
+            and self.max_count is not None
+            and self.preferred_count > self.max_count
+        ):
+            raise ValueError("dynamic page role preferred must not exceed max")
+        return self
+
+
+class DynamicPageTemplateDescriptor(DeckrModel):
+    """A plugin-declared dynamic page template resolved by the controller."""
+
+    template_id: str = Field(alias="templateId")
+    roles: tuple[DynamicPageRoleDescriptor, ...]
+
+    @field_validator("template_id")
+    @classmethod
+    def _validate_template_id(cls, value: str) -> str:
+        return _require_text(value, field_name="dynamic page template id")
+
+    @field_validator("roles", mode="after")
+    @classmethod
+    def _validate_roles(
+        cls, value: tuple[DynamicPageRoleDescriptor, ...]
+    ) -> tuple[DynamicPageRoleDescriptor, ...]:
+        if not value:
+            raise ValueError("dynamic page template must include roles")
+        role_ids = [role.role_id for role in value]
+        duplicates = {role_id for role_id in role_ids if role_ids.count(role_id) > 1}
+        if duplicates:
+            raise ValueError(
+                "dynamic page template role ids must be unique: "
+                + ", ".join(sorted(duplicates))
+            )
+        return value
+
+
+class MatchedCapability(DeckrModel):
+    """A capability selected by the controller for a binding or page role."""
+
+    requirement_name: str | None = Field(default=None, alias="requirementName")
+    role_id: str | None = Field(default=None, alias="roleId")
+    capability: CapabilityRef
+    family: str
+    capability_type: str = Field(alias="type")
+    direction: CapabilityDirection
+    event_types: tuple[str, ...] = Field(default_factory=tuple, alias="eventTypes")
+    command_types: tuple[str, ...] = Field(default_factory=tuple, alias="commandTypes")
+    provenance: CapabilityProvenance = "native"
+    source: CapabilityRef | None = None
+
+
+class BindingMetadata(DeckrModel):
+    """Plugin-facing metadata for one active binding lease."""
+
+    plugin_id: str | None = Field(default=None, alias="pluginId")
+    action_id: str = Field(alias="actionId")
+    action_instance_id: str = Field(alias="actionInstanceId")
+    config_id: str = Field(alias="configId")
+    context_id: str = Field(alias="contextId")
+    binding_id: str = Field(alias="bindingId")
+    page_session_id: str | None = Field(default=None, alias="pageSessionId")
+    device_ref: DeviceRef = Field(alias="deviceRef")
+    control_ref: ControlRef = Field(alias="controlRef")
+    role_id: str | None = Field(default=None, alias="roleId")
+    item_key: str | None = Field(default=None, alias="itemKey")
+    handler: str | None = None
+    matched_capabilities: tuple[MatchedCapability, ...] = Field(
+        default_factory=tuple,
+        alias="matchedCapabilities",
+    )
+    output_generation: int = Field(default=0, alias="outputGeneration")
+
+
+class ActionInstanceMetadata(DeckrModel):
+    """Plugin-facing metadata for one controller-owned action instance."""
+
+    plugin_id: str | None = Field(default=None, alias="pluginId")
+    action_id: str = Field(alias="actionId")
+    action_instance_id: str = Field(alias="actionInstanceId")
+    config_id: str = Field(alias="configId")
+    context_id: str | None = Field(default=None, alias="contextId")
+
+
+class PageSessionMetadata(DeckrModel):
+    """Plugin-facing metadata for one dynamic page session."""
+
+    action_instance_id: str = Field(alias="actionInstanceId")
+    config_id: str = Field(alias="configId")
+    page_id: str = Field(alias="pageId")
+    page_session_id: str = Field(alias="pageSessionId")
+    context_id: str = Field(alias="contextId")
+    template_id: str | None = Field(default=None, alias="templateId")
+    owner_binding_id: str | None = Field(default=None, alias="ownerBindingId")
+    bindings: tuple[BindingMetadata, ...] = Field(default_factory=tuple)
+
+
+class CapabilityInputEvent(DeckrModel):
+    """Capability-oriented plugin input event delivered to an active binding."""
+
+    capability: CapabilityRef
+    event_type: str = Field(alias="eventType")
+    value: JsonValue | None = None
+    sequence: int | None = None
+    occurred_at: datetime = Field(alias="occurredAt")
+    producer: str | None = None
+    source: CapabilityRef | None = None
+    view: CapabilityViewKind | None = None
+
+    @field_validator("event_type")
+    @classmethod
+    def _validate_event_type(cls, value: str) -> str:
+        return _require_text(value, field_name="input event type")
+
+    @field_validator("value", mode="after")
+    @classmethod
+    def _freeze_value(cls, value: Any) -> Any:
+        return freeze_json(value)
+
+    @field_serializer("value")
+    def _serialize_value(self, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_serializer("occurred_at")
+    def _serialize_occurred_at(self, value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+class ActionInstanceLifecycleBody(PluginMessageBody):
+    metadata: ActionInstanceMetadata
+    settings: JsonObject = Field(default_factory=dict)
+    reason: str | None = None
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _thaw_settings(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("settings", mode="after")
+    @classmethod
+    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("settings")
+    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+class BindingAttachedBody(PluginMessageBody):
+    binding: BindingMetadata
+    settings: JsonObject = Field(default_factory=dict)
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _thaw_settings(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("settings", mode="after")
+    @classmethod
+    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("settings")
+    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+class BindingDetachedBody(PluginMessageBody):
+    binding: BindingMetadata
+    reason: str
+
+
+class PageSessionLifecycleBody(PluginMessageBody):
+    page_session: PageSessionMetadata = Field(alias="pageSession")
+    reason: str | None = None
+
+
+class CapabilityInputBody(PluginMessageBody):
+    binding: BindingMetadata
+    event: CapabilityInputEvent
+
+
+class BindingOutputBody(PluginMessageBody):
+    binding: BindingMetadata
+    capability: CapabilityRef
+    command_type: str = Field(alias="commandType")
+    params: JsonObject = Field(default_factory=dict)
+    generation: int
+
+    @field_validator("command_type")
+    @classmethod
+    def _validate_command_type(cls, value: str) -> str:
+        return _require_text(value, field_name="output command type")
+
+    @field_validator("params", mode="before")
+    @classmethod
+    def _thaw_params(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("params", mode="after")
+    @classmethod
+    def _freeze_params(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("params")
+    def _serialize_params(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
 class SettingsBody(PluginMessageBody):
     settings: JsonObject = Field(default_factory=dict)
 
@@ -110,136 +451,9 @@ class SettingsBody(PluginMessageBody):
         return thaw_json(value)
 
 
-class TitleOptionsBody(PluginMessageBody):
-    text: str = ""
-    title_options: TitleOptions | None = None
-
-
-class ImageBody(PluginMessageBody):
-    image: str = ""
-
-
 class PageSelectBody(PluginMessageBody):
     profile: str = "default"
     page: int = 0
-
-
-class OpenPageBody(PluginMessageBody):
-    descriptor: DynamicPageDescriptor
-
-
-class UpdatePageBody(PluginMessageBody):
-    descriptor: DynamicPageDescriptor
-
-
-class ReplacePageBody(PluginMessageBody):
-    descriptor: DynamicPageDescriptor
-
-
-class SlotCoordinates(DeckrModel):
-    column: int
-    row: int
-
-
-class SlotImageFormat(DeckrModel):
-    width: int
-    height: int
-    format: str
-    rotation: int | None = None
-
-
-class SlotInfo(DeckrModel):
-    slot_id: str
-    slot_type: str
-    coordinates: SlotCoordinates | None = None
-    gestures: tuple[str, ...] = Field(default_factory=tuple)
-    image_format: SlotImageFormat | None = None
-
-
-class WillAppearEvent(DeckrModel):
-    event: str = "willAppear"
-    slot: SlotInfo
-
-
-class WillDisappearEvent(DeckrModel):
-    event: str = "willDisappear"
-    slot_id: str
-
-
-class KeyEvent(DeckrModel):
-    event: str
-    slot_id: str
-
-
-class DialRotateEvent(DeckrModel):
-    event: str
-    slot_id: str
-    direction: str
-
-
-class TouchSwipeEvent(DeckrModel):
-    event: str
-    slot_id: str
-    direction: str
-
-
-class PageAppearEvent(DeckrModel):
-    event: str = "pageAppear"
-    page_id: str
-    timeout_ms: int | None = None
-
-
-class PageDisappearEvent(DeckrModel):
-    event: str = "pageDisappear"
-    page_id: str
-    reason: str | None = None
-
-
-class ControllerEventBody(PluginMessageBody):
-    event: Any
-    settings: JsonObject = Field(default_factory=dict)
-
-    @field_validator("settings", mode="before")
-    @classmethod
-    def _thaw_event_settings(cls, value: Any) -> Any:
-        return thaw_json(value)
-
-    @field_validator("settings", mode="after")
-    @classmethod
-    def _freeze_event_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return freeze_json(value)
-
-    @field_serializer("settings")
-    def _serialize_event_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return thaw_json(value)
-
-
-class WillAppearBody(ControllerEventBody):
-    event: WillAppearEvent
-
-
-class WillDisappearBody(ControllerEventBody):
-    event: WillDisappearEvent
-
-
-class KeyEventBody(ControllerEventBody):
-    event: KeyEvent
-
-
-class DialRotateBody(ControllerEventBody):
-    event: DialRotateEvent
-
-
-class TouchSwipeBody(ControllerEventBody):
-    event: TouchSwipeEvent
-
-
-class PageAppearBody(ControllerEventBody):
-    event: PageAppearEvent
-
-
-class PageDisappearBody(ControllerEventBody):
-    event: PageDisappearEvent
 
 
 def _target(
@@ -376,9 +590,52 @@ class ActionDescriptor(DeckrModel):
     uuid: str
     name: str | None = None
     plugin_uuid: str | None = None
+    requirements: tuple[CapabilityRequirement, ...] | None = None
+    dynamic_page_templates: tuple[DynamicPageTemplateDescriptor, ...] | None = Field(
+        default=None,
+        alias="dynamicPageTemplates",
+    )
     controllers: tuple[str, ...] | None = None
     property_inspector_path: str | None = None
     manifest_defaults: JsonObject | None = None
+
+    @field_validator("requirements", mode="after")
+    @classmethod
+    def _validate_requirements(
+        cls,
+        value: tuple[CapabilityRequirement, ...] | None,
+    ) -> tuple[CapabilityRequirement, ...] | None:
+        if value is None:
+            return None
+        names = [requirement.name for requirement in value]
+        duplicates = {name for name in names if names.count(name) > 1}
+        if duplicates:
+            raise ValueError(
+                "action requirement names must be unique: "
+                + ", ".join(sorted(duplicates))
+            )
+        return value
+
+    @field_validator("dynamic_page_templates", mode="after")
+    @classmethod
+    def _validate_dynamic_page_templates(
+        cls,
+        value: tuple[DynamicPageTemplateDescriptor, ...] | None,
+    ) -> tuple[DynamicPageTemplateDescriptor, ...] | None:
+        if value is None:
+            return None
+        template_ids = [template.template_id for template in value]
+        duplicates = {
+            template_id
+            for template_id in template_ids
+            if template_ids.count(template_id) > 1
+        }
+        if duplicates:
+            raise ValueError(
+                "action dynamic page template ids must be unique: "
+                + ", ".join(sorted(duplicates))
+            )
+        return value
 
     @field_validator("manifest_defaults", mode="after")
     @classmethod
@@ -445,13 +702,27 @@ class TitleOptions(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
-class ControlBindingDescriptor(DeckrModel):
-    """One control bound to an action for static or dynamic pages."""
+class PageChildBindingDescriptor(DeckrModel):
+    """One semantic child binding requested for a concrete page session."""
 
-    control_id: str
-    action_uuid: str
-    settings: Mapping[str, Any]
+    control_id: str = Field(alias="controlId")
+    role_id: str | None = Field(default=None, alias="roleId")
+    item_key: str | None = Field(default=None, alias="itemKey")
+    handler: str | None = None
+    settings: JsonObject = Field(default_factory=dict)
     title_options: TitleOptions | None = None
+
+    @field_validator("control_id")
+    @classmethod
+    def _validate_control_id(cls, value: str) -> str:
+        return _require_text(value, field_name="page child control id")
+
+    @field_validator("role_id", "item_key", "handler")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_text(value, field_name="page child metadata")
 
     @field_validator("settings", mode="before")
     @classmethod
@@ -468,15 +739,51 @@ class ControlBindingDescriptor(DeckrModel):
         return thaw_json(value)
 
 
-class DynamicPageDescriptor(DeckrModel):
-    """Plugin-generated page descriptor carried by openPage commands."""
+class DynamicPageCommand(DeckrModel):
+    """Concrete page-session command resolved by the controller."""
 
-    page_id: str
-    bindings: tuple[ControlBindingDescriptor, ...]
+    page_id: str = Field(alias="pageId")
+    template_id: str | None = Field(default=None, alias="templateId")
+    bindings: tuple[PageChildBindingDescriptor, ...]
+
+    @field_validator("page_id")
+    @classmethod
+    def _validate_page_id(cls, value: str) -> str:
+        return _require_text(value, field_name="dynamic page id")
+
+    @field_validator("bindings", mode="after")
+    @classmethod
+    def _validate_bindings(
+        cls, value: tuple[PageChildBindingDescriptor, ...]
+    ) -> tuple[PageChildBindingDescriptor, ...]:
+        if not value:
+            raise ValueError("dynamic page command must include child bindings")
+        control_ids = [binding.control_id for binding in value]
+        duplicates = {
+            control_id for control_id in control_ids if control_ids.count(control_id) > 1
+        }
+        if duplicates:
+            raise ValueError(
+                "dynamic page child control ids must be unique: "
+                + ", ".join(sorted(duplicates))
+            )
+        return value
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for plugin command payloads."""
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+class OpenPageBody(PluginMessageBody):
+    descriptor: DynamicPageCommand
+
+
+class UpdatePageBody(PluginMessageBody):
+    descriptor: DynamicPageCommand
+
+
+class ReplacePageBody(PluginMessageBody):
+    descriptor: DynamicPageCommand
 
 
 def make_dynamic_page_id() -> str:
@@ -485,19 +792,14 @@ def make_dynamic_page_id() -> str:
 
 
 # Message type constants
-WILL_APPEAR = "willAppear"
-WILL_DISAPPEAR = "willDisappear"
-KEY_UP = "keyUp"
-KEY_DOWN = "keyDown"
-DIAL_ROTATE = "dialRotate"
-TOUCH_TAP = "touchTap"
-TOUCH_SWIPE = "touchSwipe"
-PAGE_APPEAR = "pageAppear"
-PAGE_DISAPPEAR = "pageDisappear"
-SET_TITLE = "setTitle"
-SET_IMAGE = "setImage"
-SHOW_ALERT = "showAlert"
-SHOW_OK = "showOk"
+ACTION_INSTANCE_CREATED = "actionInstanceCreated"
+ACTION_INSTANCE_DESTROYED = "actionInstanceDestroyed"
+BINDING_ATTACHED = "bindingAttached"
+BINDING_DETACHED = "bindingDetached"
+PAGE_SESSION_OPENED = "pageSessionOpened"
+PAGE_SESSION_CLOSED = "pageSessionClosed"
+CAPABILITY_INPUT = "capabilityInput"
+BINDING_OUTPUT = "bindingOutput"
 REQUEST_SETTINGS = "requestSettings"
 HERE_ARE_SETTINGS = "hereAreSettings"
 SET_SETTINGS = "setSettings"
@@ -514,10 +816,7 @@ PLUGIN_EXTENSION = "pluginExtension"
 # Host -> controller commands a controller-lite should implement.
 CORE_COMMAND_MESSAGE_TYPES = frozenset(
     {
-        SET_TITLE,
-        SET_IMAGE,
-        SHOW_ALERT,
-        SHOW_OK,
+        BINDING_OUTPUT,
         REQUEST_SETTINGS,
         SET_SETTINGS,
     }
@@ -543,19 +842,14 @@ COMMAND_MESSAGE_TYPES = (
 
 
 PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
-    WILL_APPEAR: WillAppearBody,
-    WILL_DISAPPEAR: WillDisappearBody,
-    KEY_UP: KeyEventBody,
-    KEY_DOWN: KeyEventBody,
-    DIAL_ROTATE: DialRotateBody,
-    TOUCH_TAP: KeyEventBody,
-    TOUCH_SWIPE: TouchSwipeBody,
-    PAGE_APPEAR: PageAppearBody,
-    PAGE_DISAPPEAR: PageDisappearBody,
-    SET_TITLE: TitleOptionsBody,
-    SET_IMAGE: ImageBody,
-    SHOW_ALERT: EmptyPluginBody,
-    SHOW_OK: EmptyPluginBody,
+    ACTION_INSTANCE_CREATED: ActionInstanceLifecycleBody,
+    ACTION_INSTANCE_DESTROYED: ActionInstanceLifecycleBody,
+    BINDING_ATTACHED: BindingAttachedBody,
+    BINDING_DETACHED: BindingDetachedBody,
+    PAGE_SESSION_OPENED: PageSessionLifecycleBody,
+    PAGE_SESSION_CLOSED: PageSessionLifecycleBody,
+    CAPABILITY_INPUT: CapabilityInputBody,
+    BINDING_OUTPUT: BindingOutputBody,
     REQUEST_SETTINGS: EmptyPluginBody,
     HERE_ARE_SETTINGS: SettingsBody,
     SET_SETTINGS: SettingsBody,
@@ -569,7 +863,6 @@ PLUGIN_BODY_BY_MESSAGE_TYPE: dict[str, type[PluginMessageBody]] = {
     PLUGIN_EXTENSION: PluginExtensionBody,
 }
 
-TitleOptionsBody.model_rebuild()
 OpenPageBody.model_rebuild()
 UpdatePageBody.model_rebuild()
 ReplacePageBody.model_rebuild()

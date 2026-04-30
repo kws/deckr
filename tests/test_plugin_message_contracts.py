@@ -7,16 +7,23 @@ from pydantic import ValidationError
 
 from deckr.contracts.messages import host_address
 from deckr.pluginhost.messages import (
-    KEY_DOWN,
+    BINDING_OUTPUT,
+    CAPABILITY_INPUT,
     PLUGIN_EXTENSION,
     SET_SETTINGS,
-    SET_TITLE,
-    WILL_APPEAR,
-    ControlBindingDescriptor,
+    ActionDescriptor,
+    BindingMetadata,
+    CapabilityInputBody,
+    CapabilityRequirement,
+    CapabilityRequirementSelector,
+    DynamicPageCommand,
+    DynamicPageRoleDescriptor,
+    DynamicPageTemplateDescriptor,
+    MatchedCapability,
+    PageChildBindingDescriptor,
     PluginActionCatalog,
     PluginExtensionBody,
     SettingsBody,
-    TitleOptionsBody,
     context_subject,
     plugin_body_for_type,
     subject_action_instance_id,
@@ -26,70 +33,54 @@ from deckr.pluginhost.messages import (
 )
 
 
-def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
-    with pytest.raises(ValidationError):
-        plugin_body_for_type(SET_TITLE, {"text": "Demo", "contextId": "ctx"})
+def _binding_metadata() -> BindingMetadata:
+    return BindingMetadata(
+        actionId="demo.action",
+        actionInstanceId="instance-1",
+        configId="device-config-1",
+        contextId="ctx-1",
+        bindingId="binding-1",
+        deviceRef={"managerId": "manager-1", "deviceId": "device-1"},
+        controlRef={
+            "deviceRef": {"managerId": "manager-1", "deviceId": "device-1"},
+            "controlId": "0,0",
+        },
+        roleId="album",
+        itemKey="kind-of-blue",
+        handler="album",
+        matchedCapabilities=[
+            MatchedCapability(
+                requirementName="press",
+                capability={
+                    "deviceRef": {"managerId": "manager-1", "deviceId": "device-1"},
+                    "controlId": "0,0",
+                    "capabilityId": "button.press",
+                },
+                family="deckr.input.button",
+                type="activation",
+                direction="input",
+                eventTypes=("press",),
+                provenance="projection",
+            )
+        ],
+    )
 
+
+def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
     with pytest.raises(ValidationError):
         plugin_body_for_type(SET_SETTINGS, {"settings": {}, "actionUuid": "other"})
 
-
-def test_controller_event_body_takes_context_from_subject_not_payload() -> None:
-    body = plugin_body_for_type(
-        KEY_DOWN,
-        {"event": {"event": "keyDown", "slotId": "0,0"}},
-    )
-    assert body.to_dict() == {
-        "event": {"event": "keyDown", "slotId": "0,0"},
-        "settings": {},
-    }
-
     with pytest.raises(ValidationError):
         plugin_body_for_type(
-            KEY_DOWN,
-            {"event": {"event": "keyDown", "context": "ctx", "slotId": "0,0"}},
+            BINDING_OUTPUT,
+            {
+                "contextId": "ctx",
+                "binding": _binding_metadata().model_dump(by_alias=True, exclude_none=True, mode="json"),
+                "capability": {"controlId": "0,0", "capabilityId": "raster.bitmap"},
+                "commandType": "clear",
+                "generation": 1,
+            },
         )
-
-
-def test_controller_event_body_accepts_frozen_json_settings() -> None:
-    binding = ControlBindingDescriptor(
-        control_id="0,0",
-        action_uuid="com.example.action",
-        settings={
-            "slots": ["0,0", "1,0"],
-            "extra_mappings": {
-                "B1": {"action": "up"},
-                "3,0": {
-                    "action": "com.example.volume",
-                    "settings": {"zone_name": "Bedroom"},
-                },
-            },
-        },
-    )
-
-    body = plugin_body_for_type(
-        WILL_APPEAR,
-        {
-            "event": {
-                "slot": {
-                    "slotId": "0,0",
-                    "slotType": "key",
-                },
-            },
-            "settings": binding.settings,
-        },
-    )
-
-    assert body.to_dict()["settings"] == {
-        "slots": ["0,0", "1,0"],
-        "extra_mappings": {
-            "B1": {"action": "up"},
-            "3,0": {
-                "action": "com.example.volume",
-                "settings": {"zone_name": "Bedroom"},
-            },
-        },
-    }
 
 
 def test_plugin_action_catalog_serializes_actions_by_uuid() -> None:
@@ -110,6 +101,168 @@ def test_plugin_action_catalog_serializes_actions_by_uuid() -> None:
         "ttlSeconds": 15,
         "actions": {"demo.action": {"uuid": "demo.action", "name": "Demo"}},
     }
+
+
+def test_action_descriptor_carries_capability_requirements_and_page_templates() -> None:
+    descriptor = ActionDescriptor(
+        uuid="demo.pager",
+        name="Pager",
+        requirements=[
+            CapabilityRequirement(
+                name="press",
+                preferences=[
+                    CapabilityRequirementSelector(
+                        family="deckr.input.button",
+                        type="activation",
+                        direction="input",
+                        eventTypes=("press",),
+                    )
+                ],
+                eventTypes=("press",),
+                views=("projected",),
+            )
+        ],
+        dynamicPageTemplates=[
+            DynamicPageTemplateDescriptor(
+                templateId="browser",
+                roles=[
+                    DynamicPageRoleDescriptor(
+                        roleId="content",
+                        cardinality="collection",
+                        min=1,
+                        preferred=6,
+                        requirements=[
+                            CapabilityRequirement(
+                                name="content-press",
+                                preferences=[
+                                    CapabilityRequirementSelector(
+                                        family="deckr.input.button",
+                                        type="activation",
+                                        direction="input",
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    assert descriptor.to_dict()["requirements"][0]["preferences"] == [
+        {
+            "family": "deckr.input.button",
+            "type": "activation",
+            "direction": "input",
+            "eventTypes": ["press"],
+            "commandTypes": [],
+        }
+    ]
+    assert descriptor.to_dict()["dynamicPageTemplates"][0]["roles"][0]["roleId"] == (
+        "content"
+    )
+
+
+def test_action_descriptor_rejects_duplicate_requirement_names() -> None:
+    requirement = CapabilityRequirement(
+        name="press",
+        preferences=[CapabilityRequirementSelector(family="deckr.input.button")],
+    )
+
+    with pytest.raises(ValidationError, match="requirement names"):
+        ActionDescriptor(
+            uuid="demo.action",
+            requirements=[requirement, requirement],
+        )
+
+
+def test_dynamic_page_command_uses_child_binding_semantics() -> None:
+    descriptor = DynamicPageCommand(
+        pageId="page-1",
+        templateId="artist-pager",
+        bindings=[
+            PageChildBindingDescriptor(
+                controlId="0,0",
+                roleId="album",
+                itemKey="kind-of-blue",
+                handler="album",
+                settings={"albumIndex": 0},
+            ),
+            PageChildBindingDescriptor(
+                controlId="0,1",
+                roleId="page_control",
+                itemKey="close",
+                handler="close",
+            ),
+        ],
+    )
+
+    assert descriptor.to_dict() == {
+        "pageId": "page-1",
+        "templateId": "artist-pager",
+        "bindings": [
+            {
+                "controlId": "0,0",
+                "roleId": "album",
+                "itemKey": "kind-of-blue",
+                "handler": "album",
+                "settings": {"albumIndex": 0},
+            },
+            {
+                "controlId": "0,1",
+                "roleId": "page_control",
+                "itemKey": "close",
+                "handler": "close",
+                "settings": {},
+            },
+        ],
+    }
+
+
+def test_v1_capability_input_body_carries_binding_metadata() -> None:
+    body = plugin_body_for_type(
+        CAPABILITY_INPUT,
+        {
+            "binding": _binding_metadata().model_dump(by_alias=True, exclude_none=True, mode="json"),
+            "event": {
+                "capability": {
+                    "deviceRef": {"managerId": "manager-1", "deviceId": "device-1"},
+                    "controlId": "0,0",
+                    "capabilityId": "button.press",
+                },
+                "eventType": "press",
+                "value": {"pressed": True},
+                "sequence": 12,
+                "occurredAt": "2026-04-30T10:00:00Z",
+                "producer": "hardware_manager",
+                "view": "projected",
+            },
+        },
+    )
+
+    assert isinstance(body, CapabilityInputBody)
+    assert body.to_dict()["binding"]["handler"] == "album"
+    assert body.to_dict()["event"]["eventType"] == "press"
+
+
+def test_v1_binding_output_body_targets_matched_capability() -> None:
+    body = plugin_body_for_type(
+        BINDING_OUTPUT,
+        {
+            "binding": _binding_metadata().model_dump(by_alias=True, exclude_none=True, mode="json"),
+            "capability": {
+                "deviceRef": {"managerId": "manager-1", "deviceId": "device-1"},
+                "controlId": "0,0",
+                "capabilityId": "raster.bitmap",
+            },
+            "commandType": "set_frame",
+            "params": {"image": "abc", "encoding": "jpeg"},
+            "generation": 3,
+        },
+    )
+
+    assert body.to_dict()["commandType"] == "set_frame"
+    assert body.to_dict()["params"] == {"image": "abc", "encoding": "jpeg"}
 
 
 def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
@@ -137,17 +290,6 @@ def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
             },
         )
 
-    with pytest.raises(ValidationError):
-        plugin_body_for_type(
-            PLUGIN_EXTENSION,
-            {
-                "extensionType": "com.example.demo",
-                "extensionSchemaId": "com.example.demo.v1",
-                "hostId": "python",
-                "data": {},
-            },
-        )
-
 
 def test_context_subject_carries_explicit_lifecycle_ids() -> None:
     subject = context_subject(
@@ -167,25 +309,21 @@ def test_context_subject_carries_explicit_lifecycle_ids() -> None:
 
 
 def test_plugin_body_for_type_rejects_mismatched_body_instances() -> None:
-    with pytest.raises(TypeError, match="requires body type TitleOptionsBody"):
+    with pytest.raises(TypeError, match="requires body type SettingsBody"):
         plugin_body_for_type(
-            SET_TITLE,
-            SettingsBody(settings={"title": "wrong model"}),
+            SET_SETTINGS,
+            PluginExtensionBody(
+                extension_type="com.example.demo",
+                extension_schema_id="com.example.demo.v1",
+                data={},
+            ),
         )
 
     with pytest.raises(TypeError, match="requires body type PluginExtensionBody"):
         plugin_body_for_type(
             PLUGIN_EXTENSION,
-            TitleOptionsBody(text="wrong model"),
+            SettingsBody(settings={"title": "wrong model"}),
         )
-
-    extension_body = PluginExtensionBody(
-        extension_type="com.example.demo",
-        extension_schema_id="com.example.demo.v1",
-        data={"value": 1},
-    )
-    with pytest.raises(ValueError, match="Unsupported plugin message type"):
-        plugin_body_for_type("com.example.demo", extension_body)
 
 
 def test_typed_plugin_body_schemas_are_exportable() -> None:

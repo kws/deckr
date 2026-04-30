@@ -152,15 +152,15 @@ managers. They are separate from transport protocols such as MQTT and WebSocket,
 and separate from adapter-private protocols such as Elgato plugin messages or
 Python plugin runtime control-plane messages.
 
-The current implementation still has known protocol-shape gaps, especially
-around `plugin_messages`, remote hardware delivery, context ids, action
-addresses, and broadcast pseudo-addresses. The supported lane substrate and
-current-state model is defined in [docs/nats-bus.md](docs/nats-bus.md).
-
-`deckr.pluginhost.messages` currently contains shared plugin-host message models
-used by controllers, plugin hosts, lane substrate adapters, and non-Python
-implementations. Its public API shape should follow the NATS bus specification
-rather than preserve mistaken implementation details.
+The supported lane substrate and current-state model is defined in
+[docs/nats-bus.md](docs/nats-bus.md). `deckr.pluginhost.messages` contains the
+shared `plugin_messages` lane contracts used by controllers, plugin hosts, lane
+substrate adapters, and non-Python implementations. The v1 plugin contract is
+capability-native: action descriptors may declare capability requirements and
+dynamic page templates, lifecycle messages carry structured action-instance,
+binding, and page-session metadata, input is represented as capability input,
+and output requests target matched capabilities through generation-scoped
+binding output.
 
 In particular, endpoint addresses such as `controller:<controller_id>`,
 `host:<host_id>`, and `hardware_manager:<manager_id>` are protocol addressing
@@ -171,14 +171,17 @@ transport locators.
 
 `deckr.python_plugin` defines only the Python plugin SDK surface. Other plugin
 formats should define their own SDK/protocol surfaces instead of importing this
-package. `deckr.python_plugin.interface` declares the single Python plugin API,
-including action lifecycle hooks, title/image/settings commands, page
-navigation, dynamic pages, and screen power control.
+package. `deckr.python_plugin.interface` declares the capability-native
+protocols for `ActionInstance`, `ControlBinding`, `DynamicPageSession`, action
+factories, scoped tasks, capability input, and safe binding output. The old
+callback/context protocols and Elgato-shaped hook names are not v1 Deckr
+contracts.
 
-The key image rule is:
+The key output rule is:
 
-- core `set_image`: image reference, typically a plugin-local path or a data
-  URI / base64 image string
+- core plugin output targets a matched capability through binding-scoped methods
+  and canonical capability commands such as raster `set_frame` and `clear`; the
+  old `setImage` name belongs only at external adapter boundaries.
 
 ## Hardware Package
 

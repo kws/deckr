@@ -166,30 +166,25 @@ class LaneContractRegistry:
 
 PLUGIN_MESSAGE_TYPES = frozenset(
     {
+        "actionInstanceCreated",
+        "actionInstanceDestroyed",
+        "bindingAttached",
+        "bindingDetached",
+        "bindingOutput",
+        "capabilityInput",
         "closePage",
-        "dialRotate",
         "hereAreSettings",
-        "keyDown",
-        "keyUp",
         "openPage",
-        "pageAppear",
-        "pageDisappear",
+        "pageSessionClosed",
+        "pageSessionOpened",
         "pluginExtension",
         "replacePage",
         "requestSettings",
-        "setImage",
         "setPage",
         "setSettings",
-        "setTitle",
-        "showAlert",
-        "showOk",
         "sleepScreen",
-        "touchSwipe",
-        "touchTap",
         "updatePage",
         "wakeScreen",
-        "willAppear",
-        "willDisappear",
     }
 )
 
@@ -238,29 +233,30 @@ PLUGIN_MESSAGES_DELIVERY = replace(
     message_families=(
         MessageFamilyDelivery(
             family=MessageFamily.LIFECYCLE,
-            message_types=frozenset({"pageAppear", "pageDisappear"}),
+            message_types=frozenset(
+                {
+                    "actionInstanceCreated",
+                    "actionInstanceDestroyed",
+                    "bindingAttached",
+                    "bindingDetached",
+                    "pageSessionClosed",
+                    "pageSessionOpened",
+                }
+            ),
             idempotency=IdempotencySemantics.IDEMPOTENT_LATEST_BY_SUBJECT,
             ordering_keys=(
                 "sender",
                 "recipient",
                 "subject.hostId",
                 "subject.contextId",
+                "subject.bindingId",
                 "subject.pageSessionId",
+                "subject.actionInstanceId",
             ),
         ),
         MessageFamilyDelivery(
             family=MessageFamily.INPUT,
-            message_types=frozenset(
-                {
-                    "dialRotate",
-                    "keyDown",
-                    "keyUp",
-                    "touchSwipe",
-                    "touchTap",
-                    "willAppear",
-                    "willDisappear",
-                }
-            ),
+            message_types=frozenset({"capabilityInput"}),
             idempotency=(
                 IdempotencySemantics.NOT_REPLAYED_SEQUENCE_DUPLICATE_SUPPRESSION
             ),
@@ -276,17 +272,14 @@ PLUGIN_MESSAGES_DELIVERY = replace(
             family=MessageFamily.COMMAND,
             message_types=frozenset(
                 {
+                    "bindingOutput",
                     "closePage",
                     "openPage",
                     "pluginExtension",
                     "replacePage",
                     "requestSettings",
-                    "setImage",
                     "setPage",
                     "setSettings",
-                    "setTitle",
-                    "showAlert",
-                    "showOk",
                     "sleepScreen",
                     "updatePage",
                     "wakeScreen",

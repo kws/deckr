@@ -227,7 +227,7 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
         await deckr.lane("plugin_messages").endpoint("controller:main").send(
             recipient="host:main",
             subject=entity_subject("test"),
-            message_type="setTitle",
+            message_type="bindingOutput",
             body={},
         )
 

@@ -2,21 +2,120 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Protocol
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, Protocol
 
-from deckr.pluginhost.messages import DynamicPageDescriptor, TitleOptions
-from deckr.python_plugin.events import (
-    DialRotate,
-    KeyDown,
-    KeyUp,
-    PageAppear,
-    PageDisappear,
-    TouchSwipe,
-    TouchTap,
-    WillAppear,
-    WillDisappear,
+from deckr.hardware.descriptors import CapabilityRef
+from deckr.pluginhost.messages import (
+    ActionDescriptor,
+    ActionInstanceMetadata,
+    BindingMetadata,
+    CapabilityInputEvent,
+    DynamicPageCommand,
+    PageChildBindingDescriptor,
+    PageSessionMetadata,
 )
+
+JsonSettings = Mapping[str, Any]
+
+
+class ScopedTasks(Protocol):
+    """Task nursery scoped to a plugin, action instance, page session, or binding."""
+
+    def start_soon(
+        self,
+        func: Callable[..., Awaitable[Any] | Any],
+        *args: Any,
+        name: object = None,
+    ) -> None: ...
+
+    async def cancel_all(self) -> None: ...
+
+
+class ActionInstanceContext(Protocol):
+    """Controller-owned action instance metadata and settings."""
+
+    metadata: ActionInstanceMetadata
+    settings: JsonSettings
+    tasks: ScopedTasks
+
+
+class ControlBinding(Protocol):
+    """One active lease between an action instance or page session and a control."""
+
+    metadata: BindingMetadata
+    settings: JsonSettings
+    tasks: ScopedTasks
+
+    async def output(
+        self,
+        capability: CapabilityRef,
+        command_type: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> None: ...
+
+    async def set_raster_frame(
+        self,
+        frame: bytes | str,
+        *,
+        capability: CapabilityRef | None = None,
+    ) -> None: ...
+
+    async def clear(
+        self,
+        *,
+        capability: CapabilityRef | None = None,
+    ) -> None: ...
+    async def open_page(self, descriptor: DynamicPageCommand) -> None: ...
+
+
+class DynamicPageSession(Protocol):
+    """One concrete dynamic page session owned by an action instance."""
+
+    metadata: PageSessionMetadata
+    tasks: ScopedTasks
+    bindings: Sequence[ControlBinding]
+
+    async def update(self, bindings: Sequence[PageChildBindingDescriptor]) -> None: ...
+    async def replace(self, bindings: Sequence[PageChildBindingDescriptor]) -> None: ...
+    async def close(self) -> None: ...
+
+
+class ActionInstance(Protocol):
+    """Capability-native Python action object."""
+
+    async def on_bind(self, binding: ControlBinding) -> None: ...
+    async def on_unbind(self, binding: ControlBinding, reason: str) -> None: ...
+    async def on_input(
+        self,
+        binding: ControlBinding,
+        event: CapabilityInputEvent,
+    ) -> None: ...
+    async def on_page_opened(self, page: DynamicPageSession) -> None: ...
+    async def on_page_closed(
+        self,
+        page: DynamicPageSession,
+        reason: str,
+    ) -> None: ...
+
+
+class ActionFactory(Protocol):
+    """Factory for one action type advertised by a Python plugin."""
+
+    descriptor: ActionDescriptor
+
+    async def create(self, context: ActionInstanceContext) -> ActionInstance: ...
+
+
+class PluginProvider(Protocol):
+    """Capability-native Python plugin provider."""
+
+    async def actions(self) -> Sequence[ActionDescriptor]: ...
+    async def create_action(
+        self,
+        action_id: str,
+        context: ActionInstanceContext,
+    ) -> ActionInstance | None: ...
 
 CAPABILITY_PAGES = "deckr.pages"
 CAPABILITY_SCREEN_POWER = "deckr.screen-power"
@@ -27,90 +126,3 @@ PLUGIN_CAPABILITIES = frozenset(
         CAPABILITY_SCREEN_POWER,
     }
 )
-
-
-class ControlContext(Protocol):
-    async def on_will_appear(self) -> None: ...
-    async def on_will_disappear(self) -> None: ...
-    async def on_key_up(self, event: KeyUp) -> None: ...
-    async def on_key_down(self, event: KeyDown) -> None: ...
-    async def on_dial_rotate(self, event: DialRotate) -> None: ...
-    async def on_touch_tap(self, event: TouchTap) -> None: ...
-    async def on_touch_swipe(self, event: TouchSwipe) -> None: ...
-
-
-class PluginContext(Protocol):
-    """Action context exposed to Python plugins."""
-
-    async def set_title(
-        self,
-        text: str,
-        *,
-        title_options: TitleOptions | None = None,
-    ) -> None: ...
-    async def set_image(self, image: str) -> None: ...
-    async def show_alert(self) -> None: ...
-    async def show_ok(self) -> None: ...
-    async def get_settings(self) -> SimpleNamespace: ...
-    async def set_settings(self, settings: dict) -> SimpleNamespace: ...
-    async def set_page(
-        self,
-        *,
-        profile: str = "default",
-        page: int = 0,
-    ) -> None: ...
-    async def open_page(self, descriptor: DynamicPageDescriptor) -> None: ...
-    async def update_page(self, descriptor: DynamicPageDescriptor) -> None: ...
-    async def replace_page(self, descriptor: DynamicPageDescriptor) -> None: ...
-    async def close_page(self) -> None: ...
-    async def sleep_screen(self) -> None: ...
-    async def wake_screen(self) -> None: ...
-
-
-class PluginAction(Protocol):
-    """Deckr action protocol used by the current controller runtime."""
-
-    uuid: str
-
-    async def on_will_appear(
-        self, event: WillAppear, context: PluginContext
-    ) -> None: ...
-    async def on_will_disappear(
-        self, event: WillDisappear, context: PluginContext
-    ) -> None: ...
-    async def on_key_up(self, event: KeyUp, context: PluginContext) -> None: ...
-    async def on_key_down(self, event: KeyDown, context: PluginContext) -> None: ...
-
-
-class DialAndTouchAction(Protocol):
-    """Optional dial/touch hooks supported by richer devices."""
-
-    async def on_dial_rotate(
-        self, event: DialRotate, context: PluginContext
-    ) -> None: ...
-    async def on_touch_tap(self, event: TouchTap, context: PluginContext) -> None: ...
-    async def on_touch_swipe(
-        self, event: TouchSwipe, context: PluginContext
-    ) -> None: ...
-
-
-class PageAwareAction(Protocol):
-    """Optional page lifecycle hooks for dynamic-page controllers."""
-
-    async def on_page_appear(
-        self,
-        event: PageAppear,
-        context: PluginContext,
-    ) -> None: ...
-    async def on_page_disappear(
-        self,
-        event: PageDisappear,
-        context: PluginContext,
-    ) -> None: ...
-
-
-class Plugin(Protocol):
-    """Deckr plugin provider protocol."""
-
-    async def provides_actions(self) -> list[str]: ...
-    async def get_action(self, uuid: str) -> PluginAction | None: ...

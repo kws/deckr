@@ -73,7 +73,7 @@ async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
             sent = await controller.send(
                 recipient=plugin_hosts_broadcast(),
                 subject=entity_subject("page", contextId="ctx"),
-                message_type="setTitle",
+                message_type="bindingOutput",
                 body={"title": "Ready"},
             )
             received_a = await _receive(stream_a)
