@@ -37,10 +37,15 @@ The controller now lives in its own sibling repository:
 ```text
 src/deckr/
   components/  Public component model, lifecycle manager, and component host
-  core/        Generic runtime primitives, lanes, lifecycle, and substrate helpers
+  contracts/   Wire-safe lane, envelope, endpoint, and delivery contracts
+  core/        Generic config, logging, and runtime utility helpers
   hardware/    Hardware-facing shared contracts and wire models
-  plugin/      Plugin-facing contracts, rendering types, and protocol types
+  pluginhost/  Runtime-neutral plugin_messages lane body contracts
+  python_plugin/ Python plugin SDK protocols and capability helpers
+  substrates/  Lane substrate implementations, currently NATS
+  lanes.py     Endpoint-bound lane handles and lane validation
   runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
+  state.py     Current-state models, key helpers, and StateStore protocol
 docs/
   nats-bus.md
   runtime-architecture.md

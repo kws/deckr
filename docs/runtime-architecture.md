@@ -483,6 +483,8 @@ metadata:
 - `publishes`
 - `cardinality`
 
+It may also declare extension `lane_contracts` when it owns non-core lanes.
+
 The intended meanings are:
 
 - `component_id`
@@ -496,6 +498,9 @@ The intended meanings are:
   - the named event bus lanes this component may write to
 - `cardinality`
   - whether the component type is `singleton` or `multi_instance`
+- `lane_contracts`
+  - extension lane contracts owned by this component type
+  - must never override Deckr core lane contracts
 
 Lane declarations describe logical lane contracts. Those contracts may be hosted
 locally, or they may be transported across transport boundaries by other
@@ -505,11 +510,12 @@ For most component types, `consumes` and `publishes` are fixed lists declared by
 the component type itself.
 
 For configurable components whose lane participation is instance-specific, the
-manifest may instead declare the component's lane binding capability, and
-instance configuration may then provide the exact lane bindings for that specific
-instance. In that case the runtime host must resolve the instance's actual
-`consumes` and `publishes` from those explicit bindings, not infer them from
-semantic role, component type, or path naming.
+component definition may provide a lane resolver, and instance configuration may
+then provide the exact lane bindings for that specific instance. In the Python
+host API this is `ComponentDefinition.resolve_lanes(...)`, optionally paired
+with `validate_lane_bindings(...)`. In that case the runtime host must resolve
+the instance's actual `consumes` and `publishes` from those explicit bindings,
+not infer them from semantic role, component type, or path naming.
 
 As a default convention, `config_prefix` should be the canonical Python import
 path of the component.
@@ -661,6 +667,13 @@ Removed targets include the home-grown WebSocket/MQTT lane transports,
 trusted-bridge configuration. Those concepts should not be kept alive as a
 parallel lane transport architecture.
 
+The built-in NATS lane substrate is configured as runtime infrastructure, for
+example through the bundled launcher's `[deckr.runtime.substrate]` table. It is
+not discovered, instantiated, or supervised as a Deckr component. A component or
+external adapter may still use WebSocket, MQTT, USB, HID, HTTP, vendor framing,
+or even a substrate-like package name at a real protocol boundary, but that does
+not make it the generic Deckr lane substrate.
+
 The live design is:
 
 - Deckr lanes remain logical contracts.
@@ -783,9 +796,10 @@ to understand component-specific settings.
 - The runtime host does not interpret "enabled" or "disabled" for components.
 - Runtime context may carry only generic runtime-host metadata and lane handles
   as a generic primitive.
-- External protocol adapters may be components, but the NATS lane substrate must
-  not preserve the old generic transport-route model.
-- Distributed lane substrate configuration must be explicit.
+- External protocol adapters may be components, but they must not preserve the
+  old generic transport-route model.
+- Distributed lane substrate configuration must be explicit runtime
+  infrastructure, not component discovery.
 - The runtime host must not infer lane bindings from substrate kind, role name, or
   config path.
 - Implicit parent-prefix inheritance is forbidden.

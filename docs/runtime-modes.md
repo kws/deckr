@@ -5,6 +5,8 @@ Deckr runtime modes are ordinary composition over the same primitives:
 - `Deckr` owns lane contracts and lane buses.
 - `resolve_component_host_plan(...)` resolves discovered or supplied component
   definitions into exact-prefix component instances.
+- `build_runtime_substrate(...)` resolves the runtime substrate, currently NATS,
+  from host configuration.
 - `start_components(deckr, plan)` hosts those instances against the existing
   runtime.
 
@@ -13,19 +15,26 @@ rules.
 
 ## Full Stack Runtime
 
-A full-stack process creates `Deckr`, then starts controller, plugin host,
-hardware manager, and any configured lane substrate or adapter components from
-one component host plan.
+A full-stack process creates `Deckr` with the configured runtime substrate, then
+starts controller, plugin host, hardware manager, and any adapter components from
+one component host plan. The NATS lane substrate itself is runtime
+infrastructure, not a discovered component.
 
 ```python
 from deckr.components import resolve_component_host_plan, start_components
 from deckr.core.config import load_config_document
+from deckr.launcher import build_runtime_substrate
 from deckr.runtime import Deckr
 
 document = load_config_document(None)
 plan = resolve_component_host_plan(document)
+substrate = build_runtime_substrate(document, lane_contracts=plan.lane_contracts)
 
-async with Deckr(lane_contracts=plan.lane_contracts, lanes=plan.lane_names) as deckr:
+async with Deckr(
+    lane_contracts=plan.lane_contracts,
+    lanes=plan.lane_names,
+    substrate=substrate,
+) as deckr:
     async with start_components(deckr, plan):
         ...
 ```
