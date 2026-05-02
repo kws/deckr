@@ -27,12 +27,13 @@ The default distributed runtime uses `NatsSubstrate` through `Deckr`:
 from deckr.runtime import Deckr
 
 async with Deckr() as deckr:
-    hardware = deckr.lane("hardware_messages").endpoint("hardware_manager:main")
+    hardware = deckr.lane("hardware_messages")
     state = deckr.state("deckr_state_v1")
 
-    async with hardware.subscribe() as messages:
-        async for message in messages:
-            ...
+    async with hardware.register_endpoint("hardware_manager:main") as manager:
+        async with manager.subscribe() as messages:
+            async for message in messages:
+                ...
 ```
 
 The NATS implementation is installed with the `deckr[nats]` extra. A host that
@@ -110,7 +111,9 @@ Supported Deckr-owned headers:
 Deckr-Message-Id
 Deckr-Message-Type
 Deckr-Sender
+Deckr-Sender-Session
 Deckr-Recipient
+Deckr-Recipient-Session
 Deckr-In-Reply-To
 ```
 
@@ -132,7 +135,10 @@ The shared lane ingress path:
 - parses and validates the Deckr envelope
 - confirms that subject/header delivery hints agree with the envelope
 - validates the envelope against the lane contract
+- confirms that `senderSessionId` matches current endpoint presence
 - delivers direct messages only to the addressed endpoint handle
+- delivers direct messages with `recipientSessionId` only to the matching local
+  endpoint session
 - delivers broadcasts only to endpoint handles included by the broadcast target
 - drops malformed, expired, unauthorized, stale, or undeliverable messages
 
@@ -273,9 +279,19 @@ Example:
 }
 ```
 
-Presence is last-registration-wins. A process writes a fresh random `sessionId`
-at startup. A new session for the same endpoint is a restart or takeover
-boundary. Consumers invalidate live state tied to the old session.
+Presence is create-if-absent. `register_endpoint(...)` writes a fresh random
+`sessionId`; an existing live presence key for the same lane and endpoint rejects
+the duplicate registration. Registration is not an implicit takeover.
+
+Endpoint sessions are renewed with a revision guard and the same `sessionId`.
+Missing presence, session mismatch, revision conflict, expiry, or broker
+uncertainty makes the session lost. Session loss is terminal for the registered
+handle; reacquiring the address requires an outer runtime/supervisor policy and a
+new registration with a new session id.
+
+Normal context exit performs best-effort, session-guarded withdrawal. If
+withdrawal cannot complete, broker TTL and receiver-side session fencing remain
+the correctness mechanism.
 
 Presence is not a route table and does not replace envelope recipient filtering.
 
@@ -445,13 +461,18 @@ revoke dependent live bindings. The plugin host does not broadcast
 
 A participant that owns current state should:
 
-1. Generate a fresh process/session id at startup.
-2. Publish endpoint presence immediately.
-3. Publish its current domain state immediately, such as inventory or catalog.
-4. Refresh both on the 5s heartbeat with the 15s broker TTL.
+1. Register its Deckr endpoint with `register_endpoint(...)` and use the
+   resulting endpoint `sessionId`.
+2. Publish its current domain state immediately, such as inventory or catalog,
+   using the endpoint session id.
+3. Refresh domain state on the 5s heartbeat with the 15s broker TTL; endpoint
+   presence renewal is owned by the registered endpoint handle.
+4. Treat endpoint session loss as terminal for the registered handle.
 5. Rewrite aggregate state immediately when the underlying facts change.
-6. On graceful stop, delete its own keys with revision checks.
-7. On `StateUnavailable`, log and retry.
+6. On graceful stop, delete its own domain keys with revision checks; endpoint
+   presence withdrawal is owned by the registered endpoint handle.
+7. On `StateUnavailable`, stop sending through the affected endpoint session and
+   let an outer supervisor decide whether to create a new registration.
 
 Failed refresh means unknown/retry. Only graceful stop withdraws owned state. If
 the owner is truly gone, broker TTL removes the key.

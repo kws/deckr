@@ -27,6 +27,7 @@ def test_device_available_serializes_descriptor_inside_deckr_envelope():
     descriptor = _descriptor()
     message = hw_messages.device_available_message(
         manager_id="manager-main",
+        sender_session_id="manager-session",
         descriptor=descriptor,
     )
     wire = message.to_dict()
@@ -34,6 +35,7 @@ def test_device_available_serializes_descriptor_inside_deckr_envelope():
     assert wire["lane"] == "hardware_messages"
     assert wire["messageType"] == "deviceAvailable"
     assert wire["sender"] == "hardware_manager:manager-main"
+    assert wire["senderSessionId"] == "manager-session"
     assert wire["recipient"]["targetType"] == "broadcast"
     assert wire["subject"]["identifiers"] == {
         "managerId": "manager-main",
@@ -52,6 +54,7 @@ def test_device_available_serializes_descriptor_inside_deckr_envelope():
 def test_control_input_targets_exact_capability():
     message = hw_messages.control_input_message(
         manager_id="manager-main",
+        sender_session_id="manager-session",
         device_id="deck",
         fingerprint="fingerprint:deck",
         control_id="key.0.0",
@@ -97,6 +100,7 @@ def test_control_input_targets_exact_capability():
 def test_control_command_round_trips_schema_validated_params():
     message = hw_messages.control_command_message(
         controller_id="controller-main",
+        sender_session_id="controller-session",
         manager_id="manager-main",
         device_id="deck",
         control_id="key.0.0",
@@ -111,6 +115,7 @@ def test_control_command_round_trips_schema_validated_params():
     wire = message.to_dict()
 
     assert wire["messageType"] == "controlCommand"
+    assert wire["senderSessionId"] == "controller-session"
     assert wire["recipient"]["endpoint"] == "hardware_manager:manager-main"
     assert wire["subject"]["identifiers"]["deviceId"] == "deck"
     assert wire["subject"]["identifiers"]["controlId"] == "key.0.0"
@@ -140,6 +145,7 @@ def test_control_command_round_trips_schema_validated_params():
 def test_device_level_capability_command_omits_control_id():
     message = hw_messages.control_command_for_capability(
         controller_id="controller-main",
+        sender_session_id="controller-session",
         ref=CapabilityRef(
             deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
             capabilityId="device.power",
@@ -209,6 +215,7 @@ def test_hardware_message_builder_validates_message_type_body_pair():
     with pytest.raises(TypeError, match="requires body type ControlInputMessage"):
         hw_messages.hardware_message(
             sender="hardware_manager:manager-main",
+            sender_session_id="manager-session",
             recipient="controller:main",
             message_type=hw_messages.CONTROL_INPUT,
             body=hw_messages.DeviceUnavailableMessage(

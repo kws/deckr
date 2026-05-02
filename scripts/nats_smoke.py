@@ -29,7 +29,6 @@ from deckr.hardware.descriptors import (
 from deckr.runtime import Deckr
 from deckr.state import (
     DeviceClaim,
-    EndpointPresence,
     HardwareInventory,
     HardwareInventoryDevice,
     device_claim_key,
@@ -94,27 +93,21 @@ async def _run_manager(args: argparse.Namespace) -> None:
     device_id = f"deck_{args.run_id}"
     endpoint = hardware_manager_address(manager_id)
     descriptor = _device_descriptor(device_id, fingerprint=f"smoke:{args.run_id}")
-    async with _deckr(args.url) as deckr:
+    async with _deckr(args.url, state_name=args.bucket) as deckr:
         state = deckr.state(args.bucket)
-        lane = deckr.lane("hardware_messages").endpoint(endpoint)
-        async with lane.subscribe() as messages:
-            await state.put(
-                presence_endpoint_key(lane="hardware_messages", endpoint=endpoint),
-                EndpointPresence(
-                    endpoint=endpoint,
-                    lane="hardware_messages",
-                    sessionId=args.run_id,
-                    timestamp=datetime.now(UTC),
-                    ttlSeconds=15,
-                    metadata={"runtime": "deckr-nats-smoke"},
-                ),
-            )
+        async with (
+            deckr.lane("hardware_messages").register_endpoint(
+                endpoint,
+                metadata={"runtime": "deckr-nats-smoke"},
+            ) as lane,
+            lane.subscribe() as messages,
+        ):
             await state.put(
                 hardware_inventory_key(manager_id),
                 HardwareInventory(
                     managerId=manager_id,
                     managerEndpoint=endpoint,
-                    sessionId=args.run_id,
+                    sessionId=lane.session_id,
                     timestamp=datetime.now(UTC),
                     ttlSeconds=15,
                     devices={
@@ -154,10 +147,12 @@ async def _run_controller(args: argparse.Namespace) -> None:
     device_id = f"deck_{args.run_id}"
     controller = controller_address(f"smoke_controller_{args.run_id}")
     manager = hardware_manager_address(manager_id)
-    async with _deckr(args.url) as deckr:
+    async with _deckr(args.url, state_name=args.bucket) as deckr:
         state = deckr.state(args.bucket)
-        lane = deckr.lane("hardware_messages").endpoint(controller)
-        async with state.watch(hardware_inventory_key(manager_id)) as changes:
+        async with (
+            deckr.lane("hardware_messages").register_endpoint(controller) as lane,
+            state.watch(hardware_inventory_key(manager_id)) as changes,
+        ):
             with anyio.fail_after(15):
                 change = await changes.receive()
             if change.entry is None:
@@ -166,7 +161,7 @@ async def _run_controller(args: argparse.Namespace) -> None:
                 device_claim_key(manager_id=manager_id, device_id=device_id),
                 DeviceClaim(
                     claimedByEndpoint=controller,
-                    claimedBySessionId=args.run_id,
+                    claimedBySessionId=lane.session_id,
                     timestamp=datetime.now(UTC),
                     ttlSeconds=15,
                 ),
@@ -216,7 +211,7 @@ async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> Non
         hardware_inventory_key(manager_id),
         device_claim_key(manager_id=manager_id, device_id=device_id),
     )
-    async with _deckr(args.url) as deckr:
+    async with _deckr(args.url, state_name=args.bucket) as deckr:
         state = deckr.state(args.bucket)
         with anyio.fail_after(args.ttl_wait):
             while True:
@@ -226,11 +221,15 @@ async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> Non
                 await anyio.sleep(0.5)
 
 
-def _deckr(url: str) -> Deckr:
+def _deckr(url: str, *, state_name: str) -> Deckr:
     registry = LaneContractRegistry(CORE_LANE_CONTRACTS.values())
     return Deckr(
         lane_contracts=registry,
-        substrate=NatsSubstrate(url=url, lane_contracts=registry),
+        substrate=NatsSubstrate(
+            url=url,
+            lane_contracts=registry,
+            default_state_name=state_name,
+        ),
     )
 
 

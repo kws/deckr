@@ -75,6 +75,7 @@ def test_deckr_message_body_rejects_non_json_values() -> None:
             lane=PLUGIN_MESSAGES_LANE,
             messageType="pluginExtension",
             sender=host_address("python"),
+            senderSessionId="session-host",
             recipient=endpoint_target(controller_address("main")),
             subject=entity_subject("extension", contextId="ctx"),
             body={
@@ -85,11 +86,30 @@ def test_deckr_message_body_rejects_non_json_values() -> None:
         )
 
 
+def test_recipient_session_requires_direct_endpoint_recipient() -> None:
+    with pytest.raises(ValidationError, match="recipientSessionId"):
+        DeckrMessage(
+            lane=PLUGIN_MESSAGES_LANE,
+            messageType="pluginExtension",
+            sender=host_address("python"),
+            senderSessionId="session-host",
+            recipient=broadcast_target(scope="controllers", endpoint_family="controller"),
+            recipientSessionId="session-controller",
+            subject=entity_subject("extension", contextId="ctx"),
+            body={
+                "extensionType": "test.extension",
+                "extensionSchemaId": "test.extension.v1",
+                "data": {},
+            },
+        )
+
+
 def test_core_lane_validation_checks_message_type_body_pair() -> None:
     message = DeckrMessage(
         lane=PLUGIN_MESSAGES_LANE,
         messageType="settingsRequest",
         sender=host_address("python"),
+        senderSessionId="session-host",
         recipient=endpoint_target(controller_address("main")),
         subject=entity_subject("settings", contextId="ctx"),
         body={},

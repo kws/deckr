@@ -17,12 +17,15 @@ from deckr.contracts.messages import (
 )
 from deckr.contracts.models import thaw_json
 from deckr.lanes import (
+    EndpointSessionLost,
     ReplyPredicate,
     message_is_deliverable,
+    message_sender_session_is_current,
     reply_is_accepted,
     validate_message_for_contract,
 )
 from deckr.state import (
+    DEFAULT_STATE_STORE_NAME,
     StateChange,
     StateConflict,
     StateEntry,
@@ -51,8 +54,10 @@ class NatsSubstrate:
         lane_contracts: LaneContractRegistry,
         buffer_size: int = 100,
         state_lease_ttl_seconds: float = _STATE_LEASE_TTL_SECONDS,
+        default_state_name: str = DEFAULT_STATE_STORE_NAME,
     ) -> None:
         self.url = url
+        self.default_state_name = default_state_name
         self._lane_contracts = lane_contracts
         self._buffer_size = buffer_size
         self._state_lease_ttl_seconds = state_lease_ttl_seconds
@@ -79,6 +84,14 @@ class NatsSubstrate:
     async def publish(self, message: DeckrMessage) -> None:
         contract = self._lane_contracts.contract_for(message.lane)
         validate_message_for_contract(message, contract)
+        if not await message_sender_session_is_current(
+            message,
+            state=self.state(self.default_state_name),
+        ):
+            raise EndpointSessionLost(
+                f"Sender session {message.sender_session_id!r} for {message.sender} "
+                "is not current"
+            )
         await self._publish_payload(
             _subject_for(message),
             message,
@@ -108,6 +121,14 @@ class NatsSubstrate:
             raise RuntimeError("NATS substrate is not connected")
         contract = self._lane_contracts.contract_for(message.lane)
         validate_message_for_contract(message, contract)
+        if not await message_sender_session_is_current(
+            message,
+            state=self.state(self.default_state_name),
+        ):
+            raise EndpointSessionLost(
+                f"Sender session {message.sender_session_id!r} for {message.sender} "
+                "is not current"
+            )
         response = await self._nc.request(
             _subject_for(message),
             _payload_for(message),
@@ -115,6 +136,18 @@ class NatsSubstrate:
             headers=_headers_for(message),
         )
         reply = self._message_from_nats(response)
+        if not message_is_deliverable(
+            reply,
+            endpoint=message.sender,
+            endpoint_session_id=message.sender_session_id,
+            contract=contract,
+        ):
+            raise TimeoutError("NATS request returned no deliverable Deckr reply")
+        if not await message_sender_session_is_current(
+            reply,
+            state=self.state(self.default_state_name),
+        ):
+            raise TimeoutError("NATS request returned a stale Deckr reply")
         if not await reply_is_accepted(reply, request=message, accept=accept):
             raise TimeoutError("NATS request returned no accepted Deckr reply")
         return reply
@@ -124,6 +157,8 @@ class NatsSubstrate:
         self,
         lane: str,
         endpoint: EndpointAddress,
+        *,
+        endpoint_session_id: str,
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[DeckrMessage]]:
         if self._nc is None:
             raise RuntimeError("NATS substrate is not connected")
@@ -138,7 +173,13 @@ class NatsSubstrate:
                 if not message_is_deliverable(
                     message,
                     endpoint=endpoint,
+                    endpoint_session_id=endpoint_session_id,
                     contract=contract,
+                ):
+                    return
+                if not await message_sender_session_is_current(
+                    message,
+                    state=self.state(self.default_state_name),
                 ):
                     return
                 if msg.reply:
@@ -480,8 +521,11 @@ def _headers_for(message: DeckrMessage) -> Mapping[str, str]:
         "Deckr-Message-Id": message.message_id,
         "Deckr-Message-Type": message.message_type,
         "Deckr-Sender": str(message.sender),
+        "Deckr-Sender-Session": message.sender_session_id,
         "Deckr-Recipient": _recipient_header(message),
     }
+    if message.recipient_session_id is not None:
+        headers["Deckr-Recipient-Session"] = message.recipient_session_id
     if message.in_reply_to is not None:
         headers["Deckr-In-Reply-To"] = message.in_reply_to
     return headers

@@ -115,9 +115,9 @@ external runtime attach, Elgato-compatible plugin protocol adaptation, or
 concrete device protocols.
 
 The NATS substrate surface is available behind the optional `deckr[nats]` extra.
-Use `Deckr.lane(...).endpoint(...)` for endpoint-bound lane messages and
-`Deckr.state(...)` for current-state declarations. A real-NATS smoke harness is
-available at `scripts/nats_smoke.py`, and `scripts/nats_state_report.py`
+Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages
+and `Deckr.state(...)` for current-state declarations. A real-NATS smoke harness
+is available at `scripts/nats_smoke.py`, and `scripts/nats_state_report.py`
 summarizes the broker's current Deckr communication state.
 
 Run the smoke harness against the included JetStream-enabled NATS compose service:

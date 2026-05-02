@@ -471,20 +471,28 @@ def hardware_device_ref_from_message(message: DeckrMessage) -> DeviceRef | None:
 def hardware_message(
     *,
     sender: str | EndpointAddress,
+    sender_session_id: str,
     recipient: str | EndpointAddress | MessageTarget,
+    recipient_session_id: str | None = None,
     message_type: str,
     body: HardwareMessageBody | Mapping[str, Any],
     subject: EntitySubject,
     in_reply_to: str | None = None,
     causation_id: str | None = None,
 ) -> DeckrMessage:
-    target = recipient if not isinstance(recipient, str | EndpointAddress) else endpoint_target(recipient)
+    target = (
+        recipient
+        if not isinstance(recipient, str | EndpointAddress)
+        else endpoint_target(recipient)
+    )
     parsed_body = hardware_body_for_type(message_type, body)
     return DeckrMessage(
         lane=HARDWARE_MESSAGES_LANE,
         messageType=message_type,
         sender=sender,
+        senderSessionId=sender_session_id,
         recipient=target,
+        recipientSessionId=recipient_session_id,
         subject=subject,
         body=hardware_body_to_dict(parsed_body),
         inReplyTo=in_reply_to,
@@ -492,10 +500,16 @@ def hardware_message(
     )
 
 
-def device_available_message(*, manager_id: str, descriptor: DeviceDescriptor) -> DeckrMessage:
+def device_available_message(
+    *,
+    manager_id: str,
+    sender_session_id: str,
+    descriptor: DeviceDescriptor,
+) -> DeckrMessage:
     body = DeviceAvailableMessage(descriptor=descriptor)
     return hardware_message(
         sender=hardware_manager_address(manager_id),
+        sender_session_id=sender_session_id,
         recipient=controllers_broadcast(),
         message_type=DEVICE_AVAILABLE,
         body=body,
@@ -506,11 +520,15 @@ def device_available_message(*, manager_id: str, descriptor: DeviceDescriptor) -
 
 
 def device_descriptor_changed_message(
-    *, manager_id: str, descriptor: DeviceDescriptor
+    *,
+    manager_id: str,
+    sender_session_id: str,
+    descriptor: DeviceDescriptor,
 ) -> DeckrMessage:
     body = DeviceDescriptorChangedMessage(descriptor=descriptor)
     return hardware_message(
         sender=hardware_manager_address(manager_id),
+        sender_session_id=sender_session_id,
         recipient=controllers_broadcast(),
         message_type=DEVICE_DESCRIPTOR_CHANGED,
         body=body,
@@ -523,6 +541,7 @@ def device_descriptor_changed_message(
 def control_input_message(
     *,
     manager_id: str,
+    sender_session_id: str,
     device_id: str,
     fingerprint: str | None = None,
     control_id: str,
@@ -550,6 +569,7 @@ def control_input_message(
     )
     return hardware_message(
         sender=hardware_manager_address(manager_id),
+        sender_session_id=sender_session_id,
         recipient=controllers_broadcast(),
         message_type=CONTROL_INPUT,
         body=body,
@@ -566,6 +586,7 @@ def control_input_message(
 def device_unavailable_message(
     *,
     manager_id: str,
+    sender_session_id: str,
     device_id: str,
     fingerprint: str | None = None,
     reason: str | None = None,
@@ -578,6 +599,7 @@ def device_unavailable_message(
     body = DeviceUnavailableMessage(deviceRef=device_ref, reason=reason)
     return hardware_message(
         sender=hardware_manager_address(manager_id),
+        sender_session_id=sender_session_id,
         recipient=controllers_broadcast(),
         message_type=DEVICE_UNAVAILABLE,
         body=body,
@@ -588,9 +610,11 @@ def device_unavailable_message(
 def control_command_for_capability(
     *,
     controller_id: str,
+    sender_session_id: str,
     ref: CapabilityRef,
     command_type: str,
     params: JsonObject | None = None,
+    recipient_session_id: str | None = None,
 ) -> DeckrMessage:
     device = ref.device_ref
     if device is None:
@@ -598,24 +622,28 @@ def control_command_for_capability(
     control_id = ref.control_id
     return control_command_message(
         controller_id=controller_id,
+        sender_session_id=sender_session_id,
         manager_id=device.manager_id,
         device_id=device.device_id,
         control_id=control_id,
         capability_id=ref.capability_id,
         command_type=command_type,
         params=params,
+        recipient_session_id=recipient_session_id,
     )
 
 
 def control_command_message(
     *,
     controller_id: str,
+    sender_session_id: str,
     manager_id: str,
     device_id: str,
     capability_id: str,
     command_type: str,
     control_id: str | None = None,
     params: JsonObject | None = None,
+    recipient_session_id: str | None = None,
 ) -> DeckrMessage:
     device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
     body = ControlCommandMessage(
@@ -627,7 +655,9 @@ def control_command_message(
     )
     return hardware_message(
         sender=f"controller:{controller_id}",
+        sender_session_id=sender_session_id,
         recipient=endpoint_target(hardware_manager_address(manager_id)),
+        recipient_session_id=recipient_session_id,
         message_type=CONTROL_COMMAND,
         body=body,
         subject=hardware_subject_for_capability(

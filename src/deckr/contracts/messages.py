@@ -5,7 +5,14 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field, RootModel, field_serializer, field_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    RootModel,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
@@ -312,7 +319,9 @@ class DeckrMessage(DeckrModel):
     lane: str
     message_type: str = Field(alias="messageType")
     sender: EndpointAddress
+    sender_session_id: str = Field(alias="senderSessionId")
     recipient: MessageTarget
+    recipient_session_id: str | None = Field(default=None, alias="recipientSessionId")
     subject: EntitySubject
     created_at: datetime = Field(default_factory=_now_utc, alias="createdAt")
     expires_at: datetime | None = Field(default=None, alias="expiresAt")
@@ -328,6 +337,21 @@ class DeckrMessage(DeckrModel):
         if value is not None and value < 0:
             raise ValueError("ttlMs must be non-negative")
         return value
+
+    @field_validator("sender_session_id", "recipient_session_id")
+    @classmethod
+    def _validate_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_identity_part(value, field_name="Endpoint session id")
+
+    @model_validator(mode="after")
+    def _validate_session_targets(self) -> DeckrMessage:
+        if self.recipient_session_id is not None and not isinstance(
+            self.recipient, EndpointTarget
+        ):
+            raise ValueError("recipientSessionId is only valid for endpoint recipients")
+        return self
 
     @field_validator("body", mode="after")
     @classmethod

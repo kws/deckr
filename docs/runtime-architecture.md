@@ -152,8 +152,9 @@ The v1 distributed lane substrate is NATS. The old home-grown WebSocket and
 MQTT lane transports are removed architecture, not parallel runtime paths.
 
 The shared lane implementation is the application-facing bus for one Deckr
-runtime. The replacement API should expose endpoint-bound lane handles so the
-bus layer can stamp envelope senders and filter recipients centrally.
+runtime. Components use `register_endpoint(...)` to acquire endpoint-session lane
+handles so the bus layer can stamp envelope senders, fence sessions, and filter
+recipients centrally.
 
 NATS may provide broker fan-out, request/reply inboxes, queue groups, ops-only
 Services, JetStream, KV watches, TTL, duplicate windows, WebSocket/MQTT-facing

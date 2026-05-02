@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import UTC, datetime
 from inspect import isawaitable
 from typing import Any, Protocol
 
 import anyio
+from pydantic import ValidationError
 
 from deckr.contracts.lanes import LaneContract, LaneContractRegistry
 from deckr.contracts.messages import (
@@ -23,9 +26,27 @@ from deckr.contracts.messages import (
     message_targets_endpoint,
     parse_endpoint_address,
 )
-from deckr.state import StateStore
+from deckr.state import (
+    DEFAULT_STATE_LEASE_TTL_SECONDS,
+    DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS,
+    DEFAULT_STATE_STORE_NAME,
+    EndpointPresence,
+    StateConflict,
+    StateEntry,
+    StateStore,
+    StateUnavailable,
+    presence_endpoint_key,
+)
 
 ReplyPredicate = Callable[[DeckrMessage], bool | Awaitable[bool]]
+
+
+class EndpointRegistrationConflict(RuntimeError):
+    """Raised when an endpoint address is already registered on a lane."""
+
+
+class EndpointSessionLost(RuntimeError):
+    """Raised when a registered endpoint lease is no longer authoritative."""
 
 
 class LaneSubstrate(Protocol):
@@ -50,6 +71,8 @@ class LaneSubstrate(Protocol):
         self,
         lane: str,
         endpoint: EndpointAddress,
+        *,
+        endpoint_session_id: str,
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]: ...
 
     def state(self, name: str) -> StateStore: ...
@@ -66,23 +89,85 @@ class Lane:
         self.name = name
         self.contract = contract
         self._substrate = substrate
+        self._registration_lock = anyio.Lock()
+        self._registered_endpoints: set[EndpointAddress] = set()
 
-    def endpoint(self, endpoint: str | EndpointAddress) -> EndpointLane:
-        return EndpointLane(
+    @asynccontextmanager
+    async def register_endpoint(
+        self,
+        endpoint: str | EndpointAddress,
+        *,
+        metadata: Mapping[str, str] | None = None,
+    ) -> AsyncIterator[RegisteredEndpointLane]:
+        parsed = parse_endpoint_address(endpoint)
+        registered = RegisteredEndpointLane(
             lane=self,
-            endpoint=parse_endpoint_address(endpoint),
+            endpoint=parsed,
+            session_id=str(uuid.uuid4()),
+            state=self._substrate.state(
+                getattr(self._substrate, "default_state_name", DEFAULT_STATE_STORE_NAME)
+            ),
+            metadata=metadata or {},
         )
+        async with self._registration_lock:
+            if parsed in self._registered_endpoints:
+                raise EndpointRegistrationConflict(
+                    f"Endpoint {parsed} is already registered on lane {self.name!r}"
+                )
+            self._registered_endpoints.add(parsed)
+        try:
+            await registered._claim()
+            try:
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(registered._renew_until_closed)
+                    try:
+                        yield registered
+                    finally:
+                        registered._closing = True
+                        tg.cancel_scope.cancel()
+            finally:
+                registered._closed = True
+                with anyio.move_on_after(2.0, shield=True):
+                    await registered._withdraw()
+        finally:
+            async with self._registration_lock:
+                self._registered_endpoints.discard(parsed)
 
 
-class EndpointLane:
-    def __init__(self, *, lane: Lane, endpoint: EndpointAddress) -> None:
+class RegisteredEndpointLane:
+    def __init__(
+        self,
+        *,
+        lane: Lane,
+        endpoint: EndpointAddress,
+        session_id: str,
+        state: StateStore,
+        metadata: Mapping[str, str],
+        ttl_seconds: int = DEFAULT_STATE_LEASE_TTL_SECONDS,
+        renewal_interval_seconds: float = DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS,
+    ) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be greater than zero")
+        if renewal_interval_seconds <= 0:
+            raise ValueError("renewal_interval_seconds must be greater than zero")
         self.lane = lane
         self.endpoint = endpoint
+        self.session_id = session_id
+        self._state = state
+        self._metadata = dict(metadata)
+        self._ttl_seconds = ttl_seconds
+        self._renewal_interval_seconds = renewal_interval_seconds
+        self._revision: int | None = None
+        self._closing = False
+        self._closed = False
+        self._lost_reason: str | None = None
+        self._lease_lock = anyio.Lock()
 
     async def send(
         self,
         *,
         recipient: str | EndpointAddress | MessageTarget,
+        recipient_session_id: str | None = None,
         subject: EntitySubject,
         message_type: str,
         body: Mapping[str, Any],
@@ -93,14 +178,15 @@ class EndpointLane:
             lane=self.lane.name,
             messageType=message_type,
             sender=self.endpoint,
+            senderSessionId=self.session_id,
             recipient=_coerce_target(recipient),
+            recipientSessionId=recipient_session_id,
             subject=subject,
             ttlMs=ttl_ms,
             causationId=causation_id,
             body=body,
         )
-        validate_message_for_contract(message, self.lane.contract)
-        await self.lane._substrate.publish(message)
+        await self._publish_current_message(message)
         return message
 
     async def publish(self, message: DeckrMessage) -> DeckrMessage:
@@ -110,14 +196,19 @@ class EndpointLane:
                 f"Message sender {message.sender} does not match bound endpoint "
                 f"{self.endpoint}"
             )
-        validate_message_for_contract(message, self.lane.contract)
-        await self.lane._substrate.publish(message)
+        if message.sender_session_id != self.session_id:
+            raise ValueError(
+                f"Message senderSessionId {message.sender_session_id!r} does not "
+                f"match bound endpoint session {self.session_id!r}"
+            )
+        await self._publish_current_message(message)
         return message
 
     async def request(
         self,
         *,
         recipient: str | EndpointAddress | MessageTarget,
+        recipient_session_id: str | None = None,
         subject: EntitySubject,
         message_type: str,
         body: Mapping[str, Any],
@@ -132,13 +223,16 @@ class EndpointLane:
             lane=self.lane.name,
             messageType=message_type,
             sender=self.endpoint,
+            senderSessionId=self.session_id,
             recipient=_coerce_target(recipient),
+            recipientSessionId=recipient_session_id,
             subject=subject,
             ttlMs=ttl_ms,
             causationId=causation_id,
             body=body,
         )
         validate_message_for_contract(message, self.lane.contract)
+        await self._assert_current_sender_session(message)
         return await self.lane._substrate.request(
             message,
             timeout=timeout,
@@ -158,20 +252,130 @@ class EndpointLane:
             lane=request.lane,
             messageType=message_type,
             sender=self.endpoint,
+            senderSessionId=self.session_id,
             recipient=endpoint_target(request.sender),
+            recipientSessionId=request.sender_session_id,
             subject=subject or request.subject,
             inReplyTo=request.message_id,
             causationId=causation_id,
             body=body,
         )
         validate_message_for_contract(reply, self.lane.contract)
+        await self._assert_current_sender_session(reply)
         await self.lane._substrate.publish_reply(reply, request=request)
         return reply
 
     def subscribe(
         self,
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]:
-        return self.lane._substrate.subscribe(self.lane.name, self.endpoint)
+        self._ensure_active()
+        return self.lane._substrate.subscribe(
+            self.lane.name,
+            self.endpoint,
+            endpoint_session_id=self.session_id,
+        )
+
+    async def renew(self) -> None:
+        async with self._lease_lock:
+            self._ensure_active()
+            if self._revision is None:
+                raise EndpointSessionLost("Endpoint session is not registered")
+            try:
+                entry = await self._state.update(
+                    self._presence_key,
+                    self._presence(),
+                    revision=self._revision,
+                    ttl=self._ttl_seconds,
+                )
+            except (StateConflict, StateUnavailable) as exc:
+                self._mark_lost("endpoint presence renewal failed")
+                raise EndpointSessionLost(
+                    f"Endpoint {self.endpoint} lost session {self.session_id}"
+                ) from exc
+            self._revision = entry.revision
+
+    @property
+    def _presence_key(self) -> str:
+        return presence_endpoint_key(lane=self.lane.name, endpoint=self.endpoint)
+
+    async def _claim(self) -> None:
+        try:
+            entry = await self._state.create(
+                self._presence_key,
+                self._presence(),
+                ttl=self._ttl_seconds,
+            )
+        except StateConflict as exc:
+            raise EndpointRegistrationConflict(
+                f"Endpoint {self.endpoint} is already present on lane "
+                f"{self.lane.name!r}"
+            ) from exc
+        self._revision = entry.revision
+
+    async def _renew_until_closed(self) -> None:
+        while not self._closing:
+            await anyio.sleep(self._renewal_interval_seconds)
+            if self._closing:
+                return
+            await self.renew()
+
+    async def _withdraw(self) -> None:
+        if self._revision is None:
+            return
+        try:
+            current = await self._state.get(self._presence_key)
+        except StateUnavailable:
+            return
+        if current is None:
+            self._mark_lost("endpoint presence disappeared before withdrawal")
+            return
+        if not _presence_entry_matches(
+            current,
+            lane=self.lane.name,
+            endpoint=self.endpoint,
+            session_id=self.session_id,
+        ):
+            self._mark_lost("endpoint presence changed before withdrawal")
+            return
+        try:
+            await self._state.delete(self._presence_key, revision=current.revision)
+        except (StateConflict, StateUnavailable):
+            return
+        self._revision = None
+
+    def _presence(self) -> EndpointPresence:
+        return EndpointPresence(
+            endpoint=self.endpoint,
+            lane=self.lane.name,
+            sessionId=self.session_id,
+            timestamp=datetime.now(UTC),
+            ttlSeconds=self._ttl_seconds,
+            metadata=self._metadata,
+        )
+
+    async def _publish_current_message(self, message: DeckrMessage) -> None:
+        validate_message_for_contract(message, self.lane.contract)
+        await self._assert_current_sender_session(message)
+        await self.lane._substrate.publish(message)
+
+    async def _assert_current_sender_session(self, message: DeckrMessage) -> None:
+        self._ensure_active()
+        if not await message_sender_session_is_current(message, state=self._state):
+            self._mark_lost("endpoint presence no longer matches sender session")
+            raise EndpointSessionLost(
+                f"Endpoint {self.endpoint} lost session {self.session_id}"
+            )
+
+    def _ensure_active(self) -> None:
+        if self._lost_reason is not None:
+            raise EndpointSessionLost(self._lost_reason)
+        if self._closed:
+            raise RuntimeError(
+                f"Endpoint {self.endpoint} on lane {self.lane.name!r} is closed"
+            )
+
+    def _mark_lost(self, reason: str) -> None:
+        self._lost_reason = reason
 
 
 class LaneRegistry:
@@ -260,12 +464,39 @@ def message_is_deliverable(
     message: DeckrMessage,
     *,
     endpoint: EndpointAddress,
+    endpoint_session_id: str,
     contract: LaneContract,
 ) -> bool:
     if message_is_expired(message):
         return False
     validate_message_for_contract(message, contract)
+    if (
+        message.recipient_session_id is not None
+        and message.recipient_session_id != endpoint_session_id
+    ):
+        return False
     return message_targets_endpoint(message, endpoint)
+
+
+async def message_sender_session_is_current(
+    message: DeckrMessage,
+    *,
+    state: StateStore,
+) -> bool:
+    try:
+        entry = await state.get(
+            presence_endpoint_key(lane=message.lane, endpoint=message.sender)
+        )
+    except StateUnavailable:
+        return False
+    if entry is None:
+        return False
+    return _presence_entry_matches(
+        entry,
+        lane=message.lane,
+        endpoint=message.sender,
+        session_id=message.sender_session_id,
+    )
 
 
 async def reply_is_accepted(
@@ -277,6 +508,11 @@ async def reply_is_accepted(
     if reply.message_id == request.message_id:
         return False
     if reply.in_reply_to != request.message_id:
+        return False
+    if (
+        reply.recipient_session_id is not None
+        and reply.recipient_session_id != request.sender_session_id
+    ):
         return False
     if accept is None:
         return True
@@ -314,3 +550,21 @@ def _coerce_target(target: str | EndpointAddress | MessageTarget) -> MessageTarg
     if isinstance(target, EndpointTarget | BroadcastTarget):
         return target
     return endpoint_target(target)
+
+
+def _presence_entry_matches(
+    entry: StateEntry,
+    *,
+    lane: str,
+    endpoint: EndpointAddress,
+    session_id: str,
+) -> bool:
+    try:
+        presence = EndpointPresence.model_validate(entry.value)
+    except ValidationError:
+        return False
+    return (
+        presence.lane == lane
+        and presence.endpoint == endpoint
+        and presence.session_id == session_id
+    )

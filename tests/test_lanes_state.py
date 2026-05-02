@@ -2,18 +2,25 @@ from __future__ import annotations
 
 import anyio
 import pytest
-from memory_lane_substrate import memory_deckr
+from memory_lane_substrate import MemoryLaneSubstrate, memory_deckr
 
+from deckr.contracts.lanes import DEFAULT_LANE_CONTRACT_REGISTRY
 from deckr.contracts.messages import (
+    PLUGIN_MESSAGES_LANE,
+    DeckrMessage,
     controller_address,
     endpoint_address,
+    endpoint_target,
     entity_subject,
     hardware_manager_address,
     host_address,
     plugin_hosts_broadcast,
 )
+from deckr.lanes import EndpointRegistrationConflict, EndpointSessionLost
 from deckr.pluginhost.messages import plugin_message
+from deckr.runtime import Deckr
 from deckr.state import (
+    EndpointPresence,
     StateConflict,
     StateUnavailable,
     decode_key_token,
@@ -48,54 +55,68 @@ async def _receive(stream):
 
 @pytest.mark.asyncio
 async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> None:
-    async with memory_deckr() as deckr:
-        host = deckr.lane("plugin_messages").endpoint(host_address("python"))
-        controller = deckr.lane("plugin_messages").endpoint(controller_address("main"))
-        other = deckr.lane("plugin_messages").endpoint(controller_address("other"))
-        async with controller.subscribe() as controller_stream, other.subscribe() as other_stream:
-            sent = await host.send(
-                recipient=controller_address("main"),
-                subject=entity_subject("settings", contextId="ctx"),
-                message_type="settingsRequest",
-                body={"target": _settings_target()},
-            )
-            received = await _receive(controller_stream)
-            with anyio.move_on_after(0.05) as scope:
-                await other_stream.receive()
+    async with (
+        memory_deckr() as deckr, deckr.lane("plugin_messages").register_endpoint(
+            host_address("python")
+        ) as host,
+        deckr.lane("plugin_messages").register_endpoint(
+            controller_address("main")
+        ) as controller,
+        deckr.lane("plugin_messages").register_endpoint(
+            controller_address("other")
+        ) as other,
+        controller.subscribe() as controller_stream,
+        other.subscribe() as other_stream,
+    ):
+        sent = await host.send(
+            recipient=controller_address("main"),
+            subject=entity_subject("settings", contextId="ctx"),
+            message_type="settingsRequest",
+            body={"target": _settings_target()},
+        )
+        received = await _receive(controller_stream)
+        with anyio.move_on_after(0.05) as scope:
+            await other_stream.receive()
 
     assert received == sent
     assert received.sender == host_address("python")
+    assert received.sender_session_id == host.session_id
     assert scope.cancel_called
 
 
 @pytest.mark.asyncio
 async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
-    async with memory_deckr() as deckr:
-        controller = deckr.lane("plugin_messages").endpoint(controller_address("main"))
-        host_a = deckr.lane("plugin_messages").endpoint(host_address("a"))
-        host_b = deckr.lane("plugin_messages").endpoint(host_address("b"))
-        controller_listener = deckr.lane("plugin_messages").endpoint(
+    async with (
+        memory_deckr() as deckr, deckr.lane("plugin_messages").register_endpoint(
+            controller_address("main")
+        ) as controller,
+        deckr.lane("plugin_messages").register_endpoint(
+            host_address("a")
+        ) as host_a,
+        deckr.lane("plugin_messages").register_endpoint(
+            host_address("b")
+        ) as host_b,
+        deckr.lane("plugin_messages").register_endpoint(
             controller_address("other")
+        ) as controller_listener,
+        host_a.subscribe() as stream_a,
+        host_b.subscribe() as stream_b,
+        controller_listener.subscribe() as controller_stream,
+    ):
+        sent = await controller.send(
+            recipient=plugin_hosts_broadcast(),
+            subject=entity_subject("page", contextId="ctx"),
+            message_type="pluginExtension",
+            body={
+                "extensionType": "test.broadcast",
+                "extensionSchemaId": "test.broadcast.v1",
+                "data": {"title": "Ready"},
+            },
         )
-        async with (
-            host_a.subscribe() as stream_a,
-            host_b.subscribe() as stream_b,
-            controller_listener.subscribe() as controller_stream,
-        ):
-            sent = await controller.send(
-                recipient=plugin_hosts_broadcast(),
-                subject=entity_subject("page", contextId="ctx"),
-                message_type="pluginExtension",
-                body={
-                    "extensionType": "test.broadcast",
-                    "extensionSchemaId": "test.broadcast.v1",
-                    "data": {"title": "Ready"},
-                },
-            )
-            received_a = await _receive(stream_a)
-            received_b = await _receive(stream_b)
-            with anyio.move_on_after(0.05) as scope:
-                await controller_stream.receive()
+        received_a = await _receive(stream_a)
+        received_b = await _receive(stream_b)
+        with anyio.move_on_after(0.05) as scope:
+            await controller_stream.receive()
 
     assert received_a == sent
     assert received_b == sent
@@ -104,10 +125,12 @@ async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
 
 @pytest.mark.asyncio
 async def test_lane_validation_rejects_wrong_sender_family() -> None:
-    async with memory_deckr() as deckr:
-        worker = deckr.lane("plugin_messages").endpoint(
+    async with (
+        memory_deckr() as deckr,
+        deckr.lane("plugin_messages").register_endpoint(
             hardware_manager_address("x")
-        )
+        ) as worker,
+    ):
         with pytest.raises(ValueError, match="Sender family"):
             await worker.send(
                 recipient=controller_address("main"),
@@ -120,11 +143,9 @@ async def test_lane_validation_rejects_wrong_sender_family() -> None:
 @pytest.mark.asyncio
 async def test_endpoint_request_uses_deckr_correlation() -> None:
     async with memory_deckr() as deckr:
-        host = deckr.lane("plugin_messages").endpoint(host_address("python"))
-        controller = deckr.lane("plugin_messages").endpoint(controller_address("main"))
         ready = anyio.Event()
 
-        async def responder() -> None:
+        async def responder(controller) -> None:
             async with controller.subscribe() as stream:
                 ready.set()
                 request = await _receive(stream)
@@ -134,8 +155,16 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
                     body={"target": _settings_target(), "settings": {"theme": "dark"}},
                 )
 
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(responder)
+        async with (
+            deckr.lane("plugin_messages").register_endpoint(
+                host_address("python")
+            ) as host,
+            deckr.lane("plugin_messages").register_endpoint(
+                controller_address("main")
+            ) as controller,
+            anyio.create_task_group() as tg,
+        ):
+            tg.start_soon(responder, controller)
             await ready.wait()
             reply = await host.request(
                 recipient=controller_address("main"),
@@ -147,15 +176,22 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
 
     assert reply.message_type == "settingsSnapshot"
     assert reply.in_reply_to is not None
+    assert reply.recipient_session_id == host.session_id
 
 
 @pytest.mark.asyncio
 async def test_endpoint_publish_accepts_prebuilt_message_from_bound_sender() -> None:
-    async with memory_deckr() as deckr:
-        host = deckr.lane("plugin_messages").endpoint(host_address("python"))
-        controller = deckr.lane("plugin_messages").endpoint(controller_address("main"))
+    async with (
+        memory_deckr() as deckr, deckr.lane("plugin_messages").register_endpoint(
+            host_address("python")
+        ) as host,
+        deckr.lane("plugin_messages").register_endpoint(
+            controller_address("main")
+        ) as controller,
+    ):
         message = plugin_message(
             sender=host.endpoint,
+            sender_session_id=host.session_id,
             recipient=controller.endpoint,
             subject=entity_subject("settings", contextId="ctx"),
             message_type="settingsRequest",
@@ -169,6 +205,154 @@ async def test_endpoint_publish_accepts_prebuilt_message_from_bound_sender() -> 
             await controller.publish(message)
 
     assert received == message
+
+
+@pytest.mark.asyncio
+async def test_register_endpoint_creates_presence_and_withdraws_on_exit() -> None:
+    async with memory_deckr() as deckr:
+        state = deckr.state()
+        key = presence_endpoint_key(
+            lane=PLUGIN_MESSAGES_LANE,
+            endpoint=host_address("python"),
+        )
+
+        async with deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+            host_address("python"),
+            metadata={"runtime": "test-host"},
+        ) as host:
+            entry = await state.get(key)
+            assert entry is not None
+            presence = EndpointPresence.model_validate(entry.value)
+            assert presence.endpoint == host.endpoint
+            assert presence.lane == PLUGIN_MESSAGES_LANE
+            assert presence.session_id == host.session_id
+            assert presence.metadata["runtime"] == "test-host"
+
+        assert await state.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_register_endpoint_rejects_local_duplicate() -> None:
+    async with memory_deckr() as deckr:
+        lane = deckr.lane(PLUGIN_MESSAGES_LANE)
+        async with lane.register_endpoint(host_address("python")):
+            with pytest.raises(EndpointRegistrationConflict):
+                async with lane.register_endpoint(host_address("python")):
+                    pass
+
+
+@pytest.mark.asyncio
+async def test_register_endpoint_rejects_existing_distributed_presence() -> None:
+    substrate = MemoryLaneSubstrate(lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY)
+    async with (
+        Deckr(substrate=substrate) as deckr_a,
+        Deckr(substrate=substrate) as deckr_b,
+        deckr_a.lane(PLUGIN_MESSAGES_LANE).register_endpoint(host_address("python")),
+    ):
+        with pytest.raises(EndpointRegistrationConflict):
+            async with deckr_b.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+                host_address("python")
+            ):
+                pass
+
+
+@pytest.mark.asyncio
+async def test_endpoint_renewal_refreshes_same_session_with_revision_guard() -> None:
+    async with memory_deckr() as deckr:
+        state = deckr.state()
+        key = presence_endpoint_key(
+            lane=PLUGIN_MESSAGES_LANE,
+            endpoint=host_address("python"),
+        )
+        async with deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+            host_address("python")
+        ) as host:
+            before = await state.get(key)
+            assert before is not None
+            await host.renew()
+            after = await state.get(key)
+
+        assert after is not None
+        assert after.revision > before.revision
+        presence = EndpointPresence.model_validate(after.value)
+        assert presence.session_id == host.session_id
+
+
+@pytest.mark.asyncio
+async def test_endpoint_session_loss_is_terminal_after_stale_presence() -> None:
+    async with memory_deckr() as deckr:
+        state = deckr.state()
+        key = presence_endpoint_key(
+            lane=PLUGIN_MESSAGES_LANE,
+            endpoint=host_address("python"),
+        )
+        async with deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+            host_address("python")
+        ) as host:
+            entry = await state.get(key)
+            assert entry is not None
+            await state.delete(key, revision=entry.revision)
+
+            with pytest.raises(EndpointSessionLost):
+                await host.renew()
+            with pytest.raises(EndpointSessionLost):
+                await host.send(
+                    recipient=controller_address("main"),
+                    subject=entity_subject("settings", contextId="ctx"),
+                    message_type="settingsRequest",
+                    body={"target": _settings_target()},
+                )
+
+
+@pytest.mark.asyncio
+async def test_stale_sender_session_is_not_delivered() -> None:
+    async with (
+        memory_deckr() as deckr, deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+            host_address("python")
+        ) as host,
+        deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+            controller_address("main")
+        ) as controller,
+        controller.subscribe() as stream,
+    ):
+        message = DeckrMessage(
+            lane=PLUGIN_MESSAGES_LANE,
+            messageType="settingsRequest",
+            sender=host.endpoint,
+            senderSessionId="stale-session",
+            recipient=endpoint_target(controller.endpoint),
+            subject=entity_subject("settings", contextId="ctx"),
+            body={"target": _settings_target()},
+        )
+        await host.lane._substrate.publish(message)
+        with anyio.move_on_after(0.05) as scope:
+            await stream.receive()
+
+    assert scope.cancel_called
+
+
+@pytest.mark.asyncio
+async def test_recipient_session_mismatch_is_not_delivered() -> None:
+    async with (
+        memory_deckr() as deckr, deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+            host_address("python")
+        ) as host,
+        deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+            controller_address("main")
+        ) as controller,
+        controller.subscribe() as stream,
+    ):
+        await host.send(
+            recipient=controller.endpoint,
+            recipient_session_id="wrong-session",
+            subject=entity_subject("settings", contextId="ctx"),
+            message_type="settingsRequest",
+            body={"target": _settings_target()},
+        )
+        with anyio.move_on_after(0.05) as scope:
+            await stream.receive()
+
+    assert scope.cancel_called
 
 
 @pytest.mark.asyncio
@@ -338,23 +522,27 @@ def test_state_key_helpers_round_trip_encoded_tokens() -> None:
 def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() -> None:
     # Build through the public lane API so sender stamping and validation stay covered.
     async def build():
-        async with memory_deckr() as deckr:
-            host = deckr.lane("plugin_messages").endpoint(host_address("python"))
-            controller = deckr.lane("plugin_messages").endpoint(
+        async with (
+            memory_deckr() as deckr, deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+                host_address("python")
+            ) as host,
+            deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
                 controller_address("main")
+            ) as controller,
+            controller.subscribe(),
+        ):
+            return await host.send(
+                recipient=controller_address("main"),
+                subject=entity_subject("settings", contextId="ctx"),
+                message_type="settingsRequest",
+                body={"target": _settings_target()},
             )
-            async with controller.subscribe():
-                return await host.send(
-                    recipient=controller_address("main"),
-                    subject=entity_subject("settings", contextId="ctx"),
-                    message_type="settingsRequest",
-                    body={"target": _settings_target()},
-                )
 
     message = anyio.run(build)
     assert _subject_for(message) == "deckr.lane.plugin_messages.host.python"
     assert _headers_for(message)["Deckr-Message-Id"] == message.message_id
     assert _headers_for(message)["Deckr-Sender"] == "host:python"
+    assert _headers_for(message)["Deckr-Sender-Session"] == message.sender_session_id
     assert _headers_for(message)["Deckr-Recipient"] == "controller:main"
 
 
