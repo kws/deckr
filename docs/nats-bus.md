@@ -1,5 +1,11 @@
 # NATS Bus And Current State
 
+> Live implementation reference: this document describes behavior currently
+> implemented in `deckr`. It should stay in sync with code, tests, and generated
+> schemas. If it differs from the implementation, treat that as a bug: either
+> update the document to match current behavior or make an intentional
+> code/schema/test change to match the intended v1 contract.
+
 This document is the normative implementor and operator reference for Deckr's
 distributed bus.
 

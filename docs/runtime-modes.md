@@ -1,5 +1,11 @@
 # Deckr Runtime Modes
 
+> Live implementation reference: this document describes behavior currently
+> implemented in `deckr`. It should stay in sync with code, tests, and generated
+> schemas. If it differs from the implementation, treat that as a bug: either
+> update the document to match current behavior or make an intentional
+> code/schema/test change to match the intended v1 contract.
+
 Deckr runtime modes are ordinary composition over the same primitives:
 
 - `Deckr` owns lane contracts and lane buses.

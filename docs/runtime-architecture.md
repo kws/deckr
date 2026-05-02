@@ -1,7 +1,10 @@
 # Runtime Architecture
 
-This document is normative architecture, not a description of whatever the code
-happens to do today.
+> Live implementation reference: this document describes behavior currently
+> implemented in `deckr`. It should stay in sync with code, tests, and generated
+> schemas. If it differs from the implementation, treat that as a bug: either
+> update the document to match current behavior or make an intentional
+> code/schema/test change to match the intended v1 contract.
 
 Deckr is in ALPHA. We are still deciding what the architecture is. Because of
 that, backwards compatibility is not a goal. Compatibility shims, aliases,
