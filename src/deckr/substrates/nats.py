@@ -262,19 +262,8 @@ class NatsStateStore:
 
     async def items(self, prefix: str = "") -> tuple[StateEntry, ...]:
         kv = await self._available_kv()
-        filter_pattern = _kv_watch_pattern(prefix)
         try:
-            keys = await kv.keys(filters=[filter_pattern])
-        except TypeError:
-            try:
-                keys = await kv.keys()
-            except Exception as exc:
-                if _is_key_missing(exc):
-                    keys = ()
-                else:
-                    raise StateUnavailable(
-                        f"Could not list state keys with prefix {prefix!r}"
-                    ) from exc
+            keys = await kv.keys()
         except Exception as exc:
             if not _is_key_missing(exc):
                 raise StateUnavailable(

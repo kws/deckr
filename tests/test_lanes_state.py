@@ -387,6 +387,8 @@ async def test_nats_state_updates_existing_bucket_to_broker_lease_ttl() -> None:
 
     await store.items("claim.")
 
+    assert fake_js.kv is not None
+    assert fake_js.kv.keys_filters is None
     assert fake_js.updated_config is not None
     assert fake_js.updated_config.max_age == 15.0
     assert fake_js.updated_config.max_msgs_per_subject == 1
@@ -575,6 +577,7 @@ class _FakeKv:
         self._entries: dict[str, _FakeKvEntry] = {}
         self.fail_get: Exception | None = None
         self.fail_create: Exception | None = None
+        self.keys_filters: object = None
 
     async def get(self, key: str) -> _FakeKvEntry:
         if self.fail_get is not None:
@@ -585,7 +588,7 @@ class _FakeKv:
         return entry
 
     async def keys(self, filters=None):
-        del filters
+        self.keys_filters = filters
         return tuple(sorted(self._entries))
 
     async def put(self, key: str, value: bytes) -> int:
