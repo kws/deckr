@@ -110,7 +110,7 @@ diagnostics.
 The old home-grown WebSocket/MQTT lane transports, route table, route leases,
 route metadata, and remote-endpoint hint architecture are removal targets. This
 does not apply to adapter-private protocols such as external runtime attach,
-Elgato-compatible plugin protocol adaptation, or concrete device protocols.
+third-party plugin protocol adaptation, or concrete device protocols.
 
 The NATS substrate surface is available behind the optional `deckr[nats]` extra.
 Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages
@@ -153,7 +153,7 @@ uv run lint-imports
 Deckr's core message protocols are the contracts spoken between Deckr
 architectural endpoints such as controllers, action providers, and hardware
 managers. They are separate from transport protocols such as MQTT and WebSocket,
-and separate from adapter-private protocols such as Elgato plugin messages.
+and separate from adapter-private third-party protocols.
 
 The supported lane substrate and current-state model is defined in
 [docs/nats-bus.md](docs/nats-bus.md). `deckr.actions.messages`,
@@ -177,8 +177,8 @@ transport locators.
 The key output rule is:
 
 - core action output targets a matched capability through binding-scoped
-  commands such as raster `set_frame` and `clear`; external names such as
-  Elgato `setImage` belong only at adapter boundaries.
+  commands such as raster `set_frame` and `clear`; third-party command names
+  belong only at adapter boundaries.
 
 ## Hardware Package
 
