@@ -43,8 +43,8 @@ async def _running_components(document: ConfigDocument):
     async with memory_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
-    ) as deckr, start_components(deckr, plan) as host:
-        yield host, deckr
+    ) as deckr, start_components(deckr, plan) as component_host:
+        yield component_host, deckr
 
 
 def test_resolve_component_specs_includes_singleton_and_multi_instance(
@@ -54,17 +54,17 @@ def test_resolve_component_specs_includes_singleton_and_multi_instance(
         manifest=ComponentManifest(
             component_id="deckr.controller",
             config_prefix="deckr.controller",
-            consumes=("hardware_messages", "plugin_messages"),
-            publishes=("plugin_messages",),
+            consumes=("hardware_messages", "actions"),
+            publishes=("actions",),
         ),
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
-    host = ComponentDefinition(
+    provider_runtime = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="deckr.plugin_hosts.python",
-            config_prefix="deckr.plugin_hosts.python",
-            consumes=("plugin_messages",),
-            publishes=("plugin_messages",),
+            component_id="deckr.action_providers.python",
+            config_prefix="deckr.action_providers.python",
+            consumes=("actions",),
+            publishes=("actions",),
             cardinality=ComponentCardinality.MULTI_INSTANCE,
         ),
         factory=lambda context: _DummyComponent(name=context.runtime_name),
@@ -74,7 +74,7 @@ def test_resolve_component_specs_includes_singleton_and_multi_instance(
         "deckr.components._host.load_component_definition",
         lambda component_id: {
             "deckr.controller": controller,
-            "deckr.plugin_hosts.python": host,
+            "deckr.action_providers.python": provider_runtime,
         }[component_id],
     )
 
@@ -82,12 +82,12 @@ def test_resolve_component_specs_includes_singleton_and_multi_instance(
         {
             "deckr": {
                 "controller": {"log_level": "debug"},
-                "plugin_hosts": {
+                "action_providers": {
                     "python": {
                         "enabled": False,
                         "instances": {
-                            "main": {"host_id": "python"},
-                            "remote": {"host_id": "remote"},
+                            "main": {"provider_instance_id": "python"},
+                            "remote": {"provider_instance_id": "remote"},
                         },
                     }
                 },
@@ -97,26 +97,26 @@ def test_resolve_component_specs_includes_singleton_and_multi_instance(
 
     specs = resolve_component_instance_specs(
         document,
-        discovered_component_ids=["deckr.controller", "deckr.plugin_hosts.python"],
+        discovered_component_ids=["deckr.controller", "deckr.action_providers.python"],
     )
 
     assert [
         (spec.component_id, spec.instance_id, dict(spec.raw_config), spec.runtime_name)
         for spec in specs
     ] == [
-        ("deckr.controller", "default", {"log_level": "debug"}, "deckr.controller"),
         (
-            "deckr.plugin_hosts.python",
+            "deckr.action_providers.python",
             "main",
-            {"host_id": "python"},
-            "deckr.plugin_hosts.python:main",
+            {"provider_instance_id": "python"},
+            "deckr.action_providers.python:main",
         ),
         (
-            "deckr.plugin_hosts.python",
+            "deckr.action_providers.python",
             "remote",
-            {"host_id": "remote"},
-            "deckr.plugin_hosts.python:remote",
+            {"provider_instance_id": "remote"},
+            "deckr.action_providers.python:remote",
         ),
+        ("deckr.controller", "default", {"log_level": "debug"}, "deckr.controller"),
     ]
 
 
@@ -188,21 +188,21 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
 
     definition = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="deckr.plugin_hosts.python",
-            config_prefix="deckr.plugin_hosts.python",
-            consumes=("plugin_messages",),
-            publishes=("plugin_messages",),
+            component_id="deckr.action_providers.python",
+            config_prefix="deckr.action_providers.python",
+            consumes=("actions",),
+            publishes=("actions",),
             cardinality=ComponentCardinality.MULTI_INSTANCE,
         ),
         factory=lambda context: (
-            seen.setdefault("lane", context.require_lane("plugin_messages"))
+            seen.setdefault("lane", context.require_lane("actions"))
             and _DummyComponent(name=context.runtime_name)
         ),
     )
     document = _document(
         {
             "deckr": {
-                "plugin_hosts": {
+                "action_providers": {
                     "python": {
                         "instances": {
                             "main": {},
@@ -214,23 +214,23 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
     )
     plan = resolve_component_host_plan(
         document,
-        definitions={"deckr.plugin_hosts.python": definition},
+        definitions={"deckr.action_providers.python": definition},
     )
     async with memory_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
-    ) as deckr, start_components(deckr, plan) as host:
-        await host.component_manager.wait_for_state(
-            "deckr.plugin_hosts.python:main",
+    ) as deckr, start_components(deckr, plan) as component_host:
+        await component_host.component_manager.wait_for_state(
+            "deckr.action_providers.python:main",
             ComponentState.RUNNING,
         )
-        async with deckr.lane("plugin_messages").register_endpoint(
+        async with deckr.lane("actions").register_endpoint(
             "controller:main"
         ) as controller:
             await controller.send(
-                recipient="host:main",
+                recipient="action_provider:main",
                 subject=entity_subject("test"),
-                message_type="pluginExtension",
+                message_type="actionExtension",
                 body={
                     "extensionType": "test.component",
                     "extensionSchemaId": "test.component.v1",

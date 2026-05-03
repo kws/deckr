@@ -24,7 +24,7 @@ def test_load_config_document_rejects_non_deckr_top_level_namespaces(
 [deckr.controller]
 log_level = "info"
 
-[plugin.openhab]
+[action_provider.openhab]
 url = "http://example.invalid"
 """.strip()
     )
@@ -40,10 +40,10 @@ def test_load_config_document_preserves_namespaced_children(tmp_path: Path) -> N
 [deckr.controller]
 log_level = "debug"
 
-[deckr.plugin_hosts.python.instances.main]
+[deckr.action_providers.python.instances.main]
 enabled = false
 
-[deckr.plugins.openhab]
+[deckr.actions.providers.openhab]
 url = "http://openhab.local:8080"
 """.strip()
     )
@@ -53,10 +53,10 @@ url = "http://openhab.local:8080"
     assert document.source_path == config_path.resolve()
     assert document.base_dir == tmp_path.resolve()
     assert document.namespace("deckr.controller") == {"log_level": "debug"}
-    assert document.children("deckr.plugin_hosts") == {
+    assert document.children("deckr.action_providers") == {
         "python": {"instances": {"main": {"enabled": False}}}
     }
-    assert document.namespace("deckr.plugins.openhab") == {
+    assert document.namespace("deckr.actions.providers.openhab") == {
         "url": "http://openhab.local:8080"
     }
 
@@ -94,10 +94,10 @@ def test_load_config_document_expands_env_placeholders_before_parsing(
     config_path = tmp_path / "deckr.toml"
     config_path.write_text(
         """
-[deckr.plugin_hosts.python.instances.main.runtime]
+[deckr.action_providers.python.instances.main.runtime]
 bind_host = "${DECKR_BIND_HOST:-0.0.0.0}"
 bind_port = ${DECKR_BIND_PORT}
-plugin_ids = ${DECKR_PLUGIN_IDS:-["deckr-plugin-clock"]}
+provider_ids = ${DECKR_PROVIDER_IDS:-["deckr-plugin-clock"]}
 """.strip()
     )
 
@@ -107,10 +107,10 @@ plugin_ids = ${DECKR_PLUGIN_IDS:-["deckr-plugin-clock"]}
         env={"DECKR_BIND_PORT": "9000"},
     )
 
-    assert document.namespace("deckr.plugin_hosts.python.instances.main.runtime") == {
+    assert document.namespace("deckr.action_providers.python.instances.main.runtime") == {
         "bind_host": "0.0.0.0",
         "bind_port": 9000,
-        "plugin_ids": ("deckr-plugin-clock",),
+        "provider_ids": ("deckr-plugin-clock",),
     }
 
 
@@ -138,7 +138,7 @@ def test_load_config_document_rejects_missing_env_placeholder(tmp_path: Path) ->
     config_path = tmp_path / "deckr.toml"
     config_path.write_text(
         """
-[deckr.plugin_hosts.python.instances.main.runtime]
+[deckr.action_providers.python.instances.main.runtime]
 bind_port = ${DECKR_BIND_PORT}
 """.strip()
     )

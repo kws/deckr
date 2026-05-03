@@ -4,20 +4,26 @@ import anyio
 import pytest
 from memory_lane_substrate import MemoryLaneSubstrate, memory_deckr
 
+from deckr.actions.endpoints import (
+    action_provider_address,
+    action_providers_broadcast,
+)
+from deckr.actions.messages import action_message
+from deckr.actions.state import (
+    action_provider_catalog_key,
+    parse_action_provider_catalog_key,
+)
 from deckr.contracts.lanes import DEFAULT_LANE_CONTRACT_REGISTRY
 from deckr.contracts.messages import (
-    PLUGIN_MESSAGES_LANE,
+    ACTIONS_LANE,
     DeckrMessage,
     controller_address,
     endpoint_address,
     endpoint_target,
     entity_subject,
     hardware_manager_address,
-    host_address,
-    plugin_hosts_broadcast,
 )
 from deckr.lanes import EndpointRegistrationConflict, EndpointSessionLost
-from deckr.pluginhost.messages import plugin_message
 from deckr.runtime import Deckr
 from deckr.state import (
     EndpointPresence,
@@ -29,9 +35,7 @@ from deckr.state import (
     hardware_inventory_key,
     parse_device_claim_key,
     parse_hardware_inventory_key,
-    parse_plugin_action_catalog_key,
     parse_presence_endpoint_key,
-    plugin_action_catalog_key,
     presence_endpoint_key,
 )
 from deckr.substrates.nats import NatsStateStore, _headers_for, _subject_for
@@ -42,7 +46,8 @@ def _settings_target() -> dict[str, str]:
         "scope": "action_instance",
         "controllerId": "main",
         "configId": "device-config",
-        "pluginId": "demo.plugin",
+        "providerInstanceId": "demo-provider",
+        "providerId": "demo.provider",
         "actionId": "demo.action",
         "actionInstanceId": "instance-a",
     }
@@ -56,19 +61,19 @@ async def _receive(stream):
 @pytest.mark.asyncio
 async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane("plugin_messages").register_endpoint(
-            host_address("python")
-        ) as host,
-        deckr.lane("plugin_messages").register_endpoint(
+        memory_deckr() as deckr, deckr.lane("actions").register_endpoint(
+            action_provider_address("python")
+        ) as provider,
+        deckr.lane("actions").register_endpoint(
             controller_address("main")
         ) as controller,
-        deckr.lane("plugin_messages").register_endpoint(
+        deckr.lane("actions").register_endpoint(
             controller_address("other")
         ) as other,
         controller.subscribe() as controller_stream,
         other.subscribe() as other_stream,
     ):
-        sent = await host.send(
+        sent = await provider.send(
             recipient=controller_address("main"),
             subject=entity_subject("settings", contextId="ctx"),
             message_type="settingsRequest",
@@ -79,34 +84,34 @@ async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> Non
             await other_stream.receive()
 
     assert received == sent
-    assert received.sender == host_address("python")
-    assert received.sender_session_id == host.session_id
+    assert received.sender == action_provider_address("python")
+    assert received.sender_session_id == provider.session_id
     assert scope.cancel_called
 
 
 @pytest.mark.asyncio
 async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane("plugin_messages").register_endpoint(
+        memory_deckr() as deckr, deckr.lane("actions").register_endpoint(
             controller_address("main")
         ) as controller,
-        deckr.lane("plugin_messages").register_endpoint(
-            host_address("a")
-        ) as host_a,
-        deckr.lane("plugin_messages").register_endpoint(
-            host_address("b")
-        ) as host_b,
-        deckr.lane("plugin_messages").register_endpoint(
+        deckr.lane("actions").register_endpoint(
+            action_provider_address("a")
+        ) as provider_a,
+        deckr.lane("actions").register_endpoint(
+            action_provider_address("b")
+        ) as provider_b,
+        deckr.lane("actions").register_endpoint(
             controller_address("other")
         ) as controller_listener,
-        host_a.subscribe() as stream_a,
-        host_b.subscribe() as stream_b,
+        provider_a.subscribe() as stream_a,
+        provider_b.subscribe() as stream_b,
         controller_listener.subscribe() as controller_stream,
     ):
         sent = await controller.send(
-            recipient=plugin_hosts_broadcast(),
+            recipient=action_providers_broadcast(),
             subject=entity_subject("page", contextId="ctx"),
-            message_type="pluginExtension",
+            message_type="actionExtension",
             body={
                 "extensionType": "test.broadcast",
                 "extensionSchemaId": "test.broadcast.v1",
@@ -127,7 +132,7 @@ async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
 async def test_lane_validation_rejects_wrong_sender_family() -> None:
     async with (
         memory_deckr() as deckr,
-        deckr.lane("plugin_messages").register_endpoint(
+        deckr.lane("actions").register_endpoint(
             hardware_manager_address("x")
         ) as worker,
     ):
@@ -156,17 +161,17 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
                 )
 
         async with (
-            deckr.lane("plugin_messages").register_endpoint(
-                host_address("python")
-            ) as host,
-            deckr.lane("plugin_messages").register_endpoint(
+            deckr.lane("actions").register_endpoint(
+                action_provider_address("python")
+            ) as provider,
+            deckr.lane("actions").register_endpoint(
                 controller_address("main")
             ) as controller,
             anyio.create_task_group() as tg,
         ):
             tg.start_soon(responder, controller)
             await ready.wait()
-            reply = await host.request(
+            reply = await provider.request(
                 recipient=controller_address("main"),
                 subject=entity_subject("settings", contextId="ctx"),
                 message_type="settingsRequest",
@@ -176,29 +181,29 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
 
     assert reply.message_type == "settingsSnapshot"
     assert reply.in_reply_to is not None
-    assert reply.recipient_session_id == host.session_id
+    assert reply.recipient_session_id == provider.session_id
 
 
 @pytest.mark.asyncio
 async def test_endpoint_publish_accepts_prebuilt_message_from_bound_sender() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane("plugin_messages").register_endpoint(
-            host_address("python")
-        ) as host,
-        deckr.lane("plugin_messages").register_endpoint(
+        memory_deckr() as deckr, deckr.lane("actions").register_endpoint(
+            action_provider_address("python")
+        ) as provider,
+        deckr.lane("actions").register_endpoint(
             controller_address("main")
         ) as controller,
     ):
-        message = plugin_message(
-            sender=host.endpoint,
-            sender_session_id=host.session_id,
+        message = action_message(
+            sender=provider.endpoint,
+            sender_session_id=provider.session_id,
             recipient=controller.endpoint,
             subject=entity_subject("settings", contextId="ctx"),
             message_type="settingsRequest",
             body={"target": _settings_target()},
         )
         async with controller.subscribe() as stream:
-            await host.publish(message)
+            await provider.publish(message)
             received = await _receive(stream)
 
         with pytest.raises(ValueError, match="does not match bound endpoint"):
@@ -212,21 +217,21 @@ async def test_register_endpoint_creates_presence_and_withdraws_on_exit() -> Non
     async with memory_deckr() as deckr:
         state = deckr.state()
         key = presence_endpoint_key(
-            lane=PLUGIN_MESSAGES_LANE,
-            endpoint=host_address("python"),
+            lane=ACTIONS_LANE,
+            endpoint=action_provider_address("python"),
         )
 
-        async with deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
-            host_address("python"),
-            metadata={"runtime": "test-host"},
-        ) as host:
+        async with deckr.lane(ACTIONS_LANE).register_endpoint(
+            action_provider_address("python"),
+            metadata={"runtime": "test-provider"},
+        ) as provider:
             entry = await state.get(key)
             assert entry is not None
             presence = EndpointPresence.model_validate(entry.value)
-            assert presence.endpoint == host.endpoint
-            assert presence.lane == PLUGIN_MESSAGES_LANE
-            assert presence.session_id == host.session_id
-            assert presence.metadata["runtime"] == "test-host"
+            assert presence.endpoint == provider.endpoint
+            assert presence.lane == ACTIONS_LANE
+            assert presence.session_id == provider.session_id
+            assert presence.metadata["runtime"] == "test-provider"
 
         assert await state.get(key) is None
 
@@ -234,10 +239,10 @@ async def test_register_endpoint_creates_presence_and_withdraws_on_exit() -> Non
 @pytest.mark.asyncio
 async def test_register_endpoint_rejects_local_duplicate() -> None:
     async with memory_deckr() as deckr:
-        lane = deckr.lane(PLUGIN_MESSAGES_LANE)
-        async with lane.register_endpoint(host_address("python")):
+        lane = deckr.lane(ACTIONS_LANE)
+        async with lane.register_endpoint(action_provider_address("python")):
             with pytest.raises(EndpointRegistrationConflict):
-                async with lane.register_endpoint(host_address("python")):
+                async with lane.register_endpoint(action_provider_address("python")):
                     pass
 
 
@@ -247,11 +252,11 @@ async def test_register_endpoint_rejects_existing_distributed_presence() -> None
     async with (
         Deckr(substrate=substrate) as deckr_a,
         Deckr(substrate=substrate) as deckr_b,
-        deckr_a.lane(PLUGIN_MESSAGES_LANE).register_endpoint(host_address("python")),
+        deckr_a.lane(ACTIONS_LANE).register_endpoint(action_provider_address("python")),
     ):
         with pytest.raises(EndpointRegistrationConflict):
-            async with deckr_b.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
-                host_address("python")
+            async with deckr_b.lane(ACTIONS_LANE).register_endpoint(
+                action_provider_address("python")
             ):
                 pass
 
@@ -261,21 +266,21 @@ async def test_endpoint_renewal_refreshes_same_session_with_revision_guard() -> 
     async with memory_deckr() as deckr:
         state = deckr.state()
         key = presence_endpoint_key(
-            lane=PLUGIN_MESSAGES_LANE,
-            endpoint=host_address("python"),
+            lane=ACTIONS_LANE,
+            endpoint=action_provider_address("python"),
         )
-        async with deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
-            host_address("python")
-        ) as host:
+        async with deckr.lane(ACTIONS_LANE).register_endpoint(
+            action_provider_address("python")
+        ) as provider:
             before = await state.get(key)
             assert before is not None
-            await host.renew()
+            await provider.renew()
             after = await state.get(key)
 
         assert after is not None
         assert after.revision > before.revision
         presence = EndpointPresence.model_validate(after.value)
-        assert presence.session_id == host.session_id
+        assert presence.session_id == provider.session_id
 
 
 @pytest.mark.asyncio
@@ -283,20 +288,20 @@ async def test_endpoint_session_loss_is_terminal_after_stale_presence() -> None:
     async with memory_deckr() as deckr:
         state = deckr.state()
         key = presence_endpoint_key(
-            lane=PLUGIN_MESSAGES_LANE,
-            endpoint=host_address("python"),
+            lane=ACTIONS_LANE,
+            endpoint=action_provider_address("python"),
         )
-        async with deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
-            host_address("python")
-        ) as host:
+        async with deckr.lane(ACTIONS_LANE).register_endpoint(
+            action_provider_address("python")
+        ) as provider:
             entry = await state.get(key)
             assert entry is not None
             await state.delete(key, revision=entry.revision)
 
             with pytest.raises(EndpointSessionLost):
-                await host.renew()
+                await provider.renew()
             with pytest.raises(EndpointSessionLost):
-                await host.send(
+                await provider.send(
                     recipient=controller_address("main"),
                     subject=entity_subject("settings", contextId="ctx"),
                     message_type="settingsRequest",
@@ -307,24 +312,24 @@ async def test_endpoint_session_loss_is_terminal_after_stale_presence() -> None:
 @pytest.mark.asyncio
 async def test_stale_sender_session_is_not_delivered() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
-            host_address("python")
-        ) as host,
-        deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+        memory_deckr() as deckr, deckr.lane(ACTIONS_LANE).register_endpoint(
+            action_provider_address("python")
+        ) as provider,
+        deckr.lane(ACTIONS_LANE).register_endpoint(
             controller_address("main")
         ) as controller,
         controller.subscribe() as stream,
     ):
         message = DeckrMessage(
-            lane=PLUGIN_MESSAGES_LANE,
+            lane=ACTIONS_LANE,
             messageType="settingsRequest",
-            sender=host.endpoint,
+            sender=provider.endpoint,
             senderSessionId="stale-session",
             recipient=endpoint_target(controller.endpoint),
             subject=entity_subject("settings", contextId="ctx"),
             body={"target": _settings_target()},
         )
-        await host.lane._substrate.publish(message)
+        await provider.lane._substrate.publish(message)
         with anyio.move_on_after(0.05) as scope:
             await stream.receive()
 
@@ -334,15 +339,15 @@ async def test_stale_sender_session_is_not_delivered() -> None:
 @pytest.mark.asyncio
 async def test_recipient_session_mismatch_is_not_delivered() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
-            host_address("python")
-        ) as host,
-        deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+        memory_deckr() as deckr, deckr.lane(ACTIONS_LANE).register_endpoint(
+            action_provider_address("python")
+        ) as provider,
+        deckr.lane(ACTIONS_LANE).register_endpoint(
             controller_address("main")
         ) as controller,
         controller.subscribe() as stream,
     ):
-        await host.send(
+        await provider.send(
             recipient=controller.endpoint,
             recipient_session_id="wrong-session",
             subject=entity_subject("settings", contextId="ctx"),
@@ -508,7 +513,7 @@ def test_state_key_helpers_round_trip_encoded_tokens() -> None:
     )
     inventory_key = hardware_inventory_key("room/a")
     claim_key = device_claim_key(manager_id="room/a", device_id="deck:one")
-    catalog_key = plugin_action_catalog_key("host/main")
+    catalog_key = action_provider_catalog_key("provider.main")
 
     assert parse_presence_endpoint_key(presence_key) == (
         "hardware_messages",
@@ -516,22 +521,22 @@ def test_state_key_helpers_round_trip_encoded_tokens() -> None:
     )
     assert parse_hardware_inventory_key(inventory_key) == "room/a"
     assert parse_device_claim_key(claim_key) == ("room/a", "deck:one")
-    assert parse_plugin_action_catalog_key(catalog_key) == "host/main"
+    assert parse_action_provider_catalog_key(catalog_key) == "provider.main"
 
 
 def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() -> None:
     # Build through the public lane API so sender stamping and validation stay covered.
     async def build():
         async with (
-            memory_deckr() as deckr, deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
-                host_address("python")
-            ) as host,
-            deckr.lane(PLUGIN_MESSAGES_LANE).register_endpoint(
+            memory_deckr() as deckr, deckr.lane(ACTIONS_LANE).register_endpoint(
+                action_provider_address("python")
+            ) as provider,
+            deckr.lane(ACTIONS_LANE).register_endpoint(
                 controller_address("main")
             ) as controller,
             controller.subscribe(),
         ):
-            return await host.send(
+            return await provider.send(
                 recipient=controller_address("main"),
                 subject=entity_subject("settings", contextId="ctx"),
                 message_type="settingsRequest",
@@ -539,9 +544,9 @@ def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() ->
             )
 
     message = anyio.run(build)
-    assert _subject_for(message) == "deckr.lane.plugin_messages.host.python"
+    assert _subject_for(message) == "deckr.lane.actions.action_provider.python"
     assert _headers_for(message)["Deckr-Message-Id"] == message.message_id
-    assert _headers_for(message)["Deckr-Sender"] == "host:python"
+    assert _headers_for(message)["Deckr-Sender"] == "action_provider:python"
     assert _headers_for(message)["Deckr-Sender-Session"] == message.sender_session_id
     assert _headers_for(message)["Deckr-Recipient"] == "controller:main"
 

@@ -12,9 +12,9 @@ from pydantic import ValidationError
 
 from deckr.contracts.lanes import LaneContract, LaneContractRegistry
 from deckr.contracts.messages import (
+    ACTIONS_LANE,
     CORE_LANE_NAMES,
     HARDWARE_MESSAGES_LANE,
-    PLUGIN_MESSAGES_LANE,
     BroadcastTarget,
     DeckrMessage,
     EndpointAddress,
@@ -535,10 +535,10 @@ def _validate_recipient_family(
 
 
 def _validate_core_lane_body(message: DeckrMessage) -> None:
-    if message.lane == PLUGIN_MESSAGES_LANE:
-        from deckr.pluginhost.messages import plugin_body
+    if message.lane == ACTIONS_LANE:
+        from deckr.actions.messages import action_body
 
-        plugin_body(message)
+        action_body(message)
         return
     if message.lane == HARDWARE_MESSAGES_LANE:
         from deckr.hardware.messages import hardware_body_from_message

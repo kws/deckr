@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -17,29 +18,29 @@ from pydantic import (
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
 HARDWARE_MESSAGES_LANE = "hardware_messages"
-PLUGIN_MESSAGES_LANE = "plugin_messages"
-CORE_LANE_NAMES = (HARDWARE_MESSAGES_LANE, PLUGIN_MESSAGES_LANE)
+ACTIONS_LANE = "actions"
+CORE_LANE_NAMES = (ACTIONS_LANE, HARDWARE_MESSAGES_LANE)
 
 DECKR_MESSAGE_PROTOCOL_VERSION = "1"
 HARDWARE_MESSAGES_SCHEMA_ID = "deckr.message.hardware_messages.v1"
-PLUGIN_MESSAGES_SCHEMA_ID = "deckr.message.plugin_messages.v1"
+ACTION_MESSAGES_SCHEMA_ID = "deckr.message.actions.v1"
 CORE_LANE_SCHEMA_IDS = {
+    ACTIONS_LANE: ACTION_MESSAGES_SCHEMA_ID,
     HARDWARE_MESSAGES_LANE: HARDWARE_MESSAGES_SCHEMA_ID,
-    PLUGIN_MESSAGES_LANE: PLUGIN_MESSAGES_SCHEMA_ID,
 }
-
-BUILTIN_ACTION_PROVIDER_ID = "deckr.controller.builtin"
-RESERVED_BUILTIN_PROVIDER_IDS = frozenset(
-    {
-        BUILTIN_ACTION_PROVIDER_ID,
-    }
-)
 
 CORE_ENDPOINT_FAMILIES = frozenset(
     {
+        "action_provider",
         "controller",
-        "host",
         "hardware_manager",
+    }
+)
+
+_PROVIDER_INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_RESERVED_ACTION_PROVIDER_INSTANCE_IDS = frozenset(
+    {
+        "deckr.controller.builtin",
     }
 )
 
@@ -65,6 +66,19 @@ def _require_endpoint_family(value: str, *, field_name: str) -> str:
     if family not in CORE_ENDPOINT_FAMILIES:
         raise ValueError(f"Unknown endpoint family {family!r}")
     return family
+
+
+def _require_action_provider_endpoint_id(value: str, *, field_name: str) -> str:
+    provider_instance_id = _require_identity_part(value, field_name=field_name)
+    if not _PROVIDER_INSTANCE_ID_RE.fullmatch(provider_instance_id):
+        raise ValueError(
+            f"{field_name} must match [A-Za-z0-9][A-Za-z0-9._-]*"
+        )
+    if "::" in provider_instance_id:
+        raise ValueError(f"{field_name} must not contain '::'")
+    if provider_instance_id in _RESERVED_ACTION_PROVIDER_INSTANCE_IDS:
+        raise ValueError(f"{field_name} uses a reserved provider identity")
+    return provider_instance_id
 
 
 def _new_message_id() -> str:
@@ -98,6 +112,11 @@ class EndpointAddress(RootModel[str]):
         _require_identity_part(endpoint_id, field_name="Endpoint id")
         if ":" in endpoint_id:
             raise ValueError("Endpoint id must not contain ':'")
+        if family == "action_provider":
+            _require_action_provider_endpoint_id(
+                endpoint_id,
+                field_name="Action provider instance id",
+            )
         return value
 
     @property
@@ -120,10 +139,6 @@ def controller_address(controller_id: str) -> EndpointAddress:
     return endpoint_address("controller", controller_id)
 
 
-def host_address(host_id: str) -> EndpointAddress:
-    return endpoint_address("host", host_id)
-
-
 def hardware_manager_address(manager_id: str) -> EndpointAddress:
     return endpoint_address("hardware_manager", manager_id)
 
@@ -142,16 +157,6 @@ def parse_controller_address(address: str | EndpointAddress) -> str | None:
     except ValueError:
         return None
     if parsed.family != "controller":
-        return None
-    return parsed.endpoint_id
-
-
-def parse_host_address(address: str | EndpointAddress) -> str | None:
-    try:
-        parsed = parse_endpoint_address(address)
-    except ValueError:
-        return None
-    if parsed.family != "host":
         return None
     return parsed.endpoint_id
 
@@ -222,19 +227,6 @@ def broadcast_target(
     return BroadcastTarget(
         scope=scope,
         endpoint_family=endpoint_family,
-        domain=domain,
-        hop_limit=hop_limit,
-    )
-
-
-def plugin_hosts_broadcast(
-    *,
-    domain: str | None = None,
-    hop_limit: int | None = None,
-) -> BroadcastTarget:
-    return broadcast_target(
-        scope="plugin_hosts",
-        endpoint_family="host",
         domain=domain,
         hop_limit=hop_limit,
     )

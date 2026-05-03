@@ -18,7 +18,7 @@ because some code already exists.
 Deckr aims to be a service-driven, distributed architecture for connecting:
 
 - hardware devices
-- plugin hosts
+- action provider runtimes
 - controllers
 - any future runtime participant that fits the same model
 
@@ -28,8 +28,8 @@ deployment shape.
 The two external realities shaping this architecture are:
 
 - Hardware devices with addressable controls, displays, and input gestures.
-- Plugin runtimes that bind actions to those controls and react to lifecycle
-  and input events.
+- Action provider runtimes that bind actions to those controls and react to
+  lifecycle and input events.
 
 The shared APIs and runtime primitives for this architecture belong in `deckr`.
 That includes the core message specifications, endpoint identity rules,
@@ -47,14 +47,15 @@ There are not separate architectural discovery systems for:
 
 - controllers
 - hardware managers
-- plugin hosts
+- action provider runtimes
 - transports
 - "special" runtime services
 
 Those are semantic roles, not different runtime kinds.
 
-A controller is a component. A hardware manager is a component. A plugin host is
-a component. Any future third-party participant is also just a component.
+A controller is a component. A hardware manager is a component. An action
+provider runtime is a component. Any future third-party participant is also just
+a component.
 
 If a design introduces a second generic discovery abstraction because one role
 "feels special", that design is wrong.
@@ -97,8 +98,8 @@ handles before starting any component. No component may rely on another
 component having already started in order for a core lane to exist.
 
 The runtime host does not care whether a component is "really" a controller,
-hardware manager, or plugin host. The only generic concern is the lane contract it
-declares.
+hardware manager, or action provider runtime. The only generic concern is the
+lane contract it declares.
 
 This means the architecture is defined by lane interaction, not by role-specific
 loader types.
@@ -113,7 +114,7 @@ as incidental local variable names.
 
 The current core lane set includes:
 
-- `plugin_messages`
+- `actions`
 - `hardware_messages`
 
 The distributed lane substrate is NATS. This document owns the generic component
@@ -128,7 +129,7 @@ reply placeholders use capability-targeted contracts in
 `deckr.hardware.messages`.
 
 If Deckr needs another core lane, it must be added deliberately in `deckr`. Do
-not create new core lanes ad hoc inside a controller, plugin host, hardware
+not create new core lanes ad hoc inside a controller, action provider runtime, hardware
 manager, or transport package.
 
 Third-party extension lanes are allowed, but they must use globally namespaced
@@ -162,8 +163,9 @@ network edges, and leaf topology below Deckr. Application components still use
 Deckr lane handles, Deckr envelopes, Deckr endpoint addresses, and Deckr
 subjects.
 
-Adapter-private WebSocket or MQTT protocols may still exist behind plugin,
-hardware, or third-party protocol boundaries. They are not Deckr lane transports.
+Adapter-private WebSocket or MQTT protocols may still exist behind action
+provider, hardware, or third-party protocol boundaries. They are not Deckr lane
+transports.
 
 ### Managed Lane Runtime
 
@@ -179,7 +181,7 @@ It includes:
 - current-state, diagnostics, or control-plane hooks that remain lane-generic
 
 The managed lane runtime belongs in `deckr`. It is not a transport, controller,
-hardware manager, plugin host, or special discovered component.
+hardware manager, action provider runtime, or special discovered component.
 
 Every runtime host must either use the Deckr-provided managed lane runtime or
 explicitly provide equivalent behavior. Endpoint liveness and current-state
@@ -199,7 +201,7 @@ The public Python API should make this the normal path:
 
 ```python
 async with Deckr() as deckr:
-    plugin_messages = deckr.lane("plugin_messages")
+    actions = deckr.lane("actions")
     hardware_messages = deckr.lane("hardware_messages")
 ```
 
@@ -232,21 +234,22 @@ These modes are deployment shapes, not different architectures.
 
 - full-stack runtime
   - runs a managed Deckr instance plus component hosting
-  - may start controller, plugin hosts, hardware managers, transports, and other
+  - may start controller, action provider runtimes, hardware managers, transports, and other
     local services in one process
 - embedded application runtime
   - creates a managed Deckr instance inside another application such as a web
     service, desktop app, or test harness
   - may use lane messaging directly, start components manually, or use component
     discovery
-- skinny plugin host runtime
-  - runs only the managed lane runtime, a plugin host, and the lane substrate
+- skinny action provider runtime
+  - runs only the managed lane runtime, an action provider runtime, and the lane
+    substrate
     needed to reach a controller domain
   - does not require a local controller or hardware manager
 - remote hardware manager runtime
   - runs only the managed lane runtime, one or more hardware manager components,
     and the lane substrate needed to reach a controller domain
-  - does not require a local controller or plugin host
+  - does not require a local controller or action provider runtime
 
 Every mode must use the same managed lane runtime, lane contracts,
 endpoint-bound send/subscribe API, recipient filtering, current-state behavior,
@@ -263,7 +266,7 @@ binding, `RunContext`, `ComponentManager`, and lifecycle supervision.
 The bundled launcher may expose convenient presets or examples for these modes,
 but presets must be expressed as ordinary component composition and explicit
 transport bindings. They must not introduce hidden lane inference such as
-"plugin host mode means plugin traffic" or
+"action provider runtime mode means action traffic" or
 "hardware manager mode means hardware traffic."
 
 ### AnyIO Runtime Boundary
@@ -418,30 +421,31 @@ ad hoc role-specific context key invented by one implementation.
 ## Reference Roles
 
 The reference architecture includes a controller component that brokers commands
-from plugin-facing lanes to device-facing lanes.
+from action-provider-facing lanes to device-facing lanes.
 
 The controller's job is to:
 
 - connect actions to actual device controls
 - manage settings and state around that process
 - own user experience state
-- mediate between plugins and devices
+- mediate between action providers and devices
 - own context ids and the mapping from contexts to devices, controls, profiles,
   and pages
 
 All experience state belongs in controllers.
 
-Devices should know nothing about plugins.
+Devices should know nothing about action providers.
 
-Plugins should know nothing about devices beyond what they learn through the
-controller-mediated protocol.
+Action providers should know nothing about devices beyond what they learn
+through the controller-mediated protocol.
 
-Plugin hosts are also just components. Their job is to own plugin lifecycle and
-translate between plugin-facing APIs and Deckr's message lanes.
+Action provider runtimes are also just components. Their job is to own action
+provider lifecycle and translate between action-provider-facing APIs and Deckr's
+message lanes.
 
-Plugin runtime process identities, session tokens, claim URLs, and runtime
-WebSocket connections are plugin-host-private control-plane details. They must
-not become Deckr endpoint addresses.
+Action provider runtime process identities, session tokens, claim URLs, and
+runtime WebSocket connections are runtime-private control-plane details. They
+must not become Deckr endpoint addresses.
 
 Drivers are also just components. Their job is to translate between concrete
 hardware and Deckr's message lanes.
@@ -464,8 +468,8 @@ formatters, or file output.
 Components, component factories, embedded runtime helpers, and SDK surfaces must
 not configure root logging or mutate process-global logging policy. Embedded
 applications own their own logging setup. The exception is a true subprocess
-entrypoint, such as a plugin worker process, because that process has its own
-process boundary and needs its own entrypoint logging setup.
+entrypoint because that process has its own process boundary and needs its own
+entrypoint logging setup.
 
 ## Configuration
 
@@ -527,15 +531,15 @@ path of the component.
 Examples:
 
 - `deckr.controller`
-- `deckr.plugin_hosts.python`
+- `deckr.action_providers.python`
 - `deckr.drivers.elgato`
 - `deckr.drivers.mirabox`
 
 The runtime host must use the manifest's declared `config_prefix`. It must not
-try to infer meaning from path segments such as `plugin_hosts`, `drivers`, or
+try to infer meaning from path segments such as `action_providers`, `drivers`, or
 `controller`.
 
-`deckr.plugin_hosts.python` and `deckr.drivers.elgato` are therefore two
+`deckr.action_providers.python` and `deckr.drivers.elgato` are therefore two
 separate component types, not a parent component and a child component.
 
 ### Exact Prefix Binding
@@ -558,8 +562,8 @@ The runtime host must not:
 
 This means:
 
-- `deckr.plugin_hosts.python` does not automatically receive configuration from
-  `deckr.plugin_hosts`
+- `deckr.action_providers.python` does not automatically receive configuration from
+  `deckr.action_providers`
 - `deckr.drivers.elgato` does not automatically receive configuration from
   `deckr.drivers`
 - dotted names are exact binding prefixes, not inheritance paths
@@ -594,7 +598,7 @@ enabled/disabled convention.
 
 Component type identity and component instance identity are different concepts.
 
-`deckr.plugin_hosts.python` and `deckr.drivers.elgato` are distinct component
+`deckr.action_providers.python` and `deckr.drivers.elgato` are distinct component
 types with their own manifests and exact `config_prefix` values.
 
 If a component type is `singleton`, there is at most one configured instance of
@@ -614,9 +618,10 @@ That runtime identity must be:
 - derived deterministically from `component_id` and `instance_id`
 - separate from protocol-level addresses carried on event lanes
 
-Protocol addresses such as `controller:<controller_id>`, `host:<host_id>`, and
-`hardware_manager:<manager_id>` are lane-level messaging identities. They are
-not the generic lifecycle identity of a component instance.
+Protocol addresses such as `controller:<controller_id>`,
+`action_provider:<provider_instance_id>`, and `hardware_manager:<manager_id>`
+are lane-level messaging identities. They are not the generic lifecycle identity
+of a component instance.
 
 Deckr protocol endpoint addresses, entity subjects, client/session ids,
 transport addresses, component type ids, and runtime-host component identities
@@ -633,10 +638,10 @@ The configuration model for multi-instance components is:
   whole component family subtree
 
 For example, a multi-instance component with `config_prefix =
-deckr.plugin_hosts.python` would use:
+deckr.action_providers.python` would use:
 
-- `[deckr.plugin_hosts.python.instances.main]`
-- `[deckr.plugin_hosts.python.instances.remote]`
+- `[deckr.action_providers.python.instances.main]`
+- `[deckr.action_providers.python.instances.remote]`
 
 and the runtime host would instantiate two instances with `instance_id = "main"`
 and `instance_id = "remote"`.
@@ -690,13 +695,13 @@ The live design is:
 - NATS subject, reply inbox, queue group, ops-only Service, JetStream, and KV
   concepts remain substrate mechanics below the Deckr lane contract.
 
-This does not remove adapter-private WebSocket/MQTT protocols at plugin,
+This does not remove adapter-private WebSocket/MQTT protocols at action provider,
 hardware, or third-party integration boundaries.
 
 ### Shared Defaults
 
-Family-wide defaults such as "all plugin hosts inherit from
-`deckr.plugin_hosts`" are not part of the architecture.
+Family-wide defaults such as "all action provider runtimes inherit from
+`deckr.action_providers`" are not part of the architecture.
 
 That kind of implicit parent lookup is an unnecessary complication and is
 forbidden.
@@ -733,11 +738,11 @@ valid configuration values unless substitution was requested.
 Supported substitution happens on the raw configuration text before TOML parsing:
 
 ```toml
-[deckr.plugin_hosts.python.instances.main.runtime]
-bind_host = "${DECKR_PLUGINHOST_BIND_HOST:-0.0.0.0}"
-bind_port = ${DECKR_PLUGINHOST_BIND_PORT:-9000}
-plugin_ids = ${DECKR_PLUGIN_IDS_TOML:-[]}
-excluded_plugin_ids = ${DECKR_EXCLUDED_PLUGIN_IDS_TOML:-[]}
+[deckr.action_providers.python.instances.main.runtime]
+bind_host = "${DECKR_ACTION_PROVIDER_BIND_HOST:-0.0.0.0}"
+bind_port = ${DECKR_ACTION_PROVIDER_BIND_PORT:-9000}
+provider_ids = ${DECKR_PROVIDER_IDS_TOML:-[]}
+excluded_provider_ids = ${DECKR_EXCLUDED_PROVIDER_IDS_TOML:-[]}
 ```
 
 The replacement text is TOML source. Operators are responsible for quoting
@@ -753,7 +758,7 @@ substitution:
   discovery, exact-prefix binding, and handoff to components
 - components still receive only their final resolved configuration mapping
 - missing variables without defaults fail visibly before components start
-- environment values must not become transport, endpoint, plugin, hardware, or
+- environment values must not become transport, endpoint, action provider, hardware, or
   controller identity by accident; they are only configuration input
 
 This feature is intended for deployment systems such as Docker, Compose,
@@ -809,7 +814,7 @@ to understand component-specific settings.
 - Implicit parent-prefix inheritance is forbidden.
 - Type identity and instance identity are separate.
 - Lifecycle identity and protocol address identity are separate.
-- Role names such as controller, hardware manager, and plugin host are
+- Role names such as controller, hardware manager, and action provider runtime are
   descriptive only.
 - Replaceability alone is not a reason to introduce a new generic runtime layer.
 - Do not add shims, aliases, compatibility wrappers, or dual abstractions.

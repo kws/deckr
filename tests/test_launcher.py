@@ -165,7 +165,7 @@ def test_run_configured_deckr_uses_public_runtime_and_component_host(
         (),
         {
             "lane_contracts": "contracts",
-            "lane_names": ("plugin_messages",),
+            "lane_names": ("actions",),
         },
     )()
 
@@ -201,7 +201,7 @@ def test_run_configured_deckr_uses_public_runtime_and_component_host(
         anyio.run(run_configured_deckr, document)
 
     assert captured["lane_contracts"] == "contracts"
-    assert captured["lanes"] == ("plugin_messages",)
+    assert captured["lanes"] == ("actions",)
     assert captured["substrate"] is not None
     assert captured["start_components_plan"] is plan
     assert captured["deckr_entered"] is True

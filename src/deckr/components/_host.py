@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
 CORE_NON_COMPONENT_CONFIG_NAMESPACES = frozenset(
-    {"lane_contracts", "plugins", "runtime"}
+    {"actions", "lane_contracts", "runtime"}
 )
 REMOVED_TRANSPORT_CONFIG_PREFIXES = frozenset(
     {
@@ -424,7 +424,7 @@ def _component_candidate_prefix(path: tuple[str, ...]) -> str | None:
         return None
     if path[0] == "controller":
         return "deckr.controller"
-    if path[0] in {"drivers", "plugin_hosts", "substrates"} and len(path) >= 2:
+    if path[0] in {"action_providers", "drivers", "substrates"} and len(path) >= 2:
         return f"deckr.{path[0]}.{path[1]}"
     return "deckr." + ".".join(path)
 

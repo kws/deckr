@@ -13,7 +13,7 @@ README and use this file for placement rules and implementation hints.
 Use this repo for:
 
 - shared hardware contracts and wire models
-- plugin-facing manifests, messages, and lifecycle primitives
+- action-provider-facing manifests, messages, and lifecycle primitives
 - reusable runtime utilities that are not controller-specific
 
 Do not place controller orchestration, rendering policy, filesystem config, or
@@ -24,17 +24,13 @@ device-manager-specific behavior here. That belongs in the sibling
 
 - `src/deckr/core`
   - Generic runtime utilities and messaging primitives.
-  - Must not depend on `deckr.hardware`, `deckr.pluginhost`, or
-    `deckr.python_plugin`.
+  - Must not depend on `deckr.hardware` or `deckr.actions`.
+- `src/deckr/actions`
+  - Runtime-neutral `actions` lane wire contracts, provider-instance catalogs,
+    settings targets, endpoint helpers, and action-facing capability contracts.
 - `src/deckr/hardware`
   - Shared hardware-facing contracts.
-  - Must not depend on `deckr.pluginhost` or `deckr.python_plugin`.
-- `src/deckr/pluginhost`
-  - Runtime-neutral `plugin_messages` lane wire contracts.
-  - Must not depend on `deckr.python_plugin`.
-- `src/deckr/python_plugin`
-  - Python plugin SDK contracts used by Python plugin authors and
-    `deckr-pluginhost-python`.
+  - Must not depend on `deckr.actions`.
 - `tests`
   - Tests for the core package only.
 
@@ -52,9 +48,10 @@ device-manager-specific behavior here. That belongs in the sibling
 These are enforced in [`.importlinter`](./.importlinter):
 
 - `deckr.core` must not import `deckr.hardware`
-- `deckr.core` must not import `deckr.pluginhost` or `deckr.python_plugin`
-- `deckr.hardware` must not import `deckr.pluginhost` or `deckr.python_plugin`
-- `deckr.pluginhost` must not import `deckr.python_plugin`
+- `deckr.core` must not import `deckr.actions`
+- `deckr.contracts` must not import `deckr.actions` or `deckr.hardware`
+- `deckr.state` must not import `deckr.actions`
+- `deckr.hardware` must not import `deckr.actions`
 
 After touching package boundaries or import structure, run:
 

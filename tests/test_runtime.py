@@ -11,12 +11,12 @@ from deckr.runtime import Deckr
 @pytest.mark.asyncio
 async def test_deckr_creates_core_endpoint_bound_lanes() -> None:
     async with memory_deckr() as deckr:
-        plugin_lane = deckr.lane("plugin_messages")
+        actions_lane = deckr.lane("actions")
         hardware_lane = deckr.lane("hardware_messages")
 
-    assert isinstance(plugin_lane, Lane)
+    assert isinstance(actions_lane, Lane)
     assert isinstance(hardware_lane, Lane)
-    assert deckr.lanes.require("plugin_messages") is plugin_lane
+    assert deckr.lanes.require("actions") is actions_lane
 
 
 @pytest.mark.asyncio

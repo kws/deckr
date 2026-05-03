@@ -30,7 +30,7 @@ _DEFAULT_CONFIG_DOCUMENT_TEXT = """# Deckr configuration document
 #
 # Examples:
 #   [deckr.controller]
-#   [deckr.plugin_hosts.python.instances.main]
+#   [deckr.action_providers.python.instances.main]
 
 [deckr]
 """

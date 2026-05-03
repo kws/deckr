@@ -75,7 +75,7 @@ _EXTENSION_CAPABILITY_FAMILY_PATTERN = (
 )
 _CONTRACT_NAME_RE = re.compile(_CONTRACT_NAME_PATTERN)
 _GLOBALLY_QUALIFIED_NAME_RE = re.compile(_GLOBALLY_QUALIFIED_NAME_PATTERN)
-_ENDPOINT_ADDRESS_RE = re.compile(r"^(controller|host|hardware_manager):")
+_ENDPOINT_ADDRESS_RE = re.compile(r"^(action_provider|controller|hardware_manager):")
 _JSON_SCHEMA_CONTRACT_KEYS = frozenset(
     {
         "$ref",

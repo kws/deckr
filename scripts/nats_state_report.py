@@ -7,10 +7,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
+from deckr.actions.state import parse_action_provider_catalog_key
 from deckr.state import (
     parse_device_claim_key,
     parse_hardware_inventory_key,
-    parse_plugin_action_catalog_key,
     parse_presence_endpoint_key,
 )
 
@@ -82,9 +82,9 @@ def _print_report(rows: list[Row]) -> None:
         if manager_id is not None:
             inventories.append((manager_id, row))
             continue
-        host_id = parse_plugin_action_catalog_key(row.key)
-        if host_id is not None:
-            catalogs.append((host_id, row))
+        provider_instance_id = parse_action_provider_catalog_key(row.key)
+        if provider_instance_id is not None:
+            catalogs.append((provider_instance_id, row))
             continue
         parsed_claim = parse_device_claim_key(row.key)
         if parsed_claim is not None:
@@ -137,29 +137,23 @@ def _print_inventories(rows: list[tuple[str, Row]]) -> None:
 
 
 def _print_catalogs(rows: list[tuple[str, Row]]) -> None:
-    print("Plugin Catalogs")
+    print("Action Provider Catalogs")
     if not rows:
         print("  none")
         print()
         return
-    for host_id, row in rows:
+    for provider_instance_id, row in rows:
         actions = _catalog_action_count(row.value)
         print(
             "  "
-            f"{host_id} endpoint={row.value.get('hostEndpoint')} "
+            f"{provider_instance_id} endpoint={row.value.get('providerEndpoint')} "
+            f"provider={row.value.get('providerId')} "
             f"session={row.value.get('sessionId')} actions={actions} rev={row.revision}"
         )
     print()
 
 
 def _catalog_action_count(value: dict[str, Any]) -> int:
-    actions_by_plugin = value.get("plugins")
-    if isinstance(actions_by_plugin, dict):
-        count = 0
-        for plugin in actions_by_plugin.values():
-            if isinstance(plugin, dict) and isinstance(plugin.get("actions"), dict):
-                count += len(plugin["actions"])
-        return count
     actions = value.get("actions")
     return len(actions) if isinstance(actions, dict) else 0
 

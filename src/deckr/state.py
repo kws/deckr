@@ -231,10 +231,6 @@ def device_claim_key(*, manager_id: str, device_id: str) -> str:
     )
 
 
-def plugin_action_catalog_key(host_id: str) -> str:
-    return ".".join(("catalog", "plugin", encode_key_token(host_id)))
-
-
 def parse_presence_endpoint_key(key: str) -> tuple[str, EndpointAddress] | None:
     parts = key.split(".")
     if len(parts) != 5 or parts[:2] != ["presence", "endpoint"]:
@@ -257,10 +253,3 @@ def parse_device_claim_key(key: str) -> tuple[str, str] | None:
     if len(parts) != 4 or parts[:2] != ["claim", "device"]:
         return None
     return decode_key_token(parts[2]), decode_key_token(parts[3])
-
-
-def parse_plugin_action_catalog_key(key: str) -> str | None:
-    parts = key.split(".")
-    if len(parts) != 3 or parts[:2] != ["catalog", "plugin"]:
-        return None
-    return decode_key_token(parts[2])

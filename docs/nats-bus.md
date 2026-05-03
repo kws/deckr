@@ -42,11 +42,11 @@ constructs its own substrate must provide the same lane and state semantics.
 ## Core Rules
 
 - The v1 distributed lane substrate is NATS.
-- `plugin_messages` and `hardware_messages` lane traffic uses Core NATS, not
+- `actions` and `hardware_messages` lane traffic uses Core NATS, not
   JetStream persistence.
 - Retained communication state uses JetStream KV.
 - KV current state is authoritative for endpoint presence, hardware inventory,
-  device claims, and plugin action catalogs.
+  device claims, and action provider catalogs.
 - KV watches are wakeups. Broker snapshots from `get()` and `items()` are the
   repair path for local projections.
 - Local caches are disposable projections rebuilt from broker current state plus
@@ -64,10 +64,10 @@ messages and KV current-state documents at that boundary.
 
 ## Vocabulary
 
-- **Deckr lane:** a logical Deckr message contract, such as `plugin_messages` or
+- **Deckr lane:** a logical Deckr message contract, such as `actions` or
   `hardware_messages`.
 - **Deckr endpoint address:** a protocol address such as `controller:main`,
-  `host:python`, or `hardware_manager:mirabox`.
+  `action_provider:python`, or `hardware_manager:mirabox`.
 - **Deckr subject:** the domain entity a Deckr message is about, such as a
   device, control, action, binding, context, page session, or profile.
 - **NATS subject:** the substrate publish/subscribe address used by the NATS
@@ -93,8 +93,8 @@ Examples:
 ```text
 deckr.lane.hardware_messages.controller.main
 deckr.lane.hardware_messages.hardware_manager.mirabox-main
-deckr.lane.plugin_messages.controller.main
-deckr.lane.plugin_messages.host.python
+deckr.lane.actions.controller.main
+deckr.lane.actions.action_provider.python
 ```
 
 `<lane>`, `<sender-family>`, and `<sender-id>` are encoded with the same
@@ -152,15 +152,15 @@ Application code uses `deckr.state.StateStore`, not raw `nats-py` KV calls:
 ```python
 state = deckr.state("deckr_state_v1")
 
-entry = await state.get("presence.endpoint.plugin_messages.host.python")
-entries = await state.items("catalog.plugin.")
+entry = await state.get("presence.endpoint.actions.action_provider.python")
+entries = await state.items("catalog.actions.providers.")
 
 written = await state.put(key, value, ttl=15.0)
 created = await state.create(key, value, ttl=15.0)
 updated = await state.update(key, value, revision=written.revision, ttl=15.0)
 await state.delete(key, revision=updated.revision)
 
-async with state.watch("catalog.plugin.") as changes:
+async with state.watch("catalog.actions.providers.") as changes:
     async for change in changes:
         ...
 ```
@@ -219,16 +219,21 @@ Raw ids are encoded before they become NATS key or subject tokens:
 - Tokens beginning with `b64_` are always decoded as base64url fallback tokens,
   so raw ids that naturally start with `b64_` must use the fallback form.
 
-Python helpers live in `deckr.state`:
+Generic current-state helpers live in `deckr.state`:
 
 ```python
-presence_endpoint_key(lane="plugin_messages", endpoint="host:python")
+presence_endpoint_key(lane="actions", endpoint="action_provider:python")
 hardware_inventory_key("mirabox")
 device_claim_key(manager_id="mirabox", device_id="device-1")
-plugin_action_catalog_key("python")
 ```
 
-Matching parsers are also in `deckr.state`.
+Action provider catalog helpers live in `deckr.actions.state`:
+
+```python
+action_provider_catalog_key("python")
+```
+
+Matching parsers live alongside the corresponding key helpers.
 
 ## Current-State Keys
 
@@ -244,10 +249,10 @@ Hardware inventory:
 inventory.hardware.<manager-id>
 ```
 
-Plugin action catalog:
+Action provider catalog:
 
 ```text
-catalog.plugin.<host-id>
+catalog.actions.providers.<provider-instance-id>
 ```
 
 Device claim:
@@ -257,8 +262,9 @@ claim.device.<manager-id>.<device-id>
 ```
 
 Consumers must validate both key identity and payload identity. A catalog key for
-`catalog.plugin.a` with payload `hostId = b` is invalid. A presence key for
-`host:a` with payload endpoint `host:b` is invalid.
+`catalog.actions.providers.a` with payload `providerInstanceId = b` is invalid.
+A presence key for `action_provider:a` with payload endpoint `action_provider:b`
+is invalid.
 
 ## Endpoint Presence
 
@@ -268,13 +274,13 @@ Example:
 
 ```json
 {
-  "endpoint": "host:python",
-  "lane": "plugin_messages",
+  "endpoint": "action_provider:python",
+  "lane": "actions",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
   "ttlSeconds": 15,
   "metadata": {
-    "runtime": "deckr-pluginhost-python"
+    "runtime": "deckr-action-provider-runtime-python"
   }
 }
 ```
@@ -424,24 +430,31 @@ For claim refresh:
 - `StateUnavailable` does not revoke live ownership immediately. The controller
   retries and lets broker TTL or a later conflict settle ownership.
 
-## Plugin Action Catalogs
+## Action Provider Catalogs
 
-Plugin action catalogs advertise action types provided by a plugin host.
+Action provider catalogs advertise action types provided by one action provider
+instance.
 
 Example:
 
 ```json
 {
-  "hostId": "python",
-  "hostEndpoint": "host:python",
+  "providerInstanceId": "clock-office",
+  "providerEndpoint": "action_provider:clock-office",
+  "providerId": "com.example.clock",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
   "ttlSeconds": 15,
+  "labels": {
+    "location": "office"
+  },
+  "annotations": {
+    "runtime": "python"
+  },
   "actions": {
     "com.example.clock.digital": {
       "actionId": "com.example.clock.digital",
       "name": "Digital Clock",
-      "pluginId": "com.example.clock",
       "controllers": []
     }
   }
@@ -449,13 +462,16 @@ Example:
 ```
 
 The action map is keyed by `actionId`; each map key must match the descriptor's
-`actionId`, and `hostEndpoint` must equal `host:<hostId>`. The catalog is usable
-only while matching host endpoint presence exists with the same `sessionId`.
+`actionId`, `providerInstanceId` must match the catalog key suffix, and
+`providerEndpoint` must equal `action_provider:<providerInstanceId>`. The
+catalog is usable only while matching action provider endpoint presence exists
+with the same `sessionId`.
 
-Catalog loss, host presence loss, host session change, or catalog
-incompatibility makes affected actions unavailable and causes the controller to
-revoke dependent live bindings. The plugin host does not broadcast
-`actionsUnregistered`; broker current state is the source of truth.
+Catalog loss, action provider presence loss, action provider session change, or
+catalog incompatibility makes affected actions unavailable and causes the
+controller to revoke dependent live bindings. The action provider instance does
+not broadcast `actionsUnregistered`; broker current state is the source of
+truth.
 
 ## Producer Pattern
 
@@ -497,7 +513,7 @@ arrive in any order:
 missing -> present
 present -> missing
 present -> different session
-catalog present -> host presence missing
+catalog present -> action provider presence missing
 claim present -> controller presence missing
 inventory present -> manager presence missing
 ```
@@ -548,11 +564,11 @@ Examples:
 - A hardware manager with endpoint `hardware_manager:mirabox` publishes lane
   traffic only to `deckr.lane.hardware_messages.hardware_manager.mirabox` and
   updates only its own presence and inventory keys.
-- A plugin host with endpoint `host:python` publishes lane traffic only to
-  `deckr.lane.plugin_messages.host.python` and updates only its own presence and
-  catalog keys.
+- An action provider instance with endpoint `action_provider:python` publishes
+  lane traffic only to `deckr.lane.actions.action_provider.python` and updates
+  only its own presence and catalog keys.
 - A controller with endpoint `controller:main` publishes controller-originated
-  messages on `hardware_messages` and `plugin_messages`, reads and watches
+  messages on `hardware_messages` and `actions`, reads and watches
   endpoint, inventory, catalog, and claim keyspaces, and creates or refreshes
   claim keys according to controller policy.
 
@@ -601,7 +617,7 @@ Inspect useful keyspaces:
 ```bash
 nats kv ls deckr_state_v1 'presence.endpoint.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_state_v1 'inventory.hardware.>' --server nats://127.0.0.1:4222
-nats kv ls deckr_state_v1 'catalog.plugin.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_state_v1 'catalog.actions.providers.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_state_v1 'claim.device.>' --server nats://127.0.0.1:4222
 ```
 
@@ -610,7 +626,7 @@ When a component appears unavailable, check in this order:
 1. Is its endpoint presence key present and carrying the expected endpoint, lane,
    and session id?
 2. Is its domain state present and session-matched, such as inventory for a
-   hardware manager or catalog for a plugin host?
+   hardware manager or catalog for an action provider instance?
 3. If a device is claimed, does the claim's controller endpoint/session match
    current controller presence?
 4. Did the key expire after the 15s TTL because the component stopped refreshing

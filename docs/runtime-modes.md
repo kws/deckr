@@ -22,8 +22,8 @@ rules.
 ## Full Stack Runtime
 
 A full-stack process creates `Deckr` with the configured runtime substrate, then
-starts controller, plugin host, hardware manager, and any adapter components from
-one component host plan. The NATS lane substrate itself is runtime
+starts controller, action provider runtime, hardware manager, and any adapter
+components from one component host plan. The NATS lane substrate itself is runtime
 infrastructure, not a discovered component.
 
 ```python
@@ -45,18 +45,20 @@ async with Deckr(
         ...
 ```
 
-## Skinny Plugin Host Runtime
+## Skinny Action Provider Runtime
 
-A skinny plugin host runtime uses the same `Deckr` and component host APIs, but
-its configuration only includes a plugin host component and the lane substrate
-needed to reach the controller domain. Distributed runtimes use the NATS
-substrate; the old WebSocket/MQTT lane transport examples have been removed.
+A skinny action provider runtime uses the same `Deckr` and component host APIs,
+but its configuration only includes an action provider runtime component and the
+lane substrate needed to reach the controller domain. Distributed runtimes use
+the NATS substrate; the old WebSocket/MQTT lane transport examples have been
+removed.
 
 ## Remote Hardware Manager Runtime
 
 A remote hardware manager runtime likewise uses the same APIs, but includes one
 or more hardware manager components plus the lane substrate needed for
-`hardware_messages`. It does not need a local controller or plugin host.
+`hardware_messages`. It does not need a local controller or action provider
+runtime.
 
 ## Embedded Or Manual Runtime
 

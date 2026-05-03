@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "deckr"
 version = "0.3.0.dev0"
-description = "Deckr core contracts and runtime primitives for hardware, plugins, and controllers"
+description = "Deckr core contracts and runtime primitives for hardware, action providers, and controllers"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
     { name = "Kaj Siebert", email = "kaj@k-si.com" }
 ]
 requires-python = ">=3.11,<4.0.0"
-keywords = ["deckr", "stream-deck", "hardware", "plugins", "controller"]
+keywords = ["deckr", "stream-deck", "hardware", "actions", "controller"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

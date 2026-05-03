@@ -5,9 +5,9 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from deckr.contracts.messages import (
+    ACTIONS_LANE,
     CORE_LANE_SCHEMA_IDS,
     HARDWARE_MESSAGES_LANE,
-    PLUGIN_MESSAGES_LANE,
 )
 
 EndpointFamilies = frozenset[str]
@@ -148,8 +148,9 @@ class LaneContractRegistry:
         return dict(self._contracts)
 
 
-PLUGIN_MESSAGE_TYPES = frozenset(
+ACTION_MESSAGE_TYPES = frozenset(
     {
+        "actionExtension",
         "actionInstanceCreated",
         "actionInstanceDestroyed",
         "bindingAttached",
@@ -160,7 +161,6 @@ PLUGIN_MESSAGE_TYPES = frozenset(
         "openPage",
         "pageSessionClosed",
         "pageSessionOpened",
-        "pluginExtension",
         "replacePage",
         "settingsPatch",
         "settingsReplace",
@@ -199,16 +199,16 @@ CORE_EPHEMERAL_DELIVERY = DeliverySemantics(
     ),
 )
 
-PLUGIN_MESSAGES_DELIVERY = replace(
+ACTION_MESSAGES_DELIVERY = replace(
     CORE_EPHEMERAL_DELIVERY,
     ordering_keys=(
         "sender",
         "recipient",
+        "subject.providerInstanceId",
         "subject.contextId",
         "subject.bindingId",
         "subject.pageSessionId",
         "subject.actionInstanceId",
-        "subject.hostId",
     ),
     message_families=(
         MessageFamilyDelivery(
@@ -227,7 +227,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
             ordering_keys=(
                 "sender",
                 "recipient",
-                "subject.hostId",
+                "subject.providerInstanceId",
                 "subject.contextId",
                 "subject.bindingId",
                 "subject.pageSessionId",
@@ -255,7 +255,7 @@ PLUGIN_MESSAGES_DELIVERY = replace(
                     "bindingOutput",
                     "closePage",
                     "openPage",
-                    "pluginExtension",
+                    "actionExtension",
                     "replacePage",
                     "settingsPatch",
                     "settingsReplace",
@@ -346,15 +346,15 @@ HARDWARE_MESSAGES_DELIVERY = replace(
 )
 
 CORE_LANE_CONTRACTS: Mapping[str, LaneContract] = {
-    PLUGIN_MESSAGES_LANE: LaneContract(
-        lane=PLUGIN_MESSAGES_LANE,
-        schema_id=CORE_LANE_SCHEMA_IDS[PLUGIN_MESSAGES_LANE],
-        message_types=PLUGIN_MESSAGE_TYPES,
-        delivery=PLUGIN_MESSAGES_DELIVERY,
-        allowed_sender_families=frozenset({"controller", "host"}),
-        allowed_recipient_families=frozenset({"controller", "host"}),
+    ACTIONS_LANE: LaneContract(
+        lane=ACTIONS_LANE,
+        schema_id=CORE_LANE_SCHEMA_IDS[ACTIONS_LANE],
+        message_types=ACTION_MESSAGE_TYPES,
+        delivery=ACTION_MESSAGES_DELIVERY,
+        allowed_sender_families=frozenset({"action_provider", "controller"}),
+        allowed_recipient_families=frozenset({"action_provider", "controller"}),
         broadcast_targets={
-            "plugin_hosts": "host",
+            "action_providers": "action_provider",
             "controllers": "controller",
         },
         default_broadcast_hop_limit=1,

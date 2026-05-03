@@ -8,11 +8,11 @@ controller-specific policy.
 That includes:
 
 - the `Component` runtime abstraction
-- named event lanes such as `plugin_messages` and `hardware_messages`
+- named event lanes such as `actions` and `hardware_messages`
 - core Deckr message specifications and identity rules
 - shared runtime utilities such as component lifecycle support and lane/substrate
   helpers
-- hardware-facing and plugin-facing shared models
+- hardware-facing and action-provider-facing shared models
 
 The normative architecture reference now lives in:
 
@@ -39,9 +39,8 @@ src/deckr/
   components/  Public component model, lifecycle manager, and component host
   contracts/   Wire-safe lane, envelope, endpoint, and delivery contracts
   core/        Generic config, logging, and runtime utility helpers
+  actions/     Runtime-neutral actions lane body, endpoint, and catalog contracts
   hardware/    Hardware-facing shared contracts and wire models
-  pluginhost/  Runtime-neutral plugin_messages lane body contracts
-  python_plugin/ Python plugin SDK protocols and capability helpers
   substrates/  Lane substrate implementations, currently NATS
   lanes.py     Endpoint-bound lane handles and lane validation
   runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
@@ -96,8 +95,8 @@ Deckr’s target architecture is:
 - stable endpoint addresses and explicit subjects that are separate from
   component runtime ids, transport ids, sessions, topics, and paths
 
-Controllers, hardware managers, plugin hosts, and protocol adapters are semantic
-roles, not different architectural kinds.
+Controllers, hardware managers, action provider runtimes, and protocol adapters
+are semantic roles, not different architectural kinds.
 
 If you are looking for the design rules around discovery, lane ownership,
 lane substrate configuration, wire-safe schemas, configuration namespacing, and
@@ -110,9 +109,8 @@ diagnostics.
 
 The old home-grown WebSocket/MQTT lane transports, route table, route leases,
 route metadata, and remote-endpoint hint architecture are removal targets. This
-does not apply to adapter-private protocols such as plugin worker attach,
-external runtime attach, Elgato-compatible plugin protocol adaptation, or
-concrete device protocols.
+does not apply to adapter-private protocols such as external runtime attach,
+Elgato-compatible plugin protocol adaptation, or concrete device protocols.
 
 The NATS substrate surface is available behind the optional `deckr[nats]` extra.
 Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages
@@ -139,9 +137,10 @@ management, controller configuration, or controller-owned state, it belongs in
 Internal boundaries are enforced with `.importlinter`:
 
 - `deckr.core` must not import `deckr.hardware`
-- `deckr.core` must not import `deckr.pluginhost` or `deckr.python_plugin`
-- `deckr.hardware` must not import `deckr.pluginhost` or `deckr.python_plugin`
-- `deckr.pluginhost` must not import `deckr.python_plugin`
+- `deckr.core` must not import `deckr.actions`
+- `deckr.contracts` must not import `deckr.actions` or `deckr.hardware`
+- `deckr.state` must not import `deckr.actions`
+- `deckr.hardware` must not import `deckr.actions`
 
 Run the contract checks with:
 
@@ -152,15 +151,15 @@ uv run lint-imports
 ## Deckr Message Protocols
 
 Deckr's core message protocols are the contracts spoken between Deckr
-architectural endpoints such as controllers, plugin hosts, and hardware
+architectural endpoints such as controllers, action providers, and hardware
 managers. They are separate from transport protocols such as MQTT and WebSocket,
-and separate from adapter-private protocols such as Elgato plugin messages or
-Python plugin runtime control-plane messages.
+and separate from adapter-private protocols such as Elgato plugin messages.
 
 The supported lane substrate and current-state model is defined in
-[docs/nats-bus.md](docs/nats-bus.md). `deckr.pluginhost.messages` contains the
-shared `plugin_messages` lane contracts used by controllers, plugin hosts, lane
-substrate adapters, and non-Python implementations. The v1 plugin contract is
+[docs/nats-bus.md](docs/nats-bus.md). `deckr.actions.messages`,
+`deckr.actions.endpoints`, and `deckr.actions.state` contain the shared
+`actions` lane contracts used by controllers, action provider runtimes, lane
+substrate adapters, and non-Python implementations. The v1 action contract is
 capability-native: action descriptors may declare capability requirements and
 dynamic page templates, lifecycle messages carry structured action-instance,
 binding, and page-session metadata, input is represented as capability input,
@@ -168,25 +167,18 @@ and output requests target matched capabilities through generation-scoped
 binding output.
 
 In particular, endpoint addresses such as `controller:<controller_id>`,
-`host:<host_id>`, and `hardware_manager:<manager_id>` are protocol addressing
-identities. They are not launcher runtime names, plugin runtime ids, WebSocket
-connection ids, MQTT topics, or concrete hardware ids. Device, control,
-capability, action, context, profile, and page references are subjects carried
-by lane messages, not transport locators.
-
-`deckr.python_plugin` defines only the Python plugin SDK surface. Other plugin
-formats should define their own SDK/protocol surfaces instead of importing this
-package. `deckr.python_plugin.interface` declares the capability-native
-protocols for `ActionInstance`, `ControlBinding`, `DynamicPageSession`, action
-factories, scoped tasks, capability input, and safe binding output. The old
-callback/context protocols and Elgato-shaped hook names are not v1 Deckr
-contracts.
+`action_provider:<provider_instance_id>`, and
+`hardware_manager:<manager_id>` are protocol addressing identities. They are not
+launcher runtime names, action provider runtime ids, WebSocket connection ids,
+MQTT topics, or concrete hardware ids. Device, control, capability, action,
+context, profile, and page references are subjects carried by lane messages, not
+transport locators.
 
 The key output rule is:
 
-- core plugin output targets a matched capability through binding-scoped methods
-  and canonical capability commands such as raster `set_frame` and `clear`; the
-  old `setImage` name belongs only at external adapter boundaries.
+- core action output targets a matched capability through binding-scoped
+  commands such as raster `set_frame` and `clear`; external names such as
+  Elgato `setImage` belong only at adapter boundaries.
 
 ## Hardware Package
 

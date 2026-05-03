@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from deckr.contracts.messages import host_address
-from deckr.pluginhost.messages import (
+from deckr.actions.endpoints import action_provider_address
+from deckr.actions.messages import (
+    ACTION_EXTENSION,
     BINDING_OUTPUT,
     CAPABILITY_INPUT,
-    PLUGIN_EXTENSION,
     SETTINGS_PATCH,
     ActionDescriptor,
+    ActionExtensionBody,
+    ActionProviderCatalog,
     BindingMetadata,
     CapabilityInputBody,
     CapabilityRequirement,
@@ -21,16 +25,14 @@ from deckr.pluginhost.messages import (
     DynamicPageTemplateDescriptor,
     MatchedCapability,
     PageChildBindingDescriptor,
-    PluginActionCatalog,
-    PluginExtensionBody,
     SettingsPatchBody,
     SettingsSnapshot,
     SettingsTargetDescription,
     SettingsTargetRef,
+    action_body_for_type,
+    action_message_schema,
     context_subject,
     parse_settings_target_key,
-    plugin_body_for_type,
-    plugin_message_schema,
     subject_action_instance_id,
     subject_binding_id,
     subject_config_id,
@@ -43,7 +45,8 @@ def _settings_target() -> SettingsTargetRef:
         scope="action_instance",
         controllerId="controller-main",
         configId="device-config-1",
-        pluginId="demo.plugin",
+        providerInstanceId="demo-provider",
+        providerId="demo.provider",
         actionId="demo.action",
         actionInstanceId="instance-1",
         stableId="weather",
@@ -52,6 +55,8 @@ def _settings_target() -> SettingsTargetRef:
 
 def _binding_metadata() -> BindingMetadata:
     return BindingMetadata(
+        providerInstanceId="demo-provider",
+        providerId="demo.provider",
         actionId="demo.action",
         actionInstanceId="instance-1",
         configId="device-config-1",
@@ -83,9 +88,9 @@ def _binding_metadata() -> BindingMetadata:
     )
 
 
-def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
+def test_core_action_bodies_forbid_stale_routing_identity_fields() -> None:
     with pytest.raises(ValidationError):
-        plugin_body_for_type(
+        action_body_for_type(
             SETTINGS_PATCH,
             {
                 "target": _settings_target().to_dict(),
@@ -95,7 +100,7 @@ def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
         )
 
     with pytest.raises(ValidationError):
-        plugin_body_for_type(
+        action_body_for_type(
             BINDING_OUTPUT,
             {
                 "contextId": "ctx",
@@ -107,31 +112,38 @@ def test_core_plugin_bodies_forbid_stale_routing_identity_fields() -> None:
         )
 
 
-def test_plugin_action_catalog_serializes_actions_by_action_id() -> None:
-    catalog = PluginActionCatalog(
-        hostId="python",
-        hostEndpoint=host_address("python"),
+def test_action_provider_catalog_serializes_actions_by_action_id() -> None:
+    catalog = ActionProviderCatalog(
+        providerInstanceId="clock-office",
+        providerEndpoint=action_provider_address("clock-office"),
+        providerId="demo.provider",
         sessionId="session-1",
         timestamp=datetime(2026, 4, 29, tzinfo=UTC),
         ttlSeconds=15,
+        labels={"location": "office"},
+        annotations={"runtime": "python"},
         actions={"demo.action": {"actionId": "demo.action", "name": "Demo"}},
     )
 
     assert catalog.model_dump(by_alias=True, mode="json") == {
-        "hostId": "python",
-        "hostEndpoint": "host:python",
+        "providerInstanceId": "clock-office",
+        "providerEndpoint": "action_provider:clock-office",
+        "providerId": "demo.provider",
         "sessionId": "session-1",
         "timestamp": "2026-04-29T00:00:00Z",
         "ttlSeconds": 15,
+        "labels": {"location": "office"},
+        "annotations": {"runtime": "python"},
         "actions": {"demo.action": {"actionId": "demo.action", "name": "Demo"}},
     }
 
 
-def test_plugin_action_catalog_validates_host_and_action_identity() -> None:
-    with pytest.raises(ValidationError, match="hostEndpoint"):
-        PluginActionCatalog(
-            hostId="python",
-            hostEndpoint=host_address("other"),
+def test_action_provider_catalog_validates_provider_and_action_identity() -> None:
+    with pytest.raises(ValidationError, match="providerEndpoint"):
+        ActionProviderCatalog(
+            providerInstanceId="clock-office",
+            providerEndpoint=action_provider_address("other"),
+            providerId="demo.provider",
             sessionId="session-1",
             timestamp=datetime(2026, 4, 29, tzinfo=UTC),
             ttlSeconds=15,
@@ -139,9 +151,10 @@ def test_plugin_action_catalog_validates_host_and_action_identity() -> None:
         )
 
     with pytest.raises(ValidationError, match="map keys"):
-        PluginActionCatalog(
-            hostId="python",
-            hostEndpoint=host_address("python"),
+        ActionProviderCatalog(
+            providerInstanceId="clock-office",
+            providerEndpoint=action_provider_address("clock-office"),
+            providerId="demo.provider",
             sessionId="session-1",
             timestamp=datetime(2026, 4, 29, tzinfo=UTC),
             ttlSeconds=15,
@@ -194,7 +207,7 @@ def test_action_descriptor_carries_capability_requirements_page_templates_and_se
             )
         ],
         settingsSchema={"type": "object", "properties": {"title": {"type": "string"}}},
-        pluginSettingsSchema={"type": "object", "properties": {"token": {"type": "string"}}},
+        providerSettingsSchema={"type": "object", "properties": {"token": {"type": "string"}}},
     )
 
     assert descriptor.to_dict()["requirements"][0]["preferences"] == [
@@ -212,7 +225,7 @@ def test_action_descriptor_carries_capability_requirements_page_templates_and_se
     assert descriptor.to_dict()["settingsSchema"]["properties"]["title"]["type"] == (
         "string"
     )
-    assert descriptor.to_dict()["pluginSettingsSchema"]["properties"]["token"]["type"] == (
+    assert descriptor.to_dict()["providerSettingsSchema"]["properties"]["token"]["type"] == (
         "string"
     )
 
@@ -237,7 +250,8 @@ def test_settings_target_and_snapshot_are_target_based() -> None:
             "scope": "action_instance",
             "controllerId": "controller-main",
             "configId": "device-config-1",
-            "pluginId": "demo.plugin",
+            "providerInstanceId": "demo-provider",
+            "providerId": "demo.provider",
             "actionId": "demo.action",
             "actionInstanceId": "instance-1",
             "stableId": "weather",
@@ -258,20 +272,59 @@ def test_settings_target_and_snapshot_are_target_based() -> None:
     assert parse_settings_target_key(target.key()) == target
 
 
+def test_provider_instance_settings_target_carries_provider_instance_identity() -> None:
+    target = SettingsTargetRef(
+        scope="action_provider_instance",
+        controllerId="controller-main",
+        configId="device-config-1",
+        providerInstanceId="demo-provider",
+        providerId="demo.provider",
+    )
+
+    assert target.to_dict() == {
+        "scope": "action_provider_instance",
+        "controllerId": "controller-main",
+        "configId": "device-config-1",
+        "providerInstanceId": "demo-provider",
+        "providerId": "demo.provider",
+    }
+    assert parse_settings_target_key(target.key()) == target
+
+    with pytest.raises(ValidationError, match="must not include action ids"):
+        SettingsTargetRef(
+            scope="action_provider_instance",
+            controllerId="controller-main",
+            configId="device-config-1",
+            providerInstanceId="demo-provider",
+            providerId="demo.provider",
+            actionId="demo.action",
+        )
+
+
 def test_settings_target_description_mirrors_target_identity() -> None:
     target = _settings_target()
 
-    with pytest.raises(ValidationError, match="pluginId"):
+    with pytest.raises(ValidationError, match="providerId"):
         SettingsTargetDescription(
             target=target,
-            pluginId="other.plugin",
+            providerInstanceId=target.provider_instance_id,
+            providerId="other.provider",
+            actionId=target.action_id,
+        )
+
+    with pytest.raises(ValidationError, match="providerInstanceId"):
+        SettingsTargetDescription(
+            target=target,
+            providerInstanceId="other-provider",
+            providerId=target.provider_id,
             actionId=target.action_id,
         )
 
     with pytest.raises(ValidationError, match="actionId"):
         SettingsTargetDescription(
             target=target,
-            pluginId=target.plugin_id,
+            providerInstanceId=target.provider_instance_id,
+            providerId=target.provider_id,
             actionId="other.action",
         )
 
@@ -333,7 +386,7 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
 
 
 def test_v1_capability_input_body_carries_binding_metadata() -> None:
-    body = plugin_body_for_type(
+    body = action_body_for_type(
         CAPABILITY_INPUT,
         {
             "binding": _binding_metadata().model_dump(by_alias=True, exclude_none=True, mode="json"),
@@ -358,7 +411,7 @@ def test_v1_capability_input_body_carries_binding_metadata() -> None:
     assert body.to_dict()["event"]["eventType"] == "press"
 
 
-def test_plugin_metadata_rejects_empty_ids_and_negative_sequences() -> None:
+def test_action_metadata_rejects_empty_ids_and_negative_sequences() -> None:
     with pytest.raises(ValidationError, match="binding metadata id"):
         BindingMetadata.model_validate(
             {
@@ -372,7 +425,7 @@ def test_plugin_metadata_rejects_empty_ids_and_negative_sequences() -> None:
         )
 
     with pytest.raises(ValidationError, match="sequence"):
-        plugin_body_for_type(
+        action_body_for_type(
             CAPABILITY_INPUT,
             {
                 "binding": _binding_metadata().model_dump(
@@ -397,9 +450,9 @@ def test_plugin_metadata_rejects_empty_ids_and_negative_sequences() -> None:
         )
 
 
-def test_plugin_capability_refs_for_binding_io_must_be_bound_to_control() -> None:
+def test_action_capability_refs_for_binding_io_must_be_bound_to_control() -> None:
     with pytest.raises(ValidationError, match="requires deviceRef and controlId"):
-        plugin_body_for_type(
+        action_body_for_type(
             CAPABILITY_INPUT,
             {
                 "binding": _binding_metadata().model_dump(
@@ -416,7 +469,7 @@ def test_plugin_capability_refs_for_binding_io_must_be_bound_to_control() -> Non
         )
 
     with pytest.raises(ValidationError, match="requires deviceRef and controlId"):
-        plugin_body_for_type(
+        action_body_for_type(
             BINDING_OUTPUT,
             {
                 "binding": _binding_metadata().model_dump(
@@ -443,7 +496,7 @@ def test_capability_requirement_selectors_reject_malformed_names() -> None:
 
 
 def test_v1_binding_output_body_targets_matched_capability() -> None:
-    body = plugin_body_for_type(
+    body = action_body_for_type(
         BINDING_OUTPUT,
         {
             "binding": _binding_metadata().model_dump(by_alias=True, exclude_none=True, mode="json"),
@@ -462,9 +515,9 @@ def test_v1_binding_output_body_targets_matched_capability() -> None:
     assert body.to_dict()["params"] == {"image": "abc", "encoding": "jpeg"}
 
 
-def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
-    body = plugin_body_for_type(
-        PLUGIN_EXTENSION,
+def test_action_extension_body_has_explicit_non_routing_shape() -> None:
+    body = action_body_for_type(
+        ACTION_EXTENSION,
         {
             "extensionType": "com.example.demo",
             "extensionSchemaId": "com.example.demo.v1",
@@ -478,8 +531,8 @@ def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
     }
 
     with pytest.raises(ValidationError):
-        plugin_body_for_type(
-            PLUGIN_EXTENSION,
+        action_body_for_type(
+            ACTION_EXTENSION,
             {
                 "extensionType": "com.example.demo",
                 "extensionSchemaId": "com.example.demo.v1",
@@ -488,8 +541,8 @@ def test_plugin_extension_body_has_explicit_non_routing_shape() -> None:
         )
 
     with pytest.raises(ValidationError):
-        plugin_body_for_type(
-            PLUGIN_EXTENSION,
+        action_body_for_type(
+            ACTION_EXTENSION,
             {
                 "extensionType": "com.example.demo",
                 "extensionSchemaId": "com.example.demo.v1",
@@ -514,20 +567,20 @@ def test_context_subject_carries_explicit_lifecycle_ids() -> None:
     assert subject_page_session_id(subject) == "session-a"
 
 
-def test_plugin_body_for_type_rejects_mismatched_body_instances() -> None:
+def test_action_body_for_type_rejects_mismatched_body_instances() -> None:
     with pytest.raises(TypeError, match="requires body type SettingsPatchBody"):
-        plugin_body_for_type(
+        action_body_for_type(
             SETTINGS_PATCH,
-            PluginExtensionBody(
+            ActionExtensionBody(
                 extension_type="com.example.demo",
                 extension_schema_id="com.example.demo.v1",
                 data={},
             ),
         )
 
-    with pytest.raises(TypeError, match="requires body type PluginExtensionBody"):
-        plugin_body_for_type(
-            PLUGIN_EXTENSION,
+    with pytest.raises(TypeError, match="requires body type ActionExtensionBody"):
+        action_body_for_type(
+            ACTION_EXTENSION,
             SettingsPatchBody(
                 target=_settings_target(),
                 settings={"title": "wrong model"},
@@ -535,9 +588,9 @@ def test_plugin_body_for_type_rejects_mismatched_body_instances() -> None:
         )
 
 
-def test_typed_plugin_body_schemas_are_exportable() -> None:
-    extension_schema = PluginExtensionBody.model_json_schema(by_alias=True)
-    lane_schema = plugin_message_schema()
+def test_typed_action_body_schemas_are_exportable() -> None:
+    extension_schema = ActionExtensionBody.model_json_schema(by_alias=True)
+    lane_schema = action_message_schema()
 
     assert extension_schema["additionalProperties"] is False
     assert {
@@ -545,7 +598,7 @@ def test_typed_plugin_body_schemas_are_exportable() -> None:
         "extensionSchemaId",
         "data",
     }.issubset(extension_schema["properties"])
-    assert lane_schema["$id"] == "deckr.message.plugin_messages.v1"
+    assert lane_schema["$id"] == "deckr.message.actions.v1"
     assert lane_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     binding_output_variant = next(
         variant
@@ -554,8 +607,19 @@ def test_typed_plugin_body_schemas_are_exportable() -> None:
         == BINDING_OUTPUT
     )
     assert binding_output_variant["allOf"][1]["properties"]["lane"]["const"] == (
-        "plugin_messages"
+        "actions"
     )
     assert binding_output_variant["allOf"][1]["properties"]["body"]["$ref"] == (
         "#/$defs/BindingOutputBody"
     )
+
+
+def test_action_schema_artifact_matches_checked_in_file() -> None:
+    schema_path = (
+        Path(__file__).resolve().parents[1]
+        / "schemas"
+        / "actions"
+        / "actions.v1.schema.json"
+    )
+
+    assert json.loads(schema_path.read_text(encoding="utf-8")) == action_message_schema()

@@ -1,9 +1,6 @@
 [importlinter]
 root_packages =
-    deckr.core
-    deckr.hardware
-    deckr.pluginhost
-    deckr.python_plugin
+    deckr
 
 include_external_packages = True
 
@@ -15,28 +12,35 @@ source_modules =
 forbidden_modules =
     deckr.hardware
 
-[importlinter:contract:core_must_not_import_plugin]
-name = Core must not import plugin-host or Python plugin APIs
+[importlinter:contract:core_must_not_import_actions]
+name = Core must not import action APIs
 type = forbidden
 source_modules =
     deckr.core
 forbidden_modules =
-    deckr.pluginhost
-    deckr.python_plugin
+    deckr.actions
 
-[importlinter:contract:hardware_must_not_import_plugin]
-name = Hardware must not import plugin-host or Python plugin APIs
+[importlinter:contract:contracts_must_not_import_actions_or_hardware]
+name = Contracts must not import action or hardware APIs
+type = forbidden
+source_modules =
+    deckr.contracts
+forbidden_modules =
+    deckr.actions
+    deckr.hardware
+
+[importlinter:contract:state_must_not_import_actions]
+name = State must not import action APIs
+type = forbidden
+source_modules =
+    deckr.state
+forbidden_modules =
+    deckr.actions
+
+[importlinter:contract:hardware_must_not_import_actions]
+name = Hardware must not import action APIs
 type = forbidden
 source_modules =
     deckr.hardware
 forbidden_modules =
-    deckr.pluginhost
-    deckr.python_plugin
-
-[importlinter:contract:pluginhost_must_not_import_python_plugin]
-name = Plugin-host wire contracts must not import Python plugin SDK
-type = forbidden
-source_modules =
-    deckr.pluginhost
-forbidden_modules =
-    deckr.python_plugin
+    deckr.actions

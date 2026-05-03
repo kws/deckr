@@ -84,8 +84,8 @@ def test_multi_instance_component_only_creates_declared_instances(
 ) -> None:
     host = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="deckr.plugin_hosts.python",
-            config_prefix="deckr.plugin_hosts.python",
+            component_id="deckr.action_providers.python",
+            config_prefix="deckr.action_providers.python",
             cardinality=ComponentCardinality.MULTI_INSTANCE,
         ),
         factory=lambda context: None,
@@ -98,11 +98,11 @@ def test_multi_instance_component_only_creates_declared_instances(
     document = _document(
         {
             "deckr": {
-                "plugin_hosts": {
+                "action_providers": {
                     "python": {
                         "instances": {
-                            "main": {"host_id": "python"},
-                            "remote": {"host_id": "remote"},
+                            "main": {"provider_instance_id": "python"},
+                            "remote": {"provider_instance_id": "remote"},
                         }
                     }
                 }
@@ -112,12 +112,12 @@ def test_multi_instance_component_only_creates_declared_instances(
 
     specs = resolve_component_instance_specs(
         document,
-        discovered_component_ids=["deckr.plugin_hosts.python"],
+        discovered_component_ids=["deckr.action_providers.python"],
     )
 
     assert [(spec.instance_id, dict(spec.raw_config)) for spec in specs] == [
-        ("main", {"host_id": "python"}),
-        ("remote", {"host_id": "remote"}),
+        ("main", {"provider_instance_id": "python"}),
+        ("remote", {"provider_instance_id": "remote"}),
     ]
 
 
@@ -130,17 +130,17 @@ def test_component_definition_can_resolve_instance_specific_lanes() -> None:
         ),
         factory=lambda context: None,
         resolve_lanes=lambda **kwargs: ResolvedLaneSet(
-            consumes=("plugin_messages",),
-            publishes=("plugin_messages", "hardware_messages"),
+            consumes=("actions",),
+            publishes=("actions", "hardware_messages"),
         ),
     )
 
     lanes = definition.lanes_for(
-        raw_config={"bindings": {"plugin": {"lane": "plugin_messages"}}},
+        raw_config={"bindings": {"action_provider": {"lane": "actions"}}},
         instance_id="main",
     )
 
     assert lanes == ResolvedLaneSet(
-        consumes=("plugin_messages",),
-        publishes=("plugin_messages", "hardware_messages"),
+        consumes=("actions",),
+        publishes=("actions", "hardware_messages"),
     )
