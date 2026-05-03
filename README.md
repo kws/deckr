@@ -114,9 +114,15 @@ third-party plugin protocol adaptation, or concrete device protocols.
 
 The NATS substrate surface is available behind the optional `deckr[nats]` extra.
 Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages
-and `Deckr.state(...)` for current-state declarations. A real-NATS smoke harness
-is available at `scripts/nats_smoke.py`, and `scripts/nats_state_report.py`
-summarizes the broker's current Deckr communication state.
+and `Deckr.state(...)` for current-state declarations. The optional
+`deckr[supervised-nats]` extra also installs the first-party
+`deckr-nats-server-bin` binary package so embedded hosts and the `deckr`
+launcher can supervise a private local `nats-server` process. This is still the
+same NATS/KV runtime contract, not an in-memory or no-NATS product mode.
+
+A real-NATS smoke harness is available at `scripts/nats_smoke.py`, and
+`scripts/nats_state_report.py` summarizes the broker's current Deckr
+communication state.
 
 Run the smoke harness against the included JetStream-enabled NATS compose service:
 
@@ -125,6 +131,12 @@ docker compose -f docker/compose.nats-smoke.yaml up -d nats
 uv run --extra nats python scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
 uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
 docker compose -f docker/compose.nats-smoke.yaml down -v
+```
+
+Run the same smoke harness with a supervised local NATS server:
+
+```bash
+uv run --extra supervised-nats python scripts/nats_smoke.py --supervised --check-ttl
 ```
 
 ## Package Boundaries

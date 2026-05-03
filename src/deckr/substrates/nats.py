@@ -51,12 +51,14 @@ class NatsSubstrate:
         self,
         *,
         url: str = "nats://127.0.0.1:4222",
+        auth_token: str | None = None,
         lane_contracts: LaneContractRegistry,
         buffer_size: int = 100,
         state_lease_ttl_seconds: float = _STATE_LEASE_TTL_SECONDS,
         default_state_name: str = DEFAULT_STATE_STORE_NAME,
     ) -> None:
         self.url = url
+        self.auth_token = auth_token
         self.default_state_name = default_state_name
         self._lane_contracts = lane_contracts
         self._buffer_size = buffer_size
@@ -72,7 +74,10 @@ class NatsSubstrate:
         except ModuleNotFoundError as exc:
             raise RuntimeError("NATS substrate requires deckr[nats].") from exc
 
-        self._nc = await nats.connect(self.url)
+        connect_options = {}
+        if self.auth_token is not None:
+            connect_options["token"] = self.auth_token
+        self._nc = await nats.connect(self.url, **connect_options)
         self._js = self._nc.jetstream()
 
     async def aclose(self) -> None:

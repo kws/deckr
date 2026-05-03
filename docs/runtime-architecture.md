@@ -678,10 +678,13 @@ parallel lane transport architecture.
 
 The built-in NATS lane substrate is configured as runtime infrastructure, for
 example through the bundled launcher's `[deckr.runtime.substrate]` table. It is
-not discovered, instantiated, or supervised as a Deckr component. A component or
-external adapter may still use WebSocket, MQTT, USB, HID, HTTP, vendor framing,
-or even a substrate-like package name at a real protocol boundary, but that does
-not make it the generic Deckr lane substrate.
+not discovered, instantiated, or supervised as a Deckr component. The runtime
+host may either connect to an external broker or supervise a private local
+`nats-server` child process through `SupervisedNatsSubstrate`; both forms expose
+the same NATS-backed lane and current-state contract. A component or external
+adapter may still use WebSocket, MQTT, USB, HID, HTTP, vendor framing, or even a
+substrate-like package name at a real protocol boundary, but that does not make
+it the generic Deckr lane substrate.
 
 The live design is:
 

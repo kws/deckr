@@ -39,9 +39,30 @@ async with Deckr() as deckr:
 The NATS implementation is installed with the `deckr[nats]` extra. A host that
 constructs its own substrate must provide the same lane and state semantics.
 
+For local full-stack or embedded runtimes that should not require Docker or a
+separately managed broker, Deckr also provides `SupervisedNatsSubstrate` through
+the `deckr[supervised-nats]` extra:
+
+```python
+from deckr.runtime import Deckr
+from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
+
+async with Deckr(
+    substrate=SupervisedNatsSubstrate(lane_contracts=...),
+) as deckr:
+    ...
+```
+
+The supervised substrate starts a real `nats-server` child process, waits for a
+real JetStream readiness call to succeed, and then delegates lane and state
+behavior to `NatsSubstrate`. It is a local infrastructure convenience for the
+same NATS contract, not a separate in-memory or no-NATS runtime mode.
+
 ## Core Rules
 
 - The v1 distributed lane substrate is NATS.
+- A supervised local broker is still the NATS substrate; it is process
+  ownership around the broker, not a different Deckr bus contract.
 - `actions` and `hardware_messages` lane traffic uses Core NATS, not
   JetStream persistence.
 - Retained communication state uses JetStream KV.
@@ -576,6 +597,12 @@ Request/reply permissions must allow the relevant `_INBOX` subjects or use NATS
 `allow_responses` where that better fits responder behavior.
 
 ## Troubleshooting
+
+Run the smoke harness with a supervised local NATS server:
+
+```bash
+uv run --extra supervised-nats python scripts/nats_smoke.py --supervised --check-ttl
+```
 
 Run the `deckr` smoke broker from the `deckr` repository:
 

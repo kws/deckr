@@ -12,7 +12,9 @@ Deckr runtime modes are ordinary composition over the same primitives:
 - `resolve_component_host_plan(...)` resolves discovered or supplied component
   definitions into exact-prefix component instances.
 - `build_runtime_substrate(...)` resolves the runtime substrate, currently NATS,
-  from host configuration.
+  from host configuration. The NATS broker may be external or supervised as a
+  local child process, but the Deckr substrate kind and lane/current-state
+  contract are the same.
 - `start_components(deckr, plan)` hosts those instances against the existing
   runtime.
 
@@ -45,6 +47,34 @@ async with Deckr(
         ...
 ```
 
+Launcher configuration for an external broker:
+
+```toml
+[deckr.runtime.substrate]
+kind = "nats"
+url = "nats://127.0.0.1:4222"
+```
+
+Launcher configuration for a supervised local broker:
+
+```toml
+[deckr.runtime.substrate]
+kind = "nats"
+supervised = true
+```
+
+When `supervised = true`, the launcher starts `nats-server` as a private child
+process, enables JetStream, binds to localhost, lets NATS select the client port,
+and wires `Deckr` to that selected URL. A configured absolute binary path can be
+used when the host already installs `nats-server`:
+
+```toml
+[deckr.runtime.substrate]
+kind = "nats"
+supervised = true
+server_path = "/usr/local/bin/nats-server"
+```
+
 ## Skinny Action Provider Runtime
 
 A skinny action provider runtime uses the same `Deckr` and component host APIs,
@@ -66,3 +96,31 @@ Embedded applications may create `Deckr` directly and use lane messaging without
 component discovery. If they want component lifecycle supervision, they can pass
 manual component definitions to `resolve_component_host_plan(...)` or construct a
 `ComponentHostPlan.from_specs(...)`.
+
+Embedded applications can use the same external NATS substrate directly:
+
+```python
+from deckr.runtime import Deckr
+from deckr.substrates.nats import NatsSubstrate
+
+async with Deckr(
+    substrate=NatsSubstrate(url="nats://127.0.0.1:4222", lane_contracts=...),
+) as deckr:
+    ...
+```
+
+They can also supervise a private local `nats-server` process:
+
+```python
+from deckr.runtime import Deckr
+from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
+
+substrate = SupervisedNatsSubstrate(lane_contracts=...)
+
+async with Deckr(substrate=substrate) as deckr:
+    ...
+```
+
+The supervised form still delegates lane traffic and state to `NatsSubstrate`
+after startup. Tests may use explicit fakes at the `LaneSubstrate` and
+`StateStore` boundaries, but supported runtime modes remain real NATS.

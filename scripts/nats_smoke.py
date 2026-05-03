@@ -36,6 +36,7 @@ from deckr.state import (
     presence_endpoint_key,
 )
 from deckr.substrates.nats import NatsSubstrate
+from deckr.substrates.supervised_nats import NatsServerSupervisor
 
 
 async def main() -> int:
@@ -50,6 +51,22 @@ async def main() -> int:
 
 
 async def _run_orchestrator(args: argparse.Namespace) -> int:
+    if args.supervised:
+        supervisor = NatsServerSupervisor(
+            server_path=args.server_path,
+            runtime_dir=args.runtime_dir,
+            store_dir=args.store_dir,
+            startup_timeout=args.startup_timeout,
+        )
+        handle = await supervisor.start()
+        try:
+            args.url = handle.url
+            args.auth_token = handle.auth_token
+            args.supervised = False
+            return await _run_orchestrator(args)
+        finally:
+            await supervisor.stop()
+
     run_id = args.run_id or uuid.uuid4().hex[:10]
     script = Path(__file__).resolve()
     common = [
@@ -62,6 +79,8 @@ async def _run_orchestrator(args: argparse.Namespace) -> int:
         "--run-id",
         run_id,
     ]
+    if args.auth_token is not None:
+        common.extend(["--auth-token", args.auth_token])
     manager = await asyncio.create_subprocess_exec(
         *common,
         "--role",
@@ -93,7 +112,11 @@ async def _run_manager(args: argparse.Namespace) -> None:
     device_id = f"deck_{args.run_id}"
     endpoint = hardware_manager_address(manager_id)
     descriptor = _device_descriptor(device_id, fingerprint=f"smoke:{args.run_id}")
-    async with _deckr(args.url, state_name=args.bucket) as deckr:
+    async with _deckr(
+        args.url,
+        auth_token=args.auth_token,
+        state_name=args.bucket,
+    ) as deckr:
         state = deckr.state(args.bucket)
         async with (
             deckr.lane("hardware_messages").register_endpoint(
@@ -147,7 +170,11 @@ async def _run_controller(args: argparse.Namespace) -> None:
     device_id = f"deck_{args.run_id}"
     controller = controller_address(f"smoke_controller_{args.run_id}")
     manager = hardware_manager_address(manager_id)
-    async with _deckr(args.url, state_name=args.bucket) as deckr:
+    async with _deckr(
+        args.url,
+        auth_token=args.auth_token,
+        state_name=args.bucket,
+    ) as deckr:
         state = deckr.state(args.bucket)
         async with (
             deckr.lane("hardware_messages").register_endpoint(controller) as lane,
@@ -211,7 +238,11 @@ async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> Non
         hardware_inventory_key(manager_id),
         device_claim_key(manager_id=manager_id, device_id=device_id),
     )
-    async with _deckr(args.url, state_name=args.bucket) as deckr:
+    async with _deckr(
+        args.url,
+        auth_token=args.auth_token,
+        state_name=args.bucket,
+    ) as deckr:
         state = deckr.state(args.bucket)
         with anyio.fail_after(args.ttl_wait):
             while True:
@@ -221,12 +252,13 @@ async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> Non
                 await anyio.sleep(0.5)
 
 
-def _deckr(url: str, *, state_name: str) -> Deckr:
+def _deckr(url: str, *, auth_token: str | None, state_name: str) -> Deckr:
     registry = LaneContractRegistry(CORE_LANE_CONTRACTS.values())
     return Deckr(
         lane_contracts=registry,
         substrate=NatsSubstrate(
             url=url,
+            auth_token=auth_token,
             lane_contracts=registry,
             default_state_name=state_name,
         ),
@@ -277,6 +309,28 @@ def _device_descriptor(device_id: str, *, fingerprint: str) -> DeviceDescriptor:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="nats://127.0.0.1:4222")
+    parser.add_argument("--auth-token")
+    parser.add_argument(
+        "--supervised",
+        action="store_true",
+        help="Start a local supervised nats-server for the smoke run.",
+    )
+    parser.add_argument(
+        "--server-path",
+        type=Path,
+        help="Absolute nats-server path to use for --supervised.",
+    )
+    parser.add_argument(
+        "--runtime-dir",
+        type=Path,
+        help="Runtime directory to use for --supervised.",
+    )
+    parser.add_argument(
+        "--store-dir",
+        type=Path,
+        help="JetStream store directory to use for --supervised.",
+    )
+    parser.add_argument("--startup-timeout", type=float, default=10.0)
     parser.add_argument("--bucket", default="deckr_state_v1_smoke")
     parser.add_argument("--run-id")
     parser.add_argument("--role", choices=("manager", "controller"))
