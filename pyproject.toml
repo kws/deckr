@@ -88,7 +88,7 @@ ignore = [
 
 [tool.pytest.ini_options]
 addopts = [
-    "--cov=src/deckr",
+    "--cov=deckr",
     "--cov-report=term-missing",
 ]
 testpaths = ["tests"]

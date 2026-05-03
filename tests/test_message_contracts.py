@@ -55,15 +55,14 @@ def test_action_provider_helpers_live_on_action_modules() -> None:
     )
     assert (
         action_endpoints.require_provider_instance_id(
-            "python",
-            field_name="providerInstanceId",
-        )
-        == "python"
-    )
-    with pytest.raises(ValueError, match="reserved provider identity"):
-        action_endpoints.require_provider_instance_id(
             "deckr.controller.builtin",
             field_name="providerInstanceId",
+        )
+        == "deckr.controller.builtin"
+    )
+    with pytest.raises(ValueError, match="reserved provider identity"):
+        action_endpoints.action_provider_address(
+            "deckr.controller.builtin",
         )
 
     address = action_endpoints.action_provider_address("python")

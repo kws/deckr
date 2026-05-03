@@ -68,7 +68,7 @@ def _require_endpoint_family(value: str, *, field_name: str) -> str:
     return family
 
 
-def _require_action_provider_endpoint_id(value: str, *, field_name: str) -> str:
+def _require_provider_instance_id(value: str, *, field_name: str) -> str:
     provider_instance_id = _require_identity_part(value, field_name=field_name)
     if not _PROVIDER_INSTANCE_ID_RE.fullmatch(provider_instance_id):
         raise ValueError(
@@ -76,6 +76,14 @@ def _require_action_provider_endpoint_id(value: str, *, field_name: str) -> str:
         )
     if "::" in provider_instance_id:
         raise ValueError(f"{field_name} must not contain '::'")
+    return provider_instance_id
+
+
+def _require_action_provider_endpoint_id(value: str, *, field_name: str) -> str:
+    provider_instance_id = _require_provider_instance_id(
+        value,
+        field_name=field_name,
+    )
     if provider_instance_id in _RESERVED_ACTION_PROVIDER_INSTANCE_IDS:
         raise ValueError(f"{field_name} uses a reserved provider identity")
     return provider_instance_id

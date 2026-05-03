@@ -6,7 +6,7 @@ from deckr.contracts.messages import (
     _RESERVED_ACTION_PROVIDER_INSTANCE_IDS,
     BroadcastTarget,
     EndpointAddress,
-    _require_action_provider_endpoint_id,
+    _require_provider_instance_id,
     broadcast_target,
     endpoint_address,
     parse_endpoint_address,
@@ -17,7 +17,7 @@ RESERVED_BUILTIN_PROVIDER_IDS = _RESERVED_ACTION_PROVIDER_INSTANCE_IDS
 
 
 def require_provider_instance_id(value: str, *, field_name: str) -> str:
-    return _require_action_provider_endpoint_id(value, field_name=field_name)
+    return _require_provider_instance_id(value, field_name=field_name)
 
 
 def action_provider_address(provider_instance_id: str) -> EndpointAddress:
