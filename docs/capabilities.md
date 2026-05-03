@@ -81,6 +81,14 @@ using a `deckr.*` family outside this list is invalid.
 Input messages carry the selected capability and an `eventType`. The value
 payload must match the selected capability's `valueSchema`.
 
+For ordinary action activation, `up` from a momentary button, `press` from an
+activation button, and `tap` from a touch gesture are equivalent completion
+events. Hardware managers should emit the event for the capability the control
+actually supports. They should not emit an additional synonym event for the same
+physical interaction. Actions that only need "the user activated this control"
+should accept all three events; actions that need lifecycle or gesture-specific
+behavior should declare and handle the narrower capability they require.
+
 ### Button Activation
 
 Family: `deckr.input.button`

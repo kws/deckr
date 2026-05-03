@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from deckr.hardware.descriptors import (
     CAPABILITY_DESCRIPTOR_SCHEMA_ID,
+    CONTROL_ACTIVATION_EVENTS,
     CONTROL_DESCRIPTOR_SCHEMA_ID,
     DECKR_DEVICE_POWER,
     DECKR_INPUT_BUTTON,
@@ -22,6 +23,10 @@ from deckr.hardware.descriptors import (
     DeviceDescriptor,
     descriptor_schema_artifacts,
 )
+
+
+def test_control_activation_events_cover_activation_equivalent_inputs() -> None:
+    assert CONTROL_ACTIVATION_EVENTS == ("up", "press", "tap")
 
 
 @pytest.mark.parametrize("fixture_name,payload", descriptor_payloads().items())
