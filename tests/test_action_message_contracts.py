@@ -18,6 +18,7 @@ from deckr.actions.messages import (
     ActionProviderCatalog,
     BindingMetadata,
     CapabilityInputBody,
+    CapabilityInputEvent,
     CapabilityRequirement,
     CapabilityRequirementSelector,
     DynamicPageCommand,
@@ -29,7 +30,9 @@ from deckr.actions.messages import (
     SettingsSnapshot,
     SettingsTargetDescription,
     SettingsTargetRef,
+    action_body,
     action_body_for_type,
+    action_message,
     action_message_schema,
     context_subject,
     parse_settings_target_key,
@@ -409,6 +412,38 @@ def test_v1_capability_input_body_carries_binding_metadata() -> None:
     assert isinstance(body, CapabilityInputBody)
     assert body.to_dict()["binding"]["handler"] == "album"
     assert body.to_dict()["event"]["eventType"] == "press"
+
+
+def test_v1_capability_input_body_revalidates_frozen_event_value() -> None:
+    event = CapabilityInputEvent(
+        capability={
+            "deviceRef": {"managerId": "manager-1", "deviceId": "device-1"},
+            "controlId": "3,0",
+            "capabilityId": "encoder.relative",
+        },
+        eventType="rotate",
+        value={"delta": 1, "direction": "clockwise"},
+        occurredAt=datetime(2026, 4, 30, 10, 0, tzinfo=UTC),
+        producer="hardware_manager",
+        view="native",
+    )
+    msg = action_message(
+        sender="controller:main",
+        sender_session_id="controller-session",
+        recipient=action_provider_address("python-sonos"),
+        message_type=CAPABILITY_INPUT,
+        body=CapabilityInputBody(binding=_binding_metadata(), event=event),
+        subject=context_subject(
+            "context-1",
+            provider_instance_id="python-sonos",
+            provider_id="sonos",
+        ),
+    )
+
+    body = action_body(msg)
+
+    assert isinstance(body, CapabilityInputBody)
+    assert body.event.value == {"delta": 1, "direction": "clockwise"}
 
 
 def test_action_metadata_rejects_empty_ids_and_negative_sequences() -> None:

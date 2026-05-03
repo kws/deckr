@@ -3,73 +3,55 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from deckr.hardware.capabilities import (
+    button_activation_value_schema,
+    button_momentary_value_schema,
+    encoder_relative_value_schema,
+    raster_bitmap_command_schema,
+    touch_gesture_value_schema,
+)
+
 JsonMap = Mapping[str, Any]
 
 
 def _activation_schema() -> dict[str, Any]:
-    return {
-        "schemaId": "deckr.value.input.button.activation.v1",
-        "schema": {
-            "type": "object",
-            "required": ["eventType"],
-            "properties": {"eventType": {"const": "press"}},
-            "additionalProperties": False,
-        },
-    }
+    return button_activation_value_schema().model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
 
 
 def _momentary_schema() -> dict[str, Any]:
-    return {
-        "schemaId": "deckr.value.input.button.momentary.v1",
-        "schema": {
-            "type": "object",
-            "required": ["eventType"],
-            "properties": {"eventType": {"enum": ["down", "up"]}},
-            "additionalProperties": False,
-        },
-    }
+    return button_momentary_value_schema().model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
 
 
 def _encoder_schema() -> dict[str, Any]:
-    return {
-        "schemaId": "deckr.value.input.encoder.relative.v1",
-        "schema": {
-            "type": "object",
-            "required": ["delta"],
-            "properties": {"delta": {"type": "integer"}},
-            "additionalProperties": False,
-        },
-    }
+    return encoder_relative_value_schema().model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
 
 
 def _touch_schema() -> dict[str, Any]:
-    return {
-        "schemaId": "deckr.value.input.touch.gesture.v1",
-        "schema": {
-            "type": "object",
-            "required": ["eventType"],
-            "properties": {"eventType": {"enum": ["tap", "swipe"]}},
-            "additionalProperties": False,
-        },
-    }
+    return touch_gesture_value_schema().model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
 
 
 def _raster_schema(width: int, height: int) -> dict[str, Any]:
-    return {
-        "schemaId": "deckr.command.output.raster.bitmap.v1",
-        "schema": {
-            "type": "object",
-            "required": ["commandType"],
-            "properties": {
-                "commandType": {"enum": ["set_frame", "clear"]},
-                "image": {"type": "string", "contentEncoding": "base64"},
-                "encoding": {"enum": ["jpeg", "png"]},
-                "width": {"const": width},
-                "height": {"const": height},
-            },
-            "additionalProperties": False,
-        },
-    }
+    return raster_bitmap_command_schema(width=width, height=height).model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
 
 
 def _activation_capability(

@@ -107,7 +107,6 @@ def test_control_command_round_trips_schema_validated_params():
         capability_id="raster.bitmap",
         command_type="set_frame",
         params={
-            "commandType": "set_frame",
             "image": "AP8Q",
             "encoding": "jpeg",
         },
@@ -135,7 +134,6 @@ def test_control_command_round_trips_schema_validated_params():
         capabilityId="raster.bitmap",
         commandType="set_frame",
         params={
-            "commandType": "set_frame",
             "image": "AP8Q",
             "encoding": "jpeg",
         },
@@ -151,7 +149,7 @@ def test_device_level_capability_command_omits_control_id():
             capabilityId="device.power",
         ),
         command_type="wake",
-        params={"commandType": "wake"},
+        params={},
     )
     wire = message.to_dict()
 
@@ -175,7 +173,7 @@ def test_device_level_capability_command_omits_control_id():
         deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
         capabilityId="device.power",
         commandType="wake",
-        params={"commandType": "wake"},
+        params={},
     )
 
 

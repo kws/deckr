@@ -625,6 +625,11 @@ class CapabilityInputEvent(DeckrModel):
     def _validate_producer(cls, value: str | None) -> str | None:
         return _require_optional_text(value, field_name="producer")
 
+    @field_validator("value", mode="before")
+    @classmethod
+    def _thaw_value(cls, value: Any) -> Any:
+        return thaw_json(value)
+
     @field_validator("value", mode="after")
     @classmethod
     def _freeze_value(cls, value: Any) -> Any:

@@ -121,8 +121,10 @@ The distributed lane substrate is NATS. This document owns the generic component
 and lane model. The NATS bus specification owns endpoint-bound lane handles,
 recipient filtering, KV current state, device claims, action resolution, and
 broker diagnostics in [`nats-bus.md`](nats-bus.md). The v1 device, control, and
-capability descriptor contracts are implemented in
-`deckr.hardware.descriptors`, with the architecture background in
+capability descriptor contracts are implemented in `deckr.hardware.descriptors`.
+Canonical core capability value contracts and helpers live in
+`deckr.hardware.capabilities`; the BAU contract is documented in
+[`capabilities.md`](capabilities.md), with the architecture background in
 [`../../notes/device-capability-model.md`](../../notes/device-capability-model.md).
 Hardware discovery, input, output, device-level commands, state, and command
 reply placeholders use capability-targeted contracts in

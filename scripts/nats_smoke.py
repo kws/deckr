@@ -213,7 +213,6 @@ async def _run_controller(args: argparse.Namespace) -> None:
                             capabilityId="raster.bitmap",
                             commandType="set_frame",
                             params={
-                                "commandType": "set_frame",
                                 "image": base64.b64encode(b"smoke").decode("ascii"),
                                 "encoding": "jpeg",
                             },
