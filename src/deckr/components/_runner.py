@@ -41,11 +41,13 @@ async def component_runner(
     stopping: anyio.Event,
     on_started: Callable[[], Awaitable[None]] | None = None,
     status_reporter: _ManagerStatusReporter | None = None,
+    stop_timeout_s: Callable[[], float | None] | None = None,
+    record_stop_error: Callable[[Exception], None] | None = None,
 ) -> None:
     """Run a component with its own task group.
 
     The component controls its own concurrency through the task group.
-    This function keeps running until cancelled or the component crashes.
+    This function keeps running until stopped, cancelled, or the component crashes.
 
     Args:
         component: The component to run
@@ -53,36 +55,43 @@ async def component_runner(
         on_started: Optional callback to execute after component.start() succeeds
     """
     started = False
-    try:
-        # One TaskGroup per component: the component "controls its own concurrency"
-        async with anyio.create_task_group() as tg:
-            ctx = RunContext(tg=tg, stopping=stopping, status=status_reporter)
-            await component.start(ctx)
-            started = True
+    # One TaskGroup per component: the component "controls its own concurrency".
+    async with anyio.create_task_group() as tg:
+        ctx = RunContext(tg=tg, stopping=stopping, status=status_reporter)
+        await component.start(ctx)
+        started = True
 
+        try:
             # Component started successfully - execute callback if provided
             if on_started:
                 await on_started()
 
-            # Keep the runner alive until manager cancels it.
-            # When cancelled, the TaskGroup unwinds and cancels all component tasks.
-            await anyio.sleep_forever()
-    except BaseException:
-        # Call stop() on cancellation or any other exception
-        # Only call if component was successfully started and stop() hasn't been called yet
-        # (If stopping is already set, _stop_component is handling the shutdown)
-        if started and not stopping.is_set():
-            try:
-                # Signal that component should stop
+            # Keep the runner alive until the manager asks it to stop. If the
+            # surrounding scope is cancelled instead, this task still owns the
+            # component cleanup before the component TaskGroup unwinds.
+            await stopping.wait()
+        finally:
+            if started:
                 stopping.set()
-                # Call component's stop() method for cleanup
-                await component.stop()
-            except Exception as e:
-                logger.warning(
-                    f"Error calling stop() on component '{component.name}': {e}",
-                    exc_info=True,
-                )
-        raise
+                timeout = (
+                    stop_timeout_s() if stop_timeout_s is not None else None
+                ) or SHUTDOWN_TIMEOUT_PER_COMPONENT
+                with anyio.move_on_after(timeout, shield=True) as scope:
+                    try:
+                        await component.stop()
+                    except Exception as e:
+                        if record_stop_error is not None:
+                            record_stop_error(e)
+                        logger.warning(
+                            f"Error calling stop() on component '{component.name}': {e}",
+                            exc_info=True,
+                        )
+                if scope.cancel_called:
+                    logger.warning(
+                        f"Component '{component.name}' stop() timed out after "
+                        f"{timeout}s"
+                    )
+            tg.cancel_scope.cancel()
 
 
 class _ManagerStatusReporter:
@@ -308,12 +317,14 @@ class ComponentManager(Component):
             component: The component to start
         """
         stopping = anyio.Event()
+        stopped = anyio.Event()
         started = anyio.Event()
         error_occurred = False
+        running_component: RunningComponent | None = None
 
         async def _runner_wrapper() -> None:
             """Wrapper that handles crash detection and cleanup."""
-            nonlocal error_occurred
+            nonlocal error_occurred, running_component
             cs: anyio.CancelScope | None = None
 
             try:
@@ -331,9 +342,11 @@ class ComponentManager(Component):
                         rc = RunningComponent(
                             component=component,
                             stopping=stopping,
+                            stopped=stopped,
                             cancel_scope=cs,
                             state=ComponentState.STARTING,
                         )
+                        running_component = rc
                         self._running[component.name] = rc
                         status = _status_from_running(rc)
 
@@ -361,11 +374,22 @@ class ComponentManager(Component):
                         except SubscribableQueue.SubscriberBufferFullError:
                             pass
 
+                    def current_stop_timeout() -> float | None:
+                        if running_component is None:
+                            return None
+                        return running_component.stop_timeout_s
+
+                    def record_stop_error(exc: Exception) -> None:
+                        if running_component is not None:
+                            running_component.stop_error = exc
+
                     await component_runner(
                         component,
                         stopping,
                         on_started=set_running,
                         status_reporter=_ManagerStatusReporter(self, component.name),
+                        stop_timeout_s=current_stop_timeout,
+                        record_stop_error=record_stop_error,
                     )
 
             except BaseException as e:
@@ -411,6 +435,7 @@ class ComponentManager(Component):
                 # Re-raise to let task group handle it
                 raise
             finally:
+                stopped.set()
                 # Clean up if we never successfully started
                 if not started.is_set() or error_occurred:
                     async with self._lock:
@@ -435,46 +460,53 @@ class ComponentManager(Component):
             name: Component name to stop
             stop_timeout_s: Timeout for graceful stop in seconds
         """
-        # Remove from registry under lock, but perform awaits outside the lock
         async with self._lock:
-            rc = self._running.pop(name, None)
+            rc = self._running.get(name)
+            if rc is not None:
+                rc.state = ComponentState.STOPPING
+                rc.stop_timeout_s = stop_timeout_s
+                status = _status_from_running(rc)
+            else:
+                status = None
 
         if rc is None:
             # Component not found - this is idempotent
             return
 
-        # Update state to STOPPING
-        rc.state = ComponentState.STOPPING
-        await self._push_status(_status_from_running(rc))
+        if status is not None:
+            await self._push_status(status)
 
-        # Graceful phase: signal stop and wait for component.stop()
+        # Graceful phase: ask the component runner to call stop() from the same
+        # task that called start(), then wait for that runner to finish.
         rc.stopping.set()
+        with anyio.move_on_after(stop_timeout_s + 0.25, shield=True) as scope:
+            await rc.stopped.wait()
 
-        try:
-            with anyio.move_on_after(stop_timeout_s) as scope:
-                await rc.component.stop()
-
-            # Hard phase if stop timed out
-            if scope.cancel_called:
-                logger.warning(
-                    f"Component '{name}' stop() timed out after {stop_timeout_s}s, "
-                    "forcing cancellation"
-                )
-            else:
-                # Successfully stopped gracefully
-                pass
-
-            rc.state = ComponentState.STOPPED
-            await self._push_status(_status_from_running(rc))
-
-        except Exception as e:
-            logger.error(f"Error stopping component '{name}': {e}", exc_info=True)
-            rc.state = ComponentState.FAILED
-            await self._push_status(_status_from_running(rc))
-        finally:
-            # Always cancel the scope to kill the component's task group, even if
-            # we timed out or were cancelled by an outer shutdown timeout
+        # Hard phase if the runner did not stop within its budget.
+        if scope.cancel_called:
+            logger.warning(
+                f"Component '{name}' did not stop after {stop_timeout_s}s, "
+                "forcing cancellation"
+            )
             rc.cancel_scope.cancel()
+            with anyio.move_on_after(0.25, shield=True):
+                await rc.stopped.wait()
+
+        async with self._lock:
+            current = self._running.get(name)
+            if current is rc:
+                rc.state = (
+                    ComponentState.FAILED
+                    if rc.stop_error is not None
+                    else ComponentState.STOPPED
+                )
+                status = _status_from_running(rc)
+                self._running.pop(name, None)
+            else:
+                status = None
+
+        if status is not None:
+            await self._push_status(status)
 
     async def _event_loop(self) -> None:
         """Main event loop processing component lifecycle events.
@@ -511,7 +543,8 @@ class ComponentManager(Component):
                 await self._event_send.aclose()
             except Exception:
                 pass  # Ignore errors closing stream
-            await self._stop_all_components()
+            with anyio.CancelScope(shield=True):
+                await self._stop_all_components()
             raise
         except Exception as e:
             # Unexpected error in event loop
@@ -522,7 +555,8 @@ class ComponentManager(Component):
                 await self._event_send.aclose()
             except Exception:
                 pass  # Ignore errors closing stream
-            await self._stop_all_components()
+            with anyio.CancelScope(shield=True):
+                await self._stop_all_components()
             raise
 
     async def _stop_all_components(self) -> None:

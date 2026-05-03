@@ -149,8 +149,11 @@ class BaseComponent(ABC):
 class RunningComponent:
     component: Component
     stopping: anyio.Event
+    stopped: anyio.Event
     cancel_scope: anyio.CancelScope
     state: ComponentState = ComponentState.IDLE
+    stop_timeout_s: float | None = None
+    stop_error: Exception | None = None
     readiness_state: ReadinessState = ReadinessState.UNKNOWN
     readiness_reasons: tuple[str, ...] = ()
     diagnostics: Mapping[str, object] = field(default_factory=dict)

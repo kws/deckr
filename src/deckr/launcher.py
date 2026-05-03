@@ -253,8 +253,15 @@ async def run_document(
 ) -> None:
     async with anyio.create_task_group() as tg:
         await add_signal_handler(tg)
-        await runner(document)
-        tg.cancel_scope.cancel()
+
+        async def run_until_done() -> None:
+            try:
+                await runner(document)
+            finally:
+                tg.cancel_scope.cancel()
+
+        tg.start_soon(run_until_done, name="deckr.launcher.runner")
+        await anyio.sleep_forever()
 
 
 def launch(

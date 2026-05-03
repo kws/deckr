@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from datetime import UTC, datetime
 from inspect import isawaitable
 from typing import Any, Protocol
@@ -39,6 +41,7 @@ from deckr.state import (
 )
 
 ReplyPredicate = Callable[[DeckrMessage], bool | Awaitable[bool]]
+logger = logging.getLogger(__name__)
 
 
 class EndpointRegistrationConflict(RuntimeError):
@@ -98,6 +101,7 @@ class Lane:
         endpoint: str | EndpointAddress,
         *,
         metadata: Mapping[str, str] | None = None,
+        task_group: anyio.abc.TaskGroup | None = None,
     ) -> AsyncIterator[RegisteredEndpointLane]:
         parsed = parse_endpoint_address(endpoint)
         registered = RegisteredEndpointLane(
@@ -117,15 +121,26 @@ class Lane:
             self._registered_endpoints.add(parsed)
         try:
             await registered._claim()
+            renewal_task: asyncio.Task[None] | None = None
+            if task_group is None:
+                renewal_task = asyncio.create_task(
+                    _log_endpoint_renewal_failures(registered),
+                    name=f"deckr.endpoint-renewal:{self.name}:{parsed}",
+                )
+            else:
+                task_group.start_soon(
+                    registered._renew_until_closed,
+                    name=f"deckr.endpoint-renewal:{self.name}:{parsed}",
+                )
             try:
-                async with anyio.create_task_group() as tg:
-                    tg.start_soon(registered._renew_until_closed)
-                    try:
-                        yield registered
-                    finally:
-                        registered._closing = True
-                        tg.cancel_scope.cancel()
+                yield registered
             finally:
+                registered._closing = True
+                registered._closing_event.set()
+                if renewal_task is not None:
+                    renewal_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await renewal_task
                 registered._closed = True
                 with anyio.move_on_after(2.0, shield=True):
                     await registered._withdraw()
@@ -159,6 +174,7 @@ class RegisteredEndpointLane:
         self._renewal_interval_seconds = renewal_interval_seconds
         self._revision: int | None = None
         self._closing = False
+        self._closing_event = anyio.Event()
         self._closed = False
         self._lost_reason: str | None = None
         self._lease_lock = anyio.Lock()
@@ -314,7 +330,8 @@ class RegisteredEndpointLane:
 
     async def _renew_until_closed(self) -> None:
         while not self._closing:
-            await anyio.sleep(self._renewal_interval_seconds)
+            with anyio.move_on_after(self._renewal_interval_seconds):
+                await self._closing_event.wait()
             if self._closing:
                 return
             await self.renew()
@@ -376,6 +393,21 @@ class RegisteredEndpointLane:
 
     def _mark_lost(self, reason: str) -> None:
         self._lost_reason = reason
+
+
+async def _log_endpoint_renewal_failures(endpoint: RegisteredEndpointLane) -> None:
+    try:
+        await endpoint._renew_until_closed()
+    except anyio.get_cancelled_exc_class():
+        raise
+    except Exception:
+        if not endpoint._closing:
+            logger.warning(
+                "Endpoint lease renewal failed for %s on lane %r",
+                endpoint.endpoint,
+                endpoint.lane.name,
+                exc_info=True,
+            )
 
 
 class LaneRegistry:

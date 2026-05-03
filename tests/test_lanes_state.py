@@ -247,6 +247,18 @@ async def test_register_endpoint_rejects_local_duplicate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_register_endpoint_closes_inside_later_cancel_scope() -> None:
+    async with memory_deckr() as deckr:
+        endpoint_cm = deckr.lane(ACTIONS_LANE).register_endpoint(
+            controller_address("main")
+        )
+        await endpoint_cm.__aenter__()
+
+        with anyio.CancelScope(shield=True):
+            await endpoint_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
 async def test_register_endpoint_rejects_existing_distributed_presence() -> None:
     substrate = MemoryLaneSubstrate(lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY)
     async with (

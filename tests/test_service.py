@@ -252,6 +252,22 @@ class StoppingAwareComponent:
         pass
 
 
+@dataclass
+class TaskOwnedStopComponent:
+    """Component whose cleanup must run in the same task as start."""
+
+    name: str
+    start_task_id: int | None = None
+    stop_task_id: int | None = None
+
+    async def start(self, ctx: RunContext) -> None:
+        self.start_task_id = anyio.get_current_task().id
+        ctx.tg.start_soon(anyio.sleep_forever)
+
+    async def stop(self) -> None:
+        self.stop_task_id = anyio.get_current_task().id
+
+
 class TestComponentManagerSuccess:
     """Test successful component lifecycle scenarios."""
 
@@ -735,6 +751,21 @@ class TestComponentManagerResourceCleanup:
 
 class TestComponentManagerTaskCancellation:
     """Test that component tasks are properly cancelled when components are removed."""
+
+    @pytest.mark.asyncio
+    async def test_stop_runs_in_component_runner_task(self, manager_context):
+        """Test that component cleanup keeps task-owned resources in one task."""
+        async with manager_context as (manager, tg):
+            component = TaskOwnedStopComponent(name="test1")
+
+            await manager.add_component(component)
+            await manager.wait_for_state("test1", ComponentState.RUNNING, timeout=1.0)
+
+            await manager.remove_component(component)
+            await wait_for_removed(manager, "test1")
+
+            assert component.start_task_id is not None
+            assert component.stop_task_id == component.start_task_id
 
     @pytest.mark.asyncio
     async def test_tasks_stop_on_removal(self, manager_context):
