@@ -254,10 +254,14 @@ Discovery bucket requirements for `deckr_discovery_v1`:
 - `history = 1`
 - `max_msgs_per_subject = 1`
 - no broker TTL / max age
-- no per-write TTL arguments
+- no per-write TTL arguments from Deckr
 
 Discovery writes are used for hardware inventory and action provider catalogs.
 They are rewritten on start and content change and deleted on graceful stop.
+The NATS stream may still report message-TTL support enabled, especially if an
+existing stream was created with that flag. Deckr does not rely on disabling that
+flag because NATS does not allow it to be turned off after stream creation; the
+Deckr state API rejects TTL writes to discovery stores instead.
 
 The NATS substrate creates or updates the development bucket configuration when
 possible. If an older development bucket cannot be updated safely, delete the
@@ -583,8 +587,10 @@ A consumer should:
 5. Exact-get known keys omitted from prefix observations before removing them, or
    use `observe_prefix_current(...)`.
 6. Treat `StateUnavailable` as unknown/retry and keep prior live projection.
-7. Never derive availability from local payload timestamps.
-8. Reject mismatched key/payload identity.
+7. Treat stale delete/expire markers as harmless when an exact `get(key)` still
+   returns a current entry.
+8. Never derive availability from local payload timestamps.
+9. Reject mismatched key/payload identity.
 
 Every component owns its own internal state machine. Remote observations can
 arrive in any order:
