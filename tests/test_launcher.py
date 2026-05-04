@@ -11,7 +11,6 @@ from deckr import cli as cli_mod
 from deckr.core.config import ConfigDocument
 from deckr.launcher import (
     LauncherSpec,
-    config_env_from_environment,
     launch,
     load_launcher_document,
     run_configured_deckr,
@@ -38,17 +37,16 @@ def test_load_launcher_document_uses_custom_loader(tmp_path: Path) -> None:
     assert captured["path"] == config_path.resolve()
 
 
-def test_load_launcher_document_passes_config_env_to_default_loader(
+def test_load_launcher_document_passes_path_to_default_loader(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     captured: dict[str, object] = {}
     document = ConfigDocument(raw={"deckr": {}}, source_path=None, base_dir=tmp_path)
 
-    def fake_load_config_document(path, *, default_text, expand_env):
+    def fake_load_config_document(path, *, default_text):
         captured["path"] = path
         captured["default_text"] = default_text
-        captured["expand_env"] = expand_env
         return document
 
     monkeypatch.setattr("deckr.launcher.load_config_document", fake_load_config_document)
@@ -56,32 +54,15 @@ def test_load_launcher_document_passes_config_env_to_default_loader(
     loaded = load_launcher_document(
         tmp_path / "deckr.toml",
         spec=LauncherSpec(default_config_text="[deckr]\n"),
-        config_env=True,
     )
 
     assert loaded is document
     assert captured["path"] == (tmp_path / "deckr.toml").resolve()
     assert captured["default_text"] == "[deckr]\n"
-    assert captured["expand_env"] is True
-
-
-def test_config_env_from_environment() -> None:
-    assert config_env_from_environment({}) is False
-    assert config_env_from_environment({"DECKR_CONFIG_ENV": "true"}) is True
-    assert config_env_from_environment({"DECKR_CONFIG_ENV": "0"}) is False
-
-    with pytest.raises(ValueError, match="DECKR_CONFIG_ENV"):
-        config_env_from_environment({"DECKR_CONFIG_ENV": "sometimes"})
 
 
 def test_validate_component_configuration_rejects_empty_document(
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "deckr.launcher.configured_component_instance_specs",
-        lambda document: [],
-    )
-
     with pytest.raises(ValueError, match="does not define any component instances"):
         validate_component_configuration(
             ConfigDocument(raw={"deckr": {}}, source_path=None, base_dir=Path.cwd())
@@ -211,13 +192,13 @@ def test_run_configured_deckr_uses_public_runtime_and_component_host(
 def test_cli_prints_default_config() -> None:
     runner = CliRunner()
     command = cli_mod.build_cli(
-        spec=LauncherSpec(default_config_text="[deckr.controller]\n")
+        spec=LauncherSpec(default_config_text="[deckr.components.instances.main]\n")
     )
 
     result = runner.invoke(command, ["--print-default-config"])
 
     assert result.exit_code == 0
-    assert result.output == "[deckr.controller]\n\n"
+    assert result.output == "[deckr.components.instances.main]\n\n"
 
 
 def test_cli_delegates_to_launcher(
@@ -226,15 +207,9 @@ def test_cli_delegates_to_launcher(
 ) -> None:
     captured: dict[str, object] = {}
 
-    def fake_launch(
-        config_path,
-        *,
-        spec: LauncherSpec | None = None,
-        config_env: bool | None = None,
-    ) -> None:
+    def fake_launch(config_path, *, spec: LauncherSpec | None = None) -> None:
         captured["config_path"] = config_path
         captured["spec"] = spec
-        captured["config_env"] = config_env
 
     monkeypatch.setattr(cli_mod, "launch", fake_launch)
     monkeypatch.setattr(cli_mod, "configure_process_logging", lambda level: None)
@@ -248,7 +223,6 @@ def test_cli_delegates_to_launcher(
     assert result.exit_code == 0
     assert captured["config_path"] == str((tmp_path / "deckr.toml").resolve())
     assert captured["spec"] is spec
-    assert captured["config_env"] is None
 
 
 def test_cli_configures_default_console_logging(
@@ -259,7 +233,7 @@ def test_cli_configures_default_console_logging(
     def fake_configure_process_logging(level: str) -> None:
         captured["level"] = level
 
-    def fake_launch(config_path, *, spec=None, config_env=None) -> None:
+    def fake_launch(config_path, *, spec=None) -> None:
         captured["launched"] = True
 
     monkeypatch.setattr(
@@ -291,7 +265,7 @@ def test_cli_loads_logging_config_file(
         captured["path"] = path
         captured["disable_existing_loggers"] = disable_existing_loggers
 
-    def fake_launch(config_path, *, spec=None, config_env=None) -> None:
+    def fake_launch(config_path, *, spec=None) -> None:
         captured["launched"] = True
 
     monkeypatch.setattr(cli_mod.logging.config, "fileConfig", fake_file_config)
@@ -314,47 +288,10 @@ def test_cli_loads_logging_config_file(
     assert captured["launched"] is True
 
 
-def test_cli_passes_config_env_option(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_launch(
-        config_path,
-        *,
-        spec: LauncherSpec | None = None,
-        config_env: bool | None = None,
-    ) -> None:
-        captured["config_path"] = config_path
-        captured["config_env"] = config_env
-
-    monkeypatch.setattr(cli_mod, "launch", fake_launch)
-    monkeypatch.setattr(cli_mod, "configure_process_logging", lambda level: None)
-
-    runner = CliRunner()
-    command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))
-
-    result = runner.invoke(
-        command,
-        ["--config", str(tmp_path / "deckr.toml"), "--config-env"],
-    )
-
-    assert result.exit_code == 0
-    assert captured["config_path"] == str((tmp_path / "deckr.toml").resolve())
-    assert captured["config_env"] is True
-
-
 def test_cli_reports_leaf_exception_from_exception_group(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_launch(
-        config_path,
-        *,
-        spec: LauncherSpec | None = None,
-        config_env: bool | None = None,
-    ) -> None:
-        del config_env
+    def fake_launch(config_path, *, spec: LauncherSpec | None = None) -> None:
         raise ExceptionGroup(
             "unhandled errors in a TaskGroup",
             [ValueError("Controller ID is required.")],
@@ -376,13 +313,7 @@ def test_cli_reports_leaf_exception_from_exception_group(
 def test_cli_reports_multiple_leaf_exceptions_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_launch(
-        config_path,
-        *,
-        spec: LauncherSpec | None = None,
-        config_env: bool | None = None,
-    ) -> None:
-        del config_env
+    def fake_launch(config_path, *, spec: LauncherSpec | None = None) -> None:
         raise ExceptionGroup(
             "outer",
             [

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,11 +7,7 @@ from typing import TypeAlias
 
 import anyio
 
-from deckr.components import (
-    configured_component_instance_specs,
-    resolve_component_host_plan,
-    start_components,
-)
+from deckr.components import resolve_component_host_plan, start_components
 from deckr.contracts.lanes import LaneContractRegistry
 from deckr.core.config import ConfigDocument, load_config_document
 from deckr.core.util.anyio import add_signal_handler
@@ -27,15 +22,16 @@ DocumentRunner: TypeAlias = Callable[[ConfigDocument], Awaitable[None]]
 
 _DEFAULT_CONFIG_DOCUMENT_TEXT = """# Deckr configuration document
 #
-# Configure each component under its manifest-declared exact prefix.
+# Configure component instances under [deckr.components.instances.<name>].
 #
 # Examples:
 #   [deckr.runtime.substrate]
 #   kind = "nats"
 #   supervised = true
 #
-#   [deckr.controller]
-#   [deckr.action_providers.python.instances.main]
+#   [deckr.components.instances.controller_main]
+#   component = "com.k-si.deckr.controller"
+#   instance_id = "main"
 
 [deckr]
 """
@@ -205,24 +201,10 @@ def resolve_config_path(config_path: str | Path | None) -> Path | None:
     return path.expanduser().resolve()
 
 
-def config_env_from_environment(env: dict[str, str] | None = None) -> bool:
-    source = os.environ if env is None else env
-    value = source.get("DECKR_CONFIG_ENV")
-    if value is None:
-        return False
-    normalized = value.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"Invalid DECKR_CONFIG_ENV value: {value!r}")
-
-
 def load_launcher_document(
     config_path: str | Path | None,
     *,
     spec: LauncherSpec | None = None,
-    config_env: bool = False,
 ) -> ConfigDocument:
     resolved_spec = spec or LauncherSpec(
         default_config_text=default_config_document_text()
@@ -233,17 +215,19 @@ def load_launcher_document(
     return load_config_document(
         path,
         default_text=resolved_spec.default_config_text,
-        expand_env=config_env,
     )
 
 
 def validate_component_configuration(document: ConfigDocument) -> None:
-    if configured_component_instance_specs(document):
+    if document.children("deckr.components.instances"):
+        return
+    components = document.namespace("deckr.components")
+    if isinstance(components, Mapping) and components.get("instance_sources"):
         return
     raise ValueError(
         "Configuration does not define any component instances. "
-        "Add a singleton [deckr.<component>] table or a multi-instance "
-        "[deckr.<component>.instances.<name>] table."
+        "Add [deckr.components.instances.<name>] or configure "
+        "[[deckr.components.instance_sources]]."
     )
 
 
@@ -268,16 +252,13 @@ def launch(
     config_path: str | Path | None,
     *,
     spec: LauncherSpec | None = None,
-    config_env: bool | None = None,
 ) -> None:
     resolved_spec = spec or LauncherSpec(
         default_config_text=default_config_document_text()
     )
-    expand_env = config_env_from_environment() if config_env is None else config_env
     document = load_launcher_document(
         config_path,
         spec=resolved_spec,
-        config_env=expand_env,
     )
     if resolved_spec.require_components:
         validate_component_configuration(document)

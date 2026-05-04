@@ -262,8 +262,9 @@ role-specific discovery path.
 Component hosting must likewise have one mechanism. A runtime host may obtain
 components through entry-point discovery, direct application registration, tests,
 or explicit construction, but once a component definition or instance is resolved
-it must pass through the same lane-contract validation, exact-prefix configuration
-binding, `RunContext`, `ComponentManager`, and lifecycle supervision.
+it must pass through the same lane-contract validation, generic instance
+configuration binding, `RunContext`, `ComponentManager`, and lifecycle
+supervision.
 
 The bundled launcher may expose convenient presets or examples for these modes,
 but presets must be expressed as ordinary component composition and explicit
@@ -411,8 +412,8 @@ That runtime context must not become a second general-purpose dependency
 injection system.
 
 In particular, the runtime context must not expose the full configuration
-document to components. Components receive only their own resolved exact-prefix
-mapping.
+document to components. Components receive only their own resolved private
+config mapping.
 
 If a cross-component interaction is dynamic, it belongs on a lane.
 
@@ -478,9 +479,9 @@ entrypoint logging setup.
 Deckr should support configuration documents such as TOML, but the architecture
 does not require one concrete file format.
 
-What matters is that configuration is bound by component manifest, not by
-semantic role and not by one global document schema understood by the runtime
-host.
+What matters is that configuration creates explicit component instances. Runtime
+activation is not inferred from installed packages, component roles, endpoint
+families, or old role-shaped table paths.
 
 ### Component Manifest Contract
 
@@ -488,26 +489,29 @@ Every discoverable component must declare, in its manifest or equivalent
 metadata:
 
 - `component_id`
-- `config_prefix`
 - `consumes`
 - `publishes`
 - `cardinality`
+- `endpoint_slots`
 
 It may also declare extension `lane_contracts` when it owns non-core lanes.
+Role metadata is descriptive only.
 
 The intended meanings are:
 
 - `component_id`
-  - the stable identity of the component type
+  - the globally unique stable identity of the component type
   - also the discovery key
-- `config_prefix`
-  - the exact configuration namespace bound to this component type
 - `consumes`
   - the named event bus lanes this component may read from
 - `publishes`
   - the named event bus lanes this component may write to
 - `cardinality`
-  - whether the component type is `singleton` or `multi_instance`
+  - whether the component type allows at most one planned instance or multiple
+    planned instances
+- `endpoint_slots`
+  - required endpoint id slots keyed by endpoint family or component-declared
+    endpoint role
 - `lane_contracts`
   - extension lane contracts owned by this component type
   - must never override Deckr core lane contracts
@@ -527,94 +531,84 @@ with `validate_lane_bindings(...)`. In that case the runtime host must resolve
 the instance's actual `consumes` and `publishes` from those explicit bindings,
 not infer them from semantic role, component type, or path naming.
 
-As a default convention, `config_prefix` should be the canonical Python import
-path of the component.
+Current first-party component ids include:
 
-Examples:
+- `com.k-si.deckr.controller`
+- `com.k-si.deckr.action_provider_runtime.python`
+- `com.k-si.deckr.hardware.elgato`
+- `com.k-si.deckr.hardware.mirabox`
+- `com.k-si.deckr.hardware.mqtt`
 
-- `deckr.controller`
-- `deckr.action_providers.python`
-- `deckr.drivers.elgato`
-- `deckr.drivers.mirabox`
+The runtime host must use the `component` value in
+`deckr.components.instances.<name>`. It must not infer meaning from path
+segments such as `action_providers`, `drivers`, `services`, or `controller`.
 
-The runtime host must use the manifest's declared `config_prefix`. It must not
-try to infer meaning from path segments such as `action_providers`, `drivers`, or
-`controller`.
+### Generic Instance Binding
 
-`deckr.action_providers.python` and `deckr.drivers.elgato` are therefore two
-separate component types, not a parent component and a child component.
+Component instances are configured under one generic namespace:
 
-### Exact Prefix Binding
+```toml
+[deckr.components.instances.controller_main]
+component = "com.k-si.deckr.controller"
+instance_id = "controller-main"
 
-Each component is only concerned with its own exact configuration prefix.
+[deckr.components.instances.controller_main.endpoints]
+controller = "controller-main"
+
+[deckr.components.instances.controller_main.config.device_config.file]
+path = "../devices"
+```
+
+The table path is launcher-local configuration address. It is not the component
+type id, endpoint id, service id, provider id, hardware manager id, or runtime
+protocol identity.
+
+The generic instance wrapper fields are:
+
+- `component`
+- `instance_id`
+- optional `runtime_name`
+- optional `endpoints`
+- optional `config`
+
+Other fields at this level are invalid. Labels, annotations, provider ids,
+manager ids, service namespaces, controller ids, and similar domain settings
+belong inside the component-private `config` table unless promoted to generic
+runtime metadata by a future contract change.
 
 The runtime host must:
 
-- discover the component
-- read its manifest
-- resolve the exact configuration namespace for that component
-- pass only that resolved configuration mapping to the component
+- discover or receive component definitions
+- read explicit component instance definitions
+- run explicitly configured component instance sources
+- validate component ids, cardinality, endpoint slots, runtime names, endpoint
+  ids, lane contracts, and component config hooks
+- pass only the instance's resolved private `config` mapping and generic runtime
+  metadata to the component
 
-The runtime host must not:
+The runtime host must not inspect sibling component sections on behalf of a
+component, merge role-shaped parent namespaces implicitly, or interpret domain
+settings such as provider ids or manager ids as generic runtime identity.
 
-- inspect sibling component sections on behalf of the component
-- merge parent namespaces implicitly
-- overlay role-based configuration tables
-- interpret the overall document shape beyond generic prefix resolution
-
-This means:
-
-- `deckr.action_providers.python` does not automatically receive configuration from
-  `deckr.action_providers`
-- `deckr.drivers.elgato` does not automatically receive configuration from
-  `deckr.drivers`
-- dotted names are exact binding prefixes, not inheritance paths
-
-Implicit parent-scope inheritance is forbidden.
-
-### Component-Owned Parsing and Enablement
-
-Each component:
-
-- receives only its own resolved configuration mapping
-- parses that mapping itself
-- validates that mapping itself
-- decides for itself what defaults apply
-- decides for itself what "enabled" or "disabled" means
-
-A runtime host does not own component enablement policy.
-
-A component being "disabled" is not a runtime-host-level state. In an event-bus
-architecture it simply means the component currently chooses not to consume from
-or publish to its declared lanes. That decision belongs entirely to the
-component, and it may change at runtime if external circumstances change.
-
-For example, a component may initially decide not to participate because another
-service is absent, and later begin consuming or publishing when that dependency
-appears.
-
-The runtime host must never short-circuit that behavior by imposing a generic
-enabled/disabled convention.
-
-### Singleton and Multi-Instance Components
+### Activation
 
 Component type identity and component instance identity are different concepts.
 
-`deckr.action_providers.python` and `deckr.drivers.elgato` are distinct component
-types with their own manifests and exact `config_prefix` values.
+An installed component definition never starts by itself. A component starts only
+when an explicit instance exists under `deckr.components.instances` or an
+explicitly configured component instance source produces an instance.
 
-If a component type is `singleton`, there is at most one configured instance of
-that component type, and its configuration lives exactly at its declared
-`config_prefix`.
+`singleton` cardinality means at most one planned instance. It does not mean
+"start when installed".
 
-If a component type is `multi_instance`, that must be declared explicitly in the
-manifest. In that case the runtime host may create multiple component instances
-of the same type, each with a separate `instance_id`.
+There is no generic runtime-host `enabled` flag. The existence of an instance
+definition is the activation signal. If a component has a domain-specific
+sometimes-on mode, that behavior belongs in the component and should be exposed
+through readiness, endpoint presence, service state, or domain state as
+appropriate.
 
-Every instantiated component also has a runtime-host-scoped identity used
-for lifecycle management.
-
-That runtime identity must be:
+Every instantiated component has a runtime-host-scoped identity used for
+lifecycle management. That runtime identity must be:
 
 - unique within one runtime host
 - derived deterministically from `component_id` and `instance_id`
@@ -622,34 +616,48 @@ That runtime identity must be:
 
 Protocol addresses such as `controller:<controller_id>`,
 `action_provider:<provider_instance_id>`, and `hardware_manager:<manager_id>`
-are lane-level messaging identities. They are not the generic lifecycle identity
-of a component instance.
+are derived from endpoint family plus the configured endpoint id in the instance
+`endpoints` map. They are not the generic lifecycle identity of a component
+instance.
 
 Deckr protocol endpoint addresses, entity subjects, client/session ids,
 transport addresses, component type ids, and runtime-host component identities
-are all separate concepts. A component may currently derive one configured value
-from another as a convenience, but the architecture must not depend on that
-derivation.
+are all separate concepts. The architecture must not depend on deriving one of
+those identities from another by convention.
 
-The configuration model for multi-instance components is:
+### Config Sources And Instance Sources
 
-- the component type still has one exact `config_prefix`
-- instances live under that prefix's explicit `instances` namespace
-- each instance is addressed by `instance_id`
-- each instantiated component receives only its own instance mapping, not the
-  whole component family subtree
+Config sources run before component instance planning. They can load or
+preprocess configuration fragments, including optional environment-template
+substitution for loaded TOML fragments. Config source declarations use ordered
+arrays:
 
-For example, a multi-instance component with `config_prefix =
-deckr.action_providers.python` would use:
+```toml
+[[deckr.config.sources]]
+id = "local_fragments"
+source = "com.k-si.deckr.config.files"
+paths = ["./config.d/*.toml"]
+env_template = true
+```
 
-- `[deckr.action_providers.python.instances.main]`
-- `[deckr.action_providers.python.instances.remote]`
+The built-in file config source deep-merges map values. Later fragments replace
+scalars, arrays, and map/scalar type changes and record those replacements in
+the config resolution report. Config sources must not contribute
+`deckr.config.sources` or `deckr.components.instance_sources`.
 
-and the runtime host would instantiate two instances with `instance_id = "main"`
-and `instance_id = "remote"`.
+Component instance sources run after resolved configuration is frozen. They may
+produce ordinary component instance definitions only. They must not mutate
+resolved config, create config sources, create more instance sources, or trigger
+recursive replanning.
 
-This is the only permitted way to express multiplicity within the generic
-component model.
+```toml
+[[deckr.components.instance_sources]]
+id = "example_workers"
+source = "com.example.deckr.workers"
+```
+
+The `deckr` core owns the generic source protocols and planner hook. Domain
+packages own their own source definitions.
 
 ### Runtime-Local Component Status
 
@@ -726,28 +734,31 @@ Even if such a defaults system is added later, it must obey these rules:
   mechanism
 
 Custom runtime hosts may choose their own configuration objects, but they must
-still honor the same manifest, prefix, lane model, and managed lane runtime
-contract.
+still honor the same component id, instance, endpoint slot, lane model, and
+managed lane runtime contract.
 
 ### Environment Substitution
 
-The standard Deckr launcher may optionally render environment variable
-placeholders before parsing a configuration document.
+Environment substitution is a config-loading processor, not private CLI
+behavior and not a component feature. It is enabled per loaded file source with
+`env_template = true`. A plain bootstrap `deckr.toml` does not silently expand
+environment variables, because literal strings containing `${...}` remain valid
+configuration values unless a config source opts into substitution.
 
-This is a launcher/config loading feature, not a component feature. It must be
-explicitly enabled by the operator, for example with a launcher flag or an
-equivalent runtime-host option. A plain `deckr.toml` must not silently expand
-environment variables, because literal strings containing `${...}` should remain
-valid configuration values unless substitution was requested.
-
-Supported substitution happens on the raw configuration text before TOML parsing:
+Substitution happens on raw TOML fragment text before TOML parsing:
 
 ```toml
-[deckr.action_providers.python.instances.main.runtime]
+[[deckr.config.sources]]
+id = "runtime"
+source = "com.k-si.deckr.config.files"
+paths = ["runtime.toml"]
+env_template = true
+```
+
+```toml
+[deckr.components.instances.clock_actions.config.runtime]
 bind_host = "${DECKR_ACTION_PROVIDER_BIND_HOST:-0.0.0.0}"
 bind_port = ${DECKR_ACTION_PROVIDER_BIND_PORT:-9000}
-provider_ids = ${DECKR_PROVIDER_IDS_TOML:-[]}
-excluded_provider_ids = ${DECKR_EXCLUDED_PROVIDER_IDS_TOML:-[]}
 ```
 
 The replacement text is TOML source. Operators are responsible for quoting
@@ -759,8 +770,8 @@ substitution:
 
 - substitution is generic text rendering, not role-specific or
   component-specific interpretation
-- substitution happens before top-level namespace validation, component
-  discovery, exact-prefix binding, and handoff to components
+- substitution happens before TOML parsing for the opted-in fragment and before
+  component instance planning
 - components still receive only their final resolved configuration mapping
 - missing variables without defaults fail visibly before components start
 - environment values must not become transport, endpoint, action provider, hardware, or
@@ -805,9 +816,10 @@ to understand component-specific settings.
   lane messages.
 - Client/session identity, transport addresses, component runtime identity, and
   protocol endpoint identity are separate.
-- Configuration is bound by exact manifest-declared prefix.
+- Configuration creates explicit generic component instances.
 - Components parse only their own resolved configuration mapping.
-- The runtime host does not interpret "enabled" or "disabled" for components.
+- Installed component definitions do not activate components.
+- The runtime host does not provide a generic component `enabled` flag.
 - Runtime context may carry only generic runtime-host metadata and lane handles
   as a generic primitive.
 - External protocol adapters may be components, but they must not preserve the

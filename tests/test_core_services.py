@@ -8,13 +8,14 @@ from memory_lane_substrate import memory_deckr
 
 from deckr.components import (
     BaseComponent,
-    ComponentCardinality,
     ComponentDefinition,
+    ComponentInstanceDefinition,
+    ComponentInstanceSourceContext,
+    ComponentInstanceSourceDefinition,
     ComponentManifest,
     ComponentState,
     configured_component_instance_specs,
     resolve_component_host_plan,
-    resolve_component_instance_specs,
     start_components,
 )
 from deckr.contracts.lanes import LaneContract
@@ -47,139 +48,211 @@ async def _running_components(document: ConfigDocument):
         yield component_host, deckr
 
 
-def test_resolve_component_specs_includes_singleton_and_multi_instance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    controller = ComponentDefinition(
+def _component(
+    component_id: str,
+    *,
+    consumes: tuple[str, ...] = (),
+    publishes: tuple[str, ...] = (),
+    endpoints: tuple[str, ...] = (),
+    lane_contracts: tuple[LaneContract, ...] = (),
+) -> ComponentDefinition:
+    return ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="deckr.controller",
-            config_prefix="deckr.controller",
-            consumes=("hardware_messages", "actions"),
-            publishes=("actions",),
-        ),
-        factory=lambda context: _DummyComponent(name=context.runtime_name),
-    )
-    provider_runtime = ComponentDefinition(
-        manifest=ComponentManifest(
-            component_id="deckr.action_providers.python",
-            config_prefix="deckr.action_providers.python",
-            consumes=("actions",),
-            publishes=("actions",),
-            cardinality=ComponentCardinality.MULTI_INSTANCE,
+            component_id=component_id,
+            consumes=consumes,
+            publishes=publishes,
+            endpoint_slots=endpoints,
+            lane_contracts=lane_contracts,
         ),
         factory=lambda context: _DummyComponent(name=context.runtime_name),
     )
 
-    monkeypatch.setattr(
-        "deckr.components._host.load_component_definition",
-        lambda component_id: {
-            "deckr.controller": controller,
-            "deckr.action_providers.python": provider_runtime,
-        }[component_id],
-    )
 
+def test_resolve_component_specs_from_generic_instances() -> None:
+    controller = _component(
+        "com.k-si.deckr.controller",
+        consumes=("hardware_messages", "actions"),
+        publishes=("actions",),
+        endpoints=("controller",),
+    )
+    provider_runtime = _component(
+        "com.k-si.deckr.action_provider_runtime.python",
+        consumes=("actions",),
+        publishes=("actions",),
+        endpoints=("action_provider",),
+    )
     document = _document(
         {
             "deckr": {
-                "controller": {"log_level": "debug"},
-                "action_providers": {
-                    "python": {
-                        "enabled": False,
-                        "instances": {
-                            "main": {"provider_instance_id": "python"},
-                            "remote": {"provider_instance_id": "remote"},
+                "components": {
+                    "instances": {
+                        "controller_main": {
+                            "component": "com.k-si.deckr.controller",
+                            "instance_id": "main",
+                            "endpoints": {"controller": "controller-main"},
+                            "config": {"log_level": "debug"},
+                        },
+                        "python_clock": {
+                            "component": (
+                                "com.k-si.deckr.action_provider_runtime.python"
+                            ),
+                            "instance_id": "clock-main",
+                            "endpoints": {"action_provider": "python-clock"},
+                            "config": {"provider_id": "clock"},
                         },
                     }
-                },
+                }
             }
         }
     )
 
-    specs = resolve_component_instance_specs(
+    specs = configured_component_instance_specs(
         document,
-        discovered_component_ids=["deckr.controller", "deckr.action_providers.python"],
+        definitions={
+            "com.k-si.deckr.controller": controller,
+            "com.k-si.deckr.action_provider_runtime.python": provider_runtime,
+        },
     )
 
     assert [
-        (spec.component_id, spec.instance_id, dict(spec.raw_config), spec.runtime_name)
+        (spec.component_id, spec.instance_id, dict(spec.config), spec.runtime_name)
         for spec in specs
     ] == [
         (
-            "deckr.action_providers.python",
+            "com.k-si.deckr.controller",
             "main",
-            {"provider_instance_id": "python"},
-            "deckr.action_providers.python:main",
+            {"log_level": "debug"},
+            "com.k-si.deckr.controller:main",
         ),
         (
-            "deckr.action_providers.python",
-            "remote",
-            {"provider_instance_id": "remote"},
-            "deckr.action_providers.python:remote",
+            "com.k-si.deckr.action_provider_runtime.python",
+            "clock-main",
+            {"provider_id": "clock"},
+            "com.k-si.deckr.action_provider_runtime.python:clock-main",
         ),
-        ("deckr.controller", "default", {"log_level": "debug"}, "deckr.controller"),
     ]
 
 
-def test_configured_component_specs_rejects_uninstalled_prefix(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("deckr.components._host.available_component_ids", lambda: [])
-    document = _document({"deckr": {"controller": {"id": "controller-main"}}})
-
-    with pytest.raises(ValueError, match="deckr.controller"):
-        configured_component_instance_specs(document)
-
-
-@pytest.mark.parametrize(
-    ("namespace", "detail"),
-    [
-        ("websocket", {"instances": {"main": {"mode": "server"}}}),
-        ("mqtt", {"instances": {"main": {"hostname": "mqtt"}}}),
-        ("bus", {"instances": {"main": {}}}),
-        ("routes", {"instances": {"main": {}}}),
-    ],
-)
-def test_configured_component_specs_rejects_removed_lane_transport_prefixes(
-    monkeypatch: pytest.MonkeyPatch,
-    namespace: str,
-    detail: dict[str, object],
-) -> None:
-    monkeypatch.setattr("deckr.components._host.available_component_ids", lambda: [])
-    document = _document({"deckr": {"transports": {namespace: detail}}})
-
-    with pytest.raises(ValueError, match="removed Deckr lane transport"):
-        configured_component_instance_specs(document)
-
-
-def test_configured_component_specs_loads_only_configured_entrypoints(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    controller = ComponentDefinition(
-        manifest=ComponentManifest(
-            component_id="deckr.controller",
-            config_prefix="deckr.controller",
-        ),
-        factory=lambda context: _DummyComponent(name=context.runtime_name),
+def test_unknown_component_id_is_plan_error() -> None:
+    document = _document(
+        {
+            "deckr": {
+                "components": {
+                    "instances": {
+                        "missing": {
+                            "component": "com.example.missing",
+                            "instance_id": "missing",
+                        }
+                    }
+                }
+            }
+        }
     )
 
-    monkeypatch.setattr(
-        "deckr.components._host.available_component_ids",
-        lambda: ["deckr.controller", "deckr.drivers.elgato"],
+    with pytest.raises(ValueError, match="Unknown Deckr component id"):
+        configured_component_instance_specs(document, definitions={})
+
+
+def test_unknown_generic_instance_field_is_plan_error() -> None:
+    component = _component("com.example.worker")
+    document = _document(
+        {
+            "deckr": {
+                "components": {
+                    "instances": {
+                        "worker": {
+                            "component": "com.example.worker",
+                            "instance_id": "worker",
+                            "provider_id": "not-generic",
+                        }
+                    }
+                }
+            }
+        }
     )
 
-    def load(component_id: str):
-        if component_id == "deckr.drivers.elgato":
-            raise ModuleNotFoundError("deckr.transports")
-        if component_id == "deckr.controller":
-            return controller
-        raise AssertionError(component_id)
+    with pytest.raises(ValueError, match="Unknown component instance field"):
+        configured_component_instance_specs(
+            document,
+            definitions={"com.example.worker": component},
+        )
 
-    monkeypatch.setattr("deckr.components._host.load_component_definition", load)
-    document = _document({"deckr": {"controller": {"id": "controller-main"}}})
 
-    specs = configured_component_instance_specs(document)
+def test_duplicate_endpoint_id_is_plan_error() -> None:
+    component = _component("com.example.worker", endpoints=("service",))
+    document = _document(
+        {
+            "deckr": {
+                "components": {
+                    "instances": {
+                        "one": {
+                            "component": "com.example.worker",
+                            "instance_id": "one",
+                            "endpoints": {"service": "shared"},
+                        },
+                        "two": {
+                            "component": "com.example.worker",
+                            "instance_id": "two",
+                            "endpoints": {"service": "shared"},
+                        },
+                    }
+                }
+            }
+        }
+    )
 
-    assert [spec.component_id for spec in specs] == ["deckr.controller"]
+    with pytest.raises(ValueError, match="Duplicate Deckr endpoint id"):
+        configured_component_instance_specs(
+            document,
+            definitions={"com.example.worker": component},
+        )
+
+
+def test_instance_source_generates_component_instances() -> None:
+    component = _component("com.example.worker", endpoints=("service",))
+
+    def load_source(
+        context: ComponentInstanceSourceContext,
+    ) -> tuple[ComponentInstanceDefinition, ...]:
+        assert context.source_config["allow"] == ["worker"]
+        return (
+            ComponentInstanceDefinition(
+                component_id="com.example.worker",
+                instance_id="generated-worker",
+                endpoints={"service": "worker-service"},
+                config={"value": "from-source"},
+            ),
+        )
+
+    source = ComponentInstanceSourceDefinition(
+        source_id="com.example.worker.source",
+        load=load_source,
+    )
+    document = _document(
+        {
+            "deckr": {
+                "components": {
+                    "instance_sources": [
+                        {
+                            "id": "worker_source",
+                            "source": "com.example.worker.source",
+                            "allow": ["worker"],
+                        }
+                    ]
+                }
+            }
+        }
+    )
+
+    specs = configured_component_instance_specs(
+        document,
+        definitions={"com.example.worker": component},
+        instance_source_definitions={"com.example.worker.source": source},
+    )
+
+    assert [(spec.instance_id, dict(spec.config)) for spec in specs] == [
+        ("generated-worker", {"value": "from-source"})
+    ]
 
 
 @pytest.mark.asyncio
@@ -188,11 +261,9 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
 
     definition = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="deckr.action_providers.python",
-            config_prefix="deckr.action_providers.python",
+            component_id="com.example.action_runtime",
             consumes=("actions",),
             publishes=("actions",),
-            cardinality=ComponentCardinality.MULTI_INSTANCE,
         ),
         factory=lambda context: (
             seen.setdefault("lane", context.require_lane("actions"))
@@ -202,10 +273,11 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
     document = _document(
         {
             "deckr": {
-                "action_providers": {
-                    "python": {
-                        "instances": {
-                            "main": {},
+                "components": {
+                    "instances": {
+                        "main": {
+                            "component": "com.example.action_runtime",
+                            "instance_id": "main",
                         }
                     }
                 }
@@ -214,14 +286,14 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
     )
     plan = resolve_component_host_plan(
         document,
-        definitions={"deckr.action_providers.python": definition},
+        definitions={"com.example.action_runtime": definition},
     )
     async with memory_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan) as component_host:
         await component_host.component_manager.wait_for_state(
-            "deckr.action_providers.python:main",
+            "com.example.action_runtime:main",
             ComponentState.RUNNING,
         )
         async with deckr.lane("actions").register_endpoint(
@@ -242,34 +314,46 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_components_passes_current_state_to_component() -> None:
+async def test_start_components_passes_current_state_and_endpoints() -> None:
     seen: dict[str, object] = {}
-
-    class StateComponent(_DummyComponent):
-        async def start(self, ctx) -> None:
-            return
 
     def factory(context):
         seen["state"] = context.state()
-        return StateComponent(name=context.runtime_name)
+        seen["endpoint"] = context.require_endpoint_id("controller")
+        return _DummyComponent(name=context.runtime_name)
 
     definition = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="deckr.controller",
-            config_prefix="deckr.controller",
+            component_id="com.k-si.deckr.controller",
+            endpoint_slots=("controller",),
         ),
         factory=factory,
     )
-    document = _document({"deckr": {"controller": {}}})
+    document = _document(
+        {
+            "deckr": {
+                "components": {
+                    "instances": {
+                        "controller": {
+                            "component": "com.k-si.deckr.controller",
+                            "instance_id": "main",
+                            "endpoints": {"controller": "controller-main"},
+                        }
+                    }
+                }
+            }
+        }
+    )
     plan = resolve_component_host_plan(
         document,
-        definitions={"deckr.controller": definition},
+        definitions={"com.k-si.deckr.controller": definition},
     )
     async with memory_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan):
         assert seen["state"] is deckr.state()
+        assert seen["endpoint"] == "controller-main"
 
 
 def test_runtime_substrate_config_defaults_to_nats() -> None:
@@ -315,7 +399,6 @@ def test_deployment_lane_contract_uses_direct_v1_fields() -> None:
     component = ComponentDefinition(
         manifest=ComponentManifest(
             component_id="acme.worker",
-            config_prefix="deckr.acme.worker",
             publishes=("acme.events",),
             lane_contracts=(
                 LaneContract(
@@ -332,7 +415,14 @@ def test_deployment_lane_contract_uses_direct_v1_fields() -> None:
     document = _document(
         {
             "deckr": {
-                "acme": {"worker": {}},
+                "components": {
+                    "instances": {
+                        "worker": {
+                            "component": "acme.worker",
+                            "instance_id": "main",
+                        }
+                    }
+                },
                 "lane_contracts": {
                     "acme.events": {
                         "message_types": ["ping"],

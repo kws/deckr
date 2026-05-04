@@ -74,14 +74,6 @@ def build_cli(*, spec: LauncherSpec | None = None):
         help="Print the built-in default deckr.toml document and exit.",
     )
     @click.option(
-        "--config-env/--no-config-env",
-        default=None,
-        help=(
-            "Expand ${VAR} and ${VAR:-default} placeholders in the configuration "
-            "before parsing. Defaults to DECKR_CONFIG_ENV when omitted."
-        ),
-    )
-    @click.option(
         "--log-config",
         "log_config",
         type=click.Path(
@@ -97,7 +89,6 @@ def build_cli(*, spec: LauncherSpec | None = None):
     def command(
         config_path: str | None,
         print_default_config: bool,
-        config_env: bool | None,
         log_config: str | None,
     ) -> None:
         if print_default_config:
@@ -105,7 +96,7 @@ def build_cli(*, spec: LauncherSpec | None = None):
             return
         try:
             _configure_cli_logging(log_config)
-            launch(config_path, spec=resolved_spec, config_env=config_env)
+            launch(config_path, spec=resolved_spec)
         except Exception as exc:
             raise click.ClickException(_format_cli_error(exc)) from exc
 

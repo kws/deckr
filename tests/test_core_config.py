@@ -21,8 +21,9 @@ def test_load_config_document_rejects_non_deckr_top_level_namespaces(
     config_path = tmp_path / "deckr.toml"
     config_path.write_text(
         """
-[deckr.controller]
-log_level = "info"
+[deckr.components.instances.controller_main]
+component = "com.k-si.deckr.controller"
+instance_id = "main"
 
 [action_provider.openhab]
 url = "http://example.invalid"
@@ -37,11 +38,12 @@ def test_load_config_document_preserves_namespaced_children(tmp_path: Path) -> N
     config_path = tmp_path / "deckr.toml"
     config_path.write_text(
         """
-[deckr.controller]
-log_level = "debug"
+[deckr.components.instances.controller_main]
+component = "com.k-si.deckr.controller"
+instance_id = "main"
 
-[deckr.action_providers.python.instances.main]
-enabled = false
+[deckr.components.instances.controller_main.config]
+log_level = "debug"
 
 [deckr.actions.providers.openhab]
 url = "http://openhab.local:8080"
@@ -52,9 +54,8 @@ url = "http://openhab.local:8080"
 
     assert document.source_path == config_path.resolve()
     assert document.base_dir == tmp_path.resolve()
-    assert document.namespace("deckr.controller") == {"log_level": "debug"}
-    assert document.children("deckr.action_providers") == {
-        "python": {"instances": {"main": {"enabled": False}}}
+    assert document.namespace("deckr.components.instances.controller_main.config") == {
+        "log_level": "debug"
     }
     assert document.namespace("deckr.actions.providers.openhab") == {
         "url": "http://openhab.local:8080"
@@ -63,38 +64,52 @@ url = "http://openhab.local:8080"
 
 def test_config_document_resolves_relative_paths(tmp_path: Path) -> None:
     config_path = tmp_path / "deckr.toml"
-    config_path.write_text("[deckr.controller]\n")
+    config_path.write_text("[deckr]\n")
 
     document = load_config_document(config_path)
 
     assert document.resolve_path("settings") == (tmp_path / "settings").resolve()
 
 
-def test_load_config_document_preserves_env_placeholders_by_default(
+def test_load_config_document_preserves_env_placeholders_in_bootstrap(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "deckr.toml"
     config_path.write_text(
         """
-[deckr.substrates.nats.instances.controller]
+[deckr.runtime.substrate]
 url = "nats://${DECKR_HOST}:4222"
 """.strip()
     )
 
     document = load_config_document(config_path)
 
-    assert document.namespace("deckr.substrates.nats.instances.controller") == {
+    assert document.namespace("deckr.runtime.substrate") == {
         "url": "nats://${DECKR_HOST}:4222",
     }
 
 
-def test_load_config_document_expands_env_placeholders_before_parsing(
+def test_file_config_source_expands_env_placeholders_before_parsing(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "deckr.toml"
+    fragment = tmp_path / "runtime.toml"
     config_path.write_text(
         """
-[deckr.action_providers.python.instances.main.runtime]
+[[deckr.config.sources]]
+id = "runtime"
+source = "com.k-si.deckr.config.files"
+paths = ["runtime.toml"]
+env_template = true
+""".strip()
+    )
+    fragment.write_text(
+        """
+[deckr.components.instances.action_runtime]
+component = "com.k-si.deckr.action_provider_runtime.python"
+instance_id = "main"
+
+[deckr.components.instances.action_runtime.config.runtime]
 bind_host = "${DECKR_BIND_HOST:-0.0.0.0}"
 bind_port = ${DECKR_BIND_PORT}
 provider_ids = ${DECKR_PROVIDER_IDS:-["deckr-plugin-clock"]}
@@ -103,48 +118,67 @@ provider_ids = ${DECKR_PROVIDER_IDS:-["deckr-plugin-clock"]}
 
     document = load_config_document(
         config_path,
-        expand_env=True,
         env={"DECKR_BIND_PORT": "9000"},
     )
 
-    assert document.namespace("deckr.action_providers.python.instances.main.runtime") == {
+    assert document.namespace(
+        "deckr.components.instances.action_runtime.config.runtime"
+    ) == {
         "bind_host": "0.0.0.0",
         "bind_port": 9000,
         "provider_ids": ("deckr-plugin-clock",),
     }
 
 
-def test_load_config_document_expands_process_environment(
+def test_file_config_source_expands_process_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "deckr.toml"
+    fragment = tmp_path / "runtime.toml"
     config_path.write_text(
         """
-[deckr.substrates.nats.instances.controller]
+[[deckr.config.sources]]
+id = "runtime"
+source = "com.k-si.deckr.config.files"
+paths = ["runtime.toml"]
+env_template = true
+""".strip()
+    )
+    fragment.write_text(
+        """
+[deckr.runtime.substrate]
 port = ${DECKR_NATS_PORT}
 """.strip()
     )
     monkeypatch.setenv("DECKR_NATS_PORT", "4222")
 
-    document = load_config_document(config_path, expand_env=True)
+    document = load_config_document(config_path)
 
-    assert document.namespace("deckr.substrates.nats.instances.controller") == {
-        "port": 4222
-    }
+    assert document.namespace("deckr.runtime.substrate") == {"port": 4222}
 
 
-def test_load_config_document_rejects_missing_env_placeholder(tmp_path: Path) -> None:
+def test_file_config_source_rejects_missing_env_placeholder(tmp_path: Path) -> None:
     config_path = tmp_path / "deckr.toml"
+    fragment = tmp_path / "runtime.toml"
     config_path.write_text(
         """
-[deckr.action_providers.python.instances.main.runtime]
+[[deckr.config.sources]]
+id = "runtime"
+source = "com.k-si.deckr.config.files"
+paths = ["runtime.toml"]
+env_template = true
+""".strip()
+    )
+    fragment.write_text(
+        """
+[deckr.components.instances.action_runtime.config.runtime]
 bind_port = ${DECKR_BIND_PORT}
 """.strip()
     )
 
     with pytest.raises(ValueError, match="DECKR_BIND_PORT"):
-        load_config_document(config_path, expand_env=True, env={})
+        load_config_document(config_path, env={})
 
 
 def test_substitute_config_environment_rejects_invalid_variable_name() -> None:

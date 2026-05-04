@@ -10,7 +10,7 @@ Deckr runtime modes are ordinary composition over the same primitives:
 
 - `Deckr` owns lane contracts and lane buses.
 - `resolve_component_host_plan(...)` resolves discovered or supplied component
-  definitions into exact-prefix component instances.
+  definitions plus explicit generic instance config into component instances.
 - `build_runtime_substrate(...)` resolves the runtime substrate, currently NATS,
   from host configuration. The NATS broker may be external or supervised as a
   local child process, but the Deckr substrate kind and lane/current-state
@@ -63,6 +63,21 @@ kind = "nats"
 supervised = true
 ```
 
+Component instances use the same generic shape in every mode:
+
+```toml
+[deckr.components.instances.clock_actions]
+component = "com.k-si.deckr.action_provider_runtime.python"
+instance_id = "clock-main"
+
+[deckr.components.instances.clock_actions.endpoints]
+action_provider = "python-clock"
+
+[deckr.components.instances.clock_actions.config]
+provider_id = "clock"
+entrypoint = "deckr.plugins.clock"
+```
+
 When `supervised = true`, the launcher starts `nats-server` as a private child
 process, enables JetStream, binds to localhost, lets NATS select the client port,
 and wires `Deckr` to that selected URL. A configured absolute binary path can be
@@ -95,7 +110,9 @@ runtime.
 Embedded applications may create `Deckr` directly and use lane messaging without
 component discovery. If they want component lifecycle supervision, they can pass
 manual component definitions to `resolve_component_host_plan(...)` or construct a
-`ComponentHostPlan.from_specs(...)`.
+`ComponentHostPlan.from_specs(...)`. Installed component definitions remain
+passive until explicit instance config or an explicit instance source creates a
+planned instance.
 
 Embedded applications can use the same external NATS substrate directly:
 

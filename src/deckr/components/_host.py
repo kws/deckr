@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib.metadata import entry_points
 from pathlib import Path
@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import anyio
 
-from deckr.components._defs import BaseComponent, Component
+from deckr.components._defs import Component
 from deckr.components._runner import ComponentManager
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
@@ -30,6 +30,7 @@ from deckr.contracts.lanes import (
 )
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.config import ConfigDocument
+from deckr.core.util.runtime_id import require_runtime_id
 from deckr.lanes import Lane, LaneRegistry
 from deckr.state import DEFAULT_LEASE_STATE_STORE_NAME, StateStore
 
@@ -37,17 +38,7 @@ if TYPE_CHECKING:
     from deckr.runtime import Deckr
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
-CORE_NON_COMPONENT_CONFIG_NAMESPACES = frozenset(
-    {"actions", "lane_contracts", "runtime"}
-)
-REMOVED_TRANSPORT_CONFIG_PREFIXES = frozenset(
-    {
-        "deckr.transports.bus",
-        "deckr.transports.mqtt",
-        "deckr.transports.routes",
-        "deckr.transports.websocket",
-    }
-)
+COMPONENT_INSTANCE_SOURCE_ENTRYPOINT_GROUP = "deckr.component_instance_sources"
 REMOVED_LANE_CONTRACT_FIELDS = frozenset(
     {
         "mqtt",
@@ -86,11 +77,12 @@ class ComponentCardinality(StrEnum):
 @dataclass(frozen=True, slots=True)
 class ComponentManifest:
     component_id: str
-    config_prefix: str
     consumes: tuple[str, ...] = ()
     publishes: tuple[str, ...] = ()
     cardinality: ComponentCardinality = ComponentCardinality.SINGLETON
     lane_contracts: tuple[LaneContract, ...] = ()
+    endpoint_slots: tuple[str, ...] = ()
+    role: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,13 +97,22 @@ class ComponentContext:
     instance_id: str
     runtime_name: str
     manifest: ComponentManifest
-    raw_config: Mapping[str, Any]
+    config: Mapping[str, Any]
+    endpoints: Mapping[str, str]
     base_dir: Path
     lanes: LaneRegistry
     state_for: Callable[[str], StateStore]
 
     def require_lane(self, name: str) -> Lane:
         return self.lanes.require(name)
+
+    def require_endpoint_id(self, slot: str) -> str:
+        endpoint_id = self.endpoints.get(slot)
+        if endpoint_id is None:
+            raise KeyError(
+                f"Component {self.runtime_name!r} has no endpoint slot {slot!r}"
+            )
+        return endpoint_id
 
     def state(self, name: str = DEFAULT_LEASE_STATE_STORE_NAME) -> StateStore:
         return self.state_for(name)
@@ -126,7 +127,8 @@ class LaneResolver(Protocol):
         self,
         *,
         manifest: ComponentManifest,
-        raw_config: Mapping[str, Any],
+        config: Mapping[str, Any],
+        endpoints: Mapping[str, str],
         instance_id: str,
     ) -> ResolvedLaneSet: ...
 
@@ -135,10 +137,66 @@ class LaneBindingValidator(Protocol):
     def __call__(
         self,
         *,
-        raw_config: Mapping[str, Any],
+        config: Mapping[str, Any],
+        endpoints: Mapping[str, str],
         instance_id: str,
         lane_contracts: LaneContractRegistry,
     ) -> None: ...
+
+
+class ComponentConfigValidator(Protocol):
+    def __call__(
+        self,
+        *,
+        config: Mapping[str, Any],
+        endpoints: Mapping[str, str],
+        instance_id: str,
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentInstanceDefinition:
+    component_id: str
+    instance_id: str
+    config: Mapping[str, Any] = field(default_factory=dict)
+    endpoints: Mapping[str, str] = field(default_factory=dict)
+    runtime_name: str | None = None
+    config_address: str | None = None
+    generated_by: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentInstanceSourceContext:
+    source_id: str
+    source_config: Mapping[str, Any]
+    resolved_config: Mapping[str, Any]
+    base_dir: Path
+
+
+class ComponentInstanceSourceLoader(Protocol):
+    def __call__(
+        self,
+        context: ComponentInstanceSourceContext,
+    ) -> Sequence[ComponentInstanceDefinition]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentInstanceSourceDefinition:
+    source_id: str
+    load: ComponentInstanceSourceLoader
+
+
+@dataclass(frozen=True, slots=True)
+class PlanningEvent:
+    message: str
+    source_id: str | None = None
+    component_id: str | None = None
+    instance_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentPlanningReport:
+    events: tuple[PlanningEvent, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,17 +205,20 @@ class ComponentDefinition:
     factory: ComponentFactory
     resolve_lanes: LaneResolver | None = None
     validate_lane_bindings: LaneBindingValidator | None = None
+    validate_config: ComponentConfigValidator | None = None
 
     def lanes_for(
         self,
         *,
-        raw_config: Mapping[str, Any],
+        config: Mapping[str, Any],
+        endpoints: Mapping[str, str],
         instance_id: str,
     ) -> ResolvedLaneSet:
         if self.resolve_lanes is not None:
             return self.resolve_lanes(
                 manifest=self.manifest,
-                raw_config=raw_config,
+                config=config,
+                endpoints=endpoints,
                 instance_id=instance_id,
             )
         return ResolvedLaneSet(
@@ -168,20 +229,41 @@ class ComponentDefinition:
     def validate_resolved_lane_bindings(
         self,
         *,
-        raw_config: Mapping[str, Any],
+        config: Mapping[str, Any],
+        endpoints: Mapping[str, str],
         instance_id: str,
         lane_contracts: LaneContractRegistry,
     ) -> None:
         if self.validate_lane_bindings is None:
             return
         self.validate_lane_bindings(
-            raw_config=raw_config,
+            config=config,
+            endpoints=endpoints,
             instance_id=instance_id,
             lane_contracts=lane_contracts,
         )
 
+    def validate_instance_config(
+        self,
+        *,
+        config: Mapping[str, Any],
+        endpoints: Mapping[str, str],
+        instance_id: str,
+    ) -> None:
+        if self.validate_config is None:
+            return
+        self.validate_config(
+            config=config,
+            endpoints=endpoints,
+            instance_id=instance_id,
+        )
+
 
 ComponentDefinitions = Mapping[str, ComponentDefinition] | Sequence[ComponentDefinition]
+ComponentInstanceSourceDefinitions = (
+    Mapping[str, ComponentInstanceSourceDefinition]
+    | Sequence[ComponentInstanceSourceDefinition]
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,9 +271,12 @@ class ComponentInstanceSpec:
     component_id: str
     instance_id: str
     runtime_name: str
-    raw_config: Mapping[str, Any]
+    config: Mapping[str, Any]
+    endpoints: Mapping[str, str]
     definition: ComponentDefinition
     lanes: ResolvedLaneSet
+    config_address: str | None = None
+    generated_by: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +285,7 @@ class ComponentHostPlan:
     lane_contracts: LaneContractRegistry
     lane_names: tuple[str, ...]
     base_dir: Path
+    report: ComponentPlanningReport = field(default_factory=ComponentPlanningReport)
 
     @classmethod
     def from_specs(
@@ -244,14 +330,6 @@ class ComponentHost:
         await self.component_manager.stop()
 
 
-class InactiveComponent(BaseComponent):
-    async def start(self, ctx) -> None:
-        return
-
-    async def stop(self) -> None:
-        return
-
-
 def runtime_name_for(component_id: str, instance_id: str) -> str:
     if instance_id == "default":
         return component_id
@@ -278,54 +356,36 @@ def load_component_definition(component_id: str) -> ComponentDefinition | None:
     return None
 
 
-def resolve_component_instance_specs(
-    document: ConfigDocument,
-    *,
-    discovered_component_ids: list[str] | tuple[str, ...] | None = None,
-    definitions: ComponentDefinitions | None = None,
-) -> list[ComponentInstanceSpec]:
-    if definitions is not None:
-        definition_map = _definition_mapping(definitions)
-        component_ids = sorted(definition_map)
-        definition_for = definition_map.get
-    else:
-        component_ids = sorted(set(discovered_component_ids or ()))
-        definition_for = load_component_definition
+def available_component_instance_source_ids() -> list[str]:
+    return sorted(
+        entry_point.name
+        for entry_point in entry_points().select(
+            group=COMPONENT_INSTANCE_SOURCE_ENTRYPOINT_GROUP
+        )
+    )
 
-    specs: list[ComponentInstanceSpec] = []
-    for component_id in component_ids:
-        definition = definition_for(component_id)
-        if definition is None:
+
+def load_component_instance_source_definition(
+    source_id: str,
+) -> ComponentInstanceSourceDefinition | None:
+    for entry_point in entry_points().select(
+        group=COMPONENT_INSTANCE_SOURCE_ENTRYPOINT_GROUP
+    ):
+        if entry_point.name != source_id:
             continue
-        if definition.manifest.cardinality == ComponentCardinality.SINGLETON:
-            spec = _singleton_spec(document, definition)
-            if spec is not None:
-                specs.append(spec)
-            continue
-        specs.extend(_multi_instance_specs(document, definition))
-    return specs
-
-
-def configured_component_instance_specs(
-    document: ConfigDocument,
-) -> list[ComponentInstanceSpec]:
-    discovered_component_ids = available_component_ids()
-    configured_prefixes = _configured_component_prefixes(
-        document,
-        known_prefixes=set(discovered_component_ids),
-    )
-    _validate_configured_component_prefixes(
-        document,
-        discovered_component_ids=discovered_component_ids,
-    )
-    return resolve_component_instance_specs(
-        document,
-        discovered_component_ids=[
-            component_id
-            for component_id in discovered_component_ids
-            if component_id in configured_prefixes
-        ],
-    )
+        definition = entry_point.load()
+        if not isinstance(definition, ComponentInstanceSourceDefinition):
+            raise TypeError(
+                f"Entry point {source_id!r} did not load a "
+                "ComponentInstanceSourceDefinition"
+            )
+        if definition.source_id != source_id:
+            raise ValueError(
+                f"Component instance source entry point {source_id!r} loaded "
+                f"source {definition.source_id!r}"
+            )
+        return definition
+    return None
 
 
 def build_lane_contract_registry(
@@ -339,13 +399,26 @@ def resolve_component_host_plan(
     document: ConfigDocument,
     *,
     definitions: ComponentDefinitions | None = None,
+    instance_source_definitions: ComponentInstanceSourceDefinitions | None = None,
 ) -> ComponentHostPlan:
-    if definitions is not None:
-        _validate_configured_component_prefixes(document, definitions=definitions)
+    report_events: list[PlanningEvent] = []
+    instance_defs = list(
+        _configured_component_instance_definitions(document, report_events=report_events)
+    )
+    instance_defs.extend(
+        _generated_component_instance_definitions(
+            document,
+            instance_source_definitions=instance_source_definitions,
+            report_events=report_events,
+        )
+    )
     specs = tuple(
-        configured_component_instance_specs(document)
-        if definitions is None
-        else resolve_component_instance_specs(document, definitions=definitions)
+        _specs_from_instance_definitions(
+            instance_defs,
+            document=document,
+            definitions=definitions,
+            report_events=report_events,
+        )
     )
     lane_contracts = _build_lane_contract_registry(specs, document=document)
     _validate_component_lane_bindings(specs, lane_contracts)
@@ -354,6 +427,35 @@ def resolve_component_host_plan(
         lane_contracts=lane_contracts,
         lane_names=_lane_names_for_specs(specs, lane_contracts=lane_contracts),
         base_dir=document.base_dir,
+        report=ComponentPlanningReport(events=tuple(report_events)),
+    )
+
+
+def resolve_component_instance_specs(
+    document: ConfigDocument,
+    *,
+    definitions: ComponentDefinitions | None = None,
+    instance_source_definitions: ComponentInstanceSourceDefinitions | None = None,
+) -> list[ComponentInstanceSpec]:
+    return list(
+        resolve_component_host_plan(
+            document,
+            definitions=definitions,
+            instance_source_definitions=instance_source_definitions,
+        ).specs
+    )
+
+
+def configured_component_instance_specs(
+    document: ConfigDocument,
+    *,
+    definitions: ComponentDefinitions | None = None,
+    instance_source_definitions: ComponentInstanceSourceDefinitions | None = None,
+) -> list[ComponentInstanceSpec]:
+    return resolve_component_instance_specs(
+        document,
+        definitions=definitions,
+        instance_source_definitions=instance_source_definitions,
     )
 
 
@@ -374,151 +476,331 @@ async def start_components(
             tg.cancel_scope.cancel()
 
 
-def _singleton_spec(
-    document: ConfigDocument,
-    definition: ComponentDefinition,
-) -> ComponentInstanceSpec | None:
-    raw_config = document.namespace(definition.manifest.config_prefix)
-    if raw_config is None:
-        return None
-    instance_id = "default"
-    return ComponentInstanceSpec(
-        component_id=definition.manifest.component_id,
-        instance_id=instance_id,
-        runtime_name=runtime_name_for(definition.manifest.component_id, instance_id),
-        raw_config=raw_config,
-        definition=definition,
-        lanes=definition.lanes_for(raw_config=raw_config, instance_id=instance_id),
-    )
+GENERIC_INSTANCE_FIELDS = frozenset(
+    {"component", "instance_id", "runtime_name", "endpoints", "config"}
+)
 
 
-def _multi_instance_specs(
+def _configured_component_instance_definitions(
     document: ConfigDocument,
-    definition: ComponentDefinition,
-) -> list[ComponentInstanceSpec]:
-    instances_path = f"{definition.manifest.config_prefix}.instances"
-    instances = document.children(instances_path)
-    specs: list[ComponentInstanceSpec] = []
-    for instance_id, raw_config in sorted(instances.items()):
-        specs.append(
-            ComponentInstanceSpec(
-                component_id=definition.manifest.component_id,
-                instance_id=instance_id,
-                runtime_name=runtime_name_for(
-                    definition.manifest.component_id,
-                    instance_id,
-                ),
-                raw_config=raw_config,
-                definition=definition,
-                lanes=definition.lanes_for(
-                    raw_config=raw_config,
-                    instance_id=instance_id,
-                ),
+    *,
+    report_events: list[PlanningEvent],
+) -> list[ComponentInstanceDefinition]:
+    instances = document.children("deckr.components.instances")
+    definitions: list[ComponentInstanceDefinition] = []
+    for config_name, source in instances.items():
+        definitions.append(
+            _component_instance_definition_from_mapping(
+                source,
+                config_address=f"deckr.components.instances.{config_name}",
+                generated_by=None,
             )
         )
-    return specs
-
-
-def _component_candidate_prefix(path: tuple[str, ...]) -> str | None:
-    if not path:
-        return None
-    if path[0] == "controller":
-        return "deckr.controller"
-    if path[0] in {"action_providers", "drivers", "substrates"} and len(path) >= 2:
-        return f"deckr.{path[0]}.{path[1]}"
-    return "deckr." + ".".join(path)
-
-
-def _configured_component_prefixes(
-    document: ConfigDocument,
-    *,
-    known_prefixes: set[str],
-) -> set[str]:
-    configured: set[str] = set()
-
-    def walk(path: tuple[str, ...], value: Mapping[str, Any]) -> None:
-        prefix = _component_candidate_prefix(path)
-        if prefix in known_prefixes:
-            configured.add(prefix)
-            return
-
-        instances = value.get("instances")
-        if isinstance(instances, Mapping):
-            if prefix is not None:
-                configured.add(prefix)
-            return
-
-        if path and any(not isinstance(item, Mapping) for item in value.values()):
-            if prefix is not None:
-                configured.add(prefix)
-            return
-
-        for name, item in value.items():
-            if not path and name in CORE_NON_COMPONENT_CONFIG_NAMESPACES:
-                continue
-            if isinstance(item, Mapping):
-                walk((*path, str(name)), item)
-
-    deckr_config = document.deckr
-    if isinstance(deckr_config, Mapping):
-        walk((), deckr_config)
-    return configured
-
-
-def _component_config_prefixes(
-    *,
-    discovered_component_ids: list[str] | tuple[str, ...] | None = None,
-    definitions: ComponentDefinitions | None = None,
-) -> set[str]:
-    if definitions is not None:
-        return {
-            definition.manifest.config_prefix
-            for definition in _definition_mapping(definitions).values()
-        }
-    return set(discovered_component_ids or ())
-
-
-def _validate_configured_component_prefixes(
-    document: ConfigDocument,
-    *,
-    discovered_component_ids: list[str] | tuple[str, ...] | None = None,
-    definitions: ComponentDefinitions | None = None,
-) -> None:
-    known_prefixes = _component_config_prefixes(
-        discovered_component_ids=discovered_component_ids,
-        definitions=definitions,
-    )
-    configured_prefixes = _configured_component_prefixes(
-        document,
-        known_prefixes=known_prefixes,
-    )
-    removed = sorted(
-        prefix
-        for prefix in configured_prefixes
-        if prefix in REMOVED_TRANSPORT_CONFIG_PREFIXES
-    )
-    if removed:
-        prefixes = ", ".join(removed)
-        raise ValueError(
-            "Configuration uses removed Deckr lane transport prefix(es): "
-            f"{prefixes}. Use [deckr.runtime.substrate] kind = \"nats\" and "
-            "Deckr endpoint-bound lanes with JetStream KV current state."
+        report_events.append(
+            PlanningEvent(
+                message=f"configured component instance {config_name}",
+                instance_id=definitions[-1].instance_id,
+                component_id=definitions[-1].component_id,
+            )
         )
-    missing = sorted(configured_prefixes - known_prefixes)
-    if not missing:
-        return
-    prefixes = ", ".join(missing)
-    raise ValueError(
-        "Configuration references component prefix(es) with no installed "
-        f"deckr.components entry point: {prefixes}. Install the owning package "
-        "or remove the component configuration."
+    return definitions
+
+
+def _component_instance_definition_from_mapping(
+    source: Mapping[str, Any],
+    *,
+    config_address: str | None,
+    generated_by: str | None,
+) -> ComponentInstanceDefinition:
+    unknown = sorted(set(source) - GENERIC_INSTANCE_FIELDS)
+    if unknown:
+        names = ", ".join(unknown)
+        location = f" in {config_address}" if config_address else ""
+        raise ValueError(f"Unknown component instance field(s){location}: {names}")
+
+    component_id = source.get("component")
+    if not isinstance(component_id, str) or not component_id.strip():
+        raise ValueError(f"{config_address or 'Component instance'}.component required")
+    instance_id = require_runtime_id(
+        str(source.get("instance_id", "")).strip(),
+        label="Component instance ID",
+        source_hint=f"Set `{config_address}.instance_id`.",
     )
+    runtime_name_source = source.get("runtime_name")
+    runtime_name = None
+    if runtime_name_source is not None:
+        runtime_name = require_runtime_id(
+            str(runtime_name_source).strip(),
+            label="Component runtime name",
+            source_hint=f"Set `{config_address}.runtime_name`.",
+        )
+
+    endpoints_source = source.get("endpoints")
+    endpoints: dict[str, str] = {}
+    if endpoints_source is not None:
+        if not isinstance(endpoints_source, Mapping):
+            raise ValueError(f"{config_address}.endpoints must be a table")
+        for slot, endpoint_id in endpoints_source.items():
+            if not isinstance(slot, str) or not slot.strip():
+                raise ValueError(f"{config_address}.endpoints keys must be strings")
+            if not isinstance(endpoint_id, str) or not endpoint_id.strip():
+                raise ValueError(
+                    f"{config_address}.endpoints.{slot} must be a non-empty string"
+                )
+            endpoints[slot.strip()] = require_runtime_id(
+                endpoint_id.strip(),
+                label=f"Endpoint ID for {slot}",
+                source_hint=f"Set `{config_address}.endpoints.{slot}`.",
+            )
+
+    config = source.get("config", {})
+    if not isinstance(config, Mapping):
+        raise ValueError(f"{config_address}.config must be a table")
+
+    return ComponentInstanceDefinition(
+        component_id=component_id.strip(),
+        instance_id=instance_id,
+        runtime_name=runtime_name,
+        config=dict(config),
+        endpoints=endpoints,
+        config_address=config_address,
+        generated_by=generated_by,
+    )
+
+
+def _source_declarations(document: ConfigDocument) -> tuple[Mapping[str, Any], ...]:
+    components = document.namespace("deckr.components")
+    if components is None:
+        return ()
+    source = components.get("instance_sources")
+    if source is None:
+        return ()
+    if isinstance(source, str) or not isinstance(source, Sequence):
+        raise ValueError("deckr.components.instance_sources must be an array of tables")
+    declarations: list[Mapping[str, Any]] = []
+    for index, item in enumerate(source):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"deckr.components.instance_sources[{index}] must be a table"
+            )
+        declarations.append(item)
+    return tuple(declarations)
+
+
+def _instance_source_ids(source: Mapping[str, Any], *, index: int) -> tuple[str, str]:
+    declaration_id = source.get("id")
+    source_id = source.get("source")
+    if not isinstance(declaration_id, str) or not declaration_id.strip():
+        raise ValueError(
+            f"deckr.components.instance_sources[{index}].id must be a non-empty string"
+        )
+    if not isinstance(source_id, str) or not source_id.strip():
+        raise ValueError(
+            "deckr.components.instance_sources"
+            f"[{index}].source must be a non-empty string"
+        )
+    return declaration_id.strip(), source_id.strip()
+
+
+def _generated_component_instance_definitions(
+    document: ConfigDocument,
+    *,
+    instance_source_definitions: ComponentInstanceSourceDefinitions | None,
+    report_events: list[PlanningEvent],
+) -> list[ComponentInstanceDefinition]:
+    source_definitions = (
+        _instance_source_definition_mapping(instance_source_definitions)
+        if instance_source_definitions is not None
+        else None
+    )
+    generated: list[ComponentInstanceDefinition] = []
+    for index, source in enumerate(_source_declarations(document)):
+        declaration_id, source_id = _instance_source_ids(source, index=index)
+        definition = (
+            source_definitions.get(source_id)
+            if source_definitions is not None
+            else load_component_instance_source_definition(source_id)
+        )
+        if definition is None:
+            raise ValueError(f"Unknown Deckr component instance source: {source_id}")
+        context = ComponentInstanceSourceContext(
+            source_id=source_id,
+            source_config=source,
+            resolved_config=document.raw,
+            base_dir=document.base_dir,
+        )
+        output = tuple(definition.load(context))
+        report_events.append(
+            PlanningEvent(source_id=source_id, message=f"ran instance source {declaration_id}")
+        )
+        for item in output:
+            if not isinstance(item, ComponentInstanceDefinition):
+                raise TypeError(
+                    f"Component instance source {source_id!r} returned "
+                    "a non-ComponentInstanceDefinition"
+                )
+            generated.append(
+                ComponentInstanceDefinition(
+                    component_id=item.component_id,
+                    instance_id=item.instance_id,
+                    config=dict(item.config),
+                    endpoints=dict(item.endpoints),
+                    runtime_name=item.runtime_name,
+                    config_address=item.config_address,
+                    generated_by=source_id,
+                )
+            )
+            report_events.append(
+                PlanningEvent(
+                    source_id=source_id,
+                    component_id=item.component_id,
+                    instance_id=item.instance_id,
+                    message="generated component instance",
+                )
+            )
+    return generated
 
 
 def _definition_mapping(definitions: ComponentDefinitions) -> dict[str, ComponentDefinition]:
     if isinstance(definitions, Mapping):
         return dict(definitions)
     return {definition.manifest.component_id: definition for definition in definitions}
+
+
+def _instance_source_definition_mapping(
+    definitions: ComponentInstanceSourceDefinitions,
+) -> dict[str, ComponentInstanceSourceDefinition]:
+    if isinstance(definitions, Mapping):
+        return dict(definitions)
+    return {definition.source_id: definition for definition in definitions}
+
+
+def _component_definition_for(
+    component_id: str,
+    *,
+    definitions: Mapping[str, ComponentDefinition] | None,
+) -> ComponentDefinition:
+    definition = (
+        definitions.get(component_id)
+        if definitions is not None
+        else load_component_definition(component_id)
+    )
+    if definition is None:
+        raise ValueError(f"Unknown Deckr component id: {component_id}")
+    if definition.manifest.component_id != component_id:
+        raise ValueError(
+            f"Component definition for {component_id!r} declares "
+            f"{definition.manifest.component_id!r}"
+        )
+    return definition
+
+
+def _validate_instance_endpoints(
+    instance: ComponentInstanceDefinition,
+    definition: ComponentDefinition,
+) -> None:
+    allowed = set(definition.manifest.endpoint_slots)
+    unknown = sorted(set(instance.endpoints) - allowed)
+    if unknown:
+        names = ", ".join(unknown)
+        raise ValueError(
+            f"Component instance {instance.instance_id!r} for "
+            f"{instance.component_id!r} uses unknown endpoint slot(s): {names}"
+        )
+    missing = sorted(allowed - set(instance.endpoints))
+    if missing:
+        names = ", ".join(missing)
+        raise ValueError(
+            f"Component instance {instance.instance_id!r} for "
+            f"{instance.component_id!r} is missing endpoint slot(s): {names}"
+        )
+
+
+def _specs_from_instance_definitions(
+    instances: Sequence[ComponentInstanceDefinition],
+    *,
+    document: ConfigDocument,
+    definitions: ComponentDefinitions | None,
+    report_events: list[PlanningEvent],
+) -> list[ComponentInstanceSpec]:
+    definition_map = _definition_mapping(definitions) if definitions is not None else None
+    seen_instance_ids: set[str] = set()
+    seen_runtime_names: set[str] = set()
+    seen_endpoints: dict[tuple[str, str], str] = {}
+    component_counts: dict[str, int] = {}
+    specs: list[ComponentInstanceSpec] = []
+
+    for instance in instances:
+        if instance.instance_id in seen_instance_ids:
+            raise ValueError(
+                f"Duplicate Deckr component instance id: {instance.instance_id}"
+            )
+        seen_instance_ids.add(instance.instance_id)
+        definition = _component_definition_for(
+            instance.component_id,
+            definitions=definition_map,
+        )
+        runtime_name = instance.runtime_name or runtime_name_for(
+            instance.component_id,
+            instance.instance_id,
+        )
+        if runtime_name in seen_runtime_names:
+            raise ValueError(f"Duplicate Deckr component runtime name: {runtime_name}")
+        seen_runtime_names.add(runtime_name)
+        component_counts[instance.component_id] = (
+            component_counts.get(instance.component_id, 0) + 1
+        )
+        _validate_instance_endpoints(instance, definition)
+        for family, endpoint_id in instance.endpoints.items():
+            key = (family, endpoint_id)
+            existing = seen_endpoints.get(key)
+            if existing is not None:
+                raise ValueError(
+                    f"Duplicate Deckr endpoint id {endpoint_id!r} for family "
+                    f"{family!r}: {existing!r} and {instance.instance_id!r}"
+                )
+            seen_endpoints[key] = instance.instance_id
+
+        definition.validate_instance_config(
+            config=instance.config,
+            endpoints=instance.endpoints,
+            instance_id=instance.instance_id,
+        )
+        specs.append(
+            ComponentInstanceSpec(
+                component_id=instance.component_id,
+                instance_id=instance.instance_id,
+                runtime_name=runtime_name,
+                config=instance.config,
+                endpoints=instance.endpoints,
+                definition=definition,
+                lanes=definition.lanes_for(
+                    config=instance.config,
+                    endpoints=instance.endpoints,
+                    instance_id=instance.instance_id,
+                ),
+                config_address=instance.config_address,
+                generated_by=instance.generated_by,
+            )
+        )
+        report_events.append(
+            PlanningEvent(
+                component_id=instance.component_id,
+                instance_id=instance.instance_id,
+                message="planned component instance",
+            )
+        )
+
+    for component_id, count in sorted(component_counts.items()):
+        if count <= 1:
+            continue
+        definition = _component_definition_for(component_id, definitions=definition_map)
+        if definition.manifest.cardinality == ComponentCardinality.SINGLETON:
+            raise ValueError(
+                f"Component {component_id!r} has singleton cardinality but "
+                f"{count} instances were planned"
+            )
+    return specs
 
 
 def _string_set(value: Any, *, field_name: str) -> frozenset[str]:
@@ -978,7 +1260,8 @@ def _validate_component_lane_bindings(
 ) -> None:
     for spec in specs:
         spec.definition.validate_resolved_lane_bindings(
-            raw_config=spec.raw_config,
+            config=spec.config,
+            endpoints=spec.endpoints,
             instance_id=spec.instance_id,
             lane_contracts=lane_contracts,
         )
@@ -1014,7 +1297,8 @@ async def _activate_component_plan(
             instance_id=spec.instance_id,
             runtime_name=spec.runtime_name,
             manifest=spec.definition.manifest,
-            raw_config=spec.raw_config,
+            config=spec.config,
+            endpoints=spec.endpoints,
             base_dir=plan.base_dir,
             lanes=deckr.lanes,
             state_for=deckr.state,
@@ -1024,8 +1308,6 @@ async def _activate_component_plan(
             raise TypeError(
                 f"Component {spec.component_id!r} did not return a Component"
             )
-        if isinstance(component, InactiveComponent):
-            continue
         created.append(component)
 
     for component in created:
