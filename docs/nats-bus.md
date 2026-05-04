@@ -695,6 +695,24 @@ view.services.sonos-home.b64_Y29tLmstc2kuZGVja3Iuc29ub3Muc2VydmljZQ.zones.Kitche
 The generic Deckr contract owns key shape, token encoding, and session gating.
 The service namespace owns the view payload schema and operation semantics.
 
+Current first-party service namespaces are:
+
+- `com.k-si.deckr.sonos.service`, with operations `ensureZone`, `setVolume`,
+  `play`, `pause`, `ensureFavourite`, `playFavourite`, and `playMusicItem`.
+  `playMusicItem` accepts a JSON-safe `soco-didl-lite-v1` item reference with
+  `uri` and `didl` fields; music-library browsing may be action-local, but
+  queueing and playback happen inside the Sonos service. Zone views are stored
+  below `view.services.<service-id>.<namespace>.zones.<zone-name>`. Favourite
+  lookup views are stored below
+  `view.services.<service-id>.<namespace>.favourites.<zone-name>.<query>`.
+- `com.k-si.deckr.openhab.service`, with operations `ensureItems`,
+  `refreshItem`, and `sendCommand`. Item views are stored below
+  `view.services.<service-id>.<namespace>.items.<item-name>`.
+
+First-party service view payloads include `serviceId`, `serviceNamespace`,
+`sessionId`, and `timestamp`. Consumers must reject a view whose `sessionId`
+does not match exact live service presence/catalog/status.
+
 Exact-confirmed service presence loss, session mismatch, missing catalog,
 missing status, or `unavailable` status makes required service dependencies
 unsatisfied. `degraded` status is a degraded dependency condition. Consumers must

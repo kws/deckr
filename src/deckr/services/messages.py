@@ -130,7 +130,7 @@ def service_body_for_type(
                 f"got {type(body).__name__}"
             )
         return body
-    return body_type.model_validate(body)
+    return body_type.model_validate(thaw_json(body))
 
 
 def service_body(message: DeckrMessage) -> ServiceMessageBody:

@@ -742,6 +742,12 @@ For that first-party source, omitted `block` defaults to an empty list,
 `instance_id_template` defaults to `{provider_id}-main`, and
 `endpoint_id_templates.action_provider` defaults to `python-{provider_id}`.
 
+Each Python action-provider runtime instance registers
+`action_provider:<provider-instance-id>` on both `actions` and `services`.
+The `actions` endpoint carries controller/action traffic and catalogs. The
+`services` endpoint lets hosted action instances use service command/reply and
+service view helpers without becoming service components themselves.
+
 ### Runtime-Local Component Status
 
 Component lifecycle status is runtime-host local. `ComponentManager` exposes

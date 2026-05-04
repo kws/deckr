@@ -96,6 +96,44 @@ def test_services_lane_contract_accepts_direct_command_reply() -> None:
     assert reply.in_reply_to == command.message_id
 
 
+def test_services_lane_validation_thaws_frozen_json_body() -> None:
+    contract = CORE_LANE_CONTRACTS[SERVICES_LANE]
+    command = service_command_message(
+        sender=controller_address("controller-main"),
+        sender_session_id="controller-session",
+        recipient=service_address("openhab-home"),
+        recipient_session_id="service-session",
+        subject=entity_subject(
+            "service",
+            serviceId="openhab-home",
+            namespace="com.k-si.deckr.openhab.service",
+            operation="ensureItems",
+        ),
+        body=ServiceCommandBody(
+            serviceNamespace="com.k-si.deckr.openhab.service",
+            operation="ensureItems",
+            params={"items": ["KajsRoomScene"], "refresh": True},
+        ),
+    )
+    reply = service_command_reply_message(
+        sender=service_address("openhab-home"),
+        sender_session_id="service-session",
+        recipient=controller_address("controller-main"),
+        recipient_session_id="controller-session",
+        subject=command.subject,
+        in_reply_to=command.message_id,
+        body=ServiceCommandReplyBody(
+            serviceNamespace="com.k-si.deckr.openhab.service",
+            operation="ensureItems",
+            status=ServiceCommandStatus.OK,
+            result={"items": {"KajsRoomScene": {"state": "ON"}}},
+        ),
+    )
+
+    validate_message_for_contract(command, contract)
+    validate_message_for_contract(reply, contract)
+
+
 def test_services_lane_rejects_hardware_manager_participants() -> None:
     message = service_command_message(
         sender=hardware_manager_address("mirabox-main"),
