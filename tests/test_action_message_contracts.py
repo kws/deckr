@@ -26,6 +26,7 @@ from deckr.actions.messages import (
     DynamicPageTemplateDescriptor,
     MatchedCapability,
     PageChildBindingDescriptor,
+    PageChildBindingTarget,
     SettingsPatchBody,
     SettingsSnapshot,
     SettingsTargetDescription,
@@ -348,6 +349,7 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
         bindings=[
             PageChildBindingDescriptor(
                 controlId="0,0",
+                target=PageChildBindingTarget(kind="self"),
                 roleId="album",
                 itemKey="kind-of-blue",
                 handler="album",
@@ -355,9 +357,20 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
             ),
             PageChildBindingDescriptor(
                 controlId="0,1",
+                target=PageChildBindingTarget(kind="self"),
                 roleId="page_control",
                 itemKey="close",
                 handler="close",
+            ),
+            PageChildBindingDescriptor(
+                controlId="3,0",
+                target=PageChildBindingTarget(
+                    kind="action",
+                    actionId="com.example.sonos.volume",
+                    providerInstanceId="sonos-bedroom",
+                    instanceKey="bedroom-volume",
+                ),
+                settings={"zoneName": "Bedroom"},
             ),
         ],
     )
@@ -368,6 +381,7 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
         "bindings": [
             {
                 "controlId": "0,0",
+                "target": {"kind": "self"},
                 "roleId": "album",
                 "itemKey": "kind-of-blue",
                 "handler": "album",
@@ -375,12 +389,45 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
             },
             {
                 "controlId": "0,1",
+                "target": {"kind": "self"},
                 "roleId": "page_control",
                 "itemKey": "close",
                 "handler": "close",
                 "settings": {},
             },
+            {
+                "controlId": "3,0",
+                "target": {
+                    "kind": "action",
+                    "actionId": "com.example.sonos.volume",
+                    "providerInstanceId": "sonos-bedroom",
+                    "instanceKey": "bedroom-volume",
+                },
+                "settings": {"zoneName": "Bedroom"},
+            },
         ],
+    }
+
+
+def test_dynamic_page_child_target_validates_self_and_action_shapes() -> None:
+    with pytest.raises(ValidationError, match="self page child target"):
+        PageChildBindingTarget(kind="self", actionId="demo.action")
+
+    with pytest.raises(ValidationError, match="requires actionId"):
+        PageChildBindingTarget(kind="action")
+
+    target = PageChildBindingTarget(
+        kind="action",
+        actionId="demo.action",
+        providerLabels={"room": "bedroom"},
+        instanceKey="volume",
+    )
+
+    assert target.model_dump(by_alias=True, exclude_none=True, mode="json") == {
+        "kind": "action",
+        "actionId": "demo.action",
+        "providerLabels": {"room": "bedroom"},
+        "instanceKey": "volume",
     }
 
 

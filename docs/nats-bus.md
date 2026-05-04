@@ -549,6 +549,30 @@ same session. The action provider instance does not broadcast
 `actionsUnregistered`; broker current state plus lease presence is the source of
 truth.
 
+## Dynamic Page Action Targets
+
+Action providers request dynamic pages with `openPage`, `updatePage`, and
+`replacePage` messages on the `actions` lane. The command body carries a
+`DynamicPageCommand` with a controller-visible `pageId`, optional `templateId`,
+and concrete child `bindings`.
+
+Each child binding carries a `controlId` plus an explicit `target`:
+
+- `{"kind": "self"}` routes the child to the action instance that opened the
+  page. Role, item, and handler metadata remain binding metadata, not durable
+  routing state.
+- `{"kind": "action", "actionId": "..."}` asks the controller to resolve the
+  child through normal action-provider selection. The target may include
+  `providerInstanceId` or `providerLabels` to narrow selection. `instanceKey`
+  is a page-scoped key the controller can use to share or split live child
+  action instances for that target.
+
+Action providers never send `actionInstanceId` for dynamic page children. The
+controller owns action instance ids, binding ids, context ids, page session ids,
+capability matching, child action resolution, page replacement/stack policy, and
+cleanup. Child `settings` are the effective runtime settings for that child
+binding or child action instance; they are not a hidden routing channel.
+
 ## Producer Pattern
 
 A participant that owns current state should:

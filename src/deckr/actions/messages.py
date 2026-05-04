@@ -162,6 +162,7 @@ CapabilityViewKind = Literal["raw", "native", "projected", "derived", "extension
 CapabilityProvenance = Literal["native", "projection", "derivation", "extension"]
 TemplateRoleCardinality = Literal["single", "collection"]
 SettingsScope = Literal["action_provider_instance", "action_instance"]
+PageChildBindingTargetKind = Literal["self", "action"]
 SettingsProvenance = Literal[
     "config_default",
     "user_override",
@@ -1378,10 +1379,87 @@ class TitleOptions(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
+class PageChildBindingTarget(DeckrModel):
+    """Action target for one dynamic-page child binding."""
+
+    kind: PageChildBindingTargetKind
+    action_id: str | None = Field(default=None, alias="actionId")
+    provider_instance_id: str | None = Field(default=None, alias="providerInstanceId")
+    provider_labels: Mapping[str, str] | None = Field(
+        default=None,
+        alias="providerLabels",
+    )
+    instance_key: str | None = Field(default=None, alias="instanceKey")
+
+    @field_validator("kind")
+    @classmethod
+    def _validate_kind(cls, value: str) -> str:
+        return _require_text(value, field_name="page child target kind")
+
+    @field_validator("action_id", "instance_key")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="page child target")
+
+    @field_validator("provider_instance_id")
+    @classmethod
+    def _validate_provider_instance_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return require_provider_instance_id(value, field_name="providerInstanceId")
+
+    @field_validator("provider_labels", mode="after")
+    @classmethod
+    def _validate_provider_labels(
+        cls,
+        value: Mapping[str, str] | None,
+    ) -> Mapping[str, str] | None:
+        if value is None:
+            return None
+        return freeze_json(
+            {
+                _require_text(key, field_name="provider label key"): _require_text(
+                    item,
+                    field_name="provider label value",
+                )
+                for key, item in value.items()
+            }
+        )
+
+    @field_serializer("provider_labels")
+    def _serialize_provider_labels(
+        self,
+        value: Mapping[str, str] | None,
+    ) -> dict[str, str] | None:
+        if value is None:
+            return None
+        return thaw_json(value)
+
+    @model_validator(mode="after")
+    def _validate_target_fields(self) -> PageChildBindingTarget:
+        if self.kind == "self":
+            if (
+                self.action_id is not None
+                or self.provider_instance_id is not None
+                or self.provider_labels
+                or self.instance_key is not None
+            ):
+                raise ValueError("self page child target must not include action selector fields")
+            return self
+
+        if self.kind == "action":
+            if self.action_id is None:
+                raise ValueError("action page child target requires actionId")
+            return self
+
+        raise ValueError("page child target kind must be 'self' or 'action'")
+
+
 class PageChildBindingDescriptor(DeckrModel):
     """One semantic child binding requested for a concrete page session."""
 
     control_id: str = Field(alias="controlId")
+    target: PageChildBindingTarget
     role_id: str | None = Field(default=None, alias="roleId")
     item_key: str | None = Field(default=None, alias="itemKey")
     handler: str | None = None

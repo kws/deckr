@@ -13,6 +13,7 @@ from deckr.actions.messages import (
     ActionDescriptor,
     DynamicPageCommand,
     PageChildBindingDescriptor,
+    PageChildBindingTarget,
     TitleOptions,
 )
 
@@ -82,6 +83,7 @@ def test_dynamic_page_command_round_trip_on_wire():
         bindings=[
             PageChildBindingDescriptor(
                 controlId="0,0",
+                target=PageChildBindingTarget(kind="self"),
                 roleId="album",
                 itemKey="kind-of-blue",
                 handler="album",
@@ -99,6 +101,7 @@ def test_dynamic_page_command_round_trip_on_wire():
         "bindings": [
             {
                 "controlId": "0,0",
+                "target": {"kind": "self"},
                 "roleId": "album",
                 "itemKey": "kind-of-blue",
                 "handler": "album",

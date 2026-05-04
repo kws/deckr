@@ -178,6 +178,13 @@ binding, and page-session metadata, input is represented as capability input,
 and output requests target matched capabilities through generation-scoped
 binding output.
 
+Dynamic page commands carry one target per child binding. A child may target
+`self`, meaning the page opener's current action instance, or it may target an
+explicit action selector that the controller resolves to an action provider
+instance and page-scoped child action instance. Providers do not send
+`actionInstanceId` values for dynamic children; those live identities remain
+controller-owned.
+
 In particular, endpoint addresses such as `controller:<controller_id>`,
 `action_provider:<provider_instance_id>`, and
 `hardware_manager:<manager_id>` are protocol addressing identities. They are not

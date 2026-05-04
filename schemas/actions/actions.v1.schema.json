@@ -935,6 +935,9 @@
           "title": "Settings",
           "type": "object"
         },
+        "target": {
+          "$ref": "#/$defs/PageChildBindingTarget"
+        },
         "titleOptions": {
           "anyOf": [
             {
@@ -948,9 +951,80 @@
         }
       },
       "required": [
-        "controlId"
+        "controlId",
+        "target"
       ],
       "title": "PageChildBindingDescriptor",
+      "type": "object"
+    },
+    "PageChildBindingTarget": {
+      "additionalProperties": false,
+      "description": "Action target for one dynamic-page child binding.",
+      "properties": {
+        "actionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actionid"
+        },
+        "instanceKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instancekey"
+        },
+        "kind": {
+          "enum": [
+            "self",
+            "action"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "providerInstanceId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providerinstanceid"
+        },
+        "providerLabels": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providerlabels"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "PageChildBindingTarget",
       "type": "object"
     },
     "PageSessionLifecycleBody": {
