@@ -16,7 +16,7 @@ from deckr.contracts.models import DeckrModel, freeze_json, thaw_json
 from deckr.hardware.descriptors import DeviceDescriptor, DeviceRef
 
 DEFAULT_STATE_STORE_NAME = "deckr_state_v1"
-DEFAULT_STATE_LEASE_TTL_SECONDS = 15
+DEFAULT_STATE_LEASE_TTL_SECONDS = 90
 DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS = 5.0
 
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")

@@ -176,9 +176,9 @@ state = deckr.state("deckr_state_v1")
 entry = await state.get("presence.endpoint.actions.action_provider.python")
 entries = await state.items("catalog.actions.providers.")
 
-written = await state.put(key, value, ttl=15.0)
-created = await state.create(key, value, ttl=15.0)
-updated = await state.update(key, value, revision=written.revision, ttl=15.0)
+written = await state.put(key, value, ttl=90.0)
+created = await state.create(key, value, ttl=90.0)
+updated = await state.update(key, value, revision=written.revision, ttl=90.0)
 await state.delete(key, revision=updated.revision)
 
 async with state.watch("catalog.actions.providers.") as changes:
@@ -213,14 +213,14 @@ Bucket requirements:
 
 - `history = 1`
 - `max_msgs_per_subject = 1`
-- broker TTL / max age = `15s`
+- broker TTL / max age = `90s`
 - message TTL / limit markers enabled where supported
 
 The current cadence is:
 
 ```text
 heartbeat every 5s
-broker TTL after 15s
+broker TTL after 90s
 ```
 
 The NATS substrate creates or updates the development bucket configuration when
@@ -299,7 +299,7 @@ Example:
   "lane": "actions",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
-  "ttlSeconds": 15,
+  "ttlSeconds": 90,
   "metadata": {
     "runtime": "deckr-action-provider-runtime-python"
   }
@@ -334,7 +334,7 @@ Example:
   "managerEndpoint": "hardware_manager:mirabox",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
-  "ttlSeconds": 15,
+  "ttlSeconds": 90,
   "devices": {
     "device-1": {
       "deviceRef": {
@@ -425,7 +425,7 @@ Example:
   "claimedByEndpoint": "controller:main",
   "claimedBySessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
-  "ttlSeconds": 15
+  "ttlSeconds": 90
 }
 ```
 
@@ -467,7 +467,7 @@ Example:
   "providerId": "com.example.clock",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
-  "ttlSeconds": 15,
+  "ttlSeconds": 90,
   "labels": {
     "location": "office"
   },
@@ -486,15 +486,15 @@ Example:
 
 The action map is keyed by `actionId`; each map key must match the descriptor's
 `actionId`, `providerInstanceId` must match the catalog key suffix, and
-`providerEndpoint` must equal `action_provider:<providerInstanceId>`. The
-catalog is usable only while matching action provider endpoint presence exists
-with the same `sessionId`.
+`providerEndpoint` must equal `action_provider:<providerInstanceId>`. The catalog
+is the action availability source of truth and carries the provider endpoint
+`sessionId` used to reject stale provider commands.
 
-Catalog loss, action provider presence loss, action provider session change, or
-catalog incompatibility makes affected actions unavailable and causes the
-controller to revoke dependent live bindings. The action provider instance does
-not broadcast `actionsUnregistered`; broker current state is the source of
-truth.
+Catalog loss or catalog incompatibility makes affected actions unavailable and
+causes the controller to revoke dependent live bindings. Catalog session changes
+refresh dependent bindings so controller-side session checks follow the current
+provider endpoint session. The action provider instance does not broadcast
+`actionsUnregistered`; broker current state is the source of truth.
 
 ## Producer Pattern
 
@@ -504,7 +504,7 @@ A participant that owns current state should:
    resulting endpoint `sessionId`.
 2. Publish its current domain state immediately, such as inventory or catalog,
    using the endpoint session id.
-3. Refresh domain state on the 5s heartbeat with the 15s broker TTL; endpoint
+3. Refresh domain state on the 5s heartbeat with the 90s broker TTL; endpoint
    presence renewal is owned by the registered endpoint handle.
 4. Treat endpoint session loss as terminal for the registered handle.
 5. Rewrite aggregate state immediately when the underlying facts change.
@@ -536,7 +536,6 @@ arrive in any order:
 missing -> present
 present -> missing
 present -> different session
-catalog present -> action provider presence missing
 claim present -> controller presence missing
 inventory present -> manager presence missing
 ```
@@ -658,7 +657,7 @@ When a component appears unavailable, check in this order:
    hardware manager or catalog for an action provider instance?
 3. If a device is claimed, does the claim's controller endpoint/session match
    current controller presence?
-4. Did the key expire after the 15s TTL because the component stopped refreshing
+4. Did the key expire after the 90s TTL because the component stopped refreshing
    it?
 5. Does the component log `StateUnavailable`, indicating broker uncertainty
    rather than absence?

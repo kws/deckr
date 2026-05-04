@@ -132,7 +132,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
                     managerEndpoint=endpoint,
                     sessionId=lane.session_id,
                     timestamp=datetime.now(UTC),
-                    ttlSeconds=15,
+                    ttlSeconds=90,
                     devices={
                         device_id: HardwareInventoryDevice(
                             deviceRef=DeviceRef(
@@ -190,7 +190,7 @@ async def _run_controller(args: argparse.Namespace) -> None:
                     claimedByEndpoint=controller,
                     claimedBySessionId=lane.session_id,
                     timestamp=datetime.now(UTC),
-                    ttlSeconds=15,
+                    ttlSeconds=90,
                 ),
             )
             async with lane.subscribe() as controller_messages:

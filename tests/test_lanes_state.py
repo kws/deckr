@@ -384,7 +384,7 @@ async def test_nats_state_creates_bucket_with_broker_lease_ttl() -> None:
     await store.put("claim.device.main.deck", {"owner": "controller"})
 
     assert fake_js.created_config is not None
-    assert fake_js.created_config.ttl == 15.0
+    assert fake_js.created_config.ttl == 90.0
     assert fake_js.created_config.history == 1
 
 
@@ -402,7 +402,7 @@ async def test_nats_state_updates_existing_bucket_to_broker_lease_ttl() -> None:
     assert fake_js.kv is not None
     assert fake_js.kv.keys_filters is None
     assert fake_js.updated_config is not None
-    assert fake_js.updated_config.max_age == 15.0
+    assert fake_js.updated_config.max_age == 90.0
     assert fake_js.updated_config.max_msgs_per_subject == 1
     assert fake_js.updated_config.allow_msg_ttl is True
 
@@ -710,7 +710,7 @@ class _FakeStreamInfo:
 
 
 class _FakeJs:
-    def __init__(self, *, existing: bool = True, max_age: float | None = 15.0) -> None:
+    def __init__(self, *, existing: bool = True, max_age: float | None = 90.0) -> None:
         self.bucket = "test_state"
         self.kv = _FakeKv(self) if existing else None
         self.config = _FakeStreamConfig(

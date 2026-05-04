@@ -25,6 +25,7 @@ from deckr.lanes import (
     validate_message_for_contract,
 )
 from deckr.state import (
+    DEFAULT_STATE_LEASE_TTL_SECONDS,
     DEFAULT_STATE_STORE_NAME,
     StateChange,
     StateConflict,
@@ -38,7 +39,7 @@ from deckr.state import (
 logger = logging.getLogger(__name__)
 
 _LANE_PREFIX = "deckr.lane"
-_STATE_LEASE_TTL_SECONDS = 15.0
+_STATE_LEASE_TTL_SECONDS = float(DEFAULT_STATE_LEASE_TTL_SECONDS)
 _KV_OPERATION_HEADER = "KV-Operation"
 _KV_DELETE_OPERATION = "DEL"
 _KV_PURGE_OPERATION = "PURGE"

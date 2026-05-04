@@ -122,7 +122,7 @@ def test_action_provider_catalog_serializes_actions_by_action_id() -> None:
         providerId="demo.provider",
         sessionId="session-1",
         timestamp=datetime(2026, 4, 29, tzinfo=UTC),
-        ttlSeconds=15,
+        ttlSeconds=90,
         labels={"location": "office"},
         annotations={"runtime": "python"},
         actions={"demo.action": {"actionId": "demo.action", "name": "Demo"}},
@@ -134,7 +134,7 @@ def test_action_provider_catalog_serializes_actions_by_action_id() -> None:
         "providerId": "demo.provider",
         "sessionId": "session-1",
         "timestamp": "2026-04-29T00:00:00Z",
-        "ttlSeconds": 15,
+        "ttlSeconds": 90,
         "labels": {"location": "office"},
         "annotations": {"runtime": "python"},
         "actions": {"demo.action": {"actionId": "demo.action", "name": "Demo"}},
@@ -149,7 +149,7 @@ def test_action_provider_catalog_validates_provider_and_action_identity() -> Non
             providerId="demo.provider",
             sessionId="session-1",
             timestamp=datetime(2026, 4, 29, tzinfo=UTC),
-            ttlSeconds=15,
+            ttlSeconds=90,
             actions={},
         )
 
@@ -160,7 +160,7 @@ def test_action_provider_catalog_validates_provider_and_action_identity() -> Non
             providerId="demo.provider",
             sessionId="session-1",
             timestamp=datetime(2026, 4, 29, tzinfo=UTC),
-            ttlSeconds=15,
+            ttlSeconds=90,
             actions={"demo.other": {"actionId": "demo.action", "name": "Demo"}},
         )
 
