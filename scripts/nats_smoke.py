@@ -28,6 +28,8 @@ from deckr.hardware.descriptors import (
 )
 from deckr.runtime import Deckr
 from deckr.state import (
+    DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    DEFAULT_LEASE_STATE_STORE_NAME,
     DeviceClaim,
     HardwareInventory,
     HardwareInventoryDevice,
@@ -74,8 +76,10 @@ async def _run_orchestrator(args: argparse.Namespace) -> int:
         str(script),
         "--url",
         args.url,
-        "--bucket",
-        args.bucket,
+        "--lease-bucket",
+        args.lease_bucket,
+        "--discovery-bucket",
+        args.discovery_bucket,
         "--run-id",
         run_id,
     ]
@@ -115,9 +119,10 @@ async def _run_manager(args: argparse.Namespace) -> None:
     async with _deckr(
         args.url,
         auth_token=args.auth_token,
-        state_name=args.bucket,
+        lease_state_name=args.lease_bucket,
+        discovery_state_name=args.discovery_bucket,
     ) as deckr:
-        state = deckr.state(args.bucket)
+        discovery_state = deckr.state(args.discovery_bucket)
         async with (
             deckr.lane("hardware_messages").register_endpoint(
                 endpoint,
@@ -125,14 +130,13 @@ async def _run_manager(args: argparse.Namespace) -> None:
             ) as lane,
             lane.subscribe() as messages,
         ):
-            await state.put(
+            inventory_entry = await discovery_state.put(
                 hardware_inventory_key(manager_id),
                 HardwareInventory(
                     managerId=manager_id,
                     managerEndpoint=endpoint,
                     sessionId=lane.session_id,
                     timestamp=datetime.now(UTC),
-                    ttlSeconds=90,
                     devices={
                         device_id: HardwareInventoryDevice(
                             deviceRef=DeviceRef(
@@ -163,6 +167,10 @@ async def _run_manager(args: argparse.Namespace) -> None:
                     )
                 ),
             )
+            await discovery_state.delete(
+                hardware_inventory_key(manager_id),
+                revision=inventory_entry.revision,
+            )
 
 
 async def _run_controller(args: argparse.Namespace) -> None:
@@ -173,24 +181,26 @@ async def _run_controller(args: argparse.Namespace) -> None:
     async with _deckr(
         args.url,
         auth_token=args.auth_token,
-        state_name=args.bucket,
+        lease_state_name=args.lease_bucket,
+        discovery_state_name=args.discovery_bucket,
     ) as deckr:
-        state = deckr.state(args.bucket)
+        lease_state = deckr.state(args.lease_bucket)
+        discovery_state = deckr.state(args.discovery_bucket)
         async with (
             deckr.lane("hardware_messages").register_endpoint(controller) as lane,
-            state.watch(hardware_inventory_key(manager_id)) as changes,
+            discovery_state.watch(hardware_inventory_key(manager_id)) as changes,
         ):
             with anyio.fail_after(15):
                 change = await changes.receive()
             if change.entry is None:
                 raise RuntimeError("inventory watch did not yield current state")
-            await state.create(
+            await lease_state.create(
                 device_claim_key(manager_id=manager_id, device_id=device_id),
                 DeviceClaim(
                     claimedByEndpoint=controller,
                     claimedBySessionId=lane.session_id,
                     timestamp=datetime.now(UTC),
-                    ttlSeconds=90,
+                    ttlSeconds=30,
                 ),
             )
             async with lane.subscribe() as controller_messages:
@@ -232,26 +242,36 @@ async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> Non
     manager_id = f"smoke_manager_{run_id}"
     device_id = f"deck_{run_id}"
     manager = hardware_manager_address(manager_id)
-    keys = (
-        presence_endpoint_key(lane="hardware_messages", endpoint=manager),
-        hardware_inventory_key(manager_id),
-        device_claim_key(manager_id=manager_id, device_id=device_id),
-    )
+    presence_key = presence_endpoint_key(lane="hardware_messages", endpoint=manager)
+    inventory_key = hardware_inventory_key(manager_id)
+    claim_key = device_claim_key(manager_id=manager_id, device_id=device_id)
     async with _deckr(
         args.url,
         auth_token=args.auth_token,
-        state_name=args.bucket,
+        lease_state_name=args.lease_bucket,
+        discovery_state_name=args.discovery_bucket,
     ) as deckr:
-        state = deckr.state(args.bucket)
+        lease_state = deckr.state(args.lease_bucket)
+        discovery_state = deckr.state(args.discovery_bucket)
         with anyio.fail_after(args.ttl_wait):
             while True:
-                entries = [await state.get(key) for key in keys]
+                entries = [
+                    await lease_state.get(presence_key),
+                    await discovery_state.get(inventory_key),
+                    await lease_state.get(claim_key),
+                ]
                 if all(entry is None for entry in entries):
                     return
                 await anyio.sleep(0.5)
 
 
-def _deckr(url: str, *, auth_token: str | None, state_name: str) -> Deckr:
+def _deckr(
+    url: str,
+    *,
+    auth_token: str | None,
+    lease_state_name: str,
+    discovery_state_name: str,
+) -> Deckr:
     registry = LaneContractRegistry(CORE_LANE_CONTRACTS.values())
     return Deckr(
         lane_contracts=registry,
@@ -259,7 +279,8 @@ def _deckr(url: str, *, auth_token: str | None, state_name: str) -> Deckr:
             url=url,
             auth_token=auth_token,
             lane_contracts=registry,
-            default_state_name=state_name,
+            default_state_name=lease_state_name,
+            discovery_state_name=discovery_state_name,
         ),
     )
 
@@ -330,15 +351,22 @@ def _parse_args() -> argparse.Namespace:
         help="JetStream store directory to use for --supervised.",
     )
     parser.add_argument("--startup-timeout", type=float, default=10.0)
-    parser.add_argument("--bucket", default="deckr_state_v1_smoke")
+    parser.add_argument(
+        "--lease-bucket",
+        default=f"{DEFAULT_LEASE_STATE_STORE_NAME}_smoke",
+    )
+    parser.add_argument(
+        "--discovery-bucket",
+        default=f"{DEFAULT_DISCOVERY_STATE_STORE_NAME}_smoke",
+    )
     parser.add_argument("--run-id")
     parser.add_argument("--role", choices=("manager", "controller"))
     parser.add_argument(
         "--check-ttl",
         action="store_true",
-        help="Wait for smoke presence, inventory, and claim keys to expire.",
+        help="Wait for smoke lease expiry and graceful discovery cleanup.",
     )
-    parser.add_argument("--ttl-wait", type=float, default=25.0)
+    parser.add_argument("--ttl-wait", type=float, default=45.0)
     return parser.parse_args()
 
 

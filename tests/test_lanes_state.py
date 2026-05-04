@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import anyio
 import pytest
 from memory_lane_substrate import MemoryLaneSubstrate, memory_deckr
@@ -26,19 +28,27 @@ from deckr.contracts.messages import (
 from deckr.lanes import EndpointRegistrationConflict, EndpointSessionLost
 from deckr.runtime import Deckr
 from deckr.state import (
+    DEFAULT_DISCOVERY_STATE_STORE_NAME,
     EndpointPresence,
     StateConflict,
+    StateEntry,
     StateUnavailable,
     decode_key_token,
     device_claim_key,
     encode_key_token,
     hardware_inventory_key,
+    observe_prefix_current,
     parse_device_claim_key,
     parse_hardware_inventory_key,
     parse_presence_endpoint_key,
     presence_endpoint_key,
 )
-from deckr.substrates.nats import NatsStateStore, _headers_for, _subject_for
+from deckr.substrates.nats import (
+    NatsStateStore,
+    NatsSubstrate,
+    _headers_for,
+    _subject_for,
+)
 
 
 def _settings_target() -> dict[str, str]:
@@ -384,7 +394,7 @@ async def test_nats_state_creates_bucket_with_broker_lease_ttl() -> None:
     await store.put("claim.device.main.deck", {"owner": "controller"})
 
     assert fake_js.created_config is not None
-    assert fake_js.created_config.ttl == 90.0
+    assert fake_js.created_config.ttl == 30.0
     assert fake_js.created_config.history == 1
 
 
@@ -402,9 +412,131 @@ async def test_nats_state_updates_existing_bucket_to_broker_lease_ttl() -> None:
     assert fake_js.kv is not None
     assert fake_js.kv.keys_filters is None
     assert fake_js.updated_config is not None
-    assert fake_js.updated_config.max_age == 90.0
+    assert fake_js.updated_config.max_age == 30.0
     assert fake_js.updated_config.max_msgs_per_subject == 1
     assert fake_js.updated_config.allow_msg_ttl is True
+
+
+@pytest.mark.asyncio
+async def test_nats_state_creates_discovery_bucket_without_broker_ttl() -> None:
+    fake_js = _FakeJs(existing=False)
+    store = NatsStateStore(
+        name=DEFAULT_DISCOVERY_STATE_STORE_NAME,
+        js=fake_js,
+        buffer_size=10,
+        lease_ttl_seconds=None,
+    )
+
+    await store.put("catalog.actions.providers.python", {"provider": "python"})
+
+    assert fake_js.created_config is not None
+    assert fake_js.created_config.ttl is None
+    assert fake_js.created_config.history == 1
+    assert fake_js.updated_config is None
+
+
+@pytest.mark.asyncio
+async def test_nats_state_discovery_bucket_rejects_ttl_writes() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name=DEFAULT_DISCOVERY_STATE_STORE_NAME,
+        js=fake_js,
+        buffer_size=10,
+        lease_ttl_seconds=None,
+    )
+
+    with pytest.raises(ValueError, match="discovery state"):
+        await store.put(
+            "catalog.actions.providers.python",
+            {"provider": "python"},
+            ttl=30,
+        )
+
+
+@pytest.mark.asyncio
+async def test_nats_substrate_uses_configured_discovery_store_without_ttl() -> None:
+    substrate = NatsSubstrate(
+        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        discovery_state_name="deckr_discovery_custom",
+    )
+    substrate._js = _FakeJs()
+
+    discovery_state = substrate.state("deckr_discovery_custom")
+
+    with pytest.raises(ValueError, match="discovery state"):
+        await discovery_state.put(
+            "catalog.actions.providers.python",
+            {"provider": "python"},
+            ttl=30,
+        )
+
+
+@pytest.mark.asyncio
+async def test_nats_state_items_reads_prefix_snapshot_without_global_keys() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+
+    await store.put("inventory.hardware.elgato-main", {"manager": "elgato"})
+    claim = await store.put(
+        "claim.device.mirabox-main.deck",
+        {"owner": "controller"},
+    )
+
+    entries = await store.items("claim.device.")
+
+    assert entries == (claim,)
+    assert fake_js.kv.keys_filters is None
+
+
+@pytest.mark.asyncio
+async def test_observe_prefix_current_exact_confirms_omitted_known_keys() -> None:
+    state = _PartialState(
+        entries={
+            "claim.device.main.a": StateEntry(
+                key="claim.device.main.a",
+                value={"owner": "controller"},
+                revision=1,
+            ),
+            "claim.device.main.b": StateEntry(
+                key="claim.device.main.b",
+                value={"owner": "controller"},
+                revision=2,
+            ),
+        },
+        observed_keys={"claim.device.main.a"},
+    )
+
+    observation = await observe_prefix_current(
+        state,
+        "claim.device.",
+        known_keys=("claim.device.main.a", "claim.device.main.b", "claim.device.main.c"),
+    )
+
+    assert tuple(entry.key for entry in observation.entries) == (
+        "claim.device.main.a",
+        "claim.device.main.b",
+    )
+    assert observation.confirmed_missing == frozenset({"claim.device.main.c"})
+
+
+@pytest.mark.asyncio
+async def test_observe_prefix_current_does_not_guess_when_exact_get_fails() -> None:
+    state = _PartialState(
+        entries={},
+        observed_keys=set(),
+        fail_get=StateUnavailable("broker unavailable"),
+    )
+
+    with pytest.raises(StateUnavailable):
+        await observe_prefix_current(
+            state,
+            "claim.device.",
+            known_keys=("claim.device.main.a",),
+        )
 
 
 @pytest.mark.asyncio
@@ -443,7 +575,8 @@ async def test_nats_state_update_rejects_broker_expired_claim_refresh() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_state_watch_maps_delete_and_max_age_marker() -> None:
+async def test_nats_state_watch_maps_delete_and_max_age_marker(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="deckr.substrates.nats")
     fake_js = _FakeJs()
     store = NatsStateStore(
         name="test_state",
@@ -467,6 +600,45 @@ async def test_nats_state_watch_maps_delete_and_max_age_marker() -> None:
     assert expire_change.operation == "expire"
     assert expire_change.key == key
     assert expire_change.entry is None
+    assert (
+        "NATS Deckr state expire marker bucket=test_state "
+        "key=claim.device.main.deck marker_reason=MaxAge"
+    ) in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_nats_state_watch_ignores_stale_max_age_marker(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="deckr.substrates.nats")
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+    key = "claim.device.main.deck"
+
+    async with store.watch("claim.") as changes:
+        first = await store.create(key, {"owner": "controller"})
+        await _receive(changes)
+        await store.update(
+            key,
+            {"owner": "controller", "refresh": 1},
+            revision=first.revision,
+        )
+        refreshed_change = await _receive(changes)
+        await fake_js.kv.publish_stale_max_age_marker(key)
+        with anyio.move_on_after(0.05) as scope:
+            await changes.receive()
+
+    assert refreshed_change.operation == "put"
+    assert refreshed_change.entry is not None
+    assert refreshed_change.entry.value["refresh"] == 1
+    assert scope.cancel_called
+    assert (
+        "Ignoring stale NATS Deckr state expire marker bucket=test_state "
+        "key=claim.device.main.deck marker_reason=MaxAge"
+    ) in caplog.text
+    assert "current_revision=2" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -580,6 +752,31 @@ class _FakeKvEntry:
         self.operation = operation
 
 
+class _PartialState:
+    def __init__(
+        self,
+        *,
+        entries: dict[str, StateEntry],
+        observed_keys: set[str],
+        fail_get: Exception | None = None,
+    ) -> None:
+        self._entries = entries
+        self._observed_keys = observed_keys
+        self._fail_get = fail_get
+
+    async def get(self, key: str) -> StateEntry | None:
+        if self._fail_get is not None:
+            raise self._fail_get
+        return self._entries.get(key)
+
+    async def items(self, prefix: str = "") -> tuple[StateEntry, ...]:
+        return tuple(
+            entry
+            for key, entry in sorted(self._entries.items())
+            if key.startswith(prefix) and key in self._observed_keys
+        )
+
+
 class _FakeKv:
     def __init__(self, js: _FakeJs) -> None:
         self._js = js
@@ -602,6 +799,15 @@ class _FakeKv:
     async def keys(self, filters=None):
         self.keys_filters = filters
         return tuple(sorted(self._entries))
+
+    async def watch(self, keys, **kwargs):
+        del kwargs
+        entries = [
+            entry
+            for key, entry in sorted(self._entries.items())
+            if _subject_matches(keys, key)
+        ]
+        return _FakeKvWatcher(entries)
 
     async def put(self, key: str, value: bytes) -> int:
         self._revision += 1
@@ -653,15 +859,56 @@ class _FakeKv:
             headers={"Nats-Marker-Reason": "MaxAge"},
         )
 
+    async def publish_stale_max_age_marker(self, key: str) -> None:
+        self._revision += 1
+        await self._js.publish_state(
+            key,
+            b"",
+            revision=self._revision,
+            headers={"Nats-Marker-Reason": "MaxAge"},
+        )
+
 
 class _FakeSubscription:
     def __init__(self, js: _FakeJs, subject: str, callback) -> None:
         self._js = js
         self.subject = subject
         self.callback = callback
+        self.delivered = 0
+
+    async def consumer_info(self):
+        return _FakeConsumerInfo(num_pending=0)
+
+    async def deliver(self, message: _FakeMsg) -> None:
+        self.delivered += 1
+        await self.callback(message)
 
     async def unsubscribe(self) -> None:
         self._js.subscriptions.remove(self)
+
+
+class _FakeKvWatcher:
+    def __init__(self, entries: list[_FakeKvEntry]) -> None:
+        self._entries = [*entries, None]
+        self._index = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._index >= len(self._entries):
+            raise StopAsyncIteration
+        entry = self._entries[self._index]
+        self._index += 1
+        return entry
+
+    async def stop(self) -> None:
+        self._index = len(self._entries)
+
+
+class _FakeConsumerInfo:
+    def __init__(self, *, num_pending: int) -> None:
+        self.num_pending = num_pending
 
 
 class _FakeMetadataSequence:
@@ -670,8 +917,9 @@ class _FakeMetadataSequence:
 
 
 class _FakeMetadata:
-    def __init__(self, revision: int) -> None:
+    def __init__(self, revision: int, *, num_pending: int = 0) -> None:
         self.sequence = _FakeMetadataSequence(revision)
+        self.num_pending = num_pending
 
 
 class _FakeMsg:
@@ -682,11 +930,12 @@ class _FakeMsg:
         data: bytes,
         headers: dict[str, str],
         revision: int,
+        num_pending: int = 0,
     ) -> None:
         self.subject = subject
         self.data = data
         self.headers = headers
-        self.metadata = _FakeMetadata(revision)
+        self.metadata = _FakeMetadata(revision, num_pending=num_pending)
 
 
 class _FakeStreamConfig:
@@ -710,7 +959,7 @@ class _FakeStreamInfo:
 
 
 class _FakeJs:
-    def __init__(self, *, existing: bool = True, max_age: float | None = 90.0) -> None:
+    def __init__(self, *, existing: bool = True, max_age: float | None = 30.0) -> None:
         self.bucket = "test_state"
         self.kv = _FakeKv(self) if existing else None
         self.config = _FakeStreamConfig(
@@ -758,10 +1007,32 @@ class _FakeJs:
         self.config = config
 
     async def subscribe(self, subject: str, *, cb, **kwargs) -> _FakeSubscription:
-        del kwargs
         subscription = _FakeSubscription(self, subject, cb)
         self.subscriptions.append(subscription)
+        deliver_policy = kwargs.get("deliver_policy")
+        if getattr(deliver_policy, "value", deliver_policy) == "last_per_subject":
+            await self._deliver_last_per_subject(subscription)
         return subscription
+
+    async def _deliver_last_per_subject(self, subscription: _FakeSubscription) -> None:
+        if self.kv is None:
+            return
+        entries = [
+            entry
+            for key, entry in sorted(self.kv._entries.items())
+            if _subject_matches(subscription.subject, f"$KV.{self.bucket}.{key}")
+        ]
+        total = len(entries)
+        for index, entry in enumerate(entries):
+            await subscription.deliver(
+                _FakeMsg(
+                    subject=f"$KV.{self.bucket}.{entry.key}",
+                    data=entry.value,
+                    headers={},
+                    revision=entry.revision,
+                    num_pending=total - index - 1,
+                )
+            )
 
     async def publish_state(
         self,
@@ -780,7 +1051,7 @@ class _FakeJs:
         )
         for subscription in tuple(self.subscriptions):
             if _subject_matches(subscription.subject, subject):
-                await subscription.callback(message)
+                await subscription.deliver(message)
 
 
 def _subject_matches(pattern: str, subject: str) -> bool:

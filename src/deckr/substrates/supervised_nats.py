@@ -20,7 +20,11 @@ import anyio
 from deckr.contracts.lanes import LaneContractRegistry
 from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.lanes import ReplyPredicate
-from deckr.state import DEFAULT_STATE_STORE_NAME, StateStore
+from deckr.state import (
+    DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    DEFAULT_LEASE_STATE_STORE_NAME,
+    StateStore,
+)
 from deckr.substrates.nats import NatsSubstrate
 
 logger = logging.getLogger(__name__)
@@ -402,9 +406,11 @@ class SupervisedNatsSubstrate:
         shutdown_timeout: float = 5.0,
         log_buffer_lines: int = 200,
         buffer_size: int = 100,
-        default_state_name: str = DEFAULT_STATE_STORE_NAME,
+        default_state_name: str = DEFAULT_LEASE_STATE_STORE_NAME,
+        discovery_state_name: str = DEFAULT_DISCOVERY_STATE_STORE_NAME,
     ) -> None:
         self.default_state_name = default_state_name
+        self.discovery_state_name = discovery_state_name
         self.supervisor = supervisor or NatsServerSupervisor(
             server_path=server_path,
             minimum_version=minimum_server_version,
@@ -436,6 +442,7 @@ class SupervisedNatsSubstrate:
             lane_contracts=self._lane_contracts,
             buffer_size=self._buffer_size,
             default_state_name=self.default_state_name,
+            discovery_state_name=self.discovery_state_name,
         )
         try:
             await self._nats.connect()

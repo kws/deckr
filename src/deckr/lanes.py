@@ -29,9 +29,9 @@ from deckr.contracts.messages import (
     parse_endpoint_address,
 )
 from deckr.state import (
+    DEFAULT_LEASE_STATE_STORE_NAME,
     DEFAULT_STATE_LEASE_TTL_SECONDS,
     DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS,
-    DEFAULT_STATE_STORE_NAME,
     EndpointPresence,
     StateConflict,
     StateEntry,
@@ -109,7 +109,11 @@ class Lane:
             endpoint=parsed,
             session_id=str(uuid.uuid4()),
             state=self._substrate.state(
-                getattr(self._substrate, "default_state_name", DEFAULT_STATE_STORE_NAME)
+                getattr(
+                    self._substrate,
+                    "default_state_name",
+                    DEFAULT_LEASE_STATE_STORE_NAME,
+                )
             ),
             metadata=metadata or {},
         )

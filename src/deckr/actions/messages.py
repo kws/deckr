@@ -1282,7 +1282,6 @@ class ActionProviderCatalog(DeckrModel):
     provider_id: str = Field(alias="providerId")
     session_id: str = Field(alias="sessionId")
     timestamp: datetime
-    ttl_seconds: int = Field(alias="ttlSeconds")
     labels: Mapping[str, str] = Field(default_factory=dict)
     annotations: JsonObject = Field(default_factory=dict)
     actions: Mapping[str, ActionDescriptor] = Field(default_factory=dict)
@@ -1296,11 +1295,6 @@ class ActionProviderCatalog(DeckrModel):
     @classmethod
     def _validate_provider_instance_id(cls, value: str) -> str:
         return require_provider_instance_id(value, field_name="providerInstanceId")
-
-    @field_validator("ttl_seconds")
-    @classmethod
-    def _validate_ttl_seconds(cls, value: int) -> int:
-        return _require_non_negative(value, field_name="ttlSeconds") or 0
 
     @field_serializer("timestamp")
     def _serialize_timestamp(self, value: datetime) -> str:

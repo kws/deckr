@@ -28,7 +28,8 @@ from deckr.runtime import Deckr
 
 async with Deckr() as deckr:
     hardware = deckr.lane("hardware_messages")
-    state = deckr.state("deckr_state_v1")
+    lease_state = deckr.state("deckr_lease_v1")
+    discovery_state = deckr.state("deckr_discovery_v1")
 
     async with hardware.register_endpoint("hardware_manager:main") as manager:
         async with manager.subscribe() as messages:
@@ -65,17 +66,22 @@ same NATS contract, not a separate in-memory or no-NATS runtime mode.
   ownership around the broker, not a different Deckr bus contract.
 - `actions` and `hardware_messages` lane traffic uses Core NATS, not
   JetStream persistence.
-- Retained communication state uses JetStream KV.
-- KV current state is authoritative for endpoint presence, hardware inventory,
-  device claims, and action provider catalogs.
-- KV watches are wakeups. Broker snapshots from `get()` and `items()` are the
-  repair path for local projections.
+- Retained communication state uses JetStream KV split by semantics:
+  `deckr_lease_v1` for TTL-bound leases and `deckr_discovery_v1` for non-TTL
+  discovery.
+- Exact-key lease state is authoritative for endpoint presence and device claims.
+- Discovery state describes current action provider catalogs and hardware
+  inventory. Discovery records are usable only when matching endpoint presence
+  exists in the lease bucket with the same session id.
+- KV watches are wakeups. `get(key)` is the exact-key repair path for local
+  projections. `items(prefix)` is a prefix observation and is not an
+  absence-authoritative snapshot.
 - Local caches are disposable projections rebuilt from broker current state plus
   local durable/config/runtime state.
 - `StateUnavailable` means unknown and retry. It is not absence.
 - `StateConflict` means a real first-writer or revision race.
-- Payload `timestamp` and `ttlSeconds` fields are diagnostics. Broker-owned KV
-  TTL is the lease authority.
+- Payload `timestamp` fields are diagnostics. Payload `ttlSeconds` appears only
+  on lease documents and mirrors the broker-owned lease TTL.
 - No production Deckr WebSocket or MQTT lane substrate, route table,
   route-policy, `remote_endpoints`, or route lease model is supported.
 
@@ -171,17 +177,25 @@ permissions, but it is not the authoritative Deckr recipient check.
 Application code uses `deckr.state.StateStore`, not raw `nats-py` KV calls:
 
 ```python
-state = deckr.state("deckr_state_v1")
+lease_state = deckr.state("deckr_lease_v1")
+discovery_state = deckr.state("deckr_discovery_v1")
 
-entry = await state.get("presence.endpoint.actions.action_provider.python")
-entries = await state.items("catalog.actions.providers.")
+entry = await lease_state.get("presence.endpoint.actions.action_provider.python")
+entries = await discovery_state.items("catalog.actions.providers.")
 
-written = await state.put(key, value, ttl=90.0)
-created = await state.create(key, value, ttl=90.0)
-updated = await state.update(key, value, revision=written.revision, ttl=90.0)
-await state.delete(key, revision=updated.revision)
+written = await lease_state.put(key, value, ttl=30.0)
+created = await lease_state.create(key, value, ttl=30.0)
+updated = await lease_state.update(
+    key,
+    value,
+    revision=written.revision,
+    ttl=30.0,
+)
+await lease_state.delete(key, revision=updated.revision)
 
-async with state.watch("catalog.actions.providers.") as changes:
+catalog = await discovery_state.put(catalog_key, catalog_value)
+
+async with discovery_state.watch("catalog.actions.providers.") as changes:
     async for change in changes:
         ...
 ```
@@ -190,7 +204,9 @@ Operations mean:
 
 - `get(key)` returns the current entry or `None` if the broker says it is
   missing or deleted.
-- `items(prefix)` returns current entries whose keys begin with `prefix`.
+- `items(prefix)` observes current entries whose keys begin with `prefix`.
+  Consumers may add or refresh entries from this observation, but must not remove
+  known facts solely because they are omitted from one prefix result.
 - `put(key, value)` writes the current value.
 - `create(key, value)` writes only if the key is absent.
 - `update(key, value, revision=...)` writes only if the current revision still
@@ -201,33 +217,52 @@ Operations mean:
 `StateEntry` contains `key`, JSON-safe `value`, and broker `revision`.
 `StateChange.entry` is present only for `put` operations.
 
-## State Bucket
+Use `deckr.state.observe_prefix_current(state, prefix, known_keys=...)` when a
+projection needs to reconcile possible removals. The helper calls `items(prefix)`,
+then exact-gets omitted known keys. It returns observed entries and
+`confirmed_missing` keys. If the broker cannot answer exactly it raises
+`StateUnavailable` and the caller must keep its prior projection.
 
-The default Deckr current-state bucket is:
+## State Buckets
+
+The default Deckr current-state buckets are:
 
 ```text
-deckr_state_v1
+deckr_lease_v1
+deckr_discovery_v1
 ```
 
-Bucket requirements:
+Lease bucket requirements for `deckr_lease_v1`:
 
 - `history = 1`
 - `max_msgs_per_subject = 1`
-- broker TTL / max age = `90s`
+- broker TTL / max age = `30s`
 - message TTL / limit markers enabled where supported
 
-The current cadence is:
+Lease cadence:
 
 ```text
-heartbeat every 5s
-broker TTL after 90s
+renew every 5s
+broker TTL after 30s
 ```
+
+Lease writes are used only for endpoint presence and device claims. Per-write TTL
+arguments must be omitted or equal to the lease TTL.
+
+Discovery bucket requirements for `deckr_discovery_v1`:
+
+- `history = 1`
+- `max_msgs_per_subject = 1`
+- no broker TTL / max age
+- no per-write TTL arguments
+
+Discovery writes are used for hardware inventory and action provider catalogs.
+They are rewritten on start and content change and deleted on graceful stop.
 
 The NATS substrate creates or updates the development bucket configuration when
 possible. If an older development bucket cannot be updated safely, delete the
-`KV_deckr_state_v1` stream and restart the runtime.
-
-Per-key TTL values other than the bucket TTL are rejected by the NATS substrate.
+affected `KV_deckr_lease_v1` or `KV_deckr_discovery_v1` stream and restart the
+runtime.
 
 ## Key Tokens
 
@@ -258,25 +293,25 @@ Matching parsers live alongside the corresponding key helpers.
 
 ## Current-State Keys
 
-Endpoint presence:
+Endpoint presence in `deckr_lease_v1`:
 
 ```text
 presence.endpoint.<lane>.<endpoint-family>.<endpoint-id>
 ```
 
-Hardware inventory:
+Hardware inventory in `deckr_discovery_v1`:
 
 ```text
 inventory.hardware.<manager-id>
 ```
 
-Action provider catalog:
+Action provider catalog in `deckr_discovery_v1`:
 
 ```text
 catalog.actions.providers.<provider-instance-id>
 ```
 
-Device claim:
+Device claim in `deckr_lease_v1`:
 
 ```text
 claim.device.<manager-id>.<device-id>
@@ -287,9 +322,15 @@ Consumers must validate both key identity and payload identity. A catalog key fo
 A presence key for `action_provider:a` with payload endpoint `action_provider:b`
 is invalid.
 
+Consumers may update projections from prefix observations in either bucket. They
+must exact-confirm missing known keys with `get(key) is None` before treating a
+prefix omission as deletion, claim revocation, provider loss, manager loss, or
+device removal.
+
 ## Endpoint Presence
 
 Endpoint presence says a Deckr endpoint is currently participating on a lane.
+It is stored in `deckr_lease_v1`.
 
 Example:
 
@@ -299,7 +340,7 @@ Example:
   "lane": "actions",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
-  "ttlSeconds": 90,
+  "ttlSeconds": 30,
   "metadata": {
     "runtime": "deckr-action-provider-runtime-python"
   }
@@ -334,7 +375,6 @@ Example:
   "managerEndpoint": "hardware_manager:mirabox",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
-  "ttlSeconds": 90,
   "devices": {
     "device-1": {
       "deviceRef": {
@@ -401,6 +441,11 @@ Example:
 Inventory is aggregate by manager. Device removal is represented by rewriting
 the manager inventory without that device, not by writing a per-device tombstone.
 
+Inventory is stored in `deckr_discovery_v1` without broker TTL. Managers rewrite
+their aggregate inventory on start and whenever the device set or descriptors
+change, and delete it on graceful stop. Failed dirty inventory publishes are
+retried until the current content is written.
+
 Inventory is usable only while matching manager endpoint presence exists with the
 same `sessionId`. If manager presence disappears or changes session, dependent
 live device state becomes unavailable.
@@ -416,7 +461,7 @@ carry the same `DeviceDescriptor` shape published by `deviceAvailable` and
 ## Device Claims
 
 Device claims coordinate controller ownership of devices exposed by a hardware
-manager.
+manager. They are stored in `deckr_lease_v1`.
 
 Example:
 
@@ -425,7 +470,7 @@ Example:
   "claimedByEndpoint": "controller:main",
   "claimedBySessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
-  "ttlSeconds": 90
+  "ttlSeconds": 30
 }
 ```
 
@@ -467,7 +512,6 @@ Example:
   "providerId": "com.example.clock",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
-  "ttlSeconds": 90,
   "labels": {
     "location": "office"
   },
@@ -486,15 +530,20 @@ Example:
 
 The action map is keyed by `actionId`; each map key must match the descriptor's
 `actionId`, `providerInstanceId` must match the catalog key suffix, and
-`providerEndpoint` must equal `action_provider:<providerInstanceId>`. The catalog
-is the action availability source of truth and carries the provider endpoint
-`sessionId` used to reject stale provider commands.
+`providerEndpoint` must equal `action_provider:<providerInstanceId>`.
 
-Catalog loss or catalog incompatibility makes affected actions unavailable and
+Catalogs are stored in `deckr_discovery_v1` without broker TTL. They are
+descriptive state, not live leases. Actions from a catalog are live only while
+matching action-provider endpoint presence exists in `deckr_lease_v1` with the
+same `sessionId`.
+
+Exact-confirmed catalog loss or catalog incompatibility removes the descriptors.
+Exact-confirmed provider presence loss makes affected actions unavailable and
 causes the controller to revoke dependent live bindings. Catalog session changes
-refresh dependent bindings so controller-side session checks follow the current
-provider endpoint session. The action provider instance does not broadcast
-`actionsUnregistered`; broker current state is the source of truth.
+refresh dependent bindings only after matching provider presence moves to the
+same session. The action provider instance does not broadcast
+`actionsUnregistered`; broker current state plus lease presence is the source of
+truth.
 
 ## Producer Pattern
 
@@ -502,32 +551,40 @@ A participant that owns current state should:
 
 1. Register its Deckr endpoint with `register_endpoint(...)` and use the
    resulting endpoint `sessionId`.
-2. Publish its current domain state immediately, such as inventory or catalog,
-   using the endpoint session id.
-3. Refresh domain state on the 5s heartbeat with the 90s broker TTL; endpoint
-   presence renewal is owned by the registered endpoint handle.
+2. Publish lease state, such as endpoint presence or device claims, only to
+   `deckr_lease_v1` with the 30s lease TTL. Endpoint presence renewal is owned
+   by the registered endpoint handle.
+3. Publish discovery state, such as inventory or catalog, to
+   `deckr_discovery_v1` without TTL using the endpoint session id.
 4. Treat endpoint session loss as terminal for the registered handle.
-5. Rewrite aggregate state immediately when the underlying facts change.
-6. On graceful stop, delete its own domain keys with revision checks; endpoint
-   presence withdrawal is owned by the registered endpoint handle.
-7. On `StateUnavailable`, stop sending through the affected endpoint session and
-   let an outer supervisor decide whether to create a new registration.
+5. Rewrite aggregate discovery state immediately when the underlying facts
+   change. Retry failed dirty discovery publishes until the current content is
+   written.
+6. On graceful stop, delete owned discovery keys and release owned claims with
+   revision checks; endpoint presence withdrawal is owned by the registered
+   endpoint handle.
+7. On `StateUnavailable`, treat the affected state as unknown and retry or let an
+   outer supervisor create a fresh endpoint registration.
 
-Failed refresh means unknown/retry. Only graceful stop withdraws owned state. If
-the owner is truly gone, broker TTL removes the key.
+Lease refresh failure means unknown/retry. Only graceful stop withdraws owned
+discovery state. If a lease owner is truly gone, broker TTL removes its lease
+keys. Discovery can be stale safely because live use is gated by exact lease
+presence and session checks.
 
 ## Consumer Pattern
 
 A consumer should:
 
 1. Watch relevant prefixes for low-latency wakeups.
-2. Reconcile from broker snapshots with `items()` on start and whenever a local
-   projection could otherwise go stale.
+2. Reconcile from prefix observations with `items()` on start and whenever a
+   local projection could otherwise go stale.
 3. Treat `put` as "validate and update local projection".
-4. Treat `delete` and `expire` as "remove that current fact".
-5. Treat `StateUnavailable` as unknown/retry.
-6. Never derive availability from local payload timestamps.
-7. Reject mismatched key/payload identity.
+4. Treat `delete` and `expire` watch markers as removal wakeups, then reconcile.
+5. Exact-get known keys omitted from prefix observations before removing them, or
+   use `observe_prefix_current(...)`.
+6. Treat `StateUnavailable` as unknown/retry and keep prior live projection.
+7. Never derive availability from local payload timestamps.
+8. Reject mismatched key/payload identity.
 
 Every component owns its own internal state machine. Remote observations can
 arrive in any order:
@@ -547,8 +604,9 @@ broker current state + local durable/config state + local runtime state
   -> local operational state
 ```
 
-If a local projection cannot be rebuilt from `get()` or `items()` plus local
-durable/config/runtime state, it is probably treating watches as an event log.
+If a local projection cannot be rebuilt from `get()` plus `items()` observations
+and local durable/config/runtime state, it is probably treating watches as an
+event log.
 
 Do not add production lane messages such as `componentAppeared`,
 `componentDisappeared`, `hostOnline`, `hostOffline`, `actionsRegistered`,
@@ -585,14 +643,14 @@ Examples:
 
 - A hardware manager with endpoint `hardware_manager:mirabox` publishes lane
   traffic only to `deckr.lane.hardware_messages.hardware_manager.mirabox` and
-  updates only its own presence and inventory keys.
+  updates only its own lease presence key and discovery inventory key.
 - An action provider instance with endpoint `action_provider:python` publishes
   lane traffic only to `deckr.lane.actions.action_provider.python` and updates
-  only its own presence and catalog keys.
+  only its own lease presence key and discovery catalog key.
 - A controller with endpoint `controller:main` publishes controller-originated
   messages on `hardware_messages` and `actions`, reads and watches
-  endpoint, inventory, catalog, and claim keyspaces, and creates or refreshes
-  claim keys according to controller policy.
+  lease endpoint/claim keyspaces and discovery inventory/catalog keyspaces, and
+  creates or refreshes claim keys according to controller policy.
 
 Request/reply permissions must allow the relevant `_INBOX` subjects or use NATS
 `allow_responses` where that better fits responder behavior.
@@ -620,12 +678,14 @@ Run the workspace runtime broker from the `streamdock` workspace root:
 docker compose -f docker/compose.nats-runtime.yaml up nats
 ```
 
-Check JetStream and the bucket:
+Check JetStream and the buckets:
 
 ```bash
 nats server check jetstream --server nats://127.0.0.1:4222
-nats kv info deckr_state_v1 --server nats://127.0.0.1:4222
-nats kv ls deckr_state_v1 --server nats://127.0.0.1:4222
+nats kv info deckr_lease_v1 --server nats://127.0.0.1:4222
+nats kv info deckr_discovery_v1 --server nats://127.0.0.1:4222
+nats kv ls deckr_lease_v1 --server nats://127.0.0.1:4222
+nats kv ls deckr_discovery_v1 --server nats://127.0.0.1:4222
 ```
 
 Inspect current Deckr communication state:
@@ -643,22 +703,22 @@ nats sub 'deckr.lane.>' --server nats://127.0.0.1:4222
 Inspect useful keyspaces:
 
 ```bash
-nats kv ls deckr_state_v1 'presence.endpoint.>' --server nats://127.0.0.1:4222
-nats kv ls deckr_state_v1 'inventory.hardware.>' --server nats://127.0.0.1:4222
-nats kv ls deckr_state_v1 'catalog.actions.providers.>' --server nats://127.0.0.1:4222
-nats kv ls deckr_state_v1 'claim.device.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_lease_v1 'presence.endpoint.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_lease_v1 'claim.device.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_discovery_v1 'inventory.hardware.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_discovery_v1 'catalog.actions.providers.>' --server nats://127.0.0.1:4222
 ```
 
 When a component appears unavailable, check in this order:
 
 1. Is its endpoint presence key present and carrying the expected endpoint, lane,
    and session id?
-2. Is its domain state present and session-matched, such as inventory for a
+2. Is its discovery state present and session-matched, such as inventory for a
    hardware manager or catalog for an action provider instance?
 3. If a device is claimed, does the claim's controller endpoint/session match
    current controller presence?
-4. Did the key expire after the 90s TTL because the component stopped refreshing
-   it?
+4. Did the lease key expire after the 30s TTL because the component stopped
+   refreshing it?
 5. Does the component log `StateUnavailable`, indicating broker uncertainty
    rather than absence?
 

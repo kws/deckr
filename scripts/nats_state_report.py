@@ -9,6 +9,8 @@ from typing import Any
 
 from deckr.actions.state import parse_action_provider_catalog_key
 from deckr.state import (
+    DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    DEFAULT_LEASE_STATE_STORE_NAME,
     parse_device_claim_key,
     parse_hardware_inventory_key,
     parse_presence_endpoint_key,
@@ -17,6 +19,7 @@ from deckr.state import (
 
 @dataclass(frozen=True, slots=True)
 class Row:
+    bucket: str
     key: str
     revision: int
     value: dict[str, Any]
@@ -32,13 +35,15 @@ async def main() -> int:
     nc = await nats.connect(args.url)
     try:
         js = nc.jetstream()
-        try:
-            kv = await js.key_value(args.bucket)
-        except Exception as exc:
-            raise SystemExit(
-                f"Could not open NATS KV bucket {args.bucket!r}: {exc}"
-            ) from exc
-        rows = await _load_rows(kv)
+        rows = []
+        for bucket in (args.lease_bucket, args.discovery_bucket):
+            try:
+                kv = await js.key_value(bucket)
+            except Exception as exc:
+                raise SystemExit(
+                    f"Could not open NATS KV bucket {bucket!r}: {exc}"
+                ) from exc
+            rows.extend(await _load_rows(kv, bucket=bucket))
     finally:
         await nc.close()
 
@@ -46,7 +51,7 @@ async def main() -> int:
     return 0
 
 
-async def _load_rows(kv) -> list[Row]:
+async def _load_rows(kv, *, bucket: str) -> list[Row]:
     try:
         keys = await kv.keys()
     except Exception:
@@ -61,7 +66,9 @@ async def _load_rows(kv) -> list[Row]:
             value = json.loads(entry.value.decode("utf-8"))
         except Exception:
             value = {"_decodeError": True, "_rawBytes": len(entry.value)}
-        rows.append(Row(key=key, revision=int(entry.revision), value=value))
+        rows.append(
+            Row(bucket=bucket, key=key, revision=int(entry.revision), value=value)
+        )
     return rows
 
 
@@ -95,6 +102,7 @@ def _print_report(rows: list[Row]) -> None:
 
     print("Deckr NATS Current State")
     print("========================")
+    print(f"buckets: {', '.join(sorted({row.bucket for row in rows})) or 'none'}")
     print(f"keys: {len(rows)}")
     print()
     _print_presence(presence)
@@ -114,7 +122,8 @@ def _print_presence(rows: list[tuple[str, str, Row]]) -> None:
         print(
             "  "
             f"{endpoint} lane={lane} session={row.value.get('sessionId')} "
-            f"ttl={row.value.get('ttlSeconds')}s rev={row.revision}"
+            f"ttl={row.value.get('ttlSeconds')}s rev={row.revision} "
+            f"bucket={row.bucket}"
         )
     print()
 
@@ -131,7 +140,8 @@ def _print_inventories(rows: list[tuple[str, Row]]) -> None:
         print(
             "  "
             f"{manager_id} endpoint={row.value.get('managerEndpoint')} "
-            f"session={row.value.get('sessionId')} devices={count} rev={row.revision}"
+            f"session={row.value.get('sessionId')} devices={count} "
+            f"rev={row.revision} bucket={row.bucket}"
         )
     print()
 
@@ -148,7 +158,8 @@ def _print_catalogs(rows: list[tuple[str, Row]]) -> None:
             "  "
             f"{provider_instance_id} endpoint={row.value.get('providerEndpoint')} "
             f"provider={row.value.get('providerId')} "
-            f"session={row.value.get('sessionId')} actions={actions} rev={row.revision}"
+            f"session={row.value.get('sessionId')} actions={actions} "
+            f"rev={row.revision} bucket={row.bucket}"
         )
     print()
 
@@ -172,7 +183,8 @@ def _print_claims(rows: list[tuple[str, str, Row]]) -> None:
             print(
                 "  "
                 f"{manager_id}/{device_id} claimedBy={row.value.get('claimedByEndpoint')} "
-                f"session={row.value.get('claimedBySessionId')} rev={row.revision}"
+                f"session={row.value.get('claimedBySessionId')} "
+                f"rev={row.revision} bucket={row.bucket}"
             )
     print()
 
@@ -182,14 +194,18 @@ def _print_unknown(rows: list[Row]) -> None:
         return
     print("Other Keys")
     for row in rows:
-        print(f"  {row.key} rev={row.revision}")
+        print(f"  {row.key} rev={row.revision} bucket={row.bucket}")
     print()
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="nats://127.0.0.1:4222")
-    parser.add_argument("--bucket", default="deckr_state_v1")
+    parser.add_argument("--lease-bucket", default=DEFAULT_LEASE_STATE_STORE_NAME)
+    parser.add_argument(
+        "--discovery-bucket",
+        default=DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    )
     return parser.parse_args()
 
 

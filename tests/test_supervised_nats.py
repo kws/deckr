@@ -210,5 +210,6 @@ async def test_supervised_substrate_starts_supervisor_before_nats(
         "auth_token": "secret-token",
         "lane_contracts": DEFAULT_LANE_CONTRACT_REGISTRY,
         "buffer_size": 100,
-        "default_state_name": "deckr_state_v1",
+        "default_state_name": "deckr_lease_v1",
+        "discovery_state_name": "deckr_discovery_v1",
     }

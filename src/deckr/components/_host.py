@@ -31,7 +31,7 @@ from deckr.contracts.lanes import (
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.config import ConfigDocument
 from deckr.lanes import Lane, LaneRegistry
-from deckr.state import StateStore
+from deckr.state import DEFAULT_LEASE_STATE_STORE_NAME, StateStore
 
 if TYPE_CHECKING:
     from deckr.runtime import Deckr
@@ -113,7 +113,7 @@ class ComponentContext:
     def require_lane(self, name: str) -> Lane:
         return self.lanes.require(name)
 
-    def state(self, name: str = "deckr_state_v1") -> StateStore:
+    def state(self, name: str = DEFAULT_LEASE_STATE_STORE_NAME) -> StateStore:
         return self.state_for(name)
 
 
