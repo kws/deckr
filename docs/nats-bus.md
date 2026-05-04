@@ -881,7 +881,7 @@ docker compose -f docker/compose.nats-smoke.yaml down -v
 Run the workspace runtime broker from the `streamdock` workspace root:
 
 ```bash
-docker compose -f docker/compose.nats-runtime.yaml up nats
+docker compose -f docker/compose.yaml up nats
 ```
 
 Check JetStream and the buckets:
