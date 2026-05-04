@@ -698,13 +698,15 @@ The service namespace owns the view payload schema and operation semantics.
 Current first-party service namespaces are:
 
 - `com.k-si.deckr.sonos.service`, with operations `ensureZone`, `setVolume`,
-  `play`, `pause`, `ensureFavourite`, `playFavourite`, and `playMusicItem`.
-  `playMusicItem` accepts a JSON-safe `soco-didl-lite-v1` item reference with
-  `uri` and `didl` fields; music-library browsing may be action-local, but
-  queueing and playback happen inside the Sonos service. Zone views are stored
-  below `view.services.<service-id>.<namespace>.zones.<zone-name>`. Favourite
-  lookup views are stored below
-  `view.services.<service-id>.<namespace>.favourites.<zone-name>.<query>`.
+  `play`, `pause`, `resolveFavourite`, `playFavourite`, `playMusicItem`,
+  `listMusicServices`, `searchMusic`, and `browseMusic`. Favourite lookup and
+  music-service search/browse results are ephemeral RPC data and are not durable
+  service views. RPC media items may carry `playRef` values for playback or
+  `browseRef` values for later browsing. `playMusicItem` accepts a JSON-safe
+  `playRef`, currently either `soco-didl-lite-v1` with `uri` and `didl` fields
+  or `sonos-uri-meta-v1` with `uri` and `metadata` fields. Queueing, playback,
+  and SoCo music-service calls happen inside the Sonos service. Zone views are
+  stored below `view.services.<service-id>.<namespace>.zones.<zone-name>`.
 - `com.k-si.deckr.openhab.service`, with operations `ensureItems`,
   `refreshItem`, and `sendCommand`. Item views are stored below
   `view.services.<service-id>.<namespace>.items.<item-name>`.
