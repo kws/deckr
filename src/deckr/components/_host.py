@@ -170,6 +170,25 @@ class ComponentConfigValidator(Protocol):
     ) -> None: ...
 
 
+class ComponentInstanceSourceReporter(Protocol):
+    def __call__(
+        self,
+        message: str,
+        *,
+        component_id: str | None = None,
+        instance_id: str | None = None,
+    ) -> None: ...
+
+
+def _noop_component_instance_source_reporter(
+    message: str,
+    *,
+    component_id: str | None = None,
+    instance_id: str | None = None,
+) -> None:
+    del message, component_id, instance_id
+
+
 @dataclass(frozen=True, slots=True)
 class ComponentInstanceDefinition:
     component_id: str
@@ -188,6 +207,11 @@ class ComponentInstanceSourceContext:
     source_config: Mapping[str, Any]
     resolved_config: Mapping[str, Any]
     base_dir: Path
+    report: ComponentInstanceSourceReporter = field(
+        default=_noop_component_instance_source_reporter,
+        repr=False,
+        compare=False,
+    )
 
 
 class ComponentInstanceSourceLoader(Protocol):
@@ -653,6 +677,28 @@ def _instance_source_ids(source: Mapping[str, Any], *, index: int) -> tuple[str,
     return declaration_id.strip(), source_id.strip()
 
 
+def _component_instance_source_reporter(
+    source_id: str,
+    report_events: list[PlanningEvent],
+) -> ComponentInstanceSourceReporter:
+    def report(
+        message: str,
+        *,
+        component_id: str | None = None,
+        instance_id: str | None = None,
+    ) -> None:
+        report_events.append(
+            PlanningEvent(
+                source_id=source_id,
+                component_id=component_id,
+                instance_id=instance_id,
+                message=message,
+            )
+        )
+
+    return report
+
+
 def _generated_component_instance_definitions(
     document: ConfigDocument,
     *,
@@ -665,8 +711,15 @@ def _generated_component_instance_definitions(
         else None
     )
     generated: list[ComponentInstanceDefinition] = []
+    seen_declaration_ids: set[str] = set()
     for index, source in enumerate(_source_declarations(document)):
         declaration_id, source_id = _instance_source_ids(source, index=index)
+        if declaration_id in seen_declaration_ids:
+            raise ValueError(
+                "Duplicate Deckr component instance source declaration id: "
+                f"{declaration_id}"
+            )
+        seen_declaration_ids.add(declaration_id)
         definition = (
             source_definitions.get(source_id)
             if source_definitions is not None
@@ -674,11 +727,13 @@ def _generated_component_instance_definitions(
         )
         if definition is None:
             raise ValueError(f"Unknown Deckr component instance source: {source_id}")
+
         context = ComponentInstanceSourceContext(
             source_id=source_id,
             source_config=source,
             resolved_config=document.raw,
             base_dir=document.base_dir,
+            report=_component_instance_source_reporter(source_id, report_events),
         )
         output = tuple(definition.load(context))
         report_events.append(

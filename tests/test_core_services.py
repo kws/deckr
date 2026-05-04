@@ -391,6 +391,11 @@ def test_instance_source_generates_component_instances() -> None:
         context: ComponentInstanceSourceContext,
     ) -> tuple[ComponentInstanceDefinition, ...]:
         assert context.source_config["allow"] == ["worker"]
+        context.report(
+            "selected worker",
+            component_id="com.example.worker",
+            instance_id="generated-worker",
+        )
         return (
             ComponentInstanceDefinition(
                 component_id="com.example.worker",
@@ -429,6 +434,50 @@ def test_instance_source_generates_component_instances() -> None:
     assert [(spec.instance_id, dict(spec.config)) for spec in specs] == [
         ("generated-worker", {"value": "from-source"})
     ]
+    plan = resolve_component_host_plan(
+        document,
+        definitions={"com.example.worker": component},
+        instance_source_definitions={"com.example.worker.source": source},
+    )
+    assert any(
+        event.source_id == "com.example.worker.source"
+        and event.component_id == "com.example.worker"
+        and event.instance_id == "generated-worker"
+        and event.message == "selected worker"
+        for event in plan.report.events
+    )
+
+
+def test_duplicate_instance_source_declaration_id_is_plan_error() -> None:
+    source = ComponentInstanceSourceDefinition(
+        source_id="com.example.worker.source",
+        load=lambda context: (),
+    )
+    document = _document(
+        {
+            "deckr": {
+                "components": {
+                    "instance_sources": [
+                        {
+                            "id": "workers",
+                            "source": "com.example.worker.source",
+                        },
+                        {
+                            "id": "workers",
+                            "source": "com.example.worker.source",
+                        },
+                    ]
+                }
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="Duplicate Deckr component instance source"):
+        resolve_component_host_plan(
+            document,
+            definitions={},
+            instance_source_definitions={"com.example.worker.source": source},
+        )
 
 
 @pytest.mark.asyncio

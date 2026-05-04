@@ -710,8 +710,37 @@ id = "example_workers"
 source = "com.example.deckr.workers"
 ```
 
-The `deckr` core owns the generic source protocols and planner hook. Domain
-packages own their own source definitions.
+Instance source declaration ids are host-local diagnostics identities and must
+be unique within the resolved document. The `source` value is the globally
+unique source definition id contributed through `deckr.component_instance_sources`
+or supplied directly by an embedded host.
+
+The `deckr` core owns the generic source protocols, planner hook, strict
+duplicate checks, and planning diagnostics. Source loaders receive a reporting
+callback for non-error conditions such as selected, skipped, or blocked
+candidates. Domain packages own their own source definitions and private source
+configuration.
+
+For example, the Python action provider runtime package contributes
+`com.k-si.deckr.action_provider_runtime.python.installed_providers`, which
+discovers selected `deckr.plugins` entry points and expands them into ordinary
+`com.k-si.deckr.action_provider_runtime.python` component instances. The Python
+entry point name is discovery identity only; generated Deckr provider ids,
+endpoint ids, and component instance ids are resolved by that source's
+configuration.
+
+The common local-development shape is intentionally small:
+
+```toml
+[[deckr.components.instance_sources]]
+id = "python_actions"
+source = "com.k-si.deckr.action_provider_runtime.python.installed_providers"
+allow = ["clock", "sonos", "openhab", "kaj"]
+```
+
+For that first-party source, omitted `block` defaults to an empty list,
+`instance_id_template` defaults to `{provider_id}-main`, and
+`endpoint_id_templates.action_provider` defaults to `python-{provider_id}`.
 
 ### Runtime-Local Component Status
 

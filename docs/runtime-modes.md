@@ -63,7 +63,8 @@ kind = "nats"
 supervised = true
 ```
 
-Component instances use the same generic shape in every mode:
+Component instances use the same generic shape in every mode. Production
+deployments can configure one action provider runtime instance explicitly:
 
 ```toml
 [deckr.components.instances.clock_actions]
@@ -77,6 +78,22 @@ action_provider = "python-clock"
 provider_id = "clock"
 entrypoint = "deckr.plugins.clock"
 ```
+
+Local development can use an explicitly configured component instance source to
+activate installed Python action providers without adding Python-provider logic
+to the launcher:
+
+```toml
+[[deckr.components.instance_sources]]
+id = "python_actions"
+source = "com.k-si.deckr.action_provider_runtime.python.installed_providers"
+allow = ["clock", "sonos", "openhab", "kaj"]
+```
+
+That source expands the selected `deckr.plugins` entry points into ordinary
+`com.k-si.deckr.action_provider_runtime.python` component instances. With the
+default templates, `clock` becomes instance `clock-main` with endpoint
+`action_provider:python-clock`.
 
 When `supervised = true`, the launcher starts `nats-server` as a private child
 process, enables JetStream, binds to localhost, lets NATS select the client port,
