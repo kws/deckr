@@ -697,19 +697,83 @@ The service namespace owns the view payload schema and operation semantics.
 
 Current first-party service namespaces are:
 
-- `com.k-si.deckr.sonos.service`, with operations `ensureZone`, `setVolume`,
-  `play`, `pause`, `resolveFavourite`, `playFavourite`, `playMusicItem`,
-  `listMusicServices`, `searchMusic`, and `browseMusic`. Favourite lookup and
-  music-service search/browse results are ephemeral RPC data and are not durable
-  service views. RPC media items may carry `playRef` values for playback or
-  `browseRef` values for later browsing. `playMusicItem` accepts a JSON-safe
-  `playRef`, currently either `soco-didl-lite-v1` with `uri` and `didl` fields
-  or `sonos-uri-meta-v1` with `uri` and `metadata` fields. Queueing, playback,
-  and SoCo music-service calls happen inside the Sonos service. Zone views are
-  stored below `view.services.<service-id>.<namespace>.zones.<zone-name>`.
-- `com.k-si.deckr.openhab.service`, with operations `ensureItems`,
-  `refreshItem`, and `sendCommand`. Item views are stored below
-  `view.services.<service-id>.<namespace>.items.<item-name>`.
+- `com.k-si.deckr.sonos.service`
+- `com.k-si.deckr.openhab.service`
+
+First-party service components are ordinary configured components. Installing a
+package that contributes a service component definition does not start the
+service. Service ids such as `sonos-home` and `openhab-home` are configured
+endpoint ids; they are not package names, component ids, service namespaces, or
+runtime names.
+
+The Sonos service owns SoCo discovery, speaker connections, subscriptions,
+favourite lookup, music-service search/browse, queueing, and playback. Blocking
+SoCo calls run off-thread inside the service component. Actions and other
+clients communicate through `serviceCommand` request/reply and Sonos-owned
+views; they do not receive or cache local SoCo speaker objects.
+
+The Sonos operations are:
+
+- `ensureZone`, with `zone`; ensures a zone is connected and publishes a zone
+  view.
+- `setVolume`, with `zone` and integer `volume` from `0` through `100`.
+- `play` and `pause`, each with `zone`.
+- `resolveFavourite`, with `zone`, `query`, and optional `limit`.
+- `playFavourite`, with `zone` and `query`.
+- `playMusicItem`, with `zone` and JSON-safe `playRef`.
+- `listMusicServices`, with no params.
+- `searchMusic`, with `musicService`, `category`, optional `term`, optional
+  `offset`, and optional `limit`.
+- `browseMusic`, with `musicService`, optional `browseRef`, optional `offset`,
+  and optional `limit`.
+
+Sonos zone views are stored below:
+
+```text
+view.services.<service-id>.<namespace>.zones.<zone-name>
+```
+
+Zone view payloads include `serviceId`, `serviceNamespace`, `sessionId`, `zone`,
+`ipAddress`, `playerName`, `transportState`, `isPlaying`, `volume`, optional
+`current`, and `timestamp`. The optional `current` object may include `title`,
+`creator`, `source`, and `albumArtUri`.
+
+Sonos favourite lookup and music-service browse/search results are ephemeral RPC
+data and are not written as durable views. RPC media items are JSON-safe
+documents with `mediaType`, `title`, optional `subtitle`, optional `imageUri`,
+optional `metadata`, optional `playRef`, and optional `browseRef`.
+
+`playMusicItem` is the canonical playback operation for returned Sonos media
+items. Supported `playRef.format` values are:
+
+- `soco-didl-lite-v1`, with `uri` and `didl`; the service queues the URI with
+  the supplied DIDL-Lite metadata and plays from the queue.
+- `sonos-uri-meta-v1`, with `uri` and `metadata`; the service first attempts
+  direct URI playback and falls back to queue playback.
+
+`browseRef.format` for service-side music browsing is
+`soco-music-service-item-v1`, with `musicService` and `itemId`.
+
+The OpenHAB service owns HTTP, SSE, auth, command sending, retries, and item
+views. Its component config requires `url`; an empty or omitted `token` means no
+bearer auth. Actions and other clients communicate through service commands and
+OpenHAB-owned views rather than direct HTTP/SSE access.
+
+The OpenHAB operations are:
+
+- `ensureItems`, with `items` and optional boolean `refresh`; returns known item
+  documents keyed by item name plus a `missing` list.
+- `refreshItem`, with `item`.
+- `sendCommand`, with `item` and `command`.
+
+OpenHAB item views are stored below:
+
+```text
+view.services.<service-id>.<namespace>.items.<item-name>
+```
+
+Item view payloads include `serviceId`, `serviceNamespace`, `sessionId`, `item`,
+`state`, optional `oldState`, `source`, and `timestamp`.
 
 First-party service view payloads include `serviceId`, `serviceNamespace`,
 `sessionId`, and `timestamp`. Consumers must reject a view whose `sessionId`
