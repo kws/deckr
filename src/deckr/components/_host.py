@@ -12,6 +12,14 @@ import anyio
 
 from deckr.components._defs import Component
 from deckr.components._runner import ComponentManager
+from deckr.components.dependencies import (
+    ComponentDependency,
+    DependencyCondition,
+    DependencyConditionState,
+    DependencyKind,
+    dependency_effective_readiness,
+    dependency_from_mapping,
+)
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     BackpressureHandling,
@@ -32,7 +40,15 @@ from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.config import ConfigDocument
 from deckr.core.util.runtime_id import require_runtime_id
 from deckr.lanes import Lane, LaneRegistry
-from deckr.state import DEFAULT_LEASE_STATE_STORE_NAME, StateStore
+from deckr.services.state import ServiceLiveState, live_service_check
+from deckr.state import (
+    DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    DEFAULT_LEASE_STATE_STORE_NAME,
+    EndpointPresence,
+    StateStore,
+    StateUnavailable,
+    presence_endpoint_key,
+)
 
 if TYPE_CHECKING:
     from deckr.runtime import Deckr
@@ -160,6 +176,7 @@ class ComponentInstanceDefinition:
     instance_id: str
     config: Mapping[str, Any] = field(default_factory=dict)
     endpoints: Mapping[str, str] = field(default_factory=dict)
+    dependencies: Mapping[str, ComponentDependency] = field(default_factory=dict)
     runtime_name: str | None = None
     config_address: str | None = None
     generated_by: str | None = None
@@ -273,6 +290,7 @@ class ComponentInstanceSpec:
     runtime_name: str
     config: Mapping[str, Any]
     endpoints: Mapping[str, str]
+    dependencies: Mapping[str, ComponentDependency]
     definition: ComponentDefinition
     lanes: ResolvedLaneSet
     config_address: str | None = None
@@ -422,6 +440,8 @@ def resolve_component_host_plan(
     )
     lane_contracts = _build_lane_contract_registry(specs, document=document)
     _validate_component_lane_bindings(specs, lane_contracts)
+    _report_dependency_declarations(specs, report_events)
+    _report_presence_dependency_cycles(specs, report_events)
     return ComponentHostPlan(
         specs=specs,
         lane_contracts=lane_contracts,
@@ -469,6 +489,14 @@ async def start_components(
     async with anyio.create_task_group() as tg:
         tg.start_soon(component_manager.run)
         host = await _activate_component_plan(deckr, plan, component_manager)
+        if any(spec.dependencies for spec in plan.specs):
+            tg.start_soon(
+                _run_dependency_observer,
+                deckr,
+                plan,
+                component_manager,
+                name="deckr.component-dependencies",
+            )
         try:
             yield host
         finally:
@@ -477,7 +505,7 @@ async def start_components(
 
 
 GENERIC_INSTANCE_FIELDS = frozenset(
-    {"component", "instance_id", "runtime_name", "endpoints", "config"}
+    {"component", "instance_id", "runtime_name", "endpoints", "config", "dependencies"}
 )
 
 
@@ -557,12 +585,35 @@ def _component_instance_definition_from_mapping(
     if not isinstance(config, Mapping):
         raise ValueError(f"{config_address}.config must be a table")
 
+    dependencies_source = source.get("dependencies", {})
+    dependencies: dict[str, ComponentDependency] = {}
+    if not isinstance(dependencies_source, Mapping):
+        raise ValueError(f"{config_address}.dependencies must be a table")
+    for dependency_name, dependency_source in dependencies_source.items():
+        if not isinstance(dependency_name, str) or not dependency_name.strip():
+            raise ValueError(f"{config_address}.dependencies keys must be strings")
+        if not isinstance(dependency_source, Mapping):
+            raise ValueError(
+                f"{config_address}.dependencies.{dependency_name} must be a table"
+            )
+        normalized_name = dependency_name.strip()
+        if normalized_name in dependencies:
+            raise ValueError(
+                f"Duplicate dependency name in {config_address}: {normalized_name}"
+            )
+        dependencies[normalized_name] = dependency_from_mapping(
+            normalized_name,
+            dependency_source,
+            field_name=f"{config_address}.dependencies.{dependency_name}",
+        )
+
     return ComponentInstanceDefinition(
         component_id=component_id.strip(),
         instance_id=instance_id,
         runtime_name=runtime_name,
         config=dict(config),
         endpoints=endpoints,
+        dependencies=dependencies,
         config_address=config_address,
         generated_by=generated_by,
     )
@@ -645,6 +696,7 @@ def _generated_component_instance_definitions(
                     instance_id=item.instance_id,
                     config=dict(item.config),
                     endpoints=dict(item.endpoints),
+                    dependencies=dict(item.dependencies),
                     runtime_name=item.runtime_name,
                     config_address=item.config_address,
                     generated_by=source_id,
@@ -773,6 +825,7 @@ def _specs_from_instance_definitions(
                 runtime_name=runtime_name,
                 config=instance.config,
                 endpoints=instance.endpoints,
+                dependencies=instance.dependencies,
                 definition=definition,
                 lanes=definition.lanes_for(
                     config=instance.config,
@@ -801,6 +854,76 @@ def _specs_from_instance_definitions(
                 f"{count} instances were planned"
             )
     return specs
+
+
+def _report_dependency_declarations(
+    specs: Sequence[ComponentInstanceSpec],
+    report_events: list[PlanningEvent],
+) -> None:
+    for spec in specs:
+        for dependency in sorted(spec.dependencies.values(), key=lambda item: item.name):
+            report_events.append(
+                PlanningEvent(
+                    component_id=spec.component_id,
+                    instance_id=spec.instance_id,
+                    message=(
+                        "declared "
+                        f"{dependency.mode.value} {dependency.kind.value} "
+                        f"dependency {dependency.name}"
+                    ),
+                )
+            )
+
+
+def _report_presence_dependency_cycles(
+    specs: Sequence[ComponentInstanceSpec],
+    report_events: list[PlanningEvent],
+) -> None:
+    endpoint_owners: dict[tuple[str, str], str] = {}
+    for spec in specs:
+        for family, endpoint_id in spec.endpoints.items():
+            endpoint_owners[(family, endpoint_id)] = spec.instance_id
+
+    graph: dict[str, set[str]] = {spec.instance_id: set() for spec in specs}
+    for spec in specs:
+        for dependency in spec.dependencies.values():
+            target = endpoint_owners.get(
+                (dependency.endpoint.family, dependency.endpoint.endpoint_id)
+            )
+            if target is not None and target != spec.instance_id:
+                graph[spec.instance_id].add(target)
+
+    reported: set[tuple[str, ...]] = set()
+
+    def walk(start: str, current: str, path: tuple[str, ...]) -> None:
+        for target in sorted(graph.get(current, ())):
+            if target == start:
+                cycle = path + (target,)
+                canonical = _canonical_cycle(cycle)
+                if canonical not in reported:
+                    reported.add(canonical)
+                    report_events.append(
+                        PlanningEvent(
+                            instance_id=start,
+                            message=(
+                                "presence dependency cycle: "
+                                + " -> ".join(cycle)
+                            ),
+                        )
+                    )
+                continue
+            if target in path:
+                continue
+            walk(start, target, path + (target,))
+
+    for instance_id in sorted(graph):
+        walk(instance_id, instance_id, (instance_id,))
+
+
+def _canonical_cycle(cycle: tuple[str, ...]) -> tuple[str, ...]:
+    body = cycle[:-1]
+    rotations = tuple(body[index:] + body[:index] for index in range(len(body)))
+    return min(rotations)
 
 
 def _string_set(value: Any, *, field_name: str) -> frozenset[str]:
@@ -1318,4 +1441,200 @@ async def _activate_component_plan(
         components=tuple(created),
         lane_names=plan.lane_names,
         lanes=deckr.lanes,
+    )
+
+
+async def _run_dependency_observer(
+    deckr: Deckr,
+    plan: ComponentHostPlan,
+    component_manager: ComponentManager,
+) -> None:
+    specs = tuple(spec for spec in plan.specs if spec.dependencies)
+    lease_state = deckr.state(DEFAULT_LEASE_STATE_STORE_NAME)
+    discovery_state = deckr.state(DEFAULT_DISCOVERY_STATE_STORE_NAME)
+    send, receive = anyio.create_memory_object_stream[object](max_buffer_size=1)
+
+    async def notify() -> None:
+        try:
+            send.send_nowait(object())
+        except anyio.WouldBlock:
+            pass
+
+    async def watch_state(state: StateStore, prefix: str) -> None:
+        while True:
+            try:
+                async with state.watch(prefix) as changes:
+                    async for _change in changes:
+                        await notify()
+            except StateUnavailable:
+                await notify()
+                await anyio.sleep(1.0)
+
+    async with send, receive, anyio.create_task_group() as tg:
+        tg.start_soon(watch_state, lease_state, "presence.endpoint.")
+        tg.start_soon(watch_state, discovery_state, "catalog.services.")
+        tg.start_soon(watch_state, discovery_state, "status.services.")
+        while True:
+            await _evaluate_dependency_readiness(
+                specs,
+                lease_state=lease_state,
+                discovery_state=discovery_state,
+                component_manager=component_manager,
+            )
+            with anyio.move_on_after(0.25) as scope:
+                await receive.receive()
+            if scope.cancel_called:
+                continue
+
+
+async def _evaluate_dependency_readiness(
+    specs: Sequence[ComponentInstanceSpec],
+    *,
+    lease_state: StateStore,
+    discovery_state: StateStore,
+    component_manager: ComponentManager,
+) -> None:
+    for spec in specs:
+        conditions: dict[str, DependencyCondition] = {}
+        for dependency in spec.dependencies.values():
+            conditions[dependency.name] = await _dependency_condition(
+                dependency,
+                lease_state=lease_state,
+                discovery_state=discovery_state,
+            )
+        readiness, reasons, diagnostics = dependency_effective_readiness(conditions)
+        await component_manager.report_component_dependency_readiness(
+            spec.runtime_name,
+            readiness,
+            reasons=reasons,
+            diagnostics=diagnostics,
+        )
+
+
+async def _dependency_condition(
+    dependency: ComponentDependency,
+    *,
+    lease_state: StateStore,
+    discovery_state: StateStore,
+) -> DependencyCondition:
+    if dependency.kind == DependencyKind.SERVICE:
+        return await _service_dependency_condition(
+            dependency,
+            lease_state=lease_state,
+            discovery_state=discovery_state,
+        )
+    return await _endpoint_dependency_condition(dependency, lease_state=lease_state)
+
+
+async def _endpoint_dependency_condition(
+    dependency: ComponentDependency,
+    *,
+    lease_state: StateStore,
+) -> DependencyCondition:
+    try:
+        entry = await lease_state.get(
+            presence_endpoint_key(lane=dependency.lane, endpoint=dependency.endpoint)
+        )
+    except StateUnavailable:
+        return DependencyCondition(
+            name=dependency.name,
+            kind=dependency.kind,
+            mode=dependency.mode,
+            state=DependencyConditionState.UNKNOWN,
+            reason="state_unavailable",
+        )
+    if entry is None:
+        return DependencyCondition(
+            name=dependency.name,
+            kind=dependency.kind,
+            mode=dependency.mode,
+            state=DependencyConditionState.UNSATISFIED,
+            reason="presence_absent",
+            diagnostics={
+                "lane": dependency.lane,
+                "endpoint": str(dependency.endpoint),
+            },
+        )
+    try:
+        presence = EndpointPresence.model_validate(entry.value)
+    except ValueError:
+        return DependencyCondition(
+            name=dependency.name,
+            kind=dependency.kind,
+            mode=dependency.mode,
+            state=DependencyConditionState.UNSATISFIED,
+            reason="presence_invalid",
+        )
+    if presence.lane != dependency.lane or presence.endpoint != dependency.endpoint:
+        return DependencyCondition(
+            name=dependency.name,
+            kind=dependency.kind,
+            mode=dependency.mode,
+            state=DependencyConditionState.UNSATISFIED,
+            reason="presence_mismatch",
+        )
+    return DependencyCondition(
+        name=dependency.name,
+        kind=dependency.kind,
+        mode=dependency.mode,
+        state=DependencyConditionState.SATISFIED,
+        diagnostics={"sessionId": presence.session_id},
+    )
+
+
+async def _service_dependency_condition(
+    dependency: ComponentDependency,
+    *,
+    lease_state: StateStore,
+    discovery_state: StateStore,
+) -> DependencyCondition:
+    if dependency.namespace is None:
+        return DependencyCondition(
+            name=dependency.name,
+            kind=dependency.kind,
+            mode=dependency.mode,
+            state=DependencyConditionState.UNSATISFIED,
+            reason="namespace_missing",
+        )
+    try:
+        check = await live_service_check(
+            lease_state,
+            discovery_state,
+            service_id=dependency.endpoint.endpoint_id,
+            service_namespace=dependency.namespace,
+        )
+    except StateUnavailable:
+        return DependencyCondition(
+            name=dependency.name,
+            kind=dependency.kind,
+            mode=dependency.mode,
+            state=DependencyConditionState.UNKNOWN,
+            reason="state_unavailable",
+        )
+
+    diagnostics = {
+        "serviceId": check.service_id,
+        "serviceNamespace": check.service_namespace,
+    }
+    if check.session_id is not None:
+        diagnostics["sessionId"] = check.session_id
+    if check.reason is not None:
+        diagnostics["reason"] = check.reason
+
+    if check.state == ServiceLiveState.AVAILABLE:
+        state = DependencyConditionState.SATISFIED
+        reason = None
+    elif check.state == ServiceLiveState.DEGRADED:
+        state = DependencyConditionState.DEGRADED
+        reason = "service_degraded"
+    else:
+        state = DependencyConditionState.UNSATISFIED
+        reason = check.reason or f"service_{check.state.value}"
+    return DependencyCondition(
+        name=dependency.name,
+        kind=dependency.kind,
+        mode=dependency.mode,
+        state=state,
+        reason=reason,
+        diagnostics=diagnostics,
     )

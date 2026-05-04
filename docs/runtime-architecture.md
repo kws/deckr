@@ -116,6 +116,7 @@ The current core lane set includes:
 
 - `actions`
 - `hardware_messages`
+- `services`
 
 The distributed lane substrate is NATS. This document owns the generic component
 and lane model. The NATS bus specification owns endpoint-bound lane handles,
@@ -205,6 +206,7 @@ The public Python API should make this the normal path:
 async with Deckr() as deckr:
     actions = deckr.lane("actions")
     hardware_messages = deckr.lane("hardware_messages")
+    services = deckr.lane("services")
 ```
 
 That object is a runtime host helper around the managed lane runtime. It should:
@@ -215,8 +217,8 @@ That object is a runtime host helper around the managed lane runtime. It should:
   `lanes.require(name)`
 - expose endpoint-bound lane handles, recipient filtering diagnostics, and
   current-state hooks
-- start required generic bus services exactly once
-- stop those services through normal async context-manager cancellation
+- start required generic bus infrastructure exactly once
+- stop that infrastructure through normal async context-manager cancellation
 
 Component discovery and component lifecycle should sit on top of that instance,
 not inside the lane bus itself. A host that wants Deckr components should be able
@@ -226,8 +228,8 @@ discovery at all.
 
 The bundled launcher should be a thin convenience wrapper around this public
 runtime API. It may load configuration, install signal handlers, and start
-configured components, but it should not assemble required Deckr services through
-a private path unavailable to embedded hosts.
+configured components, but it should not assemble required Deckr bus
+infrastructure through a private path unavailable to embedded hosts.
 
 ### Supported Hosting Modes
 
@@ -569,12 +571,13 @@ The generic instance wrapper fields are:
 - `instance_id`
 - optional `runtime_name`
 - optional `endpoints`
+- optional `dependencies`
 - optional `config`
 
 Other fields at this level are invalid. Labels, annotations, provider ids,
 manager ids, service namespaces, controller ids, and similar domain settings
-belong inside the component-private `config` table unless promoted to generic
-runtime metadata by a future contract change.
+belong inside the component-private `config` table unless they are part of a
+declared generic dependency.
 
 The runtime host must:
 
@@ -582,13 +585,64 @@ The runtime host must:
 - read explicit component instance definitions
 - run explicitly configured component instance sources
 - validate component ids, cardinality, endpoint slots, runtime names, endpoint
-  ids, lane contracts, and component config hooks
+  ids, dependency declarations, lane contracts, and component config hooks
 - pass only the instance's resolved private `config` mapping and generic runtime
   metadata to the component
 
 The runtime host must not inspect sibling component sections on behalf of a
 component, merge role-shaped parent namespaces implicitly, or interpret domain
 settings such as provider ids or manager ids as generic runtime identity.
+
+### Dependencies
+
+Component dependencies are optional generic instance metadata. They are
+readiness predicates, not activation rules.
+
+```toml
+[deckr.components.instances.sonos_actions.dependencies.sonos_home]
+kind = "service"
+mode = "required"
+endpoint = "service:sonos-home"
+namespace = "com.k-si.deckr.sonos.service"
+
+[deckr.components.instances.worker.dependencies.controller_main]
+kind = "endpoint"
+mode = "observed"
+lane = "actions"
+endpoint = "controller:controller-main"
+```
+
+Supported dependency kinds are:
+
+- `endpoint`
+- `service`
+
+Supported modes are:
+
+- `required`
+- `optional`
+- `preferred`
+- `observed`
+
+Endpoint dependencies require a lane and endpoint address. Service dependencies
+require a `service:<service-id>` endpoint and service namespace; they imply the
+`services` lane, service endpoint presence, service catalog/status checks,
+matching endpoint session id, and service status evaluation.
+
+Dependencies never create component instances, start services, import local
+objects, block `start(ctx)`, block endpoint registration, or stop a component.
+The component host observes dependencies continuously through endpoint presence
+and exact-key current-state checks. A running component can therefore be ready,
+unready, or unknown while its local lifecycle remains `running`.
+
+Required dependencies with `unknown`, `degraded`, or `unsatisfied` conditions
+make the effective component readiness unready. Optional, preferred, and
+observed dependencies are reported in diagnostics without forcing effective
+readiness unready by themselves.
+
+Presence-dependency cycles are reported as diagnostics in the planning report,
+but they are not plan errors. Cyclic presence dependencies are rendezvous
+predicates, not startup ordering.
 
 ### Activation
 
@@ -615,10 +669,10 @@ lifecycle management. That runtime identity must be:
 - separate from protocol-level addresses carried on event lanes
 
 Protocol addresses such as `controller:<controller_id>`,
-`action_provider:<provider_instance_id>`, and `hardware_manager:<manager_id>`
-are derived from endpoint family plus the configured endpoint id in the instance
-`endpoints` map. They are not the generic lifecycle identity of a component
-instance.
+`action_provider:<provider_instance_id>`, `hardware_manager:<manager_id>`, and
+`service:<service_id>` are derived from endpoint family plus the configured
+endpoint id in the instance `endpoints` map. They are not the generic lifecycle
+identity of a component instance.
 
 Deckr protocol endpoint addresses, entity subjects, client/session ids,
 transport addresses, component type ids, and runtime-host component identities
@@ -668,13 +722,16 @@ diagnostics.
 
 Readiness is local operator visibility, not a Deckr protocol fact. A ready
 component may expose no endpoints, and a running component with reachable
-endpoints may still report unready for its own local reasons. Endpoint
-reachability remains lane/current-state protocol state, and device, action,
-binding, page, and settings availability remain domain state.
+endpoints may still report unready for its own local reasons or because a
+declared dependency is unavailable. Endpoint reachability remains
+lane/current-state protocol state, and device, action, binding, page, service,
+and settings availability remain domain state.
 
 Components may report readiness through `RunContext.status` or the convenience
-reporting helpers. Components that never report readiness remain in
-`unknown` readiness.
+reporting helpers. The component manager combines component-reported local
+readiness with dependency observations to publish effective `ComponentStatus`
+snapshots. Components that never report local readiness remain in `unknown`
+readiness unless a required dependency is currently unready.
 
 ### Lane Substrate Replacement
 
@@ -701,7 +758,7 @@ The live design is:
 - Deckr lanes remain logical contracts.
 - NATS carries distributed lane traffic.
 - KV carries retained current state, device descriptors, endpoint reachability,
-  device claims, and action catalogs where appropriate.
+  device claims, action catalogs, and service discovery state where appropriate.
 - Lane listeners register with their Deckr endpoint address.
 - The lane layer stamps envelope senders and filters received envelopes for the
   local endpoint before application code sees them.

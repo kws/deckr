@@ -17,6 +17,7 @@ from deckr.contracts.messages import (
     ACTIONS_LANE,
     CORE_LANE_NAMES,
     HARDWARE_MESSAGES_LANE,
+    SERVICES_LANE,
     BroadcastTarget,
     DeckrMessage,
     EndpointAddress,
@@ -580,6 +581,11 @@ def _validate_core_lane_body(message: DeckrMessage) -> None:
         from deckr.hardware.messages import hardware_body_from_message
 
         hardware_body_from_message(message)
+        return
+    if message.lane == SERVICES_LANE:
+        from deckr.services.messages import service_body
+
+        service_body(message)
 
 
 def _coerce_target(target: str | EndpointAddress | MessageTarget) -> MessageTarget:

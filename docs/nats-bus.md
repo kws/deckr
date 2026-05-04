@@ -17,7 +17,8 @@ Deckr uses:
 Deckr still owns its protocol. NATS carries it. Application code uses Deckr lane
 handles, Deckr envelopes, Deckr endpoint addresses, Deckr subjects, and Deckr
 current-state models. NATS subjects, reply inboxes, JetStream streams, KV bucket
-subjects, queue groups, connection ids, and service ids remain substrate details.
+subjects, queue groups, connection ids, and NATS Service API ids remain
+substrate details.
 
 ## Runtime Surface
 
@@ -28,6 +29,7 @@ from deckr.runtime import Deckr
 
 async with Deckr() as deckr:
     hardware = deckr.lane("hardware_messages")
+    services = deckr.lane("services")
     lease_state = deckr.state("deckr_lease_v1")
     discovery_state = deckr.state("deckr_discovery_v1")
 
@@ -64,15 +66,16 @@ same NATS contract, not a separate in-memory or no-NATS runtime mode.
 - The v1 distributed lane substrate is NATS.
 - A supervised local broker is still the NATS substrate; it is process
   ownership around the broker, not a different Deckr bus contract.
-- `actions` and `hardware_messages` lane traffic uses Core NATS, not
-  JetStream persistence.
+- `actions`, `hardware_messages`, and `services` lane traffic use Core NATS,
+  not JetStream persistence.
 - Retained communication state uses JetStream KV split by semantics:
   `deckr_lease_v1` for TTL-bound leases and `deckr_discovery_v1` for non-TTL
   discovery.
 - Exact-key lease state is authoritative for endpoint presence and device claims.
-- Discovery state describes current action provider catalogs and hardware
-  inventory. Discovery records are usable only when matching endpoint presence
-  exists in the lease bucket with the same session id.
+- Discovery state describes current action provider catalogs, hardware
+  inventory, service catalogs, service status, and service-owned views.
+  Discovery records are usable only when matching endpoint presence exists in
+  the lease bucket with the same session id.
 - KV watches are wakeups. `get(key)` is the exact-key repair path for local
   projections. `items(prefix)` is a prefix observation and is not an
   absence-authoritative snapshot.
@@ -91,10 +94,11 @@ messages and KV current-state documents at that boundary.
 
 ## Vocabulary
 
-- **Deckr lane:** a logical Deckr message contract, such as `actions` or
-  `hardware_messages`.
+- **Deckr lane:** a logical Deckr message contract, such as `actions`,
+  `hardware_messages`, or `services`.
 - **Deckr endpoint address:** a protocol address such as `controller:main`,
-  `action_provider:python`, or `hardware_manager:mirabox`.
+  `action_provider:python`, `hardware_manager:mirabox`, or
+  `service:sonos-home`.
 - **Deckr subject:** the domain entity a Deckr message is about, such as a
   device, control, action, binding, context, page session, or profile.
 - **NATS subject:** the substrate publish/subscribe address used by the NATS
@@ -122,6 +126,8 @@ deckr.lane.hardware_messages.controller.main
 deckr.lane.hardware_messages.hardware_manager.mirabox-main
 deckr.lane.actions.controller.main
 deckr.lane.actions.action_provider.python
+deckr.lane.services.service.sonos-home
+deckr.lane.services.action_provider.python-sonos
 ```
 
 `<lane>`, `<sender-family>`, and `<sender-id>` are encoded with the same
@@ -172,6 +178,59 @@ The shared lane ingress path:
 NATS subject filtering may reduce delivered traffic and enforce coarse
 permissions, but it is not the authoritative Deckr recipient check.
 
+## Services Lane
+
+The `services` lane is the core command/reply lane for endpoint-addressed Deckr
+services. It is used when a component needs to call a service endpoint without
+receiving a local Python object.
+
+Supported endpoint families on `services` are:
+
+- `controller`
+- `action_provider`
+- `service`
+
+`hardware_manager` is not a supported `services` lane participant in the current
+contract.
+
+The initial message types are:
+
+- `serviceCommand`
+- `serviceCommandReply`
+
+A `serviceCommand` body carries:
+
+```json
+{
+  "serviceNamespace": "com.k-si.deckr.sonos.service",
+  "operation": "play",
+  "params": {
+    "zone": "Kitchen"
+  }
+}
+```
+
+A `serviceCommandReply` body carries:
+
+```json
+{
+  "serviceNamespace": "com.k-si.deckr.sonos.service",
+  "operation": "play",
+  "status": "ok",
+  "result": {
+    "accepted": true
+  }
+}
+```
+
+Reply status values are `ok`, `rejected`, `unavailable`, and `error`. Error
+replies may include a structured `error` object with `code`, `message`, and
+`diagnostics`.
+
+The Deckr envelope remains the authority for sender endpoint, sender session,
+recipient endpoint, recipient session, message id, `inReplyTo`, expiry, and
+subject. Service bodies must not duplicate sender or session authority fields.
+
 ## State Store API
 
 Application code uses `deckr.state.StateStore`, not raw `nats-py` KV calls:
@@ -182,6 +241,7 @@ discovery_state = deckr.state("deckr_discovery_v1")
 
 entry = await lease_state.get("presence.endpoint.actions.action_provider.python")
 entries = await discovery_state.items("catalog.actions.providers.")
+service = await discovery_state.get("catalog.services.sonos-home")
 
 written = await lease_state.put(key, value, ttl=30.0)
 created = await lease_state.create(key, value, ttl=30.0)
@@ -256,8 +316,9 @@ Discovery bucket requirements for `deckr_discovery_v1`:
 - no broker TTL / max age
 - no per-write TTL arguments from Deckr
 
-Discovery writes are used for hardware inventory and action provider catalogs.
-They are rewritten on start and content change and deleted on graceful stop.
+Discovery writes are used for hardware inventory, action provider catalogs,
+service catalogs, service status, and service-owned views. They are rewritten on
+start and content change and deleted on graceful stop.
 The NATS stream may still report message-TTL support enabled, especially if an
 existing stream was created with that flag. Deckr does not rely on disabling that
 flag because NATS does not allow it to be turned off after stream creation; the
@@ -293,6 +354,14 @@ Action provider catalog helpers live in `deckr.actions.state`:
 action_provider_catalog_key("python")
 ```
 
+Service helpers live in `deckr.services.state`:
+
+```python
+service_catalog_key("sonos-home")
+service_status_key("sonos-home")
+service_view_key("sonos-home", "com.k-si.deckr.sonos.service", "zones", "Kitchen")
+```
+
 Matching parsers live alongside the corresponding key helpers.
 
 ## Current-State Keys
@@ -313,6 +382,14 @@ Action provider catalog in `deckr_discovery_v1`:
 
 ```text
 catalog.actions.providers.<provider-instance-id>
+```
+
+Service discovery state in `deckr_discovery_v1`:
+
+```text
+catalog.services.<service-id>
+status.services.<service-id>
+view.services.<service-id>.<service-namespace>.<tokens...>
 ```
 
 Device claim in `deckr_lease_v1`:
@@ -549,6 +626,80 @@ same session. The action provider instance does not broadcast
 `actionsUnregistered`; broker current state plus lease presence is the source of
 truth.
 
+## Service Catalogs, Status, And Views
+
+Service discovery state describes endpoint-addressed service instances and the
+service-owned views they publish. A service id is a configured service instance,
+such as `sonos-home`; a service namespace is the globally named API/state
+contract, such as `com.k-si.deckr.sonos.service`.
+
+Service catalog example:
+
+```json
+{
+  "serviceId": "sonos-home",
+  "serviceEndpoint": "service:sonos-home",
+  "serviceNamespace": "com.k-si.deckr.sonos.service",
+  "sessionId": "uuid-v4-string",
+  "supportedOperations": ["play", "pause", "setVolume"],
+  "viewPrefixes": ["view.services.sonos-home"],
+  "timestamp": "2026-04-29T10:30:00Z",
+  "labels": {
+    "location": "home"
+  },
+  "annotations": {
+    "runtime": "python"
+  },
+  "diagnostics": {}
+}
+```
+
+Service status example:
+
+```json
+{
+  "serviceId": "sonos-home",
+  "serviceEndpoint": "service:sonos-home",
+  "serviceNamespace": "com.k-si.deckr.sonos.service",
+  "sessionId": "uuid-v4-string",
+  "status": "available",
+  "timestamp": "2026-04-29T10:30:00Z",
+  "diagnostics": {}
+}
+```
+
+Status values are:
+
+- `available`
+- `degraded`
+- `unavailable`
+
+Service catalogs, status, and views are stored in `deckr_discovery_v1` without
+broker TTL. They are descriptive state, not live leases. A service is live only
+while matching service endpoint presence exists in `deckr_lease_v1` on the
+`services` lane with the same `sessionId`.
+
+Service view keys are service-specific JSON documents under the service
+namespace:
+
+```text
+view.services.<service-id>.<service-namespace>.<tokens...>
+```
+
+For example, a Sonos service may publish zone state under:
+
+```text
+view.services.sonos-home.b64_Y29tLmstc2kuZGVja3Iuc29ub3Muc2VydmljZQ.zones.Kitchen
+```
+
+The generic Deckr contract owns key shape, token encoding, and session gating.
+The service namespace owns the view payload schema and operation semantics.
+
+Exact-confirmed service presence loss, session mismatch, missing catalog,
+missing status, or `unavailable` status makes required service dependencies
+unsatisfied. `degraded` status is a degraded dependency condition. Consumers must
+treat `StateUnavailable` as unknown/retry, not absence.
+
 ## Dynamic Page Action Targets
 
 Action providers request dynamic pages with `openPage`, `updatePage`, and
@@ -625,6 +776,7 @@ present -> missing
 present -> different session
 claim present -> controller presence missing
 inventory present -> manager presence missing
+service status present -> service presence missing
 ```
 
 The component's job is:
@@ -677,10 +829,14 @@ Examples:
 - An action provider instance with endpoint `action_provider:python` publishes
   lane traffic only to `deckr.lane.actions.action_provider.python` and updates
   only its own lease presence key and discovery catalog key.
+- A service with endpoint `service:sonos-home` publishes lane traffic only to
+  `deckr.lane.services.service.sonos-home` and updates only its own lease
+  presence key, service catalog key, service status key, and owned service view
+  keys.
 - A controller with endpoint `controller:main` publishes controller-originated
-  messages on `hardware_messages` and `actions`, reads and watches
-  lease endpoint/claim keyspaces and discovery inventory/catalog keyspaces, and
-  creates or refreshes claim keys according to controller policy.
+  messages on `hardware_messages`, `actions`, and `services`, reads and watches
+  lease endpoint/claim keyspaces and discovery inventory/catalog/status/view
+  keyspaces, and creates or refreshes claim keys according to controller policy.
 
 Request/reply permissions must allow the relevant `_INBOX` subjects or use NATS
 `allow_responses` where that better fits responder behavior.
@@ -737,6 +893,9 @@ nats kv ls deckr_lease_v1 'presence.endpoint.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_lease_v1 'claim.device.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_discovery_v1 'inventory.hardware.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_discovery_v1 'catalog.actions.providers.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_discovery_v1 'catalog.services.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_discovery_v1 'status.services.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_discovery_v1 'view.services.>' --server nats://127.0.0.1:4222
 ```
 
 When a component appears unavailable, check in this order:
@@ -744,7 +903,8 @@ When a component appears unavailable, check in this order:
 1. Is its endpoint presence key present and carrying the expected endpoint, lane,
    and session id?
 2. Is its discovery state present and session-matched, such as inventory for a
-   hardware manager or catalog for an action provider instance?
+   hardware manager, catalog for an action provider instance, or catalog/status
+   for a service instance?
 3. If a device is claimed, does the claim's controller endpoint/session match
    current controller presence?
 4. Did the lease key expire after the 30s TTL because the component stopped

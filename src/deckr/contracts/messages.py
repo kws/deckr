@@ -19,14 +19,17 @@ from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_jso
 
 HARDWARE_MESSAGES_LANE = "hardware_messages"
 ACTIONS_LANE = "actions"
-CORE_LANE_NAMES = (ACTIONS_LANE, HARDWARE_MESSAGES_LANE)
+SERVICES_LANE = "services"
+CORE_LANE_NAMES = (ACTIONS_LANE, HARDWARE_MESSAGES_LANE, SERVICES_LANE)
 
 DECKR_MESSAGE_PROTOCOL_VERSION = "1"
 HARDWARE_MESSAGES_SCHEMA_ID = "deckr.message.hardware_messages.v1"
 ACTION_MESSAGES_SCHEMA_ID = "deckr.message.actions.v1"
+SERVICE_MESSAGES_SCHEMA_ID = "deckr.message.services.v1"
 CORE_LANE_SCHEMA_IDS = {
     ACTIONS_LANE: ACTION_MESSAGES_SCHEMA_ID,
     HARDWARE_MESSAGES_LANE: HARDWARE_MESSAGES_SCHEMA_ID,
+    SERVICES_LANE: SERVICE_MESSAGES_SCHEMA_ID,
 }
 
 CORE_ENDPOINT_FAMILIES = frozenset(
@@ -34,6 +37,7 @@ CORE_ENDPOINT_FAMILIES = frozenset(
         "action_provider",
         "controller",
         "hardware_manager",
+        "service",
     }
 )
 
@@ -151,6 +155,10 @@ def hardware_manager_address(manager_id: str) -> EndpointAddress:
     return endpoint_address("hardware_manager", manager_id)
 
 
+def service_address(service_id: str) -> EndpointAddress:
+    return endpoint_address("service", service_id)
+
+
 def parse_endpoint_address(address: str | EndpointAddress) -> EndpointAddress:
     return (
         address
@@ -175,6 +183,16 @@ def parse_hardware_manager_address(address: str | EndpointAddress) -> str | None
     except ValueError:
         return None
     if parsed.family != "hardware_manager":
+        return None
+    return parsed.endpoint_id
+
+
+def parse_service_address(address: str | EndpointAddress) -> str | None:
+    try:
+        parsed = parse_endpoint_address(address)
+    except ValueError:
+        return None
+    if parsed.family != "service":
         return None
     return parsed.endpoint_id
 

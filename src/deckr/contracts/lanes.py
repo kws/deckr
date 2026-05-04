@@ -8,6 +8,7 @@ from deckr.contracts.messages import (
     ACTIONS_LANE,
     CORE_LANE_SCHEMA_IDS,
     HARDWARE_MESSAGES_LANE,
+    SERVICES_LANE,
 )
 
 EndpointFamilies = frozenset[str]
@@ -186,6 +187,13 @@ HARDWARE_MESSAGE_TYPES = frozenset(
     }
 )
 
+SERVICE_MESSAGE_TYPES = frozenset(
+    {
+        "serviceCommand",
+        "serviceCommandReply",
+    }
+)
+
 CORE_EPHEMERAL_DELIVERY = DeliverySemantics(
     persistence=DeliveryPersistence.EPHEMERAL,
     guarantee=DeliveryGuarantee.AT_MOST_ONCE,
@@ -345,6 +353,37 @@ HARDWARE_MESSAGES_DELIVERY = replace(
     ),
 )
 
+SERVICE_MESSAGES_DELIVERY = replace(
+    CORE_EPHEMERAL_DELIVERY,
+    ordering_keys=(
+        "sender",
+        "recipient",
+        "subject.serviceId",
+        "subject.namespace",
+        "subject.operation",
+    ),
+    message_families=(
+        MessageFamilyDelivery(
+            family=MessageFamily.COMMAND,
+            message_types=frozenset({"serviceCommand"}),
+            idempotency=IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS,
+            ordering_keys=(
+                "sender",
+                "recipient",
+                "subject.serviceId",
+                "subject.namespace",
+                "subject.operation",
+            ),
+        ),
+        MessageFamilyDelivery(
+            family=MessageFamily.REPLY,
+            message_types=frozenset({"serviceCommandReply"}),
+            idempotency=IdempotencySemantics.CORRELATE_IN_REPLY_TO_TIMEOUT,
+            ordering_keys=("inReplyTo",),
+        ),
+    ),
+)
+
 CORE_LANE_CONTRACTS: Mapping[str, LaneContract] = {
     ACTIONS_LANE: LaneContract(
         lane=ACTIONS_LANE,
@@ -370,6 +409,16 @@ CORE_LANE_CONTRACTS: Mapping[str, LaneContract] = {
             "controllers": "controller",
         },
         default_broadcast_hop_limit=1,
+    ),
+    SERVICES_LANE: LaneContract(
+        lane=SERVICES_LANE,
+        schema_id=CORE_LANE_SCHEMA_IDS[SERVICES_LANE],
+        message_types=SERVICE_MESSAGE_TYPES,
+        delivery=SERVICE_MESSAGES_DELIVERY,
+        allowed_sender_families=frozenset({"action_provider", "controller", "service"}),
+        allowed_recipient_families=frozenset(
+            {"action_provider", "controller", "service"}
+        ),
     ),
 }
 
