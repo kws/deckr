@@ -28,10 +28,13 @@ from deckr.state import (
     DEFAULT_DISCOVERY_STATE_STORE_NAME,
     DEFAULT_LEASE_STATE_STORE_NAME,
     DEFAULT_STATE_LEASE_TTL_SECONDS,
+    LEASE_STATE_STORE_POLICY,
+    PERSISTENT_STATE_STORE_POLICY,
     StateChange,
     StateConflict,
     StateEntry,
     StateStore,
+    StateStorePolicy,
     StateUnavailable,
     encode_key_token,
     state_value,
@@ -208,23 +211,48 @@ class NatsSubstrate:
             await send.aclose()
             await receive.aclose()
 
-    def state(self, name: str) -> StateStore:
+    def state(
+        self,
+        name: str,
+        *,
+        policy: StateStorePolicy | None = None,
+    ) -> StateStore:
         if self._js is None:
             raise RuntimeError("NATS substrate is not connected")
+        resolved_policy = self._resolve_state_policy(name, policy)
         store = self._states.get(name)
         if store is None:
             store = NatsStateStore(
                 name=name,
                 js=self._js,
                 buffer_size=self._buffer_size,
-                lease_ttl_seconds=(
-                    None
-                    if name == self.discovery_state_name
-                    else self._state_lease_ttl_seconds
-                ),
+                policy=resolved_policy,
             )
             self._states[name] = store
+        elif store.policy != resolved_policy:
+            raise ValueError(
+                f"NATS current-state bucket {name!r} was already opened with "
+                f"{store.policy.description}; cannot reopen it with "
+                f"{resolved_policy.description}."
+            )
         return store
+
+    def _resolve_state_policy(
+        self,
+        name: str,
+        policy: StateStorePolicy | None,
+    ) -> StateStorePolicy:
+        if policy is not None:
+            return policy
+        if name == self.discovery_state_name:
+            return PERSISTENT_STATE_STORE_POLICY
+        if self._state_lease_ttl_seconds == LEASE_STATE_STORE_POLICY.broker_ttl_seconds:
+            return LEASE_STATE_STORE_POLICY
+        return StateStorePolicy(
+            broker_ttl_seconds=float(self._state_lease_ttl_seconds),
+            allow_write_ttl=True,
+            description="lease current state",
+        )
 
     async def _publish_payload(
         self,
@@ -258,14 +286,27 @@ class NatsStateStore:
         js,
         buffer_size: int,
         lease_ttl_seconds: float | None = _STATE_LEASE_TTL_SECONDS,
+        policy: StateStorePolicy | None = None,
     ) -> None:
         self.name = name
         self._js = js
         self._buffer_size = buffer_size
-        self._lease_ttl_seconds = (
-            None if lease_ttl_seconds is None else float(lease_ttl_seconds)
+        self._policy = policy or StateStorePolicy(
+            broker_ttl_seconds=(
+                None if lease_ttl_seconds is None else float(lease_ttl_seconds)
+            ),
+            allow_write_ttl=lease_ttl_seconds is not None,
+            description=(
+                "persistent current state"
+                if lease_ttl_seconds is None
+                else "lease current state"
+            ),
         )
         self._kv = None
+
+    @property
+    def policy(self) -> StateStorePolicy:
+        return self._policy
 
     async def get(self, key: str) -> StateEntry | None:
         return await self._get_entry(key)
@@ -490,7 +531,7 @@ class NatsStateStore:
             config=KeyValueConfig(
                 bucket=self.name,
                 history=1,
-                ttl=self._lease_ttl_seconds,
+                ttl=self._policy.broker_ttl_seconds,
             )
         )
 
@@ -498,7 +539,7 @@ class NatsStateStore:
         return await self._js.create_key_value(
             bucket=self.name,
             history=1,
-            ttl=self._lease_ttl_seconds,
+            ttl=self._policy.broker_ttl_seconds,
         )
 
     async def _ensure_kv_stream_config(self, kv) -> None:
@@ -513,18 +554,18 @@ class NatsStateStore:
             ) from exc
         config = info.config
         needs_update = (
-            getattr(config, "max_age", None) != self._lease_ttl_seconds
+            getattr(config, "max_age", None) != self._policy.broker_ttl_seconds
             or getattr(config, "max_msgs_per_subject", None) != 1
         )
-        if self._lease_ttl_seconds is not None:
+        if self._policy.allow_write_ttl:
             needs_update = (
                 needs_update or getattr(config, "allow_msg_ttl", None) is not True
             )
         if not needs_update:
             return
-        config.max_age = self._lease_ttl_seconds
+        config.max_age = self._policy.broker_ttl_seconds
         config.max_msgs_per_subject = 1
-        if self._lease_ttl_seconds is not None:
+        if self._policy.allow_write_ttl:
             config.allow_msg_ttl = True
         try:
             await self._js.update_stream(config)
@@ -546,20 +587,21 @@ class NatsStateStore:
         return _state_entry_from_kv(entry)
 
     def _validate_ttl(self, ttl: float | None) -> None:
-        if self._lease_ttl_seconds is None:
+        if not self._policy.allow_write_ttl:
             if ttl is None:
                 return
             raise ValueError(
-                "NATS discovery state does not use broker-owned per-key TTL; "
+                f"NATS {self._policy.description} does not use write TTL; "
                 f"per-key TTL {ttl!r} is not supported."
             )
         if ttl is None:
             return
-        if abs(float(ttl) - self._lease_ttl_seconds) <= 0.001:
+        broker_ttl = self._policy.broker_ttl_seconds
+        if broker_ttl is not None and abs(float(ttl) - broker_ttl) <= 0.001:
             return
         raise ValueError(
             "NATS current state uses the broker-owned bucket TTL "
-            f"({self._lease_ttl_seconds:g}s); per-key TTL {ttl!r} is not supported "
+            f"({broker_ttl:g}s); per-key TTL {ttl!r} is not supported "
             "for lease state."
         )
 

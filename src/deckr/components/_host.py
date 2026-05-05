@@ -46,6 +46,7 @@ from deckr.state import (
     DEFAULT_LEASE_STATE_STORE_NAME,
     EndpointPresence,
     StateStore,
+    StateStorePolicy,
     StateUnavailable,
     presence_endpoint_key,
 )
@@ -117,7 +118,7 @@ class ComponentContext:
     endpoints: Mapping[str, str]
     base_dir: Path
     lanes: LaneRegistry
-    state_for: Callable[[str], StateStore]
+    state_for: Callable[..., StateStore]
 
     def require_lane(self, name: str) -> Lane:
         return self.lanes.require(name)
@@ -130,8 +131,13 @@ class ComponentContext:
             )
         return endpoint_id
 
-    def state(self, name: str = DEFAULT_LEASE_STATE_STORE_NAME) -> StateStore:
-        return self.state_for(name)
+    def state(
+        self,
+        name: str = DEFAULT_LEASE_STATE_STORE_NAME,
+        *,
+        policy: StateStorePolicy | None = None,
+    ) -> StateStore:
+        return self.state_for(name, policy=policy)
 
 
 class ComponentFactory(Protocol):

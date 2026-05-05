@@ -24,6 +24,7 @@ from deckr.state import (
     DEFAULT_DISCOVERY_STATE_STORE_NAME,
     DEFAULT_LEASE_STATE_STORE_NAME,
     StateStore,
+    StateStorePolicy,
 )
 from deckr.substrates.nats import NatsSubstrate
 
@@ -499,8 +500,13 @@ class SupervisedNatsSubstrate:
             endpoint_session_id=endpoint_session_id,
         )
 
-    def state(self, name: str) -> StateStore:
-        return self._connected_nats().state(name)
+    def state(
+        self,
+        name: str,
+        *,
+        policy: StateStorePolicy | None = None,
+    ) -> StateStore:
+        return self._connected_nats().state(name, policy=policy)
 
     def _connected_nats(self) -> NatsSubstrate:
         if self._nats is None:

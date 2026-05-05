@@ -69,8 +69,9 @@ same NATS contract, not a separate in-memory or no-NATS runtime mode.
 - `actions`, `hardware_messages`, and `services` lane traffic use Core NATS,
   not JetStream persistence.
 - Retained communication state uses JetStream KV split by semantics:
-  `deckr_lease_v1` for TTL-bound leases and `deckr_discovery_v1` for non-TTL
-  discovery.
+  `deckr_lease_v1` for TTL-bound leases, `deckr_discovery_v1` for non-TTL
+  discovery, and explicitly opened owner-qualified private buckets for durable
+  package projections such as controller config.
 - Exact-key lease state is authoritative for endpoint presence and device claims.
 - Discovery state describes current action provider catalogs, hardware
   inventory, service catalogs, service status, and service-owned views.
@@ -92,40 +93,16 @@ Adapter-private WebSocket, MQTT, USB, HID, HTTP, or vendor protocols may exist a
 real external protocol boundaries. They must translate into canonical Deckr lane
 messages and KV current-state documents at that boundary.
 
-## Namespacing Guidance
+## Namespace Rules
 
-Deckr core owns the short lane names and shared current-state buckets documented
-here. Extension-owned contracts must use globally owned names so independent
-packages can coexist in one broker without accidental collisions.
+Public identifier ownership rules live in [`namespaces.md`](namespaces.md).
+This bus contract uses those rules in three places:
 
-Use these rules for service and extension naming:
-
-- Official Deckr packages use the owned `dev.deckr.*` namespace, for example
-  `dev.deckr.sonos.service`. Non-Deckr packages must use a namespace owned by
-  their package or organization.
-- Service namespaces must be globally unique dotted identifiers owned by the
-  service package. Projects with a stable DNS name should use reverse-DNS style,
-  such as `org.example.media.service`. Projects without a DNS name should use a
-  stable forge-qualified style, such as
-  `io.github.example-org.media-service.service` or
-  `io.gitlab.example-group.media-service.service`. Do not use short names such
-  as `media`, `sonos`, `openhab`, `home`, or `service` as service namespaces.
-- Service ids are deployment-local endpoint ids such as `media-home`. They are
-  configured addresses, not globally unique API namespaces.
-- Service-owned views that participate in Deckr discovery use the generic
-  `view.services.<service-id>.<service-namespace>...` key shape. The namespace
-  token is encoded in the key and prevents view-schema collisions between
-  services with similar resource names.
-- Extension lane identifiers must be globally namespaced dotted identifiers,
-  such as `org.example.media.events` or
-  `io.github.example-org.media-service.events`. Short unqualified extension
-  lanes are not valid v1 Deckr contracts.
-- Extension-owned private KV buckets, when a package genuinely needs one outside
-  Deckr lease/discovery/config projections, should use an owner-qualified,
-  purpose-specific, versioned name that is safe for JetStream bucket names, such
-  as `org_example_media_cache_v1` or
-  `io_github_example_org_media_service_cache_v1`. Do not use generic bucket
-  names such as `state`, `cache`, `services`, or `config`.
+- core lane names and shared bucket names stay short because they are Deckr
+  infrastructure roots
+- extension lane names and private package bucket names must be owner-qualified
+- service namespaces must be globally owned identifiers, while service ids are
+  deployment-local endpoint ids
 
 The shared `deckr_lease_v1` and `deckr_discovery_v1` buckets are for Deckr
 runtime coordination only. A package-specific private bucket must not redefine
@@ -276,12 +253,21 @@ subject. Service bodies must not duplicate sender or session authority fields.
 Application code uses `deckr.state.StateStore`, not raw `nats-py` KV calls:
 
 ```python
+from deckr.state import PERSISTENT_STATE_STORE_POLICY
+
 lease_state = deckr.state("deckr_lease_v1")
 discovery_state = deckr.state("deckr_discovery_v1")
+controller_config_state = deckr.state(
+    "dev_deckr_controller_config_v1",
+    policy=PERSISTENT_STATE_STORE_POLICY,
+)
 
 entry = await lease_state.get("presence.endpoint.actions.action_provider.python")
 entries = await discovery_state.items("catalog.actions.providers.")
 service = await discovery_state.get("catalog.services.media-home")
+projection = await controller_config_state.get(
+    "config.controllers.controller-main.materialized"
+)
 
 written = await lease_state.put(key, value, ttl=30.0)
 created = await lease_state.create(key, value, ttl=30.0)
@@ -364,10 +350,96 @@ existing stream was created with that flag. Deckr does not rely on disabling tha
 flag because NATS does not allow it to be turned off after stream creation; the
 Deckr state API rejects TTL writes to discovery stores instead.
 
+Owner-qualified persistent buckets use the same non-TTL current-state policy as
+discovery without reusing `deckr_discovery_v1`. Open them explicitly:
+
+```python
+from deckr.state import PERSISTENT_STATE_STORE_POLICY
+
+state = deckr.state(
+    "dev_deckr_controller_config_v1",
+    policy=PERSISTENT_STATE_STORE_POLICY,
+)
+```
+
+Persistent private bucket requirements:
+
+- `history = 1`
+- `max_msgs_per_subject = 1`
+- no broker TTL / max age
+- no per-write TTL arguments from Deckr
+
+The bucket name must be owner-qualified, purpose-specific, versioned, and safe
+for JetStream bucket names. Persistent private buckets survive runtime and
+centralized Docker stack restarts as long as the NATS JetStream store and volume
+are preserved.
+
 The NATS substrate creates or updates the development bucket configuration when
 possible. If an older development bucket cannot be updated safely, delete the
-affected `KV_deckr_lease_v1` or `KV_deckr_discovery_v1` stream and restart the
-runtime.
+affected `KV_deckr_lease_v1`, `KV_deckr_discovery_v1`, or private
+`KV_<bucket>` stream and restart the runtime.
+
+## Controller Materialized Config
+
+The Python controller owns a durable materialized config projection in:
+
+```text
+bucket: dev_deckr_controller_config_v1
+config key: config.controllers.<controller-id>.materialized
+result key: result.controllers.<controller-id>.materialized
+```
+
+`<controller-id>` is the target controller endpoint id encoded with the normal
+Deckr key-token rules. This scopes the projection to an intended controller
+without making component runtime names, process ids, transports, or file paths
+durable config identity.
+
+Projection records use whole-current-state semantics. A producer writes the
+complete controller config/settings projection for one controller:
+
+```json
+{
+  "schema": "dev.deckr.controller.config.materialized.v1",
+  "controllerId": "controller-main",
+  "timestamp": "2026-05-05T12:00:00Z",
+  "deviceConfigs": [],
+  "producer": {
+    "id": "file-watcher",
+    "kind": "file_watcher"
+  }
+}
+```
+
+`deviceConfigs` contains canonical controller device config documents as defined
+by `deckr-controller`. File deletion or local config removal is represented by
+publishing a new complete projection with that config omitted. Deleting the
+projection key means no materialized config is available for that controller.
+
+Result records are controller-owned feedback and are written separately from the
+producer-owned projection:
+
+```json
+{
+  "schema": "dev.deckr.controller.config.result.v1",
+  "controllerId": "controller-main",
+  "timestamp": "2026-05-05T12:00:01Z",
+  "status": "active",
+  "sourceRevision": 42,
+  "activeConfigIds": ["desk"],
+  "diagnostics": []
+}
+```
+
+Status is `active`, `missing`, or `rejected`. Diagnostics are explanatory only;
+they do not turn the projection into command/reply traffic.
+
+`FileBackedDeviceConfigService` may run directly inside a monolith controller
+stack for local-file use. The same file-backed watcher can also run as an
+ordinary standalone Deckr component instance connected to a remote NATS broker
+and publish the materialized projection to the persistent bucket. The producer
+component has no endpoint slots and does not register a Deckr endpoint. A future
+independent editor or web service can publish the same bucket/key/payload shape
+without using a Deckr RPC service.
 
 ## Key Tokens
 
@@ -671,7 +743,8 @@ truth.
 Service discovery state describes endpoint-addressed service instances and the
 service-owned views they publish. A service id is a configured service instance,
 such as `media-home`; a service namespace is the globally named API/state
-contract, such as `org.example.media.service`.
+contract, such as `org.example.media.service`. The general identifier ownership
+rules are defined in [`namespaces.md`](namespaces.md).
 
 Service catalog example:
 
@@ -729,7 +802,7 @@ view.services.<service-id>.<service-namespace>.<tokens...>
 For example, a media service may publish a status view under:
 
 ```text
-view.services.media-home.b64_ZGV2LmRlY2tyLm1lZGlhLnNlcnZpY2U.status
+view.services.media-home.b64_b3JnLmV4YW1wbGUubWVkaWEuc2VydmljZQ.status
 ```
 
 The generic Deckr contract owns key shape, token encoding, and session gating.

@@ -29,6 +29,7 @@ from deckr.lanes import EndpointRegistrationConflict, EndpointSessionLost
 from deckr.runtime import Deckr
 from deckr.state import (
     DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    PERSISTENT_STATE_STORE_POLICY,
     EndpointPresence,
     StateConflict,
     StateEntry,
@@ -445,7 +446,7 @@ async def test_nats_state_discovery_bucket_rejects_ttl_writes() -> None:
         lease_ttl_seconds=None,
     )
 
-    with pytest.raises(ValueError, match="discovery state"):
+    with pytest.raises(ValueError, match="persistent current state"):
         await store.put(
             "catalog.actions.providers.python",
             {"provider": "python"},
@@ -463,12 +464,44 @@ async def test_nats_substrate_uses_configured_discovery_store_without_ttl() -> N
 
     discovery_state = substrate.state("deckr_discovery_custom")
 
-    with pytest.raises(ValueError, match="discovery state"):
+    with pytest.raises(ValueError, match="persistent current state"):
         await discovery_state.put(
             "catalog.actions.providers.python",
             {"provider": "python"},
             ttl=30,
         )
+
+
+@pytest.mark.asyncio
+async def test_nats_substrate_can_open_explicit_persistent_state_bucket() -> None:
+    substrate = NatsSubstrate(lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY)
+    substrate._js = _FakeJs(existing=False)
+
+    state = substrate.state(
+        "dev_deckr_controller_config_v1",
+        policy=PERSISTENT_STATE_STORE_POLICY,
+    )
+    await state.put(
+        "config.controllers.controller-main.materialized",
+        {"schema": "test"},
+    )
+
+    assert substrate._js.created_config is not None
+    assert substrate._js.created_config.ttl is None
+    assert substrate._js.updated_config is None
+
+
+def test_nats_substrate_rejects_same_bucket_with_conflicting_policy() -> None:
+    substrate = NatsSubstrate(lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY)
+    substrate._js = _FakeJs()
+
+    substrate.state(
+        "dev_deckr_controller_config_v1",
+        policy=PERSISTENT_STATE_STORE_POLICY,
+    )
+
+    with pytest.raises(ValueError, match="already opened"):
+        substrate.state("dev_deckr_controller_config_v1")
 
 
 @pytest.mark.asyncio

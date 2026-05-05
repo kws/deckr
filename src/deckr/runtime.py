@@ -13,7 +13,7 @@ from deckr.contracts.lanes import (
 )
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.lanes import Lane, LaneRegistry, LaneSubstrate
-from deckr.state import DEFAULT_LEASE_STATE_STORE_NAME, StateStore
+from deckr.state import DEFAULT_LEASE_STATE_STORE_NAME, StateStore, StateStorePolicy
 from deckr.substrates.nats import NatsSubstrate
 
 
@@ -55,8 +55,13 @@ class Deckr:
     def lane(self, name: str) -> Lane:
         return self._lanes.require(name)
 
-    def state(self, name: str = DEFAULT_LEASE_STATE_STORE_NAME) -> StateStore:
-        return self._substrate.state(name)
+    def state(
+        self,
+        name: str = DEFAULT_LEASE_STATE_STORE_NAME,
+        *,
+        policy: StateStorePolicy | None = None,
+    ) -> StateStore:
+        return self._substrate.state(name, policy=policy)
 
     async def __aenter__(self) -> Deckr:
         if self._task_group is not None:

@@ -37,6 +37,7 @@ from deckr.state import (
     StateConflict,
     StateEntry,
     StateStore,
+    StateStorePolicy,
     StateUnavailable,
     presence_endpoint_key,
 )
@@ -79,7 +80,7 @@ class LaneSubstrate(Protocol):
         endpoint_session_id: str,
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]: ...
 
-    def state(self, name: str) -> StateStore: ...
+    def state(self, name: str, *, policy: StateStorePolicy | None = None) -> StateStore: ...
 
 
 class Lane:

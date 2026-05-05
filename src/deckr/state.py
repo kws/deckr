@@ -48,6 +48,31 @@ class StateUnavailable(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class StateStorePolicy:
+    broker_ttl_seconds: float | None
+    allow_write_ttl: bool = False
+    description: str = "persistent current state"
+
+    def __post_init__(self) -> None:
+        if self.broker_ttl_seconds is not None and self.broker_ttl_seconds <= 0:
+            raise ValueError("broker_ttl_seconds must be greater than zero")
+        if self.allow_write_ttl and self.broker_ttl_seconds is None:
+            raise ValueError("allow_write_ttl requires broker_ttl_seconds")
+
+
+LEASE_STATE_STORE_POLICY = StateStorePolicy(
+    broker_ttl_seconds=float(DEFAULT_STATE_LEASE_TTL_SECONDS),
+    allow_write_ttl=True,
+    description="lease current state",
+)
+PERSISTENT_STATE_STORE_POLICY = StateStorePolicy(
+    broker_ttl_seconds=None,
+    allow_write_ttl=False,
+    description="persistent current state",
+)
+
+
+@dataclass(frozen=True, slots=True)
 class StateEntry:
     key: str
     value: Mapping[str, Any]
