@@ -756,6 +756,67 @@ missing status, or `unavailable` status makes required service dependencies
 unsatisfied. `degraded` status is a degraded dependency condition. Consumers must
 treat `StateUnavailable` as unknown/retry, not absence.
 
+## Action Binding Output And Overlays
+
+Action providers update a bound control's base render state with
+`bindingOutput` messages on the `actions` lane. The controller validates the
+mirrored `BindingMetadata`, selected capability, command type, and generation
+before applying the output.
+
+For short-lived feedback, action providers use binding-scoped transient overlay
+messages instead of replacing the base render state:
+
+- `bindingOverlay` shows or replaces the active overlay for one binding.
+- `bindingOverlayClear` clears the active overlay, optionally fenced by
+  `overlayId`.
+
+A `bindingOverlay` body carries:
+
+```json
+{
+  "binding": { "...": "BindingMetadata including outputGeneration" },
+  "template": "ok",
+  "title": "OK",
+  "params": {},
+  "durationSeconds": 1.2,
+  "overlayId": "play-feedback",
+  "generation": 1
+}
+```
+
+A `bindingOverlayClear` body carries:
+
+```json
+{
+  "binding": { "...": "BindingMetadata including outputGeneration" },
+  "overlayId": "play-feedback",
+  "generation": 1
+}
+```
+
+The bundled controller supports the semantic templates `ok`, `error`,
+`unavailable`, `loading`, and `unknown`. If another template is requested, the
+controller logs/diagnoses the unknown template and renders the `unknown`
+question-mark overlay as fallback.
+
+Overlay timing is controller policy. The initial defaults are 1.2 seconds for
+`ok`, 2.0 seconds for `error`, `unavailable`, and `unknown`, and persistent for
+`loading` until it is cleared, replaced, a new base output arrives, or the
+binding/page/provider is cleaned up. A supplied `durationSeconds` overrides the
+template default for that request.
+
+The controller tracks the latest accepted base output generation and active
+overlay generation per binding. Overlay show/clear messages are ignored if the
+mirrored binding identity is not current, if the binding `outputGeneration` is
+older than the latest accepted base output, or if the overlay `generation`
+would rewind active overlay state. A new base output clears any active
+transient overlay by default.
+
+The overlay protocol is semantic rather than raster-specific. The current
+bundled controller renders overlays through its raster output path, while future
+hardware managers may map the same templates to capability-native feedback such
+as RGB indicators, text displays, haptics, or animated raster output.
+
 ## Dynamic Page Action Targets
 
 Action providers request dynamic pages with `openPage`, `updatePage`, and

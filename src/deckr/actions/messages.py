@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
+from math import isfinite
 from typing import Any, Literal
 
 from pydantic import (
@@ -734,6 +735,70 @@ class BindingOutputBody(ActionMessageBody):
     @field_serializer("params")
     def _serialize_params(self, value: Mapping[str, Any]) -> dict[str, Any]:
         return thaw_json(value)
+
+
+class BindingOverlayBody(ActionMessageBody):
+    binding: BindingMetadata
+    template: str
+    title: str | None = None
+    params: JsonObject = Field(default_factory=dict)
+    duration_seconds: float | None = Field(default=None, alias="durationSeconds")
+    overlay_id: str | None = Field(default=None, alias="overlayId")
+    generation: int
+
+    @field_validator("template")
+    @classmethod
+    def _validate_template(cls, value: str) -> str:
+        return _require_contract_name(value, field_name="overlay template")
+
+    @field_validator("title", "overlay_id")
+    @classmethod
+    def _validate_optional_text(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="overlay metadata")
+
+    @field_validator("duration_seconds")
+    @classmethod
+    def _validate_duration(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        if not isfinite(value) or value <= 0:
+            raise ValueError("durationSeconds must be a positive finite number")
+        return value
+
+    @field_validator("generation")
+    @classmethod
+    def _validate_generation(cls, value: int) -> int:
+        return _require_non_negative(value, field_name="generation") or 0
+
+    @field_validator("params", mode="before")
+    @classmethod
+    def _thaw_params(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("params", mode="after")
+    @classmethod
+    def _freeze_params(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("params")
+    def _serialize_params(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+
+class BindingOverlayClearBody(ActionMessageBody):
+    binding: BindingMetadata
+    overlay_id: str | None = Field(default=None, alias="overlayId")
+    generation: int
+
+    @field_validator("overlay_id")
+    @classmethod
+    def _validate_overlay_id(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="overlay metadata")
+
+    @field_validator("generation")
+    @classmethod
+    def _validate_generation(cls, value: int) -> int:
+        return _require_non_negative(value, field_name="generation") or 0
 
 
 class SettingsSchemaMetadata(DeckrModel):
@@ -1554,6 +1619,8 @@ PAGE_SESSION_OPENED = "pageSessionOpened"
 PAGE_SESSION_CLOSED = "pageSessionClosed"
 CAPABILITY_INPUT = "capabilityInput"
 BINDING_OUTPUT = "bindingOutput"
+BINDING_OVERLAY = "bindingOverlay"
+BINDING_OVERLAY_CLEAR = "bindingOverlayClear"
 SETTINGS_REQUEST = "settingsRequest"
 SETTINGS_PATCH = "settingsPatch"
 SETTINGS_REPLACE = "settingsReplace"
@@ -1568,6 +1635,8 @@ ACTION_EXTENSION = "actionExtension"
 ACTION_PROVIDER_COMMAND_MESSAGE_TYPES = frozenset(
     {
         BINDING_OUTPUT,
+        BINDING_OVERLAY,
+        BINDING_OVERLAY_CLEAR,
         SETTINGS_REQUEST,
         SETTINGS_PATCH,
         SETTINGS_REPLACE,
@@ -1598,6 +1667,8 @@ ACTION_BODY_BY_MESSAGE_TYPE: dict[str, type[ActionMessageBody]] = {
     PAGE_SESSION_CLOSED: PageSessionLifecycleBody,
     CAPABILITY_INPUT: CapabilityInputBody,
     BINDING_OUTPUT: BindingOutputBody,
+    BINDING_OVERLAY: BindingOverlayBody,
+    BINDING_OVERLAY_CLEAR: BindingOverlayClearBody,
     SETTINGS_REQUEST: SettingsRequestBody,
     SETTINGS_PATCH: SettingsPatchBody,
     SETTINGS_REPLACE: SettingsReplaceBody,

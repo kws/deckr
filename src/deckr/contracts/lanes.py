@@ -157,6 +157,8 @@ ACTION_MESSAGE_TYPES = frozenset(
         "bindingAttached",
         "bindingDetached",
         "bindingOutput",
+        "bindingOverlay",
+        "bindingOverlayClear",
         "capabilityInput",
         "closePage",
         "openPage",
@@ -261,6 +263,8 @@ ACTION_MESSAGES_DELIVERY = replace(
             message_types=frozenset(
                 {
                     "bindingOutput",
+                    "bindingOverlay",
+                    "bindingOverlayClear",
                     "closePage",
                     "openPage",
                     "actionExtension",

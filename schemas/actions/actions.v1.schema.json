@@ -291,6 +291,102 @@
       "title": "BindingOutputBody",
       "type": "object"
     },
+    "BindingOverlayBody": {
+      "additionalProperties": false,
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/BindingMetadata"
+        },
+        "durationSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Durationseconds"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        },
+        "overlayId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Overlayid"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "template": {
+          "title": "Template",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "binding",
+        "template",
+        "generation"
+      ],
+      "title": "BindingOverlayBody",
+      "type": "object"
+    },
+    "BindingOverlayClearBody": {
+      "additionalProperties": false,
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/BindingMetadata"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        },
+        "overlayId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Overlayid"
+        }
+      },
+      "required": [
+        "binding",
+        "generation"
+      ],
+      "title": "BindingOverlayClearBody",
+      "type": "object"
+    },
     "BroadcastTarget": {
       "additionalProperties": false,
       "properties": {
@@ -1663,6 +1759,58 @@
             },
             "messageType": {
               "const": "bindingOutput"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/BindingOverlayBody"
+            },
+            "lane": {
+              "const": "actions"
+            },
+            "messageType": {
+              "const": "bindingOverlay"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/BindingOverlayClearBody"
+            },
+            "lane": {
+              "const": "actions"
+            },
+            "messageType": {
+              "const": "bindingOverlayClear"
             }
           },
           "required": [

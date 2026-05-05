@@ -11,6 +11,8 @@ from deckr.actions.endpoints import action_provider_address
 from deckr.actions.messages import (
     ACTION_EXTENSION,
     BINDING_OUTPUT,
+    BINDING_OVERLAY,
+    BINDING_OVERLAY_CLEAR,
     CAPABILITY_INPUT,
     SETTINGS_PATCH,
     ActionDescriptor,
@@ -591,6 +593,67 @@ def test_v1_binding_output_body_targets_matched_capability() -> None:
 
     assert body.to_dict()["commandType"] == "set_frame"
     assert body.to_dict()["params"] == {"image": "abc", "encoding": "jpeg"}
+
+
+def test_v1_binding_overlay_body_is_generation_scoped() -> None:
+    body = action_body_for_type(
+        BINDING_OVERLAY,
+        {
+            "binding": _binding_metadata().model_dump(
+                by_alias=True,
+                exclude_none=True,
+                mode="json",
+            ),
+            "template": "ok",
+            "title": "Saved",
+            "params": {"tone": "quiet"},
+            "durationSeconds": 1.2,
+            "overlayId": "save-feedback",
+            "generation": 4,
+        },
+    )
+
+    assert body.to_dict()["template"] == "ok"
+    assert body.to_dict()["durationSeconds"] == 1.2
+    assert body.to_dict()["overlayId"] == "save-feedback"
+    assert body.to_dict()["generation"] == 4
+
+
+def test_v1_binding_overlay_rejects_invalid_duration_and_template() -> None:
+    payload = {
+        "binding": _binding_metadata().model_dump(
+            by_alias=True,
+            exclude_none=True,
+            mode="json",
+        ),
+        "template": "OK",
+        "generation": 1,
+    }
+    with pytest.raises(ValidationError, match="overlay template"):
+        action_body_for_type(BINDING_OVERLAY, payload)
+
+    payload["template"] = "ok"
+    payload["durationSeconds"] = 0
+    with pytest.raises(ValidationError, match="positive finite"):
+        action_body_for_type(BINDING_OVERLAY, payload)
+
+
+def test_v1_binding_overlay_clear_can_be_overlay_id_fenced() -> None:
+    body = action_body_for_type(
+        BINDING_OVERLAY_CLEAR,
+        {
+            "binding": _binding_metadata().model_dump(
+                by_alias=True,
+                exclude_none=True,
+                mode="json",
+            ),
+            "overlayId": "loading-task",
+            "generation": 5,
+        },
+    )
+
+    assert body.to_dict()["overlayId"] == "loading-task"
+    assert body.to_dict()["generation"] == 5
 
 
 def test_action_extension_body_has_explicit_non_routing_shape() -> None:
