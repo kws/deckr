@@ -14,7 +14,6 @@ from deckr.actions.messages import (
     DynamicPageCommand,
     PageChildBindingDescriptor,
     PageChildBindingTarget,
-    TitleOptions,
 )
 
 
@@ -53,42 +52,16 @@ def test_removed_power_commands_are_not_action_lane_contracts():
     assert not hasattr(actions, "SET_PAGE")
 
 
-def test_title_options_round_trip_on_wire():
-    title_options = TitleOptions(
-        font_family="Audiowide",
-        font_size="85vw",
-        font_style="Bold",
-        title_color="#FFFFFF",
-        title_alignment="middle",
-    )
-    wire = title_options.to_dict()
-    assert wire == {
-        "fontFamily": "Audiowide",
-        "fontSize": "85vw",
-        "fontStyle": "Bold",
-        "titleColor": "#FFFFFF",
-        "titleAlignment": "middle",
-    }
-    assert TitleOptions.model_validate(wire) == title_options
-
-
-def test_title_options_omits_unset_fields_on_wire():
-    assert TitleOptions(font_family="Inter").to_dict() == {"fontFamily": "Inter"}
-
-
 def test_dynamic_page_command_round_trip_on_wire():
     descriptor = DynamicPageCommand(
         pageId="page-1",
-        templateId="browser",
         bindings=[
             PageChildBindingDescriptor(
                 controlId="0,0",
                 target=PageChildBindingTarget(kind="self"),
-                roleId="album",
                 itemKey="kind-of-blue",
                 handler="album",
                 settings={"album": "Kind of Blue"},
-                title_options=TitleOptions(font_family="Inter"),
             )
         ],
     )
@@ -97,16 +70,13 @@ def test_dynamic_page_command_round_trip_on_wire():
 
     assert wire == {
         "pageId": "page-1",
-        "templateId": "browser",
         "bindings": [
             {
                 "controlId": "0,0",
                 "target": {"kind": "self"},
-                "roleId": "album",
                 "itemKey": "kind-of-blue",
                 "handler": "album",
                 "settings": {"album": "Kind of Blue"},
-                "titleOptions": {"fontFamily": "Inter"},
             }
         ],
     }

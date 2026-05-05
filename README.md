@@ -174,11 +174,10 @@ The supported lane substrate and current-state model is defined in
 `deckr.actions.endpoints`, and `deckr.actions.state` contain the shared
 `actions` lane contracts used by controllers, action provider runtimes, lane
 substrate adapters, and non-Python implementations. The v1 action contract is
-capability-native: action descriptors may declare capability requirements and
-dynamic page templates, lifecycle messages carry structured action-instance,
-binding, and page-session metadata, input is represented as capability input,
-and output requests target matched capabilities through generation-scoped
-binding output.
+capability-native: action descriptors may declare capability requirements,
+lifecycle messages carry structured action-instance, binding, and page-session
+metadata, input is represented as capability input, and output requests target
+matched capabilities through generation-scoped binding output.
 
 Dynamic page commands carry one target per child binding. A child may target
 `self`, meaning the page opener's current action instance, or it may target an

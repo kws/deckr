@@ -24,8 +24,6 @@ from deckr.actions.messages import (
     CapabilityRequirement,
     CapabilityRequirementSelector,
     DynamicPageCommand,
-    DynamicPageRoleDescriptor,
-    DynamicPageTemplateDescriptor,
     MatchedCapability,
     PageChildBindingDescriptor,
     PageChildBindingTarget,
@@ -73,7 +71,6 @@ def _binding_metadata() -> BindingMetadata:
             "deviceRef": {"managerId": "manager-1", "deviceId": "device-1"},
             "controlId": "0,0",
         },
-        roleId="album",
         itemKey="kind-of-blue",
         handler="album",
         matchedCapabilities=[
@@ -164,7 +161,7 @@ def test_action_provider_catalog_validates_provider_and_action_identity() -> Non
         )
 
 
-def test_action_descriptor_carries_capability_requirements_page_templates_and_settings_schema() -> None:
+def test_action_descriptor_carries_capability_requirements_and_settings_schema() -> None:
     descriptor = ActionDescriptor(
         actionId="demo.pager",
         name="Pager",
@@ -183,31 +180,6 @@ def test_action_descriptor_carries_capability_requirements_page_templates_and_se
                 views=("projected",),
             )
         ],
-        dynamicPageTemplates=[
-            DynamicPageTemplateDescriptor(
-                templateId="browser",
-                roles=[
-                    DynamicPageRoleDescriptor(
-                        roleId="content",
-                        cardinality="collection",
-                        min=1,
-                        preferred=6,
-                        requirements=[
-                            CapabilityRequirement(
-                                name="content-press",
-                                preferences=[
-                                    CapabilityRequirementSelector(
-                                        family="dev.deckr.input.button",
-                                        type="activation",
-                                        direction="input",
-                                    )
-                                ],
-                            )
-                        ],
-                    )
-                ],
-            )
-        ],
         settingsSchema={"type": "object", "properties": {"title": {"type": "string"}}},
         providerSettingsSchema={"type": "object", "properties": {"token": {"type": "string"}}},
     )
@@ -221,9 +193,6 @@ def test_action_descriptor_carries_capability_requirements_page_templates_and_se
             "commandTypes": [],
         }
     ]
-    assert descriptor.to_dict()["dynamicPageTemplates"][0]["roles"][0]["roleId"] == (
-        "content"
-    )
     assert descriptor.to_dict()["settingsSchema"]["properties"]["title"]["type"] == (
         "string"
     )
@@ -347,12 +316,10 @@ def test_action_descriptor_rejects_duplicate_requirement_names() -> None:
 def test_dynamic_page_command_uses_child_binding_semantics() -> None:
     descriptor = DynamicPageCommand(
         pageId="page-1",
-        templateId="artist-pager",
         bindings=[
             PageChildBindingDescriptor(
                 controlId="0,0",
                 target=PageChildBindingTarget(kind="self"),
-                roleId="album",
                 itemKey="kind-of-blue",
                 handler="album",
                 settings={"albumIndex": 0},
@@ -360,7 +327,6 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
             PageChildBindingDescriptor(
                 controlId="0,1",
                 target=PageChildBindingTarget(kind="self"),
-                roleId="page_control",
                 itemKey="close",
                 handler="close",
             ),
@@ -379,12 +345,10 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
 
     assert descriptor.to_dict() == {
         "pageId": "page-1",
-        "templateId": "artist-pager",
         "bindings": [
             {
                 "controlId": "0,0",
                 "target": {"kind": "self"},
-                "roleId": "album",
                 "itemKey": "kind-of-blue",
                 "handler": "album",
                 "settings": {"albumIndex": 0},
@@ -392,7 +356,6 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
             {
                 "controlId": "0,1",
                 "target": {"kind": "self"},
-                "roleId": "page_control",
                 "itemKey": "close",
                 "handler": "close",
                 "settings": {},

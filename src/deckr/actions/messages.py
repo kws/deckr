@@ -161,7 +161,6 @@ class ActionExtensionBody(ActionMessageBody):
 
 CapabilityViewKind = Literal["raw", "native", "projected", "derived", "extension"]
 CapabilityProvenance = Literal["native", "projection", "derivation", "extension"]
-TemplateRoleCardinality = Literal["single", "collection"]
 SettingsScope = Literal["action_provider_instance", "action_instance"]
 PageChildBindingTargetKind = Literal["self", "action"]
 SettingsProvenance = Literal[
@@ -331,109 +330,10 @@ class CapabilityRequirement(DeckrModel):
         return value
 
 
-class DynamicPageRoleDescriptor(DeckrModel):
-    """A semantic role in an action-declared dynamic page template."""
-
-    role_id: str = Field(alias="roleId")
-    cardinality: TemplateRoleCardinality = "single"
-    optional: bool = False
-    min_count: int | None = Field(default=None, alias="min")
-    preferred_count: int | None = Field(default=None, alias="preferred")
-    max_count: int | None = Field(default=None, alias="max")
-    requirements: tuple[CapabilityRequirement, ...]
-    layout: JsonObject = Field(default_factory=dict)
-
-    @field_validator("role_id")
-    @classmethod
-    def _validate_role_id(cls, value: str) -> str:
-        return _require_text(value, field_name="dynamic page role id")
-
-    @field_validator("requirements", mode="after")
-    @classmethod
-    def _validate_requirements(
-        cls, value: tuple[CapabilityRequirement, ...]
-    ) -> tuple[CapabilityRequirement, ...]:
-        if not value:
-            raise ValueError("dynamic page role must include capability requirements")
-        return value
-
-    @field_validator("layout", mode="before")
-    @classmethod
-    def _thaw_layout(cls, value: Any) -> Any:
-        return thaw_json(value)
-
-    @field_validator("layout", mode="after")
-    @classmethod
-    def _freeze_layout(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return freeze_json(value)
-
-    @field_serializer("layout")
-    def _serialize_layout(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return thaw_json(value)
-
-    @model_validator(mode="after")
-    def _validate_counts(self) -> DynamicPageRoleDescriptor:
-        counts = [
-            count
-            for count in (self.min_count, self.preferred_count, self.max_count)
-            if count is not None
-        ]
-        if any(count < 0 for count in counts):
-            raise ValueError("dynamic page role counts must be non-negative")
-        if (
-            self.min_count is not None
-            and self.max_count is not None
-            and self.min_count > self.max_count
-        ):
-            raise ValueError("dynamic page role min must not exceed max")
-        if (
-            self.preferred_count is not None
-            and self.min_count is not None
-            and self.preferred_count < self.min_count
-        ):
-            raise ValueError("dynamic page role preferred must be at least min")
-        if (
-            self.preferred_count is not None
-            and self.max_count is not None
-            and self.preferred_count > self.max_count
-        ):
-            raise ValueError("dynamic page role preferred must not exceed max")
-        return self
-
-
-class DynamicPageTemplateDescriptor(DeckrModel):
-    """An action-declared dynamic page template resolved by the controller."""
-
-    template_id: str = Field(alias="templateId")
-    roles: tuple[DynamicPageRoleDescriptor, ...]
-
-    @field_validator("template_id")
-    @classmethod
-    def _validate_template_id(cls, value: str) -> str:
-        return _require_text(value, field_name="dynamic page template id")
-
-    @field_validator("roles", mode="after")
-    @classmethod
-    def _validate_roles(
-        cls, value: tuple[DynamicPageRoleDescriptor, ...]
-    ) -> tuple[DynamicPageRoleDescriptor, ...]:
-        if not value:
-            raise ValueError("dynamic page template must include roles")
-        role_ids = [role.role_id for role in value]
-        duplicates = {role_id for role_id in role_ids if role_ids.count(role_id) > 1}
-        if duplicates:
-            raise ValueError(
-                "dynamic page template role ids must be unique: "
-                + ", ".join(sorted(duplicates))
-            )
-        return value
-
-
 class MatchedCapability(DeckrModel):
-    """A capability selected by the controller for a binding or page role."""
+    """A capability selected by the controller for a binding requirement."""
 
     requirement_name: str | None = Field(default=None, alias="requirementName")
-    role_id: str | None = Field(default=None, alias="roleId")
     capability: CapabilityRef
     family: str
     capability_type: str = Field(alias="type")
@@ -443,7 +343,7 @@ class MatchedCapability(DeckrModel):
     provenance: CapabilityProvenance = "native"
     source: CapabilityRef | None = None
 
-    @field_validator("requirement_name", "role_id")
+    @field_validator("requirement_name")
     @classmethod
     def _validate_optional_text(cls, value: str | None) -> str | None:
         return _require_optional_text(value, field_name="matched capability metadata")
@@ -487,7 +387,6 @@ class BindingMetadata(DeckrModel):
     page_session_id: str | None = Field(default=None, alias="pageSessionId")
     device_ref: DeviceRef = Field(alias="deviceRef")
     control_ref: ControlRef = Field(alias="controlRef")
-    role_id: str | None = Field(default=None, alias="roleId")
     item_key: str | None = Field(default=None, alias="itemKey")
     handler: str | None = None
     matched_capabilities: tuple[MatchedCapability, ...] = Field(
@@ -514,7 +413,7 @@ class BindingMetadata(DeckrModel):
     def _validate_provider_instance_id(cls, value: str) -> str:
         return require_provider_instance_id(value, field_name="providerInstanceId")
 
-    @field_validator("page_session_id", "role_id", "item_key", "handler")
+    @field_validator("page_session_id", "item_key", "handler")
     @classmethod
     def _validate_optional_ids(cls, value: str | None) -> str | None:
         return _require_optional_text(value, field_name="binding metadata id")
@@ -567,7 +466,6 @@ class PageSessionMetadata(DeckrModel):
     page_id: str = Field(alias="pageId")
     page_session_id: str = Field(alias="pageSessionId")
     context_id: str = Field(alias="contextId")
-    template_id: str | None = Field(default=None, alias="templateId")
     owner_binding_id: str | None = Field(default=None, alias="ownerBindingId")
     bindings: tuple[BindingMetadata, ...] = Field(default_factory=tuple)
 
@@ -589,7 +487,7 @@ class PageSessionMetadata(DeckrModel):
     def _validate_provider_instance_id(cls, value: str) -> str:
         return require_provider_instance_id(value, field_name="providerInstanceId")
 
-    @field_validator("template_id", "owner_binding_id")
+    @field_validator("owner_binding_id")
     @classmethod
     def _validate_optional_ids(cls, value: str | None) -> str | None:
         return _require_optional_text(value, field_name="page session metadata id")
@@ -1242,10 +1140,6 @@ class ActionDescriptor(DeckrModel):
     name: str | None = None
     provider_id: str | None = Field(default=None, alias="providerId")
     requirements: tuple[CapabilityRequirement, ...] | None = None
-    dynamic_page_templates: tuple[DynamicPageTemplateDescriptor, ...] | None = Field(
-        default=None,
-        alias="dynamicPageTemplates",
-    )
     controllers: tuple[str, ...] | None = None
     property_inspector_path: str | None = None
     manifest_defaults: JsonObject | None = None
@@ -1280,27 +1174,6 @@ class ActionDescriptor(DeckrModel):
         if duplicates:
             raise ValueError(
                 "action requirement names must be unique: "
-                + ", ".join(sorted(duplicates))
-            )
-        return value
-
-    @field_validator("dynamic_page_templates", mode="after")
-    @classmethod
-    def _validate_dynamic_page_templates(
-        cls,
-        value: tuple[DynamicPageTemplateDescriptor, ...] | None,
-    ) -> tuple[DynamicPageTemplateDescriptor, ...] | None:
-        if value is None:
-            return None
-        template_ids = [template.template_id for template in value]
-        duplicates = {
-            template_id
-            for template_id in template_ids
-            if template_ids.count(template_id) > 1
-        }
-        if duplicates:
-            raise ValueError(
-                "action dynamic page template ids must be unique: "
                 + ", ".join(sorted(duplicates))
             )
         return value
@@ -1430,20 +1303,6 @@ class ActionProviderCatalog(DeckrModel):
         }
 
 
-class TitleOptions(DeckrModel):
-    """Font and styling options for controller-rendered titles."""
-
-    font_family: str | None = None
-    font_size: int | str | None = None
-    font_style: str | None = None
-    title_color: str | None = None
-    title_alignment: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize for action command payloads."""
-        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
-
-
 class PageChildBindingTarget(DeckrModel):
     """Action target for one dynamic-page child binding."""
 
@@ -1521,22 +1380,20 @@ class PageChildBindingTarget(DeckrModel):
 
 
 class PageChildBindingDescriptor(DeckrModel):
-    """One semantic child binding requested for a concrete page session."""
+    """One concrete child binding requested for a dynamic page session."""
 
     control_id: str = Field(alias="controlId")
     target: PageChildBindingTarget
-    role_id: str | None = Field(default=None, alias="roleId")
     item_key: str | None = Field(default=None, alias="itemKey")
     handler: str | None = None
     settings: JsonObject = Field(default_factory=dict)
-    title_options: TitleOptions | None = None
 
     @field_validator("control_id")
     @classmethod
     def _validate_control_id(cls, value: str) -> str:
         return _require_text(value, field_name="page child control id")
 
-    @field_validator("role_id", "item_key", "handler")
+    @field_validator("item_key", "handler")
     @classmethod
     def _validate_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -1562,7 +1419,6 @@ class DynamicPageCommand(DeckrModel):
     """Concrete page-session command resolved by the controller."""
 
     page_id: str = Field(alias="pageId")
-    template_id: str | None = Field(default=None, alias="templateId")
     bindings: tuple[PageChildBindingDescriptor, ...]
 
     @field_validator("page_id")
@@ -1597,10 +1453,6 @@ class OpenPageBody(ActionMessageBody):
     descriptor: DynamicPageCommand
 
 
-class UpdatePageBody(ActionMessageBody):
-    descriptor: DynamicPageCommand
-
-
 class ReplacePageBody(ActionMessageBody):
     descriptor: DynamicPageCommand
 
@@ -1626,7 +1478,6 @@ SETTINGS_PATCH = "settingsPatch"
 SETTINGS_REPLACE = "settingsReplace"
 SETTINGS_SNAPSHOT = "settingsSnapshot"
 OPEN_PAGE = "openPage"
-UPDATE_PAGE = "updatePage"
 REPLACE_PAGE = "replacePage"
 CLOSE_PAGE = "closePage"
 ACTION_EXTENSION = "actionExtension"
@@ -1646,7 +1497,6 @@ ACTION_PROVIDER_COMMAND_MESSAGE_TYPES = frozenset(
 CONTROLLER_EXTENSION_COMMAND_MESSAGE_TYPES = frozenset(
     {
         OPEN_PAGE,
-        UPDATE_PAGE,
         REPLACE_PAGE,
         CLOSE_PAGE,
     }
@@ -1674,14 +1524,12 @@ ACTION_BODY_BY_MESSAGE_TYPE: dict[str, type[ActionMessageBody]] = {
     SETTINGS_REPLACE: SettingsReplaceBody,
     SETTINGS_SNAPSHOT: SettingsSnapshot,
     OPEN_PAGE: OpenPageBody,
-    UPDATE_PAGE: UpdatePageBody,
     REPLACE_PAGE: ReplacePageBody,
     CLOSE_PAGE: EmptyActionBody,
     ACTION_EXTENSION: ActionExtensionBody,
 }
 
 OpenPageBody.model_rebuild()
-UpdatePageBody.model_rebuild()
 ReplacePageBody.model_rebuild()
 
 

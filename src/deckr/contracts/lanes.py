@@ -169,7 +169,6 @@ ACTION_MESSAGE_TYPES = frozenset(
         "settingsReplace",
         "settingsRequest",
         "settingsSnapshot",
-        "updatePage",
     }
 )
 
@@ -272,7 +271,6 @@ ACTION_MESSAGES_DELIVERY = replace(
                     "settingsPatch",
                     "settingsReplace",
                     "settingsRequest",
-                    "updatePage",
                 }
             ),
             idempotency=IdempotencySemantics.DUPLICATE_REJECT_OR_LAST_WRITE_WINS,

@@ -229,18 +229,6 @@
         "providerInstanceId": {
           "title": "Providerinstanceid",
           "type": "string"
-        },
-        "roleId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Roleid"
         }
       },
       "required": [
@@ -798,18 +786,6 @@
         "pageId": {
           "title": "Pageid",
           "type": "string"
-        },
-        "templateId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Templateid"
         }
       },
       "required": [
@@ -874,7 +850,7 @@
     "JsonValue": {},
     "MatchedCapability": {
       "additionalProperties": false,
-      "description": "A capability selected by the controller for a binding or page role.",
+      "description": "A capability selected by the controller for a binding requirement.",
       "properties": {
         "capability": {
           "$ref": "#/$defs/CapabilityRef"
@@ -930,18 +906,6 @@
           "default": null,
           "title": "Requirementname"
         },
-        "roleId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Roleid"
-        },
         "source": {
           "anyOf": [
             {
@@ -982,7 +946,7 @@
     },
     "PageChildBindingDescriptor": {
       "additionalProperties": false,
-      "description": "One semantic child binding requested for a concrete page session.",
+      "description": "One concrete child binding requested for a dynamic page session.",
       "properties": {
         "controlId": {
           "title": "Controlid",
@@ -1012,18 +976,6 @@
           "default": null,
           "title": "Itemkey"
         },
-        "roleId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Roleid"
-        },
         "settings": {
           "additionalProperties": {
             "$ref": "#/$defs/JsonValue"
@@ -1033,17 +985,6 @@
         },
         "target": {
           "$ref": "#/$defs/PageChildBindingTarget"
-        },
-        "titleOptions": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TitleOptions"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         }
       },
       "required": [
@@ -1198,18 +1139,6 @@
         "providerInstanceId": {
           "title": "Providerinstanceid",
           "type": "string"
-        },
-        "templateId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Templateid"
         }
       },
       "required": [
@@ -1443,77 +1372,6 @@
       "title": "SettingsTargetRef",
       "type": "object"
     },
-    "TitleOptions": {
-      "additionalProperties": false,
-      "description": "Font and styling options for controller-rendered titles.",
-      "properties": {
-        "fontFamily": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Fontfamily"
-        },
-        "fontSize": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Fontsize"
-        },
-        "fontStyle": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Fontstyle"
-        },
-        "titleAlignment": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Titlealignment"
-        },
-        "titleColor": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Titlecolor"
-        }
-      },
-      "title": "TitleOptions",
-      "type": "object"
-    },
     "TraceContext": {
       "additionalProperties": false,
       "properties": {
@@ -1543,19 +1401,6 @@
         }
       },
       "title": "TraceContext",
-      "type": "object"
-    },
-    "UpdatePageBody": {
-      "additionalProperties": false,
-      "properties": {
-        "descriptor": {
-          "$ref": "#/$defs/DynamicPageCommand"
-        }
-      },
-      "required": [
-        "descriptor"
-      ],
-      "title": "UpdatePageBody",
       "type": "object"
     }
   },
@@ -1941,32 +1786,6 @@
             },
             "messageType": {
               "const": "openPage"
-            }
-          },
-          "required": [
-            "lane",
-            "messageType",
-            "body"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    {
-      "allOf": [
-        {
-          "$ref": "#/$defs/DeckrMessage"
-        },
-        {
-          "properties": {
-            "body": {
-              "$ref": "#/$defs/UpdatePageBody"
-            },
-            "lane": {
-              "const": "actions"
-            },
-            "messageType": {
-              "const": "updatePage"
             }
           },
           "required": [

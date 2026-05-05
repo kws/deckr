@@ -892,16 +892,23 @@ as RGB indicators, text displays, haptics, or animated raster output.
 
 ## Dynamic Page Action Targets
 
-Action providers request dynamic pages with `openPage`, `updatePage`, and
-`replacePage` messages on the `actions` lane. The command body carries a
-`DynamicPageCommand` with a controller-visible `pageId`, optional `templateId`,
-and concrete child `bindings`.
+Action providers request dynamic pages with `openPage`, `replacePage`, and
+`closePage` messages on the `actions` lane. The command body carries a
+`DynamicPageCommand` with a controller-visible `pageId` and a complete set of
+concrete child `bindings`.
+
+`openPage` claims the controller's dynamic page context for the sender's active
+binding. If another action owns that context, the controller closes the old
+session and opens the new one. `replacePage` is accepted only from the current
+owner and replaces the complete child binding set; Deckr does not merge, diff,
+patch, or retain omitted children. `closePage` closes the active dynamic page
+for the current owner and returns to the configured static page layout.
 
 Each child binding carries a `controlId` plus an explicit `target`:
 
 - `{"kind": "self"}` routes the child to the action instance that opened the
-  page. Role, item, and handler metadata remain binding metadata, not durable
-  routing state.
+  page. Item and handler metadata remain binding metadata, not durable routing
+  state.
 - `{"kind": "action", "actionId": "..."}` asks the controller to resolve the
   child through normal action-provider selection. The target may include
   `providerInstanceId` or `providerLabels` to narrow selection. `instanceKey`
