@@ -64,11 +64,11 @@ def test_services_lane_contract_accepts_direct_command_reply() -> None:
         subject=entity_subject(
             "service",
             serviceId="sonos-home",
-            namespace="com.k-si.deckr.sonos.service",
+            namespace="dev.deckr.sonos.service",
             operation="play",
         ),
         body=ServiceCommandBody(
-            serviceNamespace="com.k-si.deckr.sonos.service",
+            serviceNamespace="dev.deckr.sonos.service",
             operation="play",
             params={"zone": "Kitchen"},
         ),
@@ -81,7 +81,7 @@ def test_services_lane_contract_accepts_direct_command_reply() -> None:
         subject=command.subject,
         in_reply_to=command.message_id,
         body=ServiceCommandReplyBody(
-            serviceNamespace="com.k-si.deckr.sonos.service",
+            serviceNamespace="dev.deckr.sonos.service",
             operation="play",
             status=ServiceCommandStatus.OK,
             result={"accepted": True},
@@ -106,11 +106,11 @@ def test_services_lane_validation_thaws_frozen_json_body() -> None:
         subject=entity_subject(
             "service",
             serviceId="openhab-home",
-            namespace="com.k-si.deckr.openhab.service",
+            namespace="dev.deckr.openhab.service",
             operation="ensureItems",
         ),
         body=ServiceCommandBody(
-            serviceNamespace="com.k-si.deckr.openhab.service",
+            serviceNamespace="dev.deckr.openhab.service",
             operation="ensureItems",
             params={"items": ["KajsRoomScene"], "refresh": True},
         ),
@@ -123,7 +123,7 @@ def test_services_lane_validation_thaws_frozen_json_body() -> None:
         subject=command.subject,
         in_reply_to=command.message_id,
         body=ServiceCommandReplyBody(
-            serviceNamespace="com.k-si.deckr.openhab.service",
+            serviceNamespace="dev.deckr.openhab.service",
             operation="ensureItems",
             status=ServiceCommandStatus.OK,
             result={"items": {"KajsRoomScene": {"state": "ON"}}},
@@ -141,7 +141,7 @@ def test_services_lane_rejects_hardware_manager_participants() -> None:
         recipient=service_address("sonos-home"),
         subject=entity_subject("service", serviceId="sonos-home"),
         body={
-            "serviceNamespace": "com.k-si.deckr.sonos.service",
+            "serviceNamespace": "dev.deckr.sonos.service",
             "operation": "play",
         },
     )
@@ -158,7 +158,7 @@ def test_service_command_body_rejects_sender_authority_fields() -> None:
             recipient=service_address("sonos-home"),
             subject=entity_subject("service", serviceId="sonos-home"),
             body={
-                "serviceNamespace": "com.k-si.deckr.sonos.service",
+                "serviceNamespace": "dev.deckr.sonos.service",
                 "operation": "play",
                 "senderSessionId": "not-body-authority",
             },
@@ -170,7 +170,7 @@ def test_service_current_state_keys_round_trip() -> None:
     status_key = service_status_key("sonos-home")
     view_key = service_view_key(
         "sonos-home",
-        "com.k-si.deckr.sonos.service",
+        "dev.deckr.sonos.service",
         "zones",
         "Kitchen/Main",
     )
@@ -181,7 +181,7 @@ def test_service_current_state_keys_round_trip() -> None:
     assert parse_service_status_key(status_key) == "sonos-home"
     assert parse_service_view_key(view_key) == (
         "sonos-home",
-        "com.k-si.deckr.sonos.service",
+        "dev.deckr.sonos.service",
         ("zones", "Kitchen/Main"),
     )
 
@@ -191,7 +191,7 @@ def test_service_catalog_and_status_validate_endpoint_identity() -> None:
         ServiceCatalog(
             serviceId="sonos-home",
             serviceEndpoint=service_address("other-home"),
-            serviceNamespace="com.k-si.deckr.sonos.service",
+            serviceNamespace="dev.deckr.sonos.service",
             sessionId="service-session",
             timestamp=_now(),
         )
@@ -199,7 +199,7 @@ def test_service_catalog_and_status_validate_endpoint_identity() -> None:
         ServiceStatus(
             serviceId="sonos-home",
             serviceEndpoint=service_address("other-home"),
-            serviceNamespace="com.k-si.deckr.sonos.service",
+            serviceNamespace="dev.deckr.sonos.service",
             sessionId="service-session",
             status=ServiceStatusValue.AVAILABLE,
             timestamp=_now(),
@@ -226,7 +226,7 @@ async def test_live_service_check_requires_presence_catalog_status_and_session()
         ServiceCatalog(
             serviceId="sonos-home",
             serviceEndpoint=endpoint,
-            serviceNamespace="com.k-si.deckr.sonos.service",
+            serviceNamespace="dev.deckr.sonos.service",
             sessionId="service-session",
             supportedOperations=("play", "pause"),
             viewPrefixes=("view.services.sonos-home",),
@@ -238,7 +238,7 @@ async def test_live_service_check_requires_presence_catalog_status_and_session()
         ServiceStatus(
             serviceId="sonos-home",
             serviceEndpoint=endpoint,
-            serviceNamespace="com.k-si.deckr.sonos.service",
+            serviceNamespace="dev.deckr.sonos.service",
             sessionId="service-session",
             status=ServiceStatusValue.AVAILABLE,
             timestamp=_now(),
@@ -249,7 +249,7 @@ async def test_live_service_check_requires_presence_catalog_status_and_session()
         lease,
         discovery,
         service_id="sonos-home",
-        service_namespace="com.k-si.deckr.sonos.service",
+        service_namespace="dev.deckr.sonos.service",
     )
 
     assert check.state == ServiceLiveState.AVAILABLE
@@ -260,7 +260,7 @@ async def test_live_service_check_requires_presence_catalog_status_and_session()
         ServiceStatus(
             serviceId="sonos-home",
             serviceEndpoint=endpoint,
-            serviceNamespace="com.k-si.deckr.sonos.service",
+            serviceNamespace="dev.deckr.sonos.service",
             sessionId="old-session",
             status=ServiceStatusValue.AVAILABLE,
             timestamp=_now(),
@@ -271,7 +271,7 @@ async def test_live_service_check_requires_presence_catalog_status_and_session()
         lease,
         discovery,
         service_id="sonos-home",
-        service_namespace="com.k-si.deckr.sonos.service",
+        service_namespace="dev.deckr.sonos.service",
     )
     assert stale.state == ServiceLiveState.INVALID
     assert stale.reason == "session_mismatch"

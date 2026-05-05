@@ -61,7 +61,7 @@ def _activation_capability(
 ) -> dict[str, Any]:
     capability = {
         "capabilityId": capability_id,
-        "family": "deckr.input.button",
+        "family": "dev.deckr.input.button",
         "type": "activation",
         "direction": "input",
         "access": ["emits"],
@@ -78,7 +78,7 @@ def _momentary_capability(
 ) -> dict[str, Any]:
     return {
         "capabilityId": capability_id,
-        "family": "deckr.input.button",
+        "family": "dev.deckr.input.button",
         "type": "momentary",
         "direction": "input",
         "access": ["emits"],
@@ -90,7 +90,7 @@ def _momentary_capability(
 def _encoder_capability(capability_id: str = "encoder.relative") -> dict[str, Any]:
     return {
         "capabilityId": capability_id,
-        "family": "deckr.input.encoder",
+        "family": "dev.deckr.input.encoder",
         "type": "relative",
         "direction": "input",
         "access": ["emits"],
@@ -113,7 +113,7 @@ def _encoder_capability(capability_id: str = "encoder.relative") -> dict[str, An
 def _touch_capability(capability_id: str = "touch.gesture") -> dict[str, Any]:
     return {
         "capabilityId": capability_id,
-        "family": "deckr.input.touch",
+        "family": "dev.deckr.input.touch",
         "type": "gesture",
         "direction": "input",
         "access": ["emits"],
@@ -131,7 +131,7 @@ def _raster_capability(
 ) -> dict[str, Any]:
     return {
         "capabilityId": capability_id,
-        "family": "deckr.output.raster",
+        "family": "dev.deckr.output.raster",
         "type": "bitmap",
         "direction": "output",
         "access": ["settable"],

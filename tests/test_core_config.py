@@ -22,7 +22,7 @@ def test_load_config_document_rejects_non_deckr_top_level_namespaces(
     config_path.write_text(
         """
 [deckr.components.instances.controller_main]
-component = "com.k-si.deckr.controller"
+component = "dev.deckr.controller"
 instance_id = "main"
 
 [action_provider.openhab]
@@ -39,7 +39,7 @@ def test_load_config_document_preserves_namespaced_children(tmp_path: Path) -> N
     config_path.write_text(
         """
 [deckr.components.instances.controller_main]
-component = "com.k-si.deckr.controller"
+component = "dev.deckr.controller"
 instance_id = "main"
 
 [deckr.components.instances.controller_main.config]
@@ -98,7 +98,7 @@ def test_file_config_source_expands_env_placeholders_before_parsing(
         """
 [[deckr.config.sources]]
 id = "runtime"
-source = "com.k-si.deckr.config.files"
+source = "dev.deckr.config.files"
 paths = ["runtime.toml"]
 env_template = true
 """.strip()
@@ -106,7 +106,7 @@ env_template = true
     fragment.write_text(
         """
 [deckr.components.instances.action_runtime]
-component = "com.k-si.deckr.action_provider_runtime.python"
+component = "dev.deckr.action_provider_runtime.python"
 instance_id = "main"
 
 [deckr.components.instances.action_runtime.config.runtime]
@@ -140,7 +140,7 @@ def test_file_config_source_expands_process_environment(
         """
 [[deckr.config.sources]]
 id = "runtime"
-source = "com.k-si.deckr.config.files"
+source = "dev.deckr.config.files"
 paths = ["runtime.toml"]
 env_template = true
 """.strip()
@@ -165,7 +165,7 @@ def test_file_config_source_rejects_missing_env_placeholder(tmp_path: Path) -> N
         """
 [[deckr.config.sources]]
 id = "runtime"
-source = "com.k-si.deckr.config.files"
+source = "dev.deckr.config.files"
 paths = ["runtime.toml"]
 env_template = true
 """.strip()

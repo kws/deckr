@@ -270,7 +270,7 @@ def test_hardware_messages_reject_non_finite_json_values():
 def test_hardware_message_schema_exports_typed_bodies():
     schema = hw_messages.hardware_message_schema()
 
-    assert schema["$id"] == "deckr.message.hardware_messages.v1"
+    assert schema["$id"] == "dev.deckr.message.hardware_messages.v1"
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert "oneOf" in schema
     control_input_variant = next(

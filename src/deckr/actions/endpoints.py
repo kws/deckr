@@ -12,7 +12,7 @@ from deckr.contracts.messages import (
     parse_endpoint_address,
 )
 
-BUILTIN_ACTION_PROVIDER_ID = "deckr.controller.builtin"
+BUILTIN_ACTION_PROVIDER_ID = "dev.deckr.controller.builtin"
 RESERVED_BUILTIN_PROVIDER_IDS = _RESERVED_ACTION_PROVIDER_INSTANCE_IDS
 
 

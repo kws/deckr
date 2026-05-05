@@ -82,7 +82,7 @@ def _binding_metadata() -> BindingMetadata:
                     "controlId": "0,0",
                     "capabilityId": "button.press",
                 },
-                family="deckr.input.button",
+                family="dev.deckr.input.button",
                 type="activation",
                 direction="input",
                 eventTypes=("press",),
@@ -171,7 +171,7 @@ def test_action_descriptor_carries_capability_requirements_page_templates_and_se
                 name="press",
                 preferences=[
                     CapabilityRequirementSelector(
-                        family="deckr.input.button",
+                        family="dev.deckr.input.button",
                         type="activation",
                         direction="input",
                         eventTypes=("press",),
@@ -195,7 +195,7 @@ def test_action_descriptor_carries_capability_requirements_page_templates_and_se
                                 name="content-press",
                                 preferences=[
                                     CapabilityRequirementSelector(
-                                        family="deckr.input.button",
+                                        family="dev.deckr.input.button",
                                         type="activation",
                                         direction="input",
                                     )
@@ -212,7 +212,7 @@ def test_action_descriptor_carries_capability_requirements_page_templates_and_se
 
     assert descriptor.to_dict()["requirements"][0]["preferences"] == [
         {
-            "family": "deckr.input.button",
+            "family": "dev.deckr.input.button",
             "type": "activation",
             "direction": "input",
             "eventTypes": ["press"],
@@ -332,7 +332,7 @@ def test_settings_target_description_mirrors_target_identity() -> None:
 def test_action_descriptor_rejects_duplicate_requirement_names() -> None:
     requirement = CapabilityRequirement(
         name="press",
-        preferences=[CapabilityRequirementSelector(family="deckr.input.button")],
+        preferences=[CapabilityRequirementSelector(family="dev.deckr.input.button")],
     )
 
     with pytest.raises(ValidationError, match="requirement names"):
@@ -473,13 +473,13 @@ def test_v1_capability_input_body_revalidates_frozen_event_value() -> None:
     msg = action_message(
         sender="controller:main",
         sender_session_id="controller-session",
-        recipient=action_provider_address("python-sonos"),
+        recipient=action_provider_address("python-dev.deckr.sonos"),
         message_type=CAPABILITY_INPUT,
         body=CapabilityInputBody(binding=_binding_metadata(), event=event),
         subject=context_subject(
             "context-1",
-            provider_instance_id="python-sonos",
-            provider_id="sonos",
+            provider_instance_id="python-dev.deckr.sonos",
+            provider_id="dev.deckr.sonos",
         ),
     )
 
@@ -568,7 +568,7 @@ def test_capability_requirement_selectors_reject_malformed_names() -> None:
 
     with pytest.raises(ValidationError, match="event type"):
         CapabilityRequirementSelector(
-            family="deckr.input.button",
+            family="dev.deckr.input.button",
             eventTypes=("Press!",),
         )
 
@@ -676,7 +676,7 @@ def test_typed_action_body_schemas_are_exportable() -> None:
         "extensionSchemaId",
         "data",
     }.issubset(extension_schema["properties"])
-    assert lane_schema["$id"] == "deckr.message.actions.v1"
+    assert lane_schema["$id"] == "dev.deckr.message.actions.v1"
     assert lane_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     binding_output_variant = next(
         variant

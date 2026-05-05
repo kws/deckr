@@ -5,7 +5,7 @@ for v1. The descriptor model is intentionally extensible: hardware managers and
 adapters can expose new non-Deckr capability families without changing Deckr
 core code.
 
-At the same time, any capability family under the `deckr.*` namespace is a core
+At the same time, any capability family under the `dev.deckr.*` namespace is a core
 Deckr contract. Core capabilities must be specified in `deckr`, not improvised
 by a driver, controller, plugin, or SDK helper.
 
@@ -40,16 +40,18 @@ payloads or `deckr.contracts.models.thaw_json` before generic inspection.
 
 ## Core Versus Extension Families
 
-Deckr core families use the `deckr.*` namespace. A `deckr.*` family is valid
+Deckr core families use the `dev.deckr.*` namespace. A `dev.deckr.*` family is valid
 only when it is listed by `deckr.hardware.descriptors`. Adding one is a core
 contract change and must define the family, type names, direction, access,
 events or commands, schemas, constraints, units, tests, and docs.
 
-Extension families must not use the `deckr.*` namespace. They must be globally
-namespaced, for example `com.example.input.axis` or
-`org.openhab.item.command`. Deckr should accept extension capabilities without
-code changes when their descriptors are valid and their values are JSON
-wire-safe.
+Extension families must not use the `dev.deckr.*` namespace. They must be globally
+namespaced. Projects with a stable DNS name should use reverse-DNS style, such
+as `com.example.input.axis` or `org.example.item.command`. Projects without a DNS
+name should use a stable forge-qualified style, such as
+`io.github.example-org.media-service.item.command`. Deckr should accept
+extension capabilities without code changes when their descriptors are valid and
+their values are JSON wire-safe.
 
 Extension semantics belong in the descriptor and in the package that owns the
 extension. Deckr may route, bind, expose, and target the capability generically,
@@ -66,15 +68,15 @@ The current v1 core capability families are:
 
 | Family | Type | Direction | Access | Events / Commands |
 | --- | --- | --- | --- | --- |
-| `deckr.input.button` | `activation` | `input` | `emits` | event `press` |
-| `deckr.input.button` | `momentary` | `input` | `emits` | events `down`, `up` |
-| `deckr.input.encoder` | `relative` | `input` | `emits` | event `rotate` |
-| `deckr.input.touch` | `gesture` | `input` | `emits` | events `tap`, `swipe` |
-| `deckr.output.raster` | `bitmap` | `output` | `settable` or `invokable` | commands `set_frame`, `clear` |
-| `deckr.device.power` | `screen` | `command` | `invokable` | commands `sleep`, `wake` |
+| `dev.deckr.input.button` | `activation` | `input` | `emits` | event `press` |
+| `dev.deckr.input.button` | `momentary` | `input` | `emits` | events `down`, `up` |
+| `dev.deckr.input.encoder` | `relative` | `input` | `emits` | event `rotate` |
+| `dev.deckr.input.touch` | `gesture` | `input` | `emits` | events `tap`, `swipe` |
+| `dev.deckr.output.raster` | `bitmap` | `output` | `settable` or `invokable` | commands `set_frame`, `clear` |
+| `dev.deckr.device.power` | `screen` | `command` | `invokable` | commands `sleep`, `wake` |
 
 These family and type names are enforced by `CapabilityDescriptor`. A descriptor
-using a `deckr.*` family outside this list is invalid.
+using a `dev.deckr.*` family outside this list is invalid.
 
 ## Core Input Values
 
@@ -91,13 +93,13 @@ behavior should declare and handle the narrower capability they require.
 
 ### Button Activation
 
-Family: `deckr.input.button`
+Family: `dev.deckr.input.button`
 
 Type: `activation`
 
 Event: `press`
 
-Value schema id: `deckr.value.input.button.activation.v1`
+Value schema id: `dev.deckr.value.input.button.activation.v1`
 
 Canonical value:
 
@@ -112,13 +114,13 @@ must agree.
 
 ### Button Momentary
 
-Family: `deckr.input.button`
+Family: `dev.deckr.input.button`
 
 Type: `momentary`
 
 Events: `down`, `up`
 
-Value schema id: `deckr.value.input.button.momentary.v1`
+Value schema id: `dev.deckr.value.input.button.momentary.v1`
 
 Canonical values:
 
@@ -139,13 +141,13 @@ must agree.
 
 ### Encoder Relative
 
-Family: `deckr.input.encoder`
+Family: `dev.deckr.input.encoder`
 
 Type: `relative`
 
 Event: `rotate`
 
-Value schema id: `deckr.value.input.encoder.relative.v1`
+Value schema id: `dev.deckr.value.input.encoder.relative.v1`
 
 Canonical values:
 
@@ -173,13 +175,13 @@ instead of inspecting raw mappings directly.
 
 ### Touch Gesture
 
-Family: `deckr.input.touch`
+Family: `dev.deckr.input.touch`
 
 Type: `gesture`
 
 Events: `tap`, `swipe`
 
-Value schema id: `deckr.value.input.touch.gesture.v1`
+Value schema id: `dev.deckr.value.input.touch.gesture.v1`
 
 Canonical values:
 
@@ -214,13 +216,13 @@ payload must match the selected capability's `commandSchema`.
 
 ### Raster Bitmap
 
-Family: `deckr.output.raster`
+Family: `dev.deckr.output.raster`
 
 Type: `bitmap`
 
 Commands: `set_frame`, `clear`
 
-Command schema id: `deckr.command.output.raster.bitmap.v1`
+Command schema id: `dev.deckr.command.output.raster.bitmap.v1`
 
 `set_frame` params:
 
@@ -243,13 +245,13 @@ Descriptors should constrain `width`, `height`, and any fixed `rotation` in
 
 ### Device Power Screen
 
-Family: `deckr.device.power`
+Family: `dev.deckr.device.power`
 
 Type: `screen`
 
 Commands: `sleep`, `wake`
 
-Command schema id: `deckr.command.device.power.screen.v1`
+Command schema id: `dev.deckr.command.device.power.screen.v1`
 
 Command params:
 
@@ -281,7 +283,7 @@ Current helpers include:
 - `device_power_command_params`
 
 These helpers are not a registry for extension capabilities. They are the
-shared implementation of the Deckr-owned `deckr.*` vocabulary only.
+shared implementation of the Deckr-owned `dev.deckr.*` vocabulary only.
 
 Python components that create or consume Deckr-owned capability values or
 command params should use these helpers rather than hand-building or
@@ -292,7 +294,7 @@ hand-parsing payload dictionaries.
 Deckr must be able to bind and route capabilities it does not know in code. For
 an extension capability to be useful, its descriptor should include:
 
-- A globally namespaced `family` outside `deckr.*`.
+- A globally namespaced `family` outside `dev.deckr.*`.
 - A stable `type` within that family.
 - The correct `direction` and matching `access`.
 - Complete `eventTypes` or `commandTypes` when the capability emits or accepts
@@ -315,7 +317,7 @@ from the extension package that owns the family, not from Deckr core.
 
 ## Adding A Deckr Core Capability
 
-Add a new `deckr.*` capability only when the behavior is shared platform
+Add a new `dev.deckr.*` capability only when the behavior is shared platform
 semantics rather than one device family or one plugin's private convention.
 
 The required checklist is:

@@ -115,13 +115,13 @@ def _component(
 
 def test_resolve_component_specs_from_generic_instances() -> None:
     controller = _component(
-        "com.k-si.deckr.controller",
+        "dev.deckr.controller",
         consumes=("hardware_messages", "actions"),
         publishes=("actions",),
         endpoints=("controller",),
     )
     provider_runtime = _component(
-        "com.k-si.deckr.action_provider_runtime.python",
+        "dev.deckr.action_provider_runtime.python",
         consumes=("actions",),
         publishes=("actions",),
         endpoints=("action_provider",),
@@ -132,18 +132,18 @@ def test_resolve_component_specs_from_generic_instances() -> None:
                 "components": {
                     "instances": {
                         "controller_main": {
-                            "component": "com.k-si.deckr.controller",
+                            "component": "dev.deckr.controller",
                             "instance_id": "main",
                             "endpoints": {"controller": "controller-main"},
                             "config": {"log_level": "debug"},
                         },
                         "python_clock": {
                             "component": (
-                                "com.k-si.deckr.action_provider_runtime.python"
+                                "dev.deckr.action_provider_runtime.python"
                             ),
                             "instance_id": "clock-main",
-                            "endpoints": {"action_provider": "python-clock"},
-                            "config": {"provider_id": "clock"},
+                            "endpoints": {"action_provider": "python-dev.deckr.clock"},
+                            "config": {"provider_id": "dev.deckr.clock"},
                         },
                     }
                 }
@@ -154,8 +154,8 @@ def test_resolve_component_specs_from_generic_instances() -> None:
     specs = configured_component_instance_specs(
         document,
         definitions={
-            "com.k-si.deckr.controller": controller,
-            "com.k-si.deckr.action_provider_runtime.python": provider_runtime,
+            "dev.deckr.controller": controller,
+            "dev.deckr.action_provider_runtime.python": provider_runtime,
         },
     )
 
@@ -164,16 +164,16 @@ def test_resolve_component_specs_from_generic_instances() -> None:
         for spec in specs
     ] == [
         (
-            "com.k-si.deckr.controller",
+            "dev.deckr.controller",
             "main",
             {"log_level": "debug"},
-            "com.k-si.deckr.controller:main",
+            "dev.deckr.controller:main",
         ),
         (
-            "com.k-si.deckr.action_provider_runtime.python",
+            "dev.deckr.action_provider_runtime.python",
             "clock-main",
-            {"provider_id": "clock"},
-            "com.k-si.deckr.action_provider_runtime.python:clock-main",
+            {"provider_id": "dev.deckr.clock"},
+            "dev.deckr.action_provider_runtime.python:clock-main",
         ),
     ]
 
@@ -268,7 +268,7 @@ def test_component_dependencies_are_planned_from_generic_wrapper() -> None:
                                     "kind": "service",
                                     "mode": "required",
                                     "endpoint": "service:sonos-home",
-                                    "namespace": "com.k-si.deckr.sonos.service",
+                                    "namespace": "dev.deckr.sonos.service",
                                 },
                                 "controller_main": {
                                     "kind": "endpoint",
@@ -293,7 +293,7 @@ def test_component_dependencies_are_planned_from_generic_wrapper() -> None:
     assert sorted(dependencies) == ["controller_main", "sonos_home"]
     assert dependencies["sonos_home"].lane == "services"
     assert dependencies["sonos_home"].endpoint == service_address("sonos-home")
-    assert dependencies["sonos_home"].namespace == "com.k-si.deckr.sonos.service"
+    assert dependencies["sonos_home"].namespace == "dev.deckr.sonos.service"
 
 
 def test_component_dependencies_reject_unknown_fields() -> None:
@@ -311,7 +311,7 @@ def test_component_dependencies_reject_unknown_fields() -> None:
                                     "kind": "service",
                                     "mode": "required",
                                     "endpoint": "service:sonos-home",
-                                    "namespace": "com.k-si.deckr.sonos.service",
+                                    "namespace": "dev.deckr.sonos.service",
                                     "provider_id": "not-generic",
                                 }
                             },
@@ -549,7 +549,7 @@ async def test_start_components_passes_current_state_and_endpoints() -> None:
 
     definition = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="com.k-si.deckr.controller",
+            component_id="dev.deckr.controller",
             endpoint_slots=("controller",),
         ),
         factory=factory,
@@ -560,7 +560,7 @@ async def test_start_components_passes_current_state_and_endpoints() -> None:
                 "components": {
                     "instances": {
                         "controller": {
-                            "component": "com.k-si.deckr.controller",
+                            "component": "dev.deckr.controller",
                             "instance_id": "main",
                             "endpoints": {"controller": "controller-main"},
                         }
@@ -571,7 +571,7 @@ async def test_start_components_passes_current_state_and_endpoints() -> None:
     )
     plan = resolve_component_host_plan(
         document,
-        definitions={"com.k-si.deckr.controller": definition},
+        definitions={"dev.deckr.controller": definition},
     )
     async with memory_deckr(
         lane_contracts=plan.lane_contracts,
@@ -600,7 +600,7 @@ async def test_required_service_dependency_controls_effective_readiness() -> Non
                                     "kind": "service",
                                     "mode": "required",
                                     "endpoint": "service:sonos-home",
-                                    "namespace": "com.k-si.deckr.sonos.service",
+                                    "namespace": "dev.deckr.sonos.service",
                                 }
                             },
                         }
@@ -634,7 +634,7 @@ async def test_required_service_dependency_controls_effective_readiness() -> Non
                 ServiceCatalog(
                     serviceId="sonos-home",
                     serviceEndpoint=endpoint,
-                    serviceNamespace="com.k-si.deckr.sonos.service",
+                    serviceNamespace="dev.deckr.sonos.service",
                     sessionId=service.session_id,
                     supportedOperations=("play",),
                     timestamp=_now(),
@@ -645,7 +645,7 @@ async def test_required_service_dependency_controls_effective_readiness() -> Non
                 ServiceStatus(
                     serviceId="sonos-home",
                     serviceEndpoint=endpoint,
-                    serviceNamespace="com.k-si.deckr.sonos.service",
+                    serviceNamespace="dev.deckr.sonos.service",
                     sessionId=service.session_id,
                     status=ServiceStatusValue.AVAILABLE,
                     timestamp=_now(),
@@ -664,7 +664,7 @@ async def test_required_service_dependency_controls_effective_readiness() -> Non
                 ServiceStatus(
                     serviceId="sonos-home",
                     serviceEndpoint=endpoint,
-                    serviceNamespace="com.k-si.deckr.sonos.service",
+                    serviceNamespace="dev.deckr.sonos.service",
                     sessionId=service.session_id,
                     status=ServiceStatusValue.DEGRADED,
                     timestamp=_now(),
@@ -705,7 +705,7 @@ async def test_optional_service_dependency_reports_without_blocking_readiness() 
                                     "kind": "service",
                                     "mode": "optional",
                                     "endpoint": "service:sonos-home",
-                                    "namespace": "com.k-si.deckr.sonos.service",
+                                    "namespace": "dev.deckr.sonos.service",
                                 }
                             },
                         }

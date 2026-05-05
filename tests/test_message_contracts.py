@@ -44,25 +44,25 @@ def test_endpoint_addresses_reject_malformed_or_unknown_families(
 
 def test_action_provider_endpoint_ids_reject_reserved_builtin_provider() -> None:
     with pytest.raises(ValidationError, match="reserved provider identity"):
-        EndpointAddress.model_validate("action_provider:deckr.controller.builtin")
+        EndpointAddress.model_validate("action_provider:dev.deckr.controller.builtin")
 
 
 def test_action_provider_helpers_live_on_action_modules() -> None:
-    assert action_endpoints.BUILTIN_ACTION_PROVIDER_ID == "deckr.controller.builtin"
+    assert action_endpoints.BUILTIN_ACTION_PROVIDER_ID == "dev.deckr.controller.builtin"
     assert (
         action_endpoints.BUILTIN_ACTION_PROVIDER_ID
         in action_endpoints.RESERVED_BUILTIN_PROVIDER_IDS
     )
     assert (
         action_endpoints.require_provider_instance_id(
-            "deckr.controller.builtin",
+            "dev.deckr.controller.builtin",
             field_name="providerInstanceId",
         )
-        == "deckr.controller.builtin"
+        == "dev.deckr.controller.builtin"
     )
     with pytest.raises(ValueError, match="reserved provider identity"):
         action_endpoints.action_provider_address(
-            "deckr.controller.builtin",
+            "dev.deckr.controller.builtin",
         )
 
     address = action_endpoints.action_provider_address("python")

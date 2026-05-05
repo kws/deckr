@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 DEFAULT_CONFIG_FILENAME = "deckr.toml"
 CONFIG_SOURCE_ENTRYPOINT_GROUP = "deckr.config_sources"
-BUILTIN_FILE_CONFIG_SOURCE_ID = "com.k-si.deckr.config.files"
+BUILTIN_FILE_CONFIG_SOURCE_ID = "dev.deckr.config.files"
 _EMPTY_MAPPING = MappingProxyType({})
 _ENV_PLACEHOLDER_RE = re.compile(r"\$\{([^}]*)\}")
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

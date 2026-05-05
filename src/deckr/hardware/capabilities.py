@@ -17,33 +17,33 @@ RasterBitmapCommandType = Literal["set_frame", "clear"]
 TouchGestureDirection = Literal["left", "right"]
 TouchGestureEvent = Literal["tap", "swipe"]
 
-BUTTON_ACTIVATION_VALUE_SCHEMA_ID = "deckr.value.input.button.activation.v1"
-BUTTON_MOMENTARY_VALUE_SCHEMA_ID = "deckr.value.input.button.momentary.v1"
-DEVICE_POWER_COMMAND_SCHEMA_ID = "deckr.command.device.power.screen.v1"
+BUTTON_ACTIVATION_VALUE_SCHEMA_ID = "dev.deckr.value.input.button.activation.v1"
+BUTTON_MOMENTARY_VALUE_SCHEMA_ID = "dev.deckr.value.input.button.momentary.v1"
+DEVICE_POWER_COMMAND_SCHEMA_ID = "dev.deckr.command.device.power.screen.v1"
 ENCODER_RELATIVE_DIRECTIONS: tuple[EncoderRelativeDirection, ...] = (
     "clockwise",
     "counterclockwise",
 )
-ENCODER_RELATIVE_VALUE_SCHEMA_ID = "deckr.value.input.encoder.relative.v1"
-RASTER_BITMAP_COMMAND_SCHEMA_ID = "deckr.command.output.raster.bitmap.v1"
+ENCODER_RELATIVE_VALUE_SCHEMA_ID = "dev.deckr.value.input.encoder.relative.v1"
+RASTER_BITMAP_COMMAND_SCHEMA_ID = "dev.deckr.command.output.raster.bitmap.v1"
 TOUCH_GESTURE_DIRECTIONS: tuple[TouchGestureDirection, ...] = ("left", "right")
-TOUCH_GESTURE_VALUE_SCHEMA_ID = "deckr.value.input.touch.gesture.v1"
+TOUCH_GESTURE_VALUE_SCHEMA_ID = "dev.deckr.value.input.touch.gesture.v1"
 
 
 class ButtonActivationInputValue(DeckrModel):
-    """Value payload for a ``deckr.input.button`` activation event."""
+    """Value payload for a ``dev.deckr.input.button`` activation event."""
 
     event_type: ButtonActivationEvent = Field(alias="eventType")
 
 
 class ButtonMomentaryInputValue(DeckrModel):
-    """Value payload for a ``deckr.input.button`` momentary event."""
+    """Value payload for a ``dev.deckr.input.button`` momentary event."""
 
     event_type: ButtonMomentaryEvent = Field(alias="eventType")
 
 
 class EncoderRelativeInputValue(DeckrModel):
-    """Value payload for a ``deckr.input.encoder`` relative rotate event."""
+    """Value payload for a ``dev.deckr.input.encoder`` relative rotate event."""
 
     delta: int
     direction: EncoderRelativeDirection | None = None
@@ -67,7 +67,7 @@ class EncoderRelativeInputValue(DeckrModel):
 
 
 class TouchGestureInputValue(DeckrModel):
-    """Value payload for a ``deckr.input.touch`` gesture event."""
+    """Value payload for a ``dev.deckr.input.touch`` gesture event."""
 
     event_type: TouchGestureEvent = Field(alias="eventType")
     direction: TouchGestureDirection | None = None
@@ -82,7 +82,7 @@ class TouchGestureInputValue(DeckrModel):
 
 
 class RasterBitmapSetFrameParams(DeckrModel):
-    """Command params for ``deckr.output.raster`` bitmap ``set_frame``."""
+    """Command params for ``dev.deckr.output.raster`` bitmap ``set_frame``."""
 
     image: str
     encoding: RasterBitmapEncoding
@@ -105,11 +105,11 @@ class RasterBitmapSetFrameParams(DeckrModel):
 
 
 class RasterBitmapClearParams(DeckrModel):
-    """Command params for ``deckr.output.raster`` bitmap ``clear``."""
+    """Command params for ``dev.deckr.output.raster`` bitmap ``clear``."""
 
 
 class DevicePowerCommandParams(DeckrModel):
-    """Command params for ``deckr.device.power`` screen commands."""
+    """Command params for ``dev.deckr.device.power`` screen commands."""
 
 
 def button_activation_input_value(value: object) -> ButtonActivationInputValue:
@@ -177,7 +177,7 @@ def _button_value_schema(
 
 
 def button_activation_value_schema() -> CapabilitySchema:
-    """Return the canonical schema for ``deckr.input.button`` activation input."""
+    """Return the canonical schema for ``dev.deckr.input.button`` activation input."""
 
     return _button_value_schema(
         schema_id=BUTTON_ACTIVATION_VALUE_SCHEMA_ID,
@@ -186,7 +186,7 @@ def button_activation_value_schema() -> CapabilitySchema:
 
 
 def button_momentary_value_schema() -> CapabilitySchema:
-    """Return the canonical schema for ``deckr.input.button`` momentary input."""
+    """Return the canonical schema for ``dev.deckr.input.button`` momentary input."""
 
     return _button_value_schema(
         schema_id=BUTTON_MOMENTARY_VALUE_SCHEMA_ID,
@@ -195,7 +195,7 @@ def button_momentary_value_schema() -> CapabilitySchema:
 
 
 def encoder_relative_value_schema() -> CapabilitySchema:
-    """Return the canonical schema for ``deckr.input.encoder`` relative input."""
+    """Return the canonical schema for ``dev.deckr.input.encoder`` relative input."""
 
     return CapabilitySchema.model_validate(
         {
@@ -217,7 +217,7 @@ def encoder_relative_value_schema() -> CapabilitySchema:
 
 
 def touch_gesture_value_schema() -> CapabilitySchema:
-    """Return the canonical schema for ``deckr.input.touch`` gesture input."""
+    """Return the canonical schema for ``dev.deckr.input.touch`` gesture input."""
 
     return CapabilitySchema.model_validate(
         {
@@ -252,7 +252,7 @@ def raster_bitmap_command_schema(
     width: int | None = None,
     height: int | None = None,
 ) -> CapabilitySchema:
-    """Return the canonical command params schema for ``deckr.output.raster``."""
+    """Return the canonical command params schema for ``dev.deckr.output.raster``."""
 
     set_frame_properties: dict[str, Any] = {
         "image": {"type": "string", "contentEncoding": "base64"},
@@ -284,7 +284,7 @@ def raster_bitmap_command_schema(
 
 
 def device_power_command_schema() -> CapabilitySchema:
-    """Return the canonical command params schema for ``deckr.device.power``."""
+    """Return the canonical command params schema for ``dev.deckr.device.power``."""
 
     return CapabilitySchema.model_validate(
         {

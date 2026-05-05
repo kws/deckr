@@ -1463,7 +1463,7 @@
       "type": "object"
     }
   },
-  "$id": "deckr.message.actions.v1",
+  "$id": "dev.deckr.message.actions.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "oneOf": [
     {

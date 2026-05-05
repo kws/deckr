@@ -68,14 +68,14 @@ deployments can configure one action provider runtime instance explicitly:
 
 ```toml
 [deckr.components.instances.clock_actions]
-component = "com.k-si.deckr.action_provider_runtime.python"
+component = "dev.deckr.action_provider_runtime.python"
 instance_id = "clock-main"
 
 [deckr.components.instances.clock_actions.endpoints]
-action_provider = "python-clock"
+action_provider = "python-dev.deckr.clock"
 
 [deckr.components.instances.clock_actions.config]
-provider_id = "clock"
+provider_id = "dev.deckr.clock"
 entrypoint = "deckr.plugins.clock"
 ```
 
@@ -86,14 +86,14 @@ to the launcher:
 ```toml
 [[deckr.components.instance_sources]]
 id = "python_actions"
-source = "com.k-si.deckr.action_provider_runtime.python.installed_providers"
-allow = ["clock", "sonos", "openhab", "kaj"]
+source = "dev.deckr.action_provider_runtime.python.installed_providers"
+allow = ["dev.deckr.clock", "dev.deckr.sonos", "dev.deckr.openhab", "com.k-si.deckr.kaj"]
 ```
 
 That source expands the selected `deckr.plugins` entry points into ordinary
-`com.k-si.deckr.action_provider_runtime.python` component instances. With the
+`dev.deckr.action_provider_runtime.python` component instances. With the
 default templates, `clock` becomes instance `clock-main` with endpoint
-`action_provider:python-clock`.
+`action_provider:python-dev.deckr.clock`.
 
 When `supervised = true`, the launcher starts `nats-server` as a private child
 process, enables JetStream, binds to localhost, lets NATS select the client port,

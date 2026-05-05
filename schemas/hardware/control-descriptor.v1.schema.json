@@ -154,19 +154,19 @@
           "anyOf": [
             {
               "enum": [
-                "deckr.device.power",
-                "deckr.input.button",
-                "deckr.input.encoder",
-                "deckr.input.touch",
-                "deckr.output.raster"
+                "dev.deckr.device.power",
+                "dev.deckr.input.button",
+                "dev.deckr.input.encoder",
+                "dev.deckr.input.touch",
+                "dev.deckr.output.raster"
               ]
             },
             {
-              "pattern": "^(?!deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+              "pattern": "^(?!dev\\.deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
               "type": "string"
             }
           ],
-          "description": "Deckr-owned families must be one of the v1 core families; extension families must be globally namespaced and must not use the deckr. namespace.",
+          "description": "Deckr-owned families must be one of the v1 core families; extension families must be globally namespaced and must not use the dev.deckr. namespace.",
           "title": "Family"
         },
         "projection": {
@@ -488,7 +488,7 @@
     },
     "JsonValue": {}
   },
-  "$id": "deckr.hardware.control_descriptor.v1",
+  "$id": "dev.deckr.hardware.control_descriptor.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Descriptor for one addressable user-facing control or region.",

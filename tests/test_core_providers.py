@@ -21,7 +21,7 @@ def _document(raw: dict) -> ConfigDocument:
 def test_component_instance_uses_generic_config_mapping() -> None:
     controller = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="com.k-si.deckr.controller",
+            component_id="dev.deckr.controller",
             endpoint_slots=("controller",),
         ),
         factory=lambda context: None,
@@ -32,7 +32,7 @@ def test_component_instance_uses_generic_config_mapping() -> None:
                 "components": {
                     "instances": {
                         "controller_main": {
-                            "component": "com.k-si.deckr.controller",
+                            "component": "dev.deckr.controller",
                             "instance_id": "main",
                             "endpoints": {"controller": "controller-main"},
                             "config": {
@@ -48,11 +48,11 @@ def test_component_instance_uses_generic_config_mapping() -> None:
 
     specs = resolve_component_instance_specs(
         document,
-        definitions={"com.k-si.deckr.controller": controller},
+        definitions={"dev.deckr.controller": controller},
     )
 
     assert len(specs) == 1
-    assert specs[0].component_id == "com.k-si.deckr.controller"
+    assert specs[0].component_id == "dev.deckr.controller"
     assert specs[0].instance_id == "main"
     assert dict(specs[0].endpoints) == {"controller": "controller-main"}
     assert dict(specs[0].config) == {
@@ -63,14 +63,14 @@ def test_component_instance_uses_generic_config_mapping() -> None:
 
 def test_installed_component_without_instance_is_not_created() -> None:
     controller = ComponentDefinition(
-        manifest=ComponentManifest(component_id="com.k-si.deckr.controller"),
+        manifest=ComponentManifest(component_id="dev.deckr.controller"),
         factory=lambda context: None,
     )
     document = _document({"deckr": {}})
 
     specs = resolve_component_instance_specs(
         document,
-        definitions={"com.k-si.deckr.controller": controller},
+        definitions={"dev.deckr.controller": controller},
     )
 
     assert specs == []
@@ -78,7 +78,7 @@ def test_installed_component_without_instance_is_not_created() -> None:
 
 def test_singleton_cardinality_rejects_second_planned_instance() -> None:
     controller = ComponentDefinition(
-        manifest=ComponentManifest(component_id="com.k-si.deckr.controller"),
+        manifest=ComponentManifest(component_id="dev.deckr.controller"),
         factory=lambda context: None,
     )
     document = _document(
@@ -87,11 +87,11 @@ def test_singleton_cardinality_rejects_second_planned_instance() -> None:
                 "components": {
                     "instances": {
                         "one": {
-                            "component": "com.k-si.deckr.controller",
+                            "component": "dev.deckr.controller",
                             "instance_id": "one",
                         },
                         "two": {
-                            "component": "com.k-si.deckr.controller",
+                            "component": "dev.deckr.controller",
                             "instance_id": "two",
                         },
                     }
@@ -103,14 +103,14 @@ def test_singleton_cardinality_rejects_second_planned_instance() -> None:
     with pytest.raises(ValueError, match="singleton cardinality"):
         resolve_component_instance_specs(
             document,
-            definitions={"com.k-si.deckr.controller": controller},
+            definitions={"dev.deckr.controller": controller},
         )
 
 
 def test_multi_instance_component_creates_declared_instances() -> None:
     runtime = ComponentDefinition(
         manifest=ComponentManifest(
-            component_id="com.k-si.deckr.action_provider_runtime.python",
+            component_id="dev.deckr.action_provider_runtime.python",
             cardinality=ComponentCardinality.MULTI_INSTANCE,
             endpoint_slots=("action_provider",),
         ),
@@ -123,7 +123,7 @@ def test_multi_instance_component_creates_declared_instances() -> None:
                     "instances": {
                         "main": {
                             "component": (
-                                "com.k-si.deckr.action_provider_runtime.python"
+                                "dev.deckr.action_provider_runtime.python"
                             ),
                             "instance_id": "main",
                             "endpoints": {"action_provider": "python-main"},
@@ -131,7 +131,7 @@ def test_multi_instance_component_creates_declared_instances() -> None:
                         },
                         "remote": {
                             "component": (
-                                "com.k-si.deckr.action_provider_runtime.python"
+                                "dev.deckr.action_provider_runtime.python"
                             ),
                             "instance_id": "remote",
                             "endpoints": {"action_provider": "python-remote"},
@@ -145,7 +145,7 @@ def test_multi_instance_component_creates_declared_instances() -> None:
 
     specs = resolve_component_instance_specs(
         document,
-        definitions={"com.k-si.deckr.action_provider_runtime.python": runtime},
+        definitions={"dev.deckr.action_provider_runtime.python": runtime},
     )
 
     assert [(spec.instance_id, dict(spec.config)) for spec in specs] == [

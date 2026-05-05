@@ -189,7 +189,7 @@ def test_source_references_must_reference_existing_connections() -> None:
 def test_capability_rejects_unsupported_deckr_owned_family() -> None:
     payload = {
         "capabilityId": "indicator",
-        "family": "deckr.output.indicator",
+        "family": "dev.deckr.output.indicator",
         "type": "led",
         "direction": "output",
         "access": ["settable"],
@@ -336,13 +336,13 @@ def test_device_descriptor_schema_shape_is_interoperable() -> None:
     capability_schema = artifacts[CAPABILITY_DESCRIPTOR_SCHEMA_ID]
     family_schema = capability_schema["properties"]["family"]
     assert family_schema["anyOf"][0]["enum"] == [
-        "deckr.device.power",
-        "deckr.input.button",
-        "deckr.input.encoder",
-        "deckr.input.touch",
-        "deckr.output.raster",
+        "dev.deckr.device.power",
+        "dev.deckr.input.button",
+        "dev.deckr.input.encoder",
+        "dev.deckr.input.touch",
+        "dev.deckr.output.raster",
     ]
-    assert family_schema["anyOf"][1]["pattern"].startswith("^(?!deckr")
+    assert family_schema["anyOf"][1]["pattern"].startswith("^(?!dev\\.deckr")
 
 
 def test_projection_owner_schema_uses_v1_component_vocabulary() -> None:

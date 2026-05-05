@@ -92,13 +92,53 @@ Adapter-private WebSocket, MQTT, USB, HID, HTTP, or vendor protocols may exist a
 real external protocol boundaries. They must translate into canonical Deckr lane
 messages and KV current-state documents at that boundary.
 
+## Namespacing Guidance
+
+Deckr core owns the short lane names and shared current-state buckets documented
+here. Extension-owned contracts must use globally owned names so independent
+packages can coexist in one broker without accidental collisions.
+
+Use these rules for service and extension naming:
+
+- Official Deckr packages use the owned `dev.deckr.*` namespace, for example
+  `dev.deckr.sonos.service`. Non-Deckr packages must use a namespace owned by
+  their package or organization.
+- Service namespaces must be globally unique dotted identifiers owned by the
+  service package. Projects with a stable DNS name should use reverse-DNS style,
+  such as `org.example.media.service`. Projects without a DNS name should use a
+  stable forge-qualified style, such as
+  `io.github.example-org.media-service.service` or
+  `io.gitlab.example-group.media-service.service`. Do not use short names such
+  as `media`, `sonos`, `openhab`, `home`, or `service` as service namespaces.
+- Service ids are deployment-local endpoint ids such as `media-home`. They are
+  configured addresses, not globally unique API namespaces.
+- Service-owned views that participate in Deckr discovery use the generic
+  `view.services.<service-id>.<service-namespace>...` key shape. The namespace
+  token is encoded in the key and prevents view-schema collisions between
+  services with similar resource names.
+- Extension lane identifiers must be globally namespaced dotted identifiers,
+  such as `org.example.media.events` or
+  `io.github.example-org.media-service.events`. Short unqualified extension
+  lanes are not valid v1 Deckr contracts.
+- Extension-owned private KV buckets, when a package genuinely needs one outside
+  Deckr lease/discovery/config projections, should use an owner-qualified,
+  purpose-specific, versioned name that is safe for JetStream bucket names, such
+  as `org_example_media_cache_v1` or
+  `io_github_example_org_media_service_cache_v1`. Do not use generic bucket
+  names such as `state`, `cache`, `services`, or `config`.
+
+The shared `deckr_lease_v1` and `deckr_discovery_v1` buckets are for Deckr
+runtime coordination only. A package-specific private bucket must not redefine
+endpoint liveness, service catalogs, service status, or Deckr-owned discovery
+semantics.
+
 ## Vocabulary
 
 - **Deckr lane:** a logical Deckr message contract, such as `actions`,
   `hardware_messages`, or `services`.
 - **Deckr endpoint address:** a protocol address such as `controller:main`,
   `action_provider:python`, `hardware_manager:mirabox`, or
-  `service:sonos-home`.
+  `service:media-home`.
 - **Deckr subject:** the domain entity a Deckr message is about, such as a
   device, control, action, binding, context, page session, or profile.
 - **NATS subject:** the substrate publish/subscribe address used by the NATS
@@ -126,8 +166,8 @@ deckr.lane.hardware_messages.controller.main
 deckr.lane.hardware_messages.hardware_manager.mirabox-main
 deckr.lane.actions.controller.main
 deckr.lane.actions.action_provider.python
-deckr.lane.services.service.sonos-home
-deckr.lane.services.action_provider.python-sonos
+deckr.lane.services.service.media-home
+deckr.lane.services.action_provider.python-media
 ```
 
 `<lane>`, `<sender-family>`, and `<sender-id>` are encoded with the same
@@ -202,10 +242,10 @@ A `serviceCommand` body carries:
 
 ```json
 {
-  "serviceNamespace": "com.k-si.deckr.sonos.service",
-  "operation": "play",
+  "serviceNamespace": "org.example.media.service",
+  "operation": "refresh",
   "params": {
-    "zone": "Kitchen"
+    "target": "current"
   }
 }
 ```
@@ -214,8 +254,8 @@ A `serviceCommandReply` body carries:
 
 ```json
 {
-  "serviceNamespace": "com.k-si.deckr.sonos.service",
-  "operation": "play",
+  "serviceNamespace": "org.example.media.service",
+  "operation": "refresh",
   "status": "ok",
   "result": {
     "accepted": true
@@ -241,7 +281,7 @@ discovery_state = deckr.state("deckr_discovery_v1")
 
 entry = await lease_state.get("presence.endpoint.actions.action_provider.python")
 entries = await discovery_state.items("catalog.actions.providers.")
-service = await discovery_state.get("catalog.services.sonos-home")
+service = await discovery_state.get("catalog.services.media-home")
 
 written = await lease_state.put(key, value, ttl=30.0)
 created = await lease_state.create(key, value, ttl=30.0)
@@ -357,9 +397,9 @@ action_provider_catalog_key("python")
 Service helpers live in `deckr.services.state`:
 
 ```python
-service_catalog_key("sonos-home")
-service_status_key("sonos-home")
-service_view_key("sonos-home", "com.k-si.deckr.sonos.service", "zones", "Kitchen")
+service_catalog_key("media-home")
+service_status_key("media-home")
+service_view_key("media-home", "org.example.media.service", "status")
 ```
 
 Matching parsers live alongside the corresponding key helpers.
@@ -484,7 +524,7 @@ Example:
             "inputCapabilities": [
               {
                 "capabilityId": "press",
-                "family": "deckr.input.button",
+                "family": "dev.deckr.input.button",
                 "type": "activation",
                 "direction": "input",
                 "access": ["emits"],
@@ -494,7 +534,7 @@ Example:
             "outputCapabilities": [
               {
                 "capabilityId": "raster.bitmap",
-                "family": "deckr.output.raster",
+                "family": "dev.deckr.output.raster",
                 "type": "bitmap",
                 "direction": "output",
                 "access": ["settable"],
@@ -506,7 +546,7 @@ Example:
         "capabilities": [
           {
             "capabilityId": "device.power",
-            "family": "deckr.device.power",
+            "family": "dev.deckr.device.power",
             "type": "screen",
             "direction": "command",
             "access": ["invokable"],
@@ -630,19 +670,19 @@ truth.
 
 Service discovery state describes endpoint-addressed service instances and the
 service-owned views they publish. A service id is a configured service instance,
-such as `sonos-home`; a service namespace is the globally named API/state
-contract, such as `com.k-si.deckr.sonos.service`.
+such as `media-home`; a service namespace is the globally named API/state
+contract, such as `org.example.media.service`.
 
 Service catalog example:
 
 ```json
 {
-  "serviceId": "sonos-home",
-  "serviceEndpoint": "service:sonos-home",
-  "serviceNamespace": "com.k-si.deckr.sonos.service",
+  "serviceId": "media-home",
+  "serviceEndpoint": "service:media-home",
+  "serviceNamespace": "org.example.media.service",
   "sessionId": "uuid-v4-string",
-  "supportedOperations": ["play", "pause", "setVolume"],
-  "viewPrefixes": ["view.services.sonos-home"],
+  "supportedOperations": ["refresh", "query"],
+  "viewPrefixes": ["view.services.media-home"],
   "timestamp": "2026-04-29T10:30:00Z",
   "labels": {
     "location": "home"
@@ -658,9 +698,9 @@ Service status example:
 
 ```json
 {
-  "serviceId": "sonos-home",
-  "serviceEndpoint": "service:sonos-home",
-  "serviceNamespace": "com.k-si.deckr.sonos.service",
+  "serviceId": "media-home",
+  "serviceEndpoint": "service:media-home",
+  "serviceNamespace": "org.example.media.service",
   "sessionId": "uuid-v4-string",
   "status": "available",
   "timestamp": "2026-04-29T10:30:00Z",
@@ -686,98 +726,30 @@ namespace:
 view.services.<service-id>.<service-namespace>.<tokens...>
 ```
 
-For example, a Sonos service may publish zone state under:
+For example, a media service may publish a status view under:
 
 ```text
-view.services.sonos-home.b64_Y29tLmstc2kuZGVja3Iuc29ub3Muc2VydmljZQ.zones.Kitchen
+view.services.media-home.b64_ZGV2LmRlY2tyLm1lZGlhLnNlcnZpY2U.status
 ```
 
 The generic Deckr contract owns key shape, token encoding, and session gating.
 The service namespace owns the view payload schema and operation semantics.
 
-Current first-party service namespaces are:
+Service components are ordinary configured components. Installing a package that
+contributes a service component definition does not start the service. Service
+ids are configured endpoint ids; they are not package names, component ids,
+service namespaces, or runtime names.
 
-- `com.k-si.deckr.sonos.service`
-- `com.k-si.deckr.openhab.service`
+Deckr core does not define namespace-specific service operations, command
+parameters, result payloads, view token meanings, or view payload schemas. Those
+contracts belong to the package that owns the service namespace. A service
+namespace may choose to keep some results as ephemeral request/reply data and
+publish other resource state as durable service views.
 
-First-party service components are ordinary configured components. Installing a
-package that contributes a service component definition does not start the
-service. Service ids such as `sonos-home` and `openhab-home` are configured
-endpoint ids; they are not package names, component ids, service namespaces, or
-runtime names.
-
-The Sonos service owns SoCo discovery, speaker connections, subscriptions,
-favourite lookup, music-service search/browse, queueing, and playback. Blocking
-SoCo calls run off-thread inside the service component. Actions and other
-clients communicate through `serviceCommand` request/reply and Sonos-owned
-views; they do not receive or cache local SoCo speaker objects.
-
-The Sonos operations are:
-
-- `ensureZone`, with `zone`; ensures a zone is connected and publishes a zone
-  view.
-- `setVolume`, with `zone` and integer `volume` from `0` through `100`.
-- `play` and `pause`, each with `zone`.
-- `resolveFavourite`, with `zone`, `query`, and optional `limit`.
-- `playFavourite`, with `zone` and `query`.
-- `playMusicItem`, with `zone` and JSON-safe `playRef`.
-- `listMusicServices`, with no params.
-- `searchMusic`, with `musicService`, `category`, optional `term`, optional
-  `offset`, and optional `limit`.
-- `browseMusic`, with `musicService`, optional `browseRef`, optional `offset`,
-  and optional `limit`.
-
-Sonos zone views are stored below:
-
-```text
-view.services.<service-id>.<namespace>.zones.<zone-name>
-```
-
-Zone view payloads include `serviceId`, `serviceNamespace`, `sessionId`, `zone`,
-`ipAddress`, `playerName`, `transportState`, `isPlaying`, `volume`, optional
-`current`, and `timestamp`. The optional `current` object may include `title`,
-`creator`, `source`, and `albumArtUri`.
-
-Sonos favourite lookup and music-service browse/search results are ephemeral RPC
-data and are not written as durable views. RPC media items are JSON-safe
-documents with `mediaType`, `title`, optional `subtitle`, optional `imageUri`,
-optional `metadata`, optional `playRef`, and optional `browseRef`.
-
-`playMusicItem` is the canonical playback operation for returned Sonos media
-items. Supported `playRef.format` values are:
-
-- `soco-didl-lite-v1`, with `uri` and `didl`; the service queues the URI with
-  the supplied DIDL-Lite metadata and plays from the queue.
-- `sonos-uri-meta-v1`, with `uri` and `metadata`; the service first attempts
-  direct URI playback and falls back to queue playback.
-
-`browseRef.format` for service-side music browsing is
-`soco-music-service-item-v1`, with `musicService` and `itemId`.
-
-The OpenHAB service owns HTTP, SSE, auth, command sending, retries, and item
-views. Its component config requires `url`; an empty or omitted `token` means no
-bearer auth. Actions and other clients communicate through service commands and
-OpenHAB-owned views rather than direct HTTP/SSE access.
-
-The OpenHAB operations are:
-
-- `ensureItems`, with `items` and optional boolean `refresh`; returns known item
-  documents keyed by item name plus a `missing` list.
-- `refreshItem`, with `item`.
-- `sendCommand`, with `item` and `command`.
-
-OpenHAB item views are stored below:
-
-```text
-view.services.<service-id>.<namespace>.items.<item-name>
-```
-
-Item view payloads include `serviceId`, `serviceNamespace`, `sessionId`, `item`,
-`state`, optional `oldState`, `source`, and `timestamp`.
-
-First-party service view payloads include `serviceId`, `serviceNamespace`,
-`sessionId`, and `timestamp`. Consumers must reject a view whose `sessionId`
-does not match exact live service presence/catalog/status.
+Service view payloads should include enough namespace-owned identity to reject
+stale data after a service restart. For Deckr-owned liveness checks, consumers
+must always compare view data with exact live service presence, catalog, and
+status for the current session before treating a view as current.
 
 Exact-confirmed service presence loss, session mismatch, missing catalog,
 missing status, or `unavailable` status makes required service dependencies
@@ -913,8 +885,8 @@ Examples:
 - An action provider instance with endpoint `action_provider:python` publishes
   lane traffic only to `deckr.lane.actions.action_provider.python` and updates
   only its own lease presence key and discovery catalog key.
-- A service with endpoint `service:sonos-home` publishes lane traffic only to
-  `deckr.lane.services.service.sonos-home` and updates only its own lease
+- A service with endpoint `service:media-home` publishes lane traffic only to
+  `deckr.lane.services.service.media-home` and updates only its own lease
   presence key, service catalog key, service status key, and owned service view
   keys.
 - A controller with endpoint `controller:main` publishes controller-originated

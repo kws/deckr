@@ -140,7 +140,11 @@ identifiers owned by the extending system. Extension lanes must not squat on
 short unqualified names that look like Deckr core contracts.
 
 The recommended convention for extension lane identifiers is a dotted
-owner-qualified name such as `acme.metrics.events`.
+owner-qualified name. Projects with a stable DNS name should use reverse-DNS
+style, such as `com.example.metrics.events`. Projects without a DNS name should
+use a stable forge-qualified style, such as
+`io.github.example-org.metrics.events` or
+`io.gitlab.example-group.metrics.events`.
 
 ### Event Lane Transport
 
@@ -535,11 +539,11 @@ not infer them from semantic role, component type, or path naming.
 
 Current first-party component ids include:
 
-- `com.k-si.deckr.controller`
-- `com.k-si.deckr.action_provider_runtime.python`
-- `com.k-si.deckr.hardware.elgato`
-- `com.k-si.deckr.hardware.mirabox`
-- `com.k-si.deckr.hardware.mqtt`
+- `dev.deckr.controller`
+- `dev.deckr.action_provider_runtime.python`
+- `dev.deckr.hardware.elgato`
+- `dev.deckr.hardware.mirabox`
+- `dev.deckr.hardware.mqtt`
 
 The runtime host must use the `component` value in
 `deckr.components.instances.<name>`. It must not infer meaning from path
@@ -551,7 +555,7 @@ Component instances are configured under one generic namespace:
 
 ```toml
 [deckr.components.instances.controller_main]
-component = "com.k-si.deckr.controller"
+component = "dev.deckr.controller"
 instance_id = "controller-main"
 
 [deckr.components.instances.controller_main.endpoints]
@@ -599,11 +603,11 @@ Component dependencies are optional generic instance metadata. They are
 readiness predicates, not activation rules.
 
 ```toml
-[deckr.components.instances.sonos_actions.dependencies.sonos_home]
+[deckr.components.instances.media_actions.dependencies.media_home]
 kind = "service"
 mode = "required"
-endpoint = "service:sonos-home"
-namespace = "com.k-si.deckr.sonos.service"
+endpoint = "service:media-home"
+namespace = "org.example.media.service"
 
 [deckr.components.instances.worker.dependencies.controller_main]
 kind = "endpoint"
@@ -689,7 +693,7 @@ arrays:
 ```toml
 [[deckr.config.sources]]
 id = "local_fragments"
-source = "com.k-si.deckr.config.files"
+source = "dev.deckr.config.files"
 paths = ["./config.d/*.toml"]
 env_template = true
 ```
@@ -722,9 +726,9 @@ candidates. Domain packages own their own source definitions and private source
 configuration.
 
 For example, the Python action provider runtime package contributes
-`com.k-si.deckr.action_provider_runtime.python.installed_providers`, which
+`dev.deckr.action_provider_runtime.python.installed_providers`, which
 discovers selected `deckr.plugins` entry points and expands them into ordinary
-`com.k-si.deckr.action_provider_runtime.python` component instances. The Python
+`dev.deckr.action_provider_runtime.python` component instances. The Python
 entry point name is discovery identity only; generated Deckr provider ids,
 endpoint ids, and component instance ids are resolved by that source's
 configuration.
@@ -734,8 +738,8 @@ The common local-development shape is intentionally small:
 ```toml
 [[deckr.components.instance_sources]]
 id = "python_actions"
-source = "com.k-si.deckr.action_provider_runtime.python.installed_providers"
-allow = ["clock", "sonos", "openhab", "kaj"]
+source = "dev.deckr.action_provider_runtime.python.installed_providers"
+allow = ["dev.deckr.clock", "dev.deckr.sonos", "dev.deckr.openhab", "com.k-si.deckr.kaj"]
 ```
 
 For that first-party source, omitted `block` defaults to an empty list,
@@ -842,7 +846,7 @@ Substitution happens on raw TOML fragment text before TOML parsing:
 ```toml
 [[deckr.config.sources]]
 id = "runtime"
-source = "com.k-si.deckr.config.files"
+source = "dev.deckr.config.files"
 paths = ["runtime.toml"]
 env_template = true
 ```

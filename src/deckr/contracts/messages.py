@@ -23,9 +23,9 @@ SERVICES_LANE = "services"
 CORE_LANE_NAMES = (ACTIONS_LANE, HARDWARE_MESSAGES_LANE, SERVICES_LANE)
 
 DECKR_MESSAGE_PROTOCOL_VERSION = "1"
-HARDWARE_MESSAGES_SCHEMA_ID = "deckr.message.hardware_messages.v1"
-ACTION_MESSAGES_SCHEMA_ID = "deckr.message.actions.v1"
-SERVICE_MESSAGES_SCHEMA_ID = "deckr.message.services.v1"
+HARDWARE_MESSAGES_SCHEMA_ID = "dev.deckr.message.hardware_messages.v1"
+ACTION_MESSAGES_SCHEMA_ID = "dev.deckr.message.actions.v1"
+SERVICE_MESSAGES_SCHEMA_ID = "dev.deckr.message.services.v1"
 CORE_LANE_SCHEMA_IDS = {
     ACTIONS_LANE: ACTION_MESSAGES_SCHEMA_ID,
     HARDWARE_MESSAGES_LANE: HARDWARE_MESSAGES_SCHEMA_ID,
@@ -44,7 +44,7 @@ CORE_ENDPOINT_FAMILIES = frozenset(
 _PROVIDER_INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _RESERVED_ACTION_PROVIDER_INSTANCE_IDS = frozenset(
     {
-        "deckr.controller.builtin",
+        "dev.deckr.controller.builtin",
     }
 )
 

@@ -30,11 +30,11 @@ ControlGeometryUnit = Literal["grid", "pixel", "normalized", "millimeter"]
 ProjectionOwner = Literal["hardware_manager", "adapter", "component"]
 ProjectionType = Literal["projection", "derivation"]
 
-DECKR_INPUT_BUTTON = "deckr.input.button"
-DECKR_INPUT_ENCODER = "deckr.input.encoder"
-DECKR_INPUT_TOUCH = "deckr.input.touch"
-DECKR_OUTPUT_RASTER = "deckr.output.raster"
-DECKR_DEVICE_POWER = "deckr.device.power"
+DECKR_INPUT_BUTTON = "dev.deckr.input.button"
+DECKR_INPUT_ENCODER = "dev.deckr.input.encoder"
+DECKR_INPUT_TOUCH = "dev.deckr.input.touch"
+DECKR_OUTPUT_RASTER = "dev.deckr.output.raster"
+DECKR_DEVICE_POWER = "dev.deckr.device.power"
 
 CORE_CAPABILITY_FAMILIES = frozenset(
     {
@@ -63,16 +63,16 @@ RASTER_COMMAND_TYPES = ("set_frame", "clear")
 POWER_COMMAND_TYPES = ("sleep", "wake")
 
 DESCRIPTOR_SCHEMA_VERSION = "1"
-DEVICE_DESCRIPTOR_SCHEMA_ID = "deckr.hardware.device_descriptor.v1"
-CONTROL_DESCRIPTOR_SCHEMA_ID = "deckr.hardware.control_descriptor.v1"
-CAPABILITY_DESCRIPTOR_SCHEMA_ID = "deckr.hardware.capability_descriptor.v1"
+DEVICE_DESCRIPTOR_SCHEMA_ID = "dev.deckr.hardware.device_descriptor.v1"
+CONTROL_DESCRIPTOR_SCHEMA_ID = "dev.deckr.hardware.control_descriptor.v1"
+CAPABILITY_DESCRIPTOR_SCHEMA_ID = "dev.deckr.hardware.capability_descriptor.v1"
 
 _CONTRACT_NAME_PATTERN = r"^[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*$"
 _GLOBALLY_QUALIFIED_NAME_PATTERN = (
     r"^[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
 )
 _EXTENSION_CAPABILITY_FAMILY_PATTERN = (
-    r"^(?!deckr\.)[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
+    r"^(?!dev\.deckr\.)[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
 )
 _CONTRACT_NAME_RE = re.compile(_CONTRACT_NAME_PATTERN)
 _GLOBALLY_QUALIFIED_NAME_RE = re.compile(_GLOBALLY_QUALIFIED_NAME_PATTERN)
@@ -535,7 +535,7 @@ class CapabilityDescriptor(DeckrModel):
     @classmethod
     def _validate_family(cls, value: str) -> str:
         family = _require_globally_qualified_name(value, field_name="capability family")
-        if family.startswith("deckr.") and family not in CORE_CAPABILITY_FAMILIES:
+        if family.startswith("dev.deckr.") and family not in CORE_CAPABILITY_FAMILIES:
             raise ValueError(f"unsupported Deckr core capability family: {family}")
         return family
 
@@ -598,31 +598,31 @@ class CapabilityDescriptor(DeckrModel):
         if self.family == DECKR_INPUT_BUTTON:
             self._validate_button_events()
         elif self.family == DECKR_INPUT_ENCODER and self.event_types != ENCODER_RELATIVE_EVENTS:
-            raise ValueError("deckr.input.encoder relative capabilities emit rotate")
+            raise ValueError("dev.deckr.input.encoder relative capabilities emit rotate")
         elif self.family == DECKR_INPUT_TOUCH and self.event_types != TOUCH_GESTURE_EVENTS:
             raise ValueError(
-                "deckr.input.touch gesture capabilities emit tap and swipe"
+                "dev.deckr.input.touch gesture capabilities emit tap and swipe"
             )
         elif self.family == DECKR_OUTPUT_RASTER and self.command_types != RASTER_COMMAND_TYPES:
             raise ValueError(
-                "deckr.output.raster bitmap capabilities support set_frame and clear"
+                "dev.deckr.output.raster bitmap capabilities support set_frame and clear"
             )
         elif self.family == DECKR_DEVICE_POWER and self.command_types != POWER_COMMAND_TYPES:
             raise ValueError(
-                "deckr.device.power screen capabilities support sleep and wake"
+                "dev.deckr.device.power screen capabilities support sleep and wake"
             )
 
     def _validate_button_events(self) -> None:
         if self.capability_type == "activation":
             if self.event_types != BUTTON_ACTIVATION_EVENTS:
                 raise ValueError(
-                    "deckr.input.button activation capabilities emit press only"
+                    "dev.deckr.input.button activation capabilities emit press only"
                 )
             return
         if self.capability_type == "momentary":
             if self.event_types != BUTTON_MOMENTARY_EVENTS:
                 raise ValueError(
-                    "deckr.input.button momentary capabilities emit down and up"
+                    "dev.deckr.input.button momentary capabilities emit down and up"
                 )
 
 
@@ -936,7 +936,7 @@ def _apply_descriptor_schema_rules(schema: dict[str, Any]) -> None:
                 "description": (
                     "Deckr-owned families must be one of the v1 core families; "
                     "extension families must be globally namespaced and must not "
-                    "use the deckr. namespace."
+                    "use the dev.deckr. namespace."
                 ),
                 "title": "Family",
             }

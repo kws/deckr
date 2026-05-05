@@ -30,7 +30,7 @@ _DEFAULT_CONFIG_DOCUMENT_TEXT = """# Deckr configuration document
 #   supervised = true
 #
 #   [deckr.components.instances.controller_main]
-#   component = "com.k-si.deckr.controller"
+#   component = "dev.deckr.controller"
 #   instance_id = "main"
 
 [deckr]

@@ -70,7 +70,7 @@ _GLOBALLY_QUALIFIED_NAME_PATTERN = (
     r"^[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
 )
 _EXTENSION_CAPABILITY_FAMILY_PATTERN = (
-    r"^(?!deckr\.)[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
+    r"^(?!dev\.deckr\.)[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
 )
 _CONTRACT_NAME_RE = re.compile(_CONTRACT_NAME_PATTERN)
 _GLOBALLY_QUALIFIED_NAME_RE = re.compile(_GLOBALLY_QUALIFIED_NAME_PATTERN)
