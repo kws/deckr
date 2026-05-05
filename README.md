@@ -99,8 +99,10 @@ Controllers, hardware managers, action provider runtimes, and protocol adapters
 are semantic roles, not different architectural kinds.
 
 If you are looking for the design rules around discovery, lane ownership,
-lane substrate configuration, wire-safe schemas, configuration namespacing, and
-alpha policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
+lane substrate configuration, wire-safe schemas, component planning, and alpha
+policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
+Public contract identifier ownership and collision-avoidance rules live in
+[docs/namespaces.md](docs/namespaces.md).
 
 The Deckr distributed lane substrate is NATS. Read
 [docs/nats-bus.md](docs/nats-bus.md) for endpoint-bound lane handles, recipient

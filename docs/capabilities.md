@@ -7,7 +7,8 @@ core code.
 
 At the same time, any capability family under the `dev.deckr.*` namespace is a core
 Deckr contract. Core capabilities must be specified in `deckr`, not improvised
-by a driver, controller, plugin, or SDK helper.
+by a driver, controller, plugin, or SDK helper. General public identifier
+ownership rules live in [`namespaces.md`](namespaces.md).
 
 ## Contract Boundaries
 
@@ -46,10 +47,7 @@ contract change and must define the family, type names, direction, access,
 events or commands, schemas, constraints, units, tests, and docs.
 
 Extension families must not use the `dev.deckr.*` namespace. They must be globally
-namespaced. Projects with a stable DNS name should use reverse-DNS style, such
-as `com.example.input.axis` or `org.example.item.command`. Projects without a DNS
-name should use a stable forge-qualified style, such as
-`io.github.example-org.media-service.item.command`. Deckr should accept
+namespaced according to [`namespaces.md`](namespaces.md). Deckr should accept
 extension capabilities without code changes when their descriptors are valid and
 their values are JSON wire-safe.
 

@@ -137,14 +137,8 @@ manager, or transport package.
 
 Third-party extension lanes are allowed, but they must use globally namespaced
 identifiers owned by the extending system. Extension lanes must not squat on
-short unqualified names that look like Deckr core contracts.
-
-The recommended convention for extension lane identifiers is a dotted
-owner-qualified name. Projects with a stable DNS name should use reverse-DNS
-style, such as `com.example.metrics.events`. Projects without a DNS name should
-use a stable forge-qualified style, such as
-`io.github.example-org.metrics.events` or
-`io.gitlab.example-group.metrics.events`.
+short unqualified names that look like Deckr core contracts. The full namespace
+rule is in [`namespaces.md`](namespaces.md).
 
 ### Event Lane Transport
 
@@ -545,6 +539,9 @@ Current first-party component ids include:
 - `dev.deckr.hardware.mirabox`
 - `dev.deckr.hardware.mqtt`
 
+Component ids are public contract identifiers and follow
+[`namespaces.md`](namespaces.md).
+
 The runtime host must use the `component` value in
 `deckr.components.instances.<name>`. It must not infer meaning from path
 segments such as `action_providers`, `drivers`, `services`, or `controller`.
@@ -731,7 +728,8 @@ discovers selected `deckr.plugins` entry points and expands them into ordinary
 `dev.deckr.action_provider_runtime.python` component instances. The Python
 entry point name is discovery identity only; generated Deckr provider ids,
 endpoint ids, and component instance ids are resolved by that source's
-configuration.
+configuration. Component ids, source ids, provider ids, and provider entry point
+names follow [`namespaces.md`](namespaces.md).
 
 The common local-development shape is intentionally small:
 

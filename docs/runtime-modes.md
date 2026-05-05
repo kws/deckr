@@ -21,6 +21,11 @@ Deckr runtime modes are ordinary composition over the same primitives:
 There are no role-specific runtimes, discovery systems, or hidden lane binding
 rules.
 
+The examples below use the public identifier rules from
+[`namespaces.md`](namespaces.md): official Deckr component, source, provider,
+and action ids use `dev.deckr.*`, while deployment-local endpoint ids remain
+short configured addresses.
+
 ## Full Stack Runtime
 
 A full-stack process creates `Deckr` with the configured runtime substrate, then
@@ -92,7 +97,8 @@ allow = ["dev.deckr.clock", "dev.deckr.sonos", "dev.deckr.openhab", "com.k-si.de
 
 That source expands the selected `deckr.plugins` entry points into ordinary
 `dev.deckr.action_provider_runtime.python` component instances. With the
-default templates, `clock` becomes instance `clock-main` with endpoint
+default templates, provider id `dev.deckr.clock` becomes instance
+`dev.deckr.clock-main` with endpoint
 `action_provider:python-dev.deckr.clock`.
 
 When `supervised = true`, the launcher starts `nats-server` as a private child
