@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "decoded": "deck_1",
+      "encoded": "deck_1",
+      "raw": "deck_1"
+    },
+    {
+      "decoded": "b64_native",
+      "encoded": "b64_YjY0X25hdGl2ZQ",
+      "raw": "b64_native"
+    },
+    {
+      "decoded": "deck:one",
+      "encoded": "b64_ZGVjazpvbmU",
+      "raw": "deck:one"
+    },
+    {
+      "decoded": "provider with spaces",
+      "encoded": "b64_cHJvdmlkZXIgd2l0aCBzcGFjZXM",
+      "raw": "provider with spaces"
+    },
+    {
+      "decoded": "elgato.com.example.plugin",
+      "encoded": "b64_ZWxnYXRvLmNvbS5leGFtcGxlLnBsdWdpbg",
+      "raw": "elgato.com.example.plugin"
+    }
+  ],
+  "schema": "dev.deckr.vector.key_tokens.v1"
+}

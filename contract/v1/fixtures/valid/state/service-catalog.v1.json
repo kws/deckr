@@ -1,0 +1,21 @@
+{
+  "annotations": {
+    "runtime": "python"
+  },
+  "diagnostics": {},
+  "labels": {
+    "room": "office"
+  },
+  "serviceEndpoint": "service:media-home",
+  "serviceId": "media-home",
+  "serviceNamespace": "dev.deckr.media.service",
+  "sessionId": "service-session",
+  "supportedOperations": [
+    "play",
+    "pause"
+  ],
+  "timestamp": "2026-04-29T10:00:00Z",
+  "viewPrefixes": [
+    "zones"
+  ]
+}

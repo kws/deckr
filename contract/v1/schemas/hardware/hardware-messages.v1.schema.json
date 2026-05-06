@@ -1,0 +1,1961 @@
+{
+  "$defs": {
+    "BroadcastTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Domain"
+        },
+        "endpointFamily": {
+          "title": "Endpointfamily",
+          "type": "string"
+        },
+        "hopLimit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hoplimit"
+        },
+        "scope": {
+          "title": "Scope",
+          "type": "string"
+        },
+        "targetType": {
+          "const": "broadcast",
+          "default": "broadcast",
+          "title": "Targettype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "endpointFamily"
+      ],
+      "title": "BroadcastTarget",
+      "type": "object"
+    },
+    "CapabilityConstraint": {
+      "additionalProperties": false,
+      "description": "A typed generic constraint on a capability value or command parameter.",
+      "properties": {
+        "maximum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maximum"
+        },
+        "minimum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minimum"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step"
+        },
+        "subject": {
+          "title": "Subject",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "values": {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Values",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "subject"
+      ],
+      "title": "CapabilityConstraint",
+      "type": "object"
+    },
+    "CapabilityDescriptor": {
+      "additionalProperties": false,
+      "description": "Descriptor for one input, output, state, or command capability.",
+      "properties": {
+        "access": {
+          "items": {
+            "enum": [
+              "emits",
+              "readable",
+              "settable",
+              "requestable",
+              "invokable"
+            ],
+            "type": "string"
+          },
+          "title": "Access",
+          "type": "array"
+        },
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "commandSchema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilitySchema"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "commandTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commandtypes",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "$ref": "#/$defs/CapabilityConstraint"
+          },
+          "title": "Constraints",
+          "type": "array"
+        },
+        "direction": {
+          "enum": [
+            "input",
+            "output",
+            "state",
+            "command"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "eventTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Eventtypes",
+          "type": "array"
+        },
+        "family": {
+          "title": "Family",
+          "type": "string"
+        },
+        "projection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilityProjection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/DeviceSourceReference"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "units": {
+          "items": {
+            "$ref": "#/$defs/CapabilityUnit"
+          },
+          "title": "Units",
+          "type": "array"
+        },
+        "valueSchema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilitySchema"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "capabilityId",
+        "family",
+        "type",
+        "direction",
+        "access"
+      ],
+      "title": "CapabilityDescriptor",
+      "type": "object"
+    },
+    "CapabilityProjection": {
+      "additionalProperties": false,
+      "description": "Explicit projection or derivation metadata for a capability.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "owner": {
+          "enum": [
+            "hardware_manager",
+            "adapter",
+            "component"
+          ],
+          "title": "Owner",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/DescriptorCapabilityRef"
+        },
+        "type": {
+          "default": "projection",
+          "enum": [
+            "projection",
+            "derivation"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner",
+        "source"
+      ],
+      "title": "CapabilityProjection",
+      "type": "object"
+    },
+    "CapabilitySchema": {
+      "additionalProperties": false,
+      "description": "A JSON Schema fragment carried by a capability descriptor.",
+      "properties": {
+        "schema": {
+          "additionalProperties": true,
+          "title": "Schema",
+          "type": "object"
+        },
+        "schemaId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schemaid"
+        }
+      },
+      "required": [
+        "schema"
+      ],
+      "title": "CapabilitySchema",
+      "type": "object"
+    },
+    "CapabilityStateChangedMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "occurredAt": {
+          "format": "date-time",
+          "title": "Occurredat",
+          "type": "string"
+        },
+        "sequence": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sequence"
+        },
+        "stateType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statetype"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "deviceRef",
+        "capabilityId"
+      ],
+      "title": "CapabilityStateChangedMessage",
+      "type": "object"
+    },
+    "CapabilityStateReplyMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "stateType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statetype"
+        },
+        "status": {
+          "default": "ok",
+          "enum": [
+            "ok",
+            "unavailable",
+            "unsupported",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "deviceRef",
+        "capabilityId"
+      ],
+      "title": "CapabilityStateReplyMessage",
+      "type": "object"
+    },
+    "CapabilityStateRequestMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "stateType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statetype"
+        }
+      },
+      "required": [
+        "deviceRef",
+        "capabilityId"
+      ],
+      "title": "CapabilityStateRequestMessage",
+      "type": "object"
+    },
+    "CapabilityUnit": {
+      "additionalProperties": false,
+      "description": "Unit metadata for a capability field.",
+      "properties": {
+        "scale": {
+          "default": 1.0,
+          "title": "Scale",
+          "type": "number"
+        },
+        "subject": {
+          "title": "Subject",
+          "type": "string"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "unit"
+      ],
+      "title": "CapabilityUnit",
+      "type": "object"
+    },
+    "CommandAcceptedMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptedAt": {
+          "format": "date-time",
+          "title": "Acceptedat",
+          "type": "string"
+        },
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "commandType": {
+          "title": "Commandtype",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        }
+      },
+      "required": [
+        "deviceRef",
+        "capabilityId",
+        "commandType"
+      ],
+      "title": "CommandAcceptedMessage",
+      "type": "object"
+    },
+    "CommandRejectedMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "commandType": {
+          "title": "Commandtype",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "reason": {
+          "enum": [
+            "malformed",
+            "unsupported",
+            "expired",
+            "unauthorized",
+            "stale",
+            "rejected"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deviceRef",
+        "capabilityId",
+        "commandType",
+        "reason"
+      ],
+      "title": "CommandRejectedMessage",
+      "type": "object"
+    },
+    "CommandReplyMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "commandType": {
+          "title": "Commandtype",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "deviceRef",
+        "capabilityId",
+        "commandType"
+      ],
+      "title": "CommandReplyMessage",
+      "type": "object"
+    },
+    "ControlCommandMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "commandType": {
+          "title": "Commandtype",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "deviceRef",
+        "capabilityId",
+        "commandType"
+      ],
+      "title": "ControlCommandMessage",
+      "type": "object"
+    },
+    "ControlDescriptor": {
+      "additionalProperties": false,
+      "description": "Descriptor for one addressable user-facing control or region.",
+      "properties": {
+        "configCapabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityDescriptor"
+          },
+          "title": "Configcapabilities",
+          "type": "array"
+        },
+        "controlId": {
+          "title": "Controlid",
+          "type": "string"
+        },
+        "diagnosticCapabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityDescriptor"
+          },
+          "title": "Diagnosticcapabilities",
+          "type": "array"
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ControlGeometry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "groupId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Groupid"
+        },
+        "inputCapabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityDescriptor"
+          },
+          "title": "Inputcapabilities",
+          "type": "array"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "outputCapabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityDescriptor"
+          },
+          "title": "Outputcapabilities",
+          "type": "array"
+        },
+        "parentControlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parentcontrolid"
+        },
+        "relatedControlIds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Relatedcontrolids",
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/DeviceSourceReference"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "stateCapabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityDescriptor"
+          },
+          "title": "Statecapabilities",
+          "type": "array"
+        },
+        "surfaceId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Surfaceid"
+        }
+      },
+      "required": [
+        "controlId",
+        "kind"
+      ],
+      "title": "ControlDescriptor",
+      "type": "object"
+    },
+    "ControlGeometry": {
+      "additionalProperties": false,
+      "description": "A control's placement on a logical or physical surface.",
+      "properties": {
+        "height": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "rotation": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rotation"
+        },
+        "unit": {
+          "default": "grid",
+          "enum": [
+            "grid",
+            "pixel",
+            "normalized",
+            "millimeter"
+          ],
+          "title": "Unit",
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        },
+        "x": {
+          "default": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "default": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "title": "ControlGeometry",
+      "type": "object"
+    },
+    "ControlInputMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "controlId": {
+          "title": "Controlid",
+          "type": "string"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "eventType": {
+          "title": "Eventtype",
+          "type": "string"
+        },
+        "occurredAt": {
+          "format": "date-time",
+          "title": "Occurredat",
+          "type": "string"
+        },
+        "sequence": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sequence"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/DeviceSourceReference"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "deviceRef",
+        "controlId",
+        "capabilityId",
+        "eventType"
+      ],
+      "title": "ControlInputMessage",
+      "type": "object"
+    },
+    "DeckrMessage": {
+      "additionalProperties": false,
+      "description": "Transport-neutral Deckr logical message envelope.",
+      "properties": {
+        "body": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Body",
+          "type": "object"
+        },
+        "causationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Causationid"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "expiresAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expiresat"
+        },
+        "inReplyTo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inreplyto"
+        },
+        "lane": {
+          "title": "Lane",
+          "type": "string"
+        },
+        "messageId": {
+          "title": "Messageid",
+          "type": "string"
+        },
+        "messageType": {
+          "title": "Messagetype",
+          "type": "string"
+        },
+        "protocolVersion": {
+          "const": "1",
+          "default": "1",
+          "title": "Protocolversion",
+          "type": "string"
+        },
+        "recipient": {
+          "discriminator": {
+            "mapping": {
+              "broadcast": "#/$defs/BroadcastTarget",
+              "endpoint": "#/$defs/EndpointTarget"
+            },
+            "propertyName": "targetType"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/EndpointTarget"
+            },
+            {
+              "$ref": "#/$defs/BroadcastTarget"
+            }
+          ],
+          "title": "Recipient"
+        },
+        "recipientSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recipientsessionid"
+        },
+        "schemaVersion": {
+          "default": "1",
+          "title": "Schemaversion",
+          "type": "string"
+        },
+        "sender": {
+          "$ref": "#/$defs/EndpointAddress"
+        },
+        "senderSessionId": {
+          "title": "Sendersessionid",
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/$defs/EntitySubject"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TraceContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ttlMs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ttlms"
+        }
+      },
+      "required": [
+        "lane",
+        "messageType",
+        "sender",
+        "senderSessionId",
+        "recipient",
+        "subject",
+        "body"
+      ],
+      "title": "DeckrMessage",
+      "type": "object"
+    },
+    "DescriptorCapabilityRef": {
+      "additionalProperties": false,
+      "description": "Reference to a capability owned by the enclosing ``DeviceDescriptor``.",
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        }
+      },
+      "required": [
+        "capabilityId"
+      ],
+      "title": "DescriptorCapabilityRef",
+      "type": "object"
+    },
+    "DeviceAvailableMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "descriptor": {
+          "$ref": "#/$defs/DeviceDescriptor"
+        }
+      },
+      "required": [
+        "descriptor"
+      ],
+      "title": "DeviceAvailableMessage",
+      "type": "object"
+    },
+    "DeviceConnection": {
+      "additionalProperties": false,
+      "description": "Structured protocol or transport facts about a device connection.",
+      "properties": {
+        "connectionId": {
+          "title": "Connectionid",
+          "type": "string"
+        },
+        "facts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Facts",
+          "type": "object"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "status": {
+          "default": "available",
+          "enum": [
+            "connected",
+            "available",
+            "unavailable",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transport"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "connectionId",
+        "type"
+      ],
+      "title": "DeviceConnection",
+      "type": "object"
+    },
+    "DeviceDescriptor": {
+      "additionalProperties": false,
+      "description": "Descriptor for one controller-visible device or sub-surface.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityDescriptor"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "connections": {
+          "items": {
+            "$ref": "#/$defs/DeviceConnection"
+          },
+          "title": "Connections",
+          "type": "array"
+        },
+        "controls": {
+          "items": {
+            "$ref": "#/$defs/ControlDescriptor"
+          },
+          "title": "Controls",
+          "type": "array"
+        },
+        "defaultStatusIndicator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DescriptorCapabilityRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deviceId": {
+          "title": "Deviceid",
+          "type": "string"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "fingerprint": {
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "firmwareVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Firmwareversion"
+        },
+        "hardwareVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hardwareversion"
+        },
+        "identifiers": {
+          "items": {
+            "$ref": "#/$defs/DeviceIdentifier"
+          },
+          "title": "Identifiers",
+          "type": "array"
+        },
+        "manufacturer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manufacturer"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "modelId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modelid"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "serialNumber": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Serialnumber"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/DeviceSourceReference"
+          },
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "deviceId",
+        "fingerprint",
+        "displayName"
+      ],
+      "title": "DeviceDescriptor",
+      "type": "object"
+    },
+    "DeviceDescriptorChangedMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "descriptor": {
+          "$ref": "#/$defs/DeviceDescriptor"
+        }
+      },
+      "required": [
+        "descriptor"
+      ],
+      "title": "DeviceDescriptorChangedMessage",
+      "type": "object"
+    },
+    "DeviceIdentifier": {
+      "additionalProperties": false,
+      "description": "Stable or diagnostic identifier attached to a device.",
+      "properties": {
+        "issuer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issuer"
+        },
+        "namespace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Namespace"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "DeviceIdentifier",
+      "type": "object"
+    },
+    "DeviceRef": {
+      "additionalProperties": false,
+      "description": "Reference to a manager-local device in a hardware manager context.",
+      "properties": {
+        "deviceId": {
+          "title": "Deviceid",
+          "type": "string"
+        },
+        "fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fingerprint"
+        },
+        "managerId": {
+          "title": "Managerid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "managerId",
+        "deviceId"
+      ],
+      "title": "DeviceRef",
+      "type": "object"
+    },
+    "DeviceSourceReference": {
+      "additionalProperties": false,
+      "description": "Diagnostic reference to a source descriptor, report, layout, or protocol fact.",
+      "properties": {
+        "connectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Connectionid"
+        },
+        "facts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Facts",
+          "type": "object"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "sourceId": {
+          "title": "Sourceid",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sourceId",
+        "type"
+      ],
+      "title": "DeviceSourceReference",
+      "type": "object"
+    },
+    "DeviceUnavailableMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "deviceRef"
+      ],
+      "title": "DeviceUnavailableMessage",
+      "type": "object"
+    },
+    "EndpointAddress": {
+      "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "title": "EndpointAddress",
+      "type": "string"
+    },
+    "EndpointTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "$ref": "#/$defs/EndpointAddress"
+        },
+        "targetType": {
+          "const": "endpoint",
+          "default": "endpoint",
+          "title": "Targettype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint"
+      ],
+      "title": "EndpointTarget",
+      "type": "object"
+    },
+    "EntitySubject": {
+      "additionalProperties": false,
+      "properties": {
+        "identifiers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Identifiers",
+          "type": "object"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "EntitySubject",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "TraceContext": {
+      "additionalProperties": false,
+      "properties": {
+        "traceParent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Traceparent"
+        },
+        "traceState": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tracestate"
+        }
+      },
+      "title": "TraceContext",
+      "type": "object"
+    }
+  },
+  "$id": "dev.deckr.message.hardware_messages.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/DeviceAvailableMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "deviceAvailable"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/DeviceDescriptorChangedMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "deviceDescriptorChanged"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/DeviceUnavailableMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "deviceUnavailable"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ControlInputMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "controlInput"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ControlCommandMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "controlCommand"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/CapabilityStateChangedMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "capabilityStateChanged"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/CapabilityStateRequestMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "capabilityStateRequest"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/CapabilityStateReplyMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "capabilityStateReply"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/CommandAcceptedMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "commandAccepted"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/CommandRejectedMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "commandRejected"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/CommandReplyMessage"
+            },
+            "lane": {
+              "const": "hardware_messages"
+            },
+            "messageType": {
+              "const": "commandReply"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  ],
+  "title": "Deckr hardware_messages Lane Message",
+  "x-deckr-schema-version": "1"
+}

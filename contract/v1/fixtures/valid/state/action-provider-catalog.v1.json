@@ -1,0 +1,19 @@
+{
+  "actions": {
+    "dev.deckr.clock.time": {
+      "actionId": "dev.deckr.clock.time",
+      "name": "Clock"
+    }
+  },
+  "annotations": {
+    "runtime": "python"
+  },
+  "labels": {
+    "room": "office"
+  },
+  "providerEndpoint": "action_provider:clock-main",
+  "providerId": "dev.deckr.clock",
+  "providerInstanceId": "clock-main",
+  "sessionId": "provider-session",
+  "timestamp": "2026-04-29T10:00:00Z"
+}

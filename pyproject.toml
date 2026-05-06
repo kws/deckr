@@ -59,6 +59,7 @@ Repository = "https://github.com/kws/deckr"
 dev = [
     "click>=8.3.1,<9.0.0",
     "import-linter>=2.11,<3.0.0",
+    "jsonschema>=4.26.0,<5.0.0",
     "nats-py>=2.14.0,<3.0.0",
     "pytest>=9.0.2,<10.0.0",
     "pytest-asyncio>=1.3.0,<2.0.0",
@@ -68,6 +69,20 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deckr"]
+force-include = { "contract/v1" = "deckr/contract/v1" }
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/AGENTS.md",
+    "/LICENSE",
+    "/README.md",
+    "/contract/v1",
+    "/docs",
+    "/pyproject.toml",
+    "/scripts",
+    "/src",
+    "/tests",
+]
 
 [tool.ruff]
 target-version = "py311"

@@ -651,7 +651,7 @@ live device state becomes unavailable.
 
 The canonical v1 descriptor contracts are implemented in
 `deckr.hardware.descriptors`, with generated JSON Schema artifacts in
-`schemas/hardware`. Deckr-owned capability semantics are documented in
+`contract/v1/schemas/hardware`. Deckr-owned capability semantics are documented in
 [`capabilities.md`](capabilities.md). Inventory records use manager-scoped
 `DeviceRef` values and
 carry the same `DeviceDescriptor` shape published by `deviceAvailable` and

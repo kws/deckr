@@ -306,7 +306,13 @@ def test_capability_schema_requires_contract_keywords() -> None:
 
 
 def test_descriptor_schema_artifacts_match_checked_in_files() -> None:
-    schema_dir = Path(__file__).resolve().parents[1] / "schemas" / "hardware"
+    schema_dir = (
+        Path(__file__).resolve().parents[1]
+        / "contract"
+        / "v1"
+        / "schemas"
+        / "hardware"
+    )
     expected_files = {
         DEVICE_DESCRIPTOR_SCHEMA_ID: "device-descriptor.v1.schema.json",
         CONTROL_DESCRIPTOR_SCHEMA_ID: "control-descriptor.v1.schema.json",

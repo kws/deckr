@@ -1,5 +1,12 @@
 """Shared Deckr protocol contract helpers."""
 
+from deckr.contracts.artifacts import (
+    CONTRACT_ARTIFACT_VERSION,
+    contract_bundle_path,
+    contract_bundle_root,
+    contract_manifest,
+    read_contract_artifact,
+)
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     DEFAULT_LANE_CONTRACT_REGISTRY,
@@ -67,6 +74,7 @@ __all__ = [
     "ACTIONS_LANE",
     "ACTION_MESSAGES_SCHEMA_ID",
     "BackpressureHandling",
+    "CONTRACT_ARTIFACT_VERSION",
     "CORE_ENDPOINT_FAMILIES",
     "CORE_LANE_CONTRACTS",
     "CORE_LANE_NAMES",
@@ -101,6 +109,9 @@ __all__ = [
     "broadcast_target",
     "controller_address",
     "controllers_broadcast",
+    "contract_bundle_path",
+    "contract_bundle_root",
+    "contract_manifest",
     "endpoint_address",
     "endpoint_target",
     "entity_subject",
@@ -116,6 +127,7 @@ __all__ = [
     "parse_endpoint_address",
     "parse_hardware_manager_address",
     "parse_service_address",
+    "read_contract_artifact",
     "service_address",
     "thaw_json",
     "to_camel",

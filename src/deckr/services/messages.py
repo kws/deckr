@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import Field, field_serializer, field_validator
 
 from deckr.contracts.messages import (
+    SERVICE_MESSAGES_SCHEMA_ID,
     SERVICES_LANE,
     DeckrMessage,
     EndpointAddress,
@@ -208,3 +210,67 @@ def service_command_reply_message(
         in_reply_to=in_reply_to,
         causation_id=causation_id,
     )
+
+
+def service_message_schema() -> dict[str, Any]:
+    """Return the canonical ``services`` lane JSON Schema artifact."""
+
+    definitions: dict[str, Any] = {}
+    envelope_ref = _add_schema_model(definitions, DeckrMessage)
+    variants: list[dict[str, Any]] = []
+    for message_type, body_type in SERVICE_BODY_BY_MESSAGE_TYPE.items():
+        body_ref = _add_schema_model(definitions, body_type)
+        variants.append(
+            {
+                "allOf": [
+                    envelope_ref,
+                    {
+                        "type": "object",
+                        "required": ["lane", "messageType", "body"],
+                        "properties": {
+                            "lane": {"const": SERVICES_LANE},
+                            "messageType": {"const": message_type},
+                            "body": body_ref,
+                        },
+                    },
+                ]
+            }
+        )
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": SERVICE_MESSAGES_SCHEMA_ID,
+        "title": "Deckr services Lane Message",
+        "x-deckr-schema-version": "1",
+        "oneOf": variants,
+        "$defs": definitions,
+    }
+
+
+def _add_schema_model(
+    definitions: dict[str, Any],
+    model: type[DeckrModel],
+) -> dict[str, str]:
+    schema = model.model_json_schema(
+        by_alias=True,
+        ref_template="#/$defs/{model}",
+    )
+    for name, definition in schema.pop("$defs", {}).items():
+        _add_schema_definition(definitions, name, definition)
+    schema.pop("$schema", None)
+    name = model.__name__
+    _add_schema_definition(definitions, name, schema)
+    return {"$ref": f"#/$defs/{name}"}
+
+
+def _add_schema_definition(
+    definitions: dict[str, Any],
+    name: str,
+    definition: Mapping[str, Any],
+) -> None:
+    schema = deepcopy(dict(definition))
+    existing = definitions.get(name)
+    if existing is not None:
+        if existing != schema:
+            raise RuntimeError(f"Conflicting schema definition {name!r}")
+        return
+    definitions[name] = schema

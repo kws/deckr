@@ -13,6 +13,7 @@ from deckr.services.messages import (
     service_command_message,
     service_command_reply_message,
     service_message,
+    service_message_schema,
 )
 from deckr.services.state import (
     ServiceCatalog,
@@ -54,6 +55,7 @@ __all__ = [
     "service_command_reply_message",
     "service_is_live",
     "service_message",
+    "service_message_schema",
     "service_status_key",
     "service_view_key",
 ]

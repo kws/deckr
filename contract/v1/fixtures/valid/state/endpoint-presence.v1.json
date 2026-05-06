@@ -1,0 +1,10 @@
+{
+  "endpoint": "action_provider:clock-main",
+  "lane": "actions",
+  "metadata": {
+    "runtime": "python"
+  },
+  "sessionId": "provider-session",
+  "timestamp": "2026-04-29T10:00:00Z",
+  "ttlSeconds": 30
+}

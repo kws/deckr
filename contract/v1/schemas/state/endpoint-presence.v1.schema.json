@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "EndpointAddress": {
+      "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "title": "EndpointAddress",
+      "type": "string"
+    }
+  },
+  "$id": "dev.deckr.state.endpoint_presence.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "endpoint": {
+      "$ref": "#/$defs/EndpointAddress"
+    },
+    "lane": {
+      "title": "Lane",
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Metadata",
+      "type": "object"
+    },
+    "sessionId": {
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "ttlSeconds": {
+      "title": "Ttlseconds",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "endpoint",
+    "lane",
+    "sessionId",
+    "timestamp",
+    "ttlSeconds"
+  ],
+  "title": "Endpoint presence state",
+  "type": "object",
+  "x-deckr-schema-version": "1"
+}

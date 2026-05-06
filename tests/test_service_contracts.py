@@ -25,6 +25,7 @@ from deckr.services.messages import (
     ServiceCommandStatus,
     service_command_message,
     service_command_reply_message,
+    service_message_schema,
 )
 from deckr.services.state import (
     ServiceCatalog,
@@ -94,6 +95,22 @@ def test_services_lane_contract_accepts_direct_command_reply() -> None:
     assert command.message_type == SERVICE_COMMAND
     assert reply.message_type == SERVICE_COMMAND_REPLY
     assert reply.in_reply_to == command.message_id
+
+
+def test_service_message_schema_exports_typed_bodies() -> None:
+    schema = service_message_schema()
+
+    assert schema["$id"] == "dev.deckr.message.services.v1"
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    service_command_variant = next(
+        variant
+        for variant in schema["oneOf"]
+        if variant["allOf"][1]["properties"]["messageType"]["const"]
+        == SERVICE_COMMAND
+    )
+    variant_properties = service_command_variant["allOf"][1]["properties"]
+    assert variant_properties["lane"]["const"] == SERVICES_LANE
+    assert variant_properties["body"]["$ref"] == "#/$defs/ServiceCommandBody"
 
 
 def test_services_lane_validation_thaws_frozen_json_body() -> None:

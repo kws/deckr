@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "fixture": "fixtures/valid/actions/settings-request.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-action-settings-request",
+        "Deckr-Message-Type": "settingsRequest",
+        "Deckr-Recipient": "controller:controller-main",
+        "Deckr-Recipient-Session": "controller-session",
+        "Deckr-Sender": "action_provider:clock-main",
+        "Deckr-Sender-Session": "provider-session"
+      },
+      "id": "actions.settings_request",
+      "subject": "deckr.lane.actions.action_provider.clock-main"
+    }
+  ],
+  "schema": "dev.deckr.vector.nats_lane.v1"
+}

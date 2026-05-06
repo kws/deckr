@@ -1,0 +1,325 @@
+{
+  "$defs": {
+    "ActionDescriptor": {
+      "additionalProperties": false,
+      "description": "Action identity advertised by an action provider.",
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "controllers": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controllers"
+        },
+        "manifestDefaults": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifestdefaults"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "propertyInspectorPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Propertyinspectorpath"
+        },
+        "providerId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providerid"
+        },
+        "providerSettingsSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providersettingsschema"
+        },
+        "requirements": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CapabilityRequirement"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requirements"
+        },
+        "settingsSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Settingsschema"
+        }
+      },
+      "required": [
+        "actionId"
+      ],
+      "title": "ActionDescriptor",
+      "type": "object"
+    },
+    "CapabilityRequirement": {
+      "additionalProperties": false,
+      "description": "A named action input, output, state, config, or diagnostic requirement.",
+      "properties": {
+        "commandTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commandtypes",
+          "type": "array"
+        },
+        "eventTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Eventtypes",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "preferences": {
+          "items": {
+            "$ref": "#/$defs/CapabilityRequirementSelector"
+          },
+          "title": "Preferences",
+          "type": "array"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "views": {
+          "items": {
+            "enum": [
+              "raw",
+              "native",
+              "projected",
+              "derived",
+              "extension"
+            ],
+            "type": "string"
+          },
+          "title": "Views",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "preferences"
+      ],
+      "title": "CapabilityRequirement",
+      "type": "object"
+    },
+    "CapabilityRequirementSelector": {
+      "additionalProperties": false,
+      "description": "One acceptable capability shape for an action requirement.",
+      "properties": {
+        "capabilityId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capabilityid"
+        },
+        "commandTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commandtypes",
+          "type": "array"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "input",
+                "output",
+                "state",
+                "command"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Direction"
+        },
+        "eventTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Eventtypes",
+          "type": "array"
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Family"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "title": "CapabilityRequirementSelector",
+      "type": "object"
+    },
+    "EndpointAddress": {
+      "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "title": "EndpointAddress",
+      "type": "string"
+    },
+    "JsonValue": {}
+  },
+  "$id": "dev.deckr.state.action_provider_catalog.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Current action catalog advertised by one action provider endpoint.",
+  "properties": {
+    "actions": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ActionDescriptor"
+      },
+      "title": "Actions",
+      "type": "object"
+    },
+    "annotations": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Annotations",
+      "type": "object"
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Labels",
+      "type": "object"
+    },
+    "providerEndpoint": {
+      "$ref": "#/$defs/EndpointAddress"
+    },
+    "providerId": {
+      "title": "Providerid",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "title": "Providerinstanceid",
+      "type": "string"
+    },
+    "sessionId": {
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    }
+  },
+  "required": [
+    "providerInstanceId",
+    "providerEndpoint",
+    "providerId",
+    "sessionId",
+    "timestamp"
+  ],
+  "title": "Action provider catalog state",
+  "type": "object",
+  "x-deckr-schema-version": "1"
+}

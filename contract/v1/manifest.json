@@ -1,0 +1,253 @@
+{
+  "artifacts": [
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/actions/settings-request-missing-target.v1.json",
+      "schemaPath": "schemas/actions/actions.v1.schema.json",
+      "title": "Invalid settingsRequest missing target",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.hardware.control_input.invalid_missing_device_ref.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/hardware/control-input-missing-device-ref.v1.json",
+      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
+      "title": "Invalid controlInput missing deviceRef",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.services.service_command.invalid_missing_namespace.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/services/service-command-missing-namespace.v1.json",
+      "schemaPath": "schemas/services/services.v1.schema.json",
+      "title": "Invalid serviceCommand missing serviceNamespace",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.state.endpoint_presence.invalid_missing_session.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/state/endpoint-presence-missing-session.v1.json",
+      "schemaPath": "schemas/state/endpoint-presence.v1.schema.json",
+      "title": "Invalid endpoint presence missing sessionId",
+      "valid": false
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.actions.settings_request.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/actions/settings-request.v1.json",
+      "schemaPath": "schemas/actions/actions.v1.schema.json",
+      "title": "Valid settingsRequest action message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.control_input.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/control-input.v1.json",
+      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
+      "title": "Valid controlInput hardware message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.device_available.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/device-available.v1.json",
+      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
+      "title": "Valid deviceAvailable hardware message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.services.service_command.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/services/service-command.v1.json",
+      "schemaPath": "schemas/services/services.v1.schema.json",
+      "title": "Valid serviceCommand service message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.state.action_provider_catalog.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/state/action-provider-catalog.v1.json",
+      "schemaPath": "schemas/state/action-provider-catalog.v1.schema.json",
+      "title": "Valid action provider catalog state",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.state.device_claim.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/state/device-claim.v1.json",
+      "schemaPath": "schemas/state/device-claim.v1.schema.json",
+      "title": "Valid device claim state",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.state.endpoint_presence.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/state/endpoint-presence.v1.json",
+      "schemaPath": "schemas/state/endpoint-presence.v1.schema.json",
+      "title": "Valid endpoint presence state",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.state.hardware_inventory.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/state/hardware-inventory.v1.json",
+      "schemaPath": "schemas/state/hardware-inventory.v1.schema.json",
+      "title": "Valid hardware inventory state",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.state.service_catalog.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/state/service-catalog.v1.json",
+      "schemaPath": "schemas/state/service-catalog.v1.schema.json",
+      "title": "Valid service catalog state",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.state.service_status.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/state/service-status.v1.json",
+      "schemaPath": "schemas/state/service-status.v1.schema.json",
+      "title": "Valid service status state",
+      "valid": true
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr actions lane envelopes and bodies.",
+      "id": "dev.deckr.message.actions.v1",
+      "kind": "schema",
+      "path": "schemas/actions/actions.v1.schema.json",
+      "schemaId": "dev.deckr.message.actions.v1",
+      "title": "Actions lane messages"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr CapabilityDescriptor.",
+      "id": "dev.deckr.hardware.capability_descriptor.v1",
+      "kind": "schema",
+      "path": "schemas/hardware/capability-descriptor.v1.schema.json",
+      "schemaId": "dev.deckr.hardware.capability_descriptor.v1",
+      "title": "Deckr CapabilityDescriptor"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr ControlDescriptor.",
+      "id": "dev.deckr.hardware.control_descriptor.v1",
+      "kind": "schema",
+      "path": "schemas/hardware/control-descriptor.v1.schema.json",
+      "schemaId": "dev.deckr.hardware.control_descriptor.v1",
+      "title": "Deckr ControlDescriptor"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr DeviceDescriptor.",
+      "id": "dev.deckr.hardware.device_descriptor.v1",
+      "kind": "schema",
+      "path": "schemas/hardware/device-descriptor.v1.schema.json",
+      "schemaId": "dev.deckr.hardware.device_descriptor.v1",
+      "title": "Deckr DeviceDescriptor"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr hardware_messages lane envelopes and bodies.",
+      "id": "dev.deckr.message.hardware_messages.v1",
+      "kind": "schema",
+      "path": "schemas/hardware/hardware-messages.v1.schema.json",
+      "schemaId": "dev.deckr.message.hardware_messages.v1",
+      "title": "Hardware messages lane messages"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr services lane envelopes and bodies.",
+      "id": "dev.deckr.message.services.v1",
+      "kind": "schema",
+      "path": "schemas/services/services.v1.schema.json",
+      "schemaId": "dev.deckr.message.services.v1",
+      "title": "Services lane messages"
+    },
+    {
+      "description": "Canonical JSON Schema for Action provider catalog state.",
+      "id": "dev.deckr.state.action_provider_catalog.v1",
+      "kind": "schema",
+      "path": "schemas/state/action-provider-catalog.v1.schema.json",
+      "schemaId": "dev.deckr.state.action_provider_catalog.v1",
+      "title": "Action provider catalog state"
+    },
+    {
+      "description": "Canonical JSON Schema for Device claim state.",
+      "id": "dev.deckr.state.device_claim.v1",
+      "kind": "schema",
+      "path": "schemas/state/device-claim.v1.schema.json",
+      "schemaId": "dev.deckr.state.device_claim.v1",
+      "title": "Device claim state"
+    },
+    {
+      "description": "Canonical JSON Schema for Endpoint presence state.",
+      "id": "dev.deckr.state.endpoint_presence.v1",
+      "kind": "schema",
+      "path": "schemas/state/endpoint-presence.v1.schema.json",
+      "schemaId": "dev.deckr.state.endpoint_presence.v1",
+      "title": "Endpoint presence state"
+    },
+    {
+      "description": "Canonical JSON Schema for Hardware inventory state.",
+      "id": "dev.deckr.state.hardware_inventory.v1",
+      "kind": "schema",
+      "path": "schemas/state/hardware-inventory.v1.schema.json",
+      "schemaId": "dev.deckr.state.hardware_inventory.v1",
+      "title": "Hardware inventory state"
+    },
+    {
+      "description": "Canonical JSON Schema for Service catalog state.",
+      "id": "dev.deckr.state.service_catalog.v1",
+      "kind": "schema",
+      "path": "schemas/state/service-catalog.v1.schema.json",
+      "schemaId": "dev.deckr.state.service_catalog.v1",
+      "title": "Service catalog state"
+    },
+    {
+      "description": "Canonical JSON Schema for Service status state.",
+      "id": "dev.deckr.state.service_status.v1",
+      "kind": "schema",
+      "path": "schemas/state/service-status.v1.schema.json",
+      "schemaId": "dev.deckr.state.service_status.v1",
+      "title": "Service status state"
+    },
+    {
+      "description": "Acceptance vectors for Deckr NATS-safe key token encoding.",
+      "id": "dev.deckr.vector.key_tokens.v1",
+      "kind": "vector",
+      "path": "vectors/key-tokens.v1.json",
+      "title": "Key token encoding vectors"
+    },
+    {
+      "description": "Acceptance vectors for Deckr NATS lane subject and header hints.",
+      "id": "dev.deckr.vector.nats_lane.v1",
+      "kind": "vector",
+      "path": "vectors/nats-lane.v1.json",
+      "title": "NATS lane subject and header vectors"
+    },
+    {
+      "description": "Acceptance vectors for Deckr current-state key helpers and parsers.",
+      "id": "dev.deckr.vector.state_keys.v1",
+      "kind": "vector",
+      "path": "vectors/state-keys.v1.json",
+      "title": "Current-state key vectors"
+    }
+  ],
+  "bundle": "deckr-contract-v1",
+  "contractVersion": "v1",
+  "deckrPackageVersion": "0.3.0.dev0",
+  "description": "Generated Deckr v1 contract artifact bundle.",
+  "schema": "dev.deckr.contract.bundle.v1",
+  "specVersion": "1"
+}

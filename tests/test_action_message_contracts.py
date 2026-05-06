@@ -721,6 +721,8 @@ def test_typed_action_body_schemas_are_exportable() -> None:
 def test_action_schema_artifact_matches_checked_in_file() -> None:
     schema_path = (
         Path(__file__).resolve().parents[1]
+        / "contract"
+        / "v1"
         / "schemas"
         / "actions"
         / "actions.v1.schema.json"
