@@ -517,7 +517,7 @@ async def start_components(
     _validate_runtime_for_plan(deckr, plan)
     component_manager = ComponentManager()
     async with anyio.create_task_group() as tg:
-        tg.start_soon(component_manager.run)
+        await tg.start(component_manager.run)
         host = await _activate_component_plan(deckr, plan, component_manager)
         if any(spec.dependencies for spec in plan.specs):
             tg.start_soon(

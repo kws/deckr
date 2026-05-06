@@ -136,8 +136,13 @@ class ComponentManager(Component):
         self._subscribers = SubscribableQueue[ComponentLifecycleEvent]()
         self._status_subscribers = SubscribableQueue[ComponentStatus]()
         self._tg: anyio.TaskGroup | None = None
+        self._run_finished = anyio.Event()
 
-    async def run(self) -> None:
+    async def run(
+        self,
+        *,
+        task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED,
+    ) -> None:
         """Start the component manager event loop.
 
         This should be run in a task group. The manager will process
@@ -146,9 +151,15 @@ class ComponentManager(Component):
         if self._tg is not None:
             raise RuntimeError("ComponentManager already started")
 
-        async with anyio.create_task_group() as tg:
-            self._tg = tg
-            await self._event_loop()
+        self._run_finished = anyio.Event()
+        try:
+            async with anyio.create_task_group() as tg:
+                self._tg = tg
+                task_status.started()
+                await self._event_loop()
+        finally:
+            self._tg = None
+            self._run_finished.set()
 
     async def start(self, ctx: RunContext) -> None:
         """Start the ComponentManager as a sub-component of the given task group.
@@ -157,12 +168,16 @@ class ComponentManager(Component):
         """
         if self._tg is not None:
             raise RuntimeError("ComponentManager already started")
-        ctx.tg.start_soon(self.run)
+        await ctx.tg.start(self.run)
 
     async def stop(self) -> None:
-        if self._tg is not None:
-            self._tg.cancel_scope.cancel()
-        await self._event_send.aclose()
+        with anyio.CancelScope(shield=True):
+            tg = self._tg
+            if tg is not None:
+                tg.cancel_scope.cancel()
+            await self._event_send.aclose()
+            if tg is not None:
+                await self._run_finished.wait()
 
     async def add_component(self, component: Component) -> None:
         """Add a component to the runtime registry.

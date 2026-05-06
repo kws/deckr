@@ -937,7 +937,10 @@ A participant that owns current state should:
    change. Retry failed dirty discovery publishes until the current content is
    written.
 6. On graceful stop, delete owned discovery keys and release owned claims with
-   revision checks; endpoint presence withdrawal is owned by the registered
+   revision checks before the endpoint handle is closed. If a runtime hosts
+   child components that borrow its endpoint handle, finish those child stops
+   first so their cleanup can still publish messages, withdraw discovery, or
+   release claims. Endpoint presence withdrawal is owned by the registered
    endpoint handle.
 7. On `StateUnavailable`, treat the affected state as unknown and retry or let an
    outer supervisor create a fresh endpoint registration.

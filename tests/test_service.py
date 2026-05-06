@@ -37,26 +37,12 @@ async def _manager_context():
     manager = ComponentManager()
 
     async with anyio.create_task_group() as tg:
-        tg.start_soon(manager.run)
-        await anyio.sleep(0.01)  # Let manager start
+        await tg.start(manager.run)
 
         try:
             yield (manager, tg)
         finally:
-            # Cleanup: stop all components before cancelling
-            component_names = list(manager.list_components())
-
-            # Stop all components by calling _stop_component directly
-            for name in component_names:
-                try:
-                    await manager._stop_component(name)
-                except Exception:
-                    pass  # Ignore errors during cleanup
-
-            # Wait a bit for cleanup
-            await anyio.sleep(0.1)
-
-            # Cancel the manager task group - suppress exceptions from component crashes
+            await manager.stop()
             tg.cancel_scope.cancel()
 
     # Suppress any ExceptionGroup that might have been raised from component crashes
@@ -732,6 +718,53 @@ class TestComponentManagerResourceCleanup:
             # Fixture will handle cleanup and cancellation
 
     @pytest.mark.asyncio
+    async def test_manager_stop_waits_for_components_when_caller_is_cancelled(self):
+        """Test manager.stop() completes child cleanup during cancelled shutdown."""
+        class BlockingStopComponent:
+            name = "test1"
+
+            def __init__(self) -> None:
+                self.stop_entered = anyio.Event()
+                self.release_stop = anyio.Event()
+                self.stop_finished = anyio.Event()
+
+            async def start(self, ctx: RunContext) -> None:
+                del ctx
+
+            async def stop(self) -> None:
+                self.stop_entered.set()
+                await self.release_stop.wait()
+                self.stop_finished.set()
+
+        manager = ComponentManager()
+        component = BlockingStopComponent()
+        stop_returned = anyio.Event()
+
+        async with anyio.create_task_group() as tg:
+            await tg.start(manager.run)
+            await manager.add_component(component)
+            await manager.wait_for_state("test1", ComponentState.RUNNING, timeout=1.0)
+
+            async def cancelled_stop() -> None:
+                with anyio.CancelScope() as scope:
+                    scope.cancel()
+                    await manager.stop()
+                stop_returned.set()
+
+            tg.start_soon(cancelled_stop)
+            with anyio.fail_after(1):
+                await component.stop_entered.wait()
+
+            assert not stop_returned.is_set()
+            component.release_stop.set()
+            with anyio.fail_after(1):
+                await stop_returned.wait()
+
+            assert component.stop_finished.is_set()
+            assert manager.get_component_state("test1") is None
+            tg.cancel_scope.cancel()
+
+    @pytest.mark.asyncio
     async def test_no_orphaned_tasks(self, manager_context):
         """Test that no tasks are orphaned on failure."""
         async with manager_context as (manager, tg):
@@ -1024,14 +1057,11 @@ class TestComponentManagerEdgeCases:
 
         # This should work (event is queued)
         async with anyio.create_task_group() as tg:
-            # Don't start manager.run() yet
-            await anyio.sleep(0.01)
-
             # Try to add - should queue event
             await manager.add_component(component)
 
             # Now start manager
-            tg.start_soon(manager.run)
+            await tg.start(manager.run)
             await manager.wait_for_state("test1", ComponentState.RUNNING, timeout=1.0)
 
             # Should work - event was queued

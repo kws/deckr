@@ -266,6 +266,25 @@ it must pass through the same lane-contract validation, generic instance
 configuration binding, `RunContext`, `ComponentManager`, and lifecycle
 supervision.
 
+### Component Shutdown
+
+`ComponentManager.stop()` is a shutdown barrier. Once it returns, every child
+component owned by that manager has completed its graceful `stop()`, timed out
+and been force-stopped, or otherwise been removed from the manager. This remains
+true when shutdown starts from a cancelled host scope such as SIGINT handling.
+
+`RunContext.stopping` is the cooperative stop signal for component-owned tasks.
+`Component.stop()` must be idempotent and bounded; it may perform final protocol
+cleanup, publish lifecycle messages, withdraw discovery records, or release
+claims while the component's borrowed runtime resources are still valid.
+
+Parent runtimes that register resources and pass them into hosted children must
+keep those resources alive until all children using them have stopped. This is
+especially important for registered endpoint lane handles: a parent must close
+or withdraw an endpoint only after hosted child cleanup that may publish on that
+endpoint has completed. Do not hide shutdown ordering bugs by catching and
+ignoring "endpoint closed" failures during cleanup; fix the ownership order.
+
 The bundled launcher may expose convenient presets or examples for these modes,
 but presets must be expressed as ordinary component composition and explicit
 transport bindings. They must not introduce hidden lane inference such as
