@@ -174,6 +174,7 @@ class ComponentManager(Component):
         with anyio.CancelScope(shield=True):
             tg = self._tg
             if tg is not None:
+                await self._stop_all_components()
                 tg.cancel_scope.cancel()
             await self._event_send.aclose()
             if tg is not None:

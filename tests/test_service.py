@@ -765,6 +765,63 @@ class TestComponentManagerResourceCleanup:
             tg.cancel_scope.cancel()
 
     @pytest.mark.asyncio
+    async def test_manager_stop_keeps_component_task_group_alive_for_stop(self):
+        """Test manager.stop() runs graceful stop before cancelling child tasks."""
+        class TaskGroupSensitiveComponent:
+            name = "test1"
+
+            def __init__(self) -> None:
+                self.task_started = anyio.Event()
+                self.task_cancelled = anyio.Event()
+                self.stop_saw_task_alive = anyio.Event()
+                self.release_stop = anyio.Event()
+
+            async def start(self, ctx: RunContext) -> None:
+                async def child_task() -> None:
+                    self.task_started.set()
+                    try:
+                        await anyio.sleep_forever()
+                    finally:
+                        self.task_cancelled.set()
+
+                ctx.tg.start_soon(child_task)
+
+            async def stop(self) -> None:
+                if not self.task_cancelled.is_set():
+                    self.stop_saw_task_alive.set()
+                await self.release_stop.wait()
+
+        manager = ComponentManager()
+        component = TaskGroupSensitiveComponent()
+        stop_returned = anyio.Event()
+
+        async with anyio.create_task_group() as tg:
+            await tg.start(manager.run)
+            await manager.add_component(component)
+            await manager.wait_for_state("test1", ComponentState.RUNNING, timeout=1.0)
+            with anyio.fail_after(1):
+                await component.task_started.wait()
+
+            async def cancelled_stop() -> None:
+                with anyio.CancelScope() as scope:
+                    scope.cancel()
+                    await manager.stop()
+                stop_returned.set()
+
+            tg.start_soon(cancelled_stop)
+            with anyio.fail_after(1):
+                await component.stop_saw_task_alive.wait()
+
+            assert not component.task_cancelled.is_set()
+            component.release_stop.set()
+            with anyio.fail_after(1):
+                await stop_returned.wait()
+
+            assert component.task_cancelled.is_set()
+            assert manager.get_component_state("test1") is None
+            tg.cancel_scope.cancel()
+
+    @pytest.mark.asyncio
     async def test_no_orphaned_tasks(self, manager_context):
         """Test that no tasks are orphaned on failure."""
         async with manager_context as (manager, tg):
