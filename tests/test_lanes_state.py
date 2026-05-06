@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 import anyio
 import pytest
@@ -31,6 +32,7 @@ from deckr.state import (
     DEFAULT_DISCOVERY_STATE_STORE_NAME,
     PERSISTENT_STATE_STORE_POLICY,
     EndpointPresence,
+    HardwareInventory,
     StateConflict,
     StateEntry,
     StateUnavailable,
@@ -741,6 +743,32 @@ def test_state_key_helpers_round_trip_encoded_tokens() -> None:
     assert parse_hardware_inventory_key(inventory_key) == "room/a"
     assert parse_device_claim_key(claim_key) == ("room/a", "deck:one")
     assert parse_action_provider_catalog_key(catalog_key) == "provider.main"
+
+
+def test_hardware_inventory_labels_round_trip_and_default_empty() -> None:
+    inventory = HardwareInventory(
+        managerId="mqtt-main",
+        managerEndpoint=hardware_manager_address("mqtt-main"),
+        sessionId="session-1",
+        timestamp=datetime.now(UTC),
+        labels={"mqtt-host": "openhabian"},
+    )
+
+    dumped = inventory.model_dump(by_alias=True, mode="json")
+
+    assert dumped["labels"] == {"mqtt-host": "openhabian"}
+    assert HardwareInventory.model_validate(dumped).labels == {
+        "mqtt-host": "openhabian"
+    }
+    assert HardwareInventory.model_validate(
+        {
+            "managerId": "mqtt-main",
+            "managerEndpoint": "hardware_manager:mqtt-main",
+            "sessionId": "session-1",
+            "timestamp": "2026-05-06T12:00:00Z",
+            "devices": {},
+        }
+    ).labels == {}
 
 
 def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() -> None:

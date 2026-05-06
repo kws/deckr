@@ -559,6 +559,9 @@ Presence is not a route table and does not replace envelope recipient filtering.
 ## Hardware Inventory
 
 Hardware inventory says which devices a hardware manager currently sees.
+`labels` are manager-authored selection labels for all devices in that inventory;
+controllers may use them with stable device fingerprints when choosing
+controller-local device configuration.
 
 Example:
 
@@ -568,6 +571,9 @@ Example:
   "managerEndpoint": "hardware_manager:mirabox",
   "sessionId": "uuid-v4-string",
   "timestamp": "2026-04-29T10:30:00Z",
+  "labels": {
+    "mqtt-host": "openhabian"
+  },
   "devices": {
     "device-1": {
       "deviceRef": {

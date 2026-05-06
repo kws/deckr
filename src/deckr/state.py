@@ -203,11 +203,21 @@ class HardwareInventory(DeckrModel):
     manager_endpoint: EndpointAddress = Field(alias="managerEndpoint")
     session_id: str = Field(alias="sessionId")
     timestamp: datetime
+    labels: Mapping[str, str] = Field(default_factory=dict)
     devices: Mapping[str, HardwareInventoryDevice] = Field(default_factory=dict)
 
     @field_serializer("timestamp")
     def _serialize_timestamp(self, value: datetime) -> str:
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    @field_validator("labels", mode="after")
+    @classmethod
+    def _freeze_labels(cls, value: Mapping[str, str]) -> Mapping[str, str]:
+        return freeze_json(value)
+
+    @field_serializer("labels")
+    def _serialize_labels(self, value: Mapping[str, str]) -> dict[str, str]:
+        return thaw_json(value)
 
     @field_validator("devices", mode="after")
     @classmethod
