@@ -83,11 +83,72 @@ def test_contract_manifest_is_available_through_public_helper() -> None:
     manifest = contract_manifest()
 
     assert manifest["bundle"] == "deckr-contract-v1"
+    assert any(
+        artifact["kind"] == "spec" and artifact["path"] == "asyncapi.json"
+        for artifact in manifest["artifacts"]
+    )
     assert read_contract_artifact("manifest.json") == (
         _bundle_root() / "manifest.json"
     ).read_text(encoding="utf-8")
     with contract_bundle_path() as bundle:
         assert (bundle / "index.html").exists()
+        assert (bundle / "asyncapi.json").exists()
+
+
+def test_asyncapi_artifact_indexes_core_lane_contracts() -> None:
+    root = _bundle_root()
+    asyncapi = _json(root / "asyncapi.json")
+
+    assert asyncapi["asyncapi"] == "3.0.0"
+    assert asyncapi["defaultContentType"] == "application/json"
+    assert asyncapi["servers"]["deckrNats"]["protocol"] == "nats"
+
+    expected_lanes = {
+        "actionsLane": (
+            "actions",
+            "ActionsLaneEnvelope",
+            "schemas/actions/actions.v1.schema.json",
+        ),
+        "hardwareMessagesLane": (
+            "hardware_messages",
+            "HardwareMessagesLaneEnvelope",
+            "schemas/hardware/hardware-messages.v1.schema.json",
+        ),
+        "servicesLane": (
+            "services",
+            "ServicesLaneEnvelope",
+            "schemas/services/services.v1.schema.json",
+        ),
+    }
+    for channel_name, (lane, schema_component, schema_path) in expected_lanes.items():
+        channel = asyncapi["channels"][channel_name]
+        channel_message_name = next(iter(channel["messages"]))
+        channel_message_ref = channel["messages"][channel_message_name]["$ref"]
+        message_component = channel_message_ref.rsplit("/", 1)[1]
+        message = asyncapi["components"]["messages"][message_component]
+        schema = asyncapi["components"]["schemas"][schema_component]
+
+        assert channel["x-deckr-lane"] == lane
+        assert channel["x-deckr-schema-path"] == schema_path
+        assert message["payload"] == {"$ref": f"#/components/schemas/{schema_component}"}
+        assert schema["schemaFormat"] == "application/schema+json;version=draft-07"
+        assert schema["x-deckr-schema-path"] == schema_path
+        assert schema["schema"]["$id"] == _json(root / schema_path)["$id"]
+        assert schema["schema"]["$schema"] == "http://json-schema.org/draft-07/schema#"
+        assert (
+            schema["schema"]["x-deckr-canonical-schema-dialect"]
+            == "https://json-schema.org/draft/2020-12/schema"
+        )
+
+        operation_refs = [
+            message_ref
+            for operation in asyncapi["operations"].values()
+            if operation["channel"] == {"$ref": f"#/channels/{channel_name}"}
+            for message_ref in operation["messages"]
+        ]
+        assert {
+            "$ref": f"#/channels/{channel_name}/messages/{channel_message_name}"
+        } in operation_refs
 
 
 def test_contract_fixtures_validate_against_declared_schemas() -> None:

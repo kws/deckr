@@ -223,6 +223,15 @@
       "title": "Service status state"
     },
     {
+      "asyncapi": "3.0.0",
+      "description": "AsyncAPI document for Deckr NATS lane contracts.",
+      "format": "asyncapi",
+      "id": "dev.deckr.asyncapi.v1",
+      "kind": "spec",
+      "path": "asyncapi.json",
+      "title": "Deckr AsyncAPI contract"
+    },
+    {
       "description": "Acceptance vectors for Deckr NATS-safe key token encoding.",
       "id": "dev.deckr.vector.key_tokens.v1",
       "kind": "vector",

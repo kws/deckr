@@ -5,6 +5,7 @@ import json
 import shutil
 import tomllib
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,15 @@ from deckr.actions.messages import (
     action_message_schema,
 )
 from deckr.actions.state import action_provider_catalog_key
+from deckr.contracts.lanes import (
+    CORE_LANE_CONTRACTS,
+    DeliverySemantics,
+    LaneContract,
+    MessageFamilyDelivery,
+)
 from deckr.contracts.messages import (
     ACTIONS_LANE,
+    HARDWARE_MESSAGES_LANE,
     SERVICES_LANE,
     DeckrMessage,
     controller_address,
@@ -76,8 +84,12 @@ from deckr.substrates.nats import _headers_for, _subject_for
 
 CONTRACT_VERSION = "v1"
 SPEC_VERSION = "1"
+ASYNCAPI_VERSION = "3.0.0"
+ASYNCAPI_REACT_COMPONENT_VERSION = "2.6.5"
 FIXED_NOW = datetime(2026, 4, 29, 10, 0, tzinfo=UTC)
 JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
+JSON_SCHEMA_DRAFT_07_URI = "http://json-schema.org/draft-07/schema#"
+ASYNCAPI_SCHEMA_FORMAT = "application/schema+json;version=draft-07"
 
 STATE_SCHEMA_IDS = {
     "endpoint_presence": "dev.deckr.state.endpoint_presence.v1",
@@ -94,6 +106,59 @@ DESCRIPTOR_SCHEMA_FILENAMES = {
     CAPABILITY_DESCRIPTOR_SCHEMA_ID: "capability-descriptor.v1.schema.json",
 }
 
+SCHEMA_COMPONENTS = {
+    "schemas/actions/actions.v1.schema.json": "ActionsLaneEnvelope",
+    "schemas/hardware/hardware-messages.v1.schema.json": "HardwareMessagesLaneEnvelope",
+    "schemas/services/services.v1.schema.json": "ServicesLaneEnvelope",
+    "schemas/hardware/device-descriptor.v1.schema.json": "DeviceDescriptor",
+    "schemas/hardware/control-descriptor.v1.schema.json": "ControlDescriptor",
+    "schemas/hardware/capability-descriptor.v1.schema.json": "CapabilityDescriptor",
+    "schemas/state/endpoint-presence.v1.schema.json": "EndpointPresenceState",
+    "schemas/state/hardware-inventory.v1.schema.json": "HardwareInventoryState",
+    "schemas/state/device-claim.v1.schema.json": "DeviceClaimState",
+    "schemas/state/action-provider-catalog.v1.schema.json": (
+        "ActionProviderCatalogState"
+    ),
+    "schemas/state/service-catalog.v1.schema.json": "ServiceCatalogState",
+    "schemas/state/service-status.v1.schema.json": "ServiceStatusState",
+}
+
+LANE_SCHEMA_PATHS = {
+    ACTIONS_LANE: "schemas/actions/actions.v1.schema.json",
+    HARDWARE_MESSAGES_LANE: "schemas/hardware/hardware-messages.v1.schema.json",
+    SERVICES_LANE: "schemas/services/services.v1.schema.json",
+}
+
+LANE_ASYNCAPI_COMPONENTS = {
+    ACTIONS_LANE: {
+        "channel": "actionsLane",
+        "message": "ActionsLaneMessage",
+        "channel_message": "actionsLaneEnvelope",
+        "publish_operation": "publishActionsLaneMessage",
+        "receive_operation": "receiveActionsLaneMessages",
+        "title": "Actions lane",
+        "summary": "Action provider and controller protocol messages.",
+    },
+    HARDWARE_MESSAGES_LANE: {
+        "channel": "hardwareMessagesLane",
+        "message": "HardwareMessagesLaneMessage",
+        "channel_message": "hardwareMessagesLaneEnvelope",
+        "publish_operation": "publishHardwareMessagesLaneMessage",
+        "receive_operation": "receiveHardwareMessagesLaneMessages",
+        "title": "Hardware messages lane",
+        "summary": "Hardware manager and controller protocol messages.",
+    },
+    SERVICES_LANE: {
+        "channel": "servicesLane",
+        "message": "ServicesLaneMessage",
+        "channel_message": "servicesLaneEnvelope",
+        "publish_operation": "publishServicesLaneMessage",
+        "receive_operation": "receiveServicesLaneMessages",
+        "title": "Services lane",
+        "summary": "Endpoint-addressed service command and reply messages.",
+    },
+}
+
 
 def generate_contract_artifacts(output_root: Path | None = None) -> None:
     repo_root = Path(__file__).resolve().parents[1]
@@ -103,6 +168,8 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
     bundle_root.mkdir(parents=True)
 
     artifacts: list[dict[str, Any]] = []
+    schema_payloads: dict[str, Mapping[str, Any]] = {}
+    valid_fixture_payloads: dict[str, Mapping[str, Any]] = {}
 
     def add_artifact(
         *,
@@ -115,6 +182,14 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
         **metadata: Any,
     ) -> None:
         _write_json(bundle_root / path, payload)
+        if kind == "schema":
+            if not isinstance(payload, Mapping):
+                raise TypeError(f"Schema artifact {path!r} must be a mapping")
+            schema_payloads[path] = payload
+        if kind == "fixture" and metadata.get("valid") is True:
+            if not isinstance(payload, Mapping):
+                raise TypeError(f"Fixture artifact {path!r} must be a mapping")
+            valid_fixture_payloads[path] = payload
         artifacts.append(
             {
                 "kind": kind,
@@ -132,17 +207,35 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
         add_artifact(**fixture)
     _add_vectors(add_artifact, fixtures=fixtures)
 
+    package_version = _package_version(repo_root)
+    asyncapi_document = _asyncapi_document(
+        package_version=package_version,
+        schema_payloads=schema_payloads,
+        fixtures=fixtures,
+        valid_fixture_payloads=valid_fixture_payloads,
+    )
+    add_artifact(
+        kind="spec",
+        artifact_id="dev.deckr.asyncapi.v1",
+        path="asyncapi.json",
+        title="Deckr AsyncAPI contract",
+        description="AsyncAPI document for Deckr NATS lane contracts.",
+        payload=asyncapi_document,
+        format="asyncapi",
+        asyncapi=ASYNCAPI_VERSION,
+    )
+
     manifest = {
         "schema": "dev.deckr.contract.bundle.v1",
         "bundle": "deckr-contract-v1",
         "specVersion": SPEC_VERSION,
         "contractVersion": CONTRACT_VERSION,
-        "deckrPackageVersion": _package_version(repo_root),
+        "deckrPackageVersion": package_version,
         "description": "Generated Deckr v1 contract artifact bundle.",
         "artifacts": sorted(artifacts, key=lambda item: (item["kind"], item["path"])),
     }
     _write_json(bundle_root / "manifest.json", manifest)
-    _write_text(bundle_root / "index.html", _render_index(manifest))
+    _write_text(bundle_root / "index.html", _render_index(manifest, asyncapi_document))
 
 
 def _add_schemas(add_artifact) -> None:
@@ -604,6 +697,394 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
     )
 
 
+def _asyncapi_document(
+    *,
+    package_version: str,
+    schema_payloads: Mapping[str, Mapping[str, Any]],
+    fixtures: list[dict[str, Any]],
+    valid_fixture_payloads: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    schema_components = _asyncapi_schema_components(schema_payloads)
+    channels = {
+        details["channel"]: _asyncapi_lane_channel(lane, CORE_LANE_CONTRACTS[lane])
+        for lane, details in LANE_ASYNCAPI_COMPONENTS.items()
+    }
+    messages = {
+        details["message"]: _asyncapi_lane_message(
+            lane=lane,
+            schema_path=LANE_SCHEMA_PATHS[lane],
+            fixtures=fixtures,
+            valid_fixture_payloads=valid_fixture_payloads,
+        )
+        for lane, details in LANE_ASYNCAPI_COMPONENTS.items()
+    }
+    operations = {}
+    for lane, details in LANE_ASYNCAPI_COMPONENTS.items():
+        operations.update(_asyncapi_lane_operations(lane, details=details))
+
+    return {
+        "asyncapi": ASYNCAPI_VERSION,
+        "id": "urn:dev.deckr:contract:v1",
+        "info": {
+            "title": "Deckr Core Contract",
+            "version": package_version,
+            "description": (
+                "Contract-first Deckr v1 artifacts for NATS lane messages, "
+                "current-state payloads, fixtures, and interop vectors."
+            ),
+            "license": {"name": "MIT"},
+            "tags": [
+                {
+                    "name": "lanes",
+                    "description": "Endpoint-bound Deckr message lanes over NATS.",
+                },
+                {
+                    "name": "state",
+                    "description": (
+                        "Deckr current-state payload schemas and key vectors."
+                    ),
+                },
+                {
+                    "name": "interop",
+                    "description": (
+                        "Fixtures and vectors for cross-language contract tests."
+                    ),
+                },
+            ],
+            "externalDocs": {
+                "description": "Deckr NATS bus documentation",
+                "url": "https://github.com/kws/deckr/blob/main/docs/nats-bus.md",
+            },
+        },
+        "defaultContentType": "application/json",
+        "servers": {
+            "deckrNats": {
+                "host": "127.0.0.1:4222",
+                "protocol": "nats",
+                "description": (
+                    "Example Deckr NATS broker. Deployments provide their own "
+                    "host, authentication, and authorization."
+                ),
+            }
+        },
+        "channels": channels,
+        "operations": operations,
+        "components": {
+            "messages": messages,
+            "schemas": schema_components,
+            "messageTraits": {
+                "deckrNatsHeaders": {
+                    "headers": _asyncapi_headers_schema(),
+                    "correlationId": {
+                        "description": "Deckr message id used for request/reply correlation.",
+                        "location": "$message.header#/Deckr-Message-Id",
+                    },
+                }
+            },
+        },
+        "x-deckr-contract-version": CONTRACT_VERSION,
+        "x-deckr-spec-version": SPEC_VERSION,
+        "x-deckr-artifact-manifest": "manifest.json",
+        "x-deckr-current-state": _asyncapi_state_artifacts(schema_payloads),
+        "x-deckr-interop-vectors": [
+            "vectors/key-tokens.v1.json",
+            "vectors/nats-lane.v1.json",
+            "vectors/state-keys.v1.json",
+        ],
+    }
+
+
+def _asyncapi_schema_components(
+    schema_payloads: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    missing = sorted(set(SCHEMA_COMPONENTS) - set(schema_payloads))
+    if missing:
+        names = ", ".join(missing)
+        raise RuntimeError(f"Missing schema artifact(s) for AsyncAPI: {names}")
+
+    return {
+        component: {
+            "schemaFormat": ASYNCAPI_SCHEMA_FORMAT,
+            "schema": _asyncapi_embedded_schema(schema_payloads[path], component),
+            "x-deckr-schema-path": path,
+            "x-deckr-schema-id": schema_payloads[path].get("$id"),
+        }
+        for path, component in sorted(SCHEMA_COMPONENTS.items())
+    }
+
+
+def _asyncapi_embedded_schema(
+    schema: Mapping[str, Any],
+    component: str,
+) -> dict[str, Any]:
+    embedded = deepcopy(dict(schema))
+    if "$schema" in embedded:
+        embedded["x-deckr-canonical-schema-dialect"] = embedded["$schema"]
+        embedded["$schema"] = JSON_SCHEMA_DRAFT_07_URI
+    _project_schema_defs_to_draft_07(embedded)
+    _rewrite_local_json_schema_refs(
+        embedded,
+        prefix=f"#/components/schemas/{component}/schema",
+    )
+    return embedded
+
+
+def _project_schema_defs_to_draft_07(value: Any) -> None:
+    if isinstance(value, dict):
+        defs = value.pop("$defs", None)
+        if defs is not None:
+            value["definitions"] = defs
+        for item in value.values():
+            _project_schema_defs_to_draft_07(item)
+    elif isinstance(value, list):
+        for item in value:
+            _project_schema_defs_to_draft_07(item)
+
+
+def _rewrite_local_json_schema_refs(value: Any, *, prefix: str) -> None:
+    if isinstance(value, dict):
+        for key, item in list(value.items()):
+            if (
+                key == "$ref"
+                and isinstance(item, str)
+                and item.startswith("#/")
+                and not item.startswith(f"{prefix}/")
+            ):
+                value[key] = _asyncapi_projected_ref(item, prefix=prefix)
+                continue
+            if key == "mapping" and isinstance(item, dict):
+                for map_key, map_value in list(item.items()):
+                    if (
+                        isinstance(map_value, str)
+                        and map_value.startswith("#/")
+                        and not map_value.startswith(f"{prefix}/")
+                    ):
+                        item[map_key] = _asyncapi_projected_ref(
+                            map_value,
+                            prefix=prefix,
+                        )
+                continue
+            _rewrite_local_json_schema_refs(item, prefix=prefix)
+    elif isinstance(value, list):
+        for item in value:
+            _rewrite_local_json_schema_refs(item, prefix=prefix)
+
+
+def _asyncapi_projected_ref(ref: str, *, prefix: str) -> str:
+    suffix = ref[1:]
+    if suffix.startswith("/$defs/"):
+        suffix = f"/definitions/{suffix.removeprefix('/$defs/')}"
+    return f"{prefix}{suffix}"
+
+
+def _asyncapi_lane_channel(lane: str, contract: LaneContract) -> dict[str, Any]:
+    details = LANE_ASYNCAPI_COMPONENTS[lane]
+    return {
+        "address": (
+            f"deckr.lane.{encode_key_token(lane)}."
+            "{senderFamily}.{senderEndpointToken}"
+        ),
+        "title": details["title"],
+        "description": (
+            "NATS subject pattern for Deckr logical lane messages. "
+            "`senderEndpointToken` is encoded with the Deckr key-token rules."
+        ),
+        "parameters": {
+            "senderFamily": {
+                "description": "Deckr endpoint family of the sender.",
+                "enum": sorted(contract.allowed_sender_families or ()),
+            },
+            "senderEndpointToken": {
+                "description": (
+                    "NATS-safe encoded token for the sender endpoint id. "
+                    "Decode it with the Deckr key-token vectors."
+                ),
+                "examples": ["controller-main", "clock-main"],
+            },
+        },
+        "messages": {
+            details["channel_message"]: {
+                "$ref": f"#/components/messages/{details['message']}"
+            }
+        },
+        "x-deckr-lane": lane,
+        "x-deckr-schema-path": LANE_SCHEMA_PATHS[lane],
+        "x-deckr-message-types": sorted(contract.message_types),
+        "x-deckr-allowed-recipient-families": sorted(
+            contract.allowed_recipient_families or ()
+        ),
+        "x-deckr-broadcast-targets": dict(contract.broadcast_targets),
+        "x-deckr-delivery": _asyncapi_delivery(contract.delivery),
+    }
+
+
+def _asyncapi_lane_message(
+    *,
+    lane: str,
+    schema_path: str,
+    fixtures: list[dict[str, Any]],
+    valid_fixture_payloads: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    details = LANE_ASYNCAPI_COMPONENTS[lane]
+    return {
+        "name": lane,
+        "title": f"{details['title']} envelope",
+        "summary": details["summary"],
+        "description": (
+            "The payload is the full Deckr logical message envelope. "
+            "The `body` field is discriminated by `messageType` inside the "
+            "lane schema."
+        ),
+        "contentType": "application/json",
+        "payload": {
+            "$ref": f"#/components/schemas/{SCHEMA_COMPONENTS[schema_path]}"
+        },
+        "traits": [{"$ref": "#/components/messageTraits/deckrNatsHeaders"}],
+        "examples": _asyncapi_message_examples(
+            schema_path=schema_path,
+            fixtures=fixtures,
+            valid_fixture_payloads=valid_fixture_payloads,
+        ),
+        "tags": [{"name": "lanes"}],
+        "x-deckr-lane": lane,
+        "x-deckr-schema-path": schema_path,
+    }
+
+
+def _asyncapi_message_examples(
+    *,
+    schema_path: str,
+    fixtures: list[dict[str, Any]],
+    valid_fixture_payloads: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
+    for fixture in sorted(fixtures, key=lambda item: item["path"]):
+        if (
+            fixture["kind"] != "fixture"
+            or not fixture["valid"]
+            or fixture["schemaPath"] != schema_path
+        ):
+            continue
+        payload = valid_fixture_payloads[fixture["path"]]
+        examples.append(
+            {
+                "name": _asyncapi_name_from_path(fixture["path"]),
+                "summary": fixture["title"],
+                "payload": payload,
+            }
+        )
+    return examples
+
+
+def _asyncapi_name_from_path(path: str) -> str:
+    stem = Path(path).stem
+    if stem.endswith(".v1"):
+        stem = stem[:-3]
+    parts = stem.replace("_", "-").split("-")
+    return parts[0] + "".join(part.capitalize() for part in parts[1:])
+
+
+def _asyncapi_lane_operations(
+    lane: str,
+    *,
+    details: Mapping[str, str],
+) -> dict[str, Any]:
+    message_ref = {
+        "$ref": (
+            f"#/channels/{details['channel']}/messages/"
+            f"{details['channel_message']}"
+        )
+    }
+    channel_ref = {"$ref": f"#/channels/{details['channel']}"}
+    bindings = {"nats": {"bindingVersion": "0.1.0"}}
+    tags = [{"name": "lanes"}]
+    return {
+        details["publish_operation"]: {
+            "action": "send",
+            "channel": channel_ref,
+            "messages": [message_ref],
+            "summary": f"Publish {details['title']} messages.",
+            "bindings": bindings,
+            "tags": tags,
+            "x-deckr-lane": lane,
+        },
+        details["receive_operation"]: {
+            "action": "receive",
+            "channel": channel_ref,
+            "messages": [message_ref],
+            "summary": f"Receive deliverable {details['title']} messages.",
+            "bindings": bindings,
+            "tags": tags,
+            "x-deckr-lane": lane,
+        },
+    }
+
+
+def _asyncapi_headers_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": [
+            "Deckr-Message-Id",
+            "Deckr-Message-Type",
+            "Deckr-Sender",
+            "Deckr-Sender-Session",
+            "Deckr-Recipient",
+        ],
+        "properties": {
+            "Deckr-Message-Id": {"type": "string"},
+            "Deckr-Message-Type": {"type": "string"},
+            "Deckr-Sender": {"type": "string"},
+            "Deckr-Sender-Session": {"type": "string"},
+            "Deckr-Recipient": {"type": "string"},
+            "Deckr-Recipient-Session": {"type": "string"},
+            "Deckr-In-Reply-To": {"type": "string"},
+        },
+        "additionalProperties": True,
+    }
+
+
+def _asyncapi_delivery(delivery: DeliverySemantics | None) -> dict[str, Any] | None:
+    if delivery is None:
+        return None
+    return {
+        "persistence": delivery.persistence.value,
+        "guarantee": delivery.guarantee.value,
+        "replay": delivery.replay.value,
+        "ordering": delivery.ordering.value,
+        "orderingKeys": list(delivery.ordering_keys),
+        "expiry": delivery.expiry.value,
+        "localBackpressure": delivery.local_backpressure.value,
+        "remoteBackpressure": delivery.remote_backpressure.value,
+        "malformedMessages": delivery.malformed_messages.value,
+        "messageFamilies": [
+            _asyncapi_message_family(family) for family in delivery.message_families
+        ],
+    }
+
+
+def _asyncapi_message_family(family: MessageFamilyDelivery) -> dict[str, Any]:
+    return {
+        "family": family.family.value,
+        "messageTypes": sorted(family.message_types),
+        "idempotency": family.idempotency.value if family.idempotency else None,
+        "orderingKeys": list(family.ordering_keys),
+    }
+
+
+def _asyncapi_state_artifacts(
+    schema_payloads: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "schema": schema_payloads[path].get("$id", ""),
+            "component": SCHEMA_COMPONENTS[path],
+            "path": path,
+        }
+        for path in sorted(SCHEMA_COMPONENTS)
+        if path.startswith("schemas/state/")
+    ]
+
+
 def _device_descriptor() -> DeviceDescriptor:
     return DeviceDescriptor.model_validate(
         {
@@ -755,15 +1236,23 @@ def _write_text(path: Path, payload: str) -> None:
     path.write_text(payload, encoding="utf-8")
 
 
-def _render_index(manifest: Mapping[str, Any]) -> str:
-    rows = "\n".join(
-        _artifact_row(artifact) for artifact in manifest["artifacts"]
+def _render_index(
+    manifest: Mapping[str, Any],
+    asyncapi_document: Mapping[str, Any],
+) -> str:
+    rows = "\n".join(_artifact_row(artifact) for artifact in manifest["artifacts"])
+    asyncapi_json = (
+        json.dumps(asyncapi_document, sort_keys=True, separators=(",", ":"))
+        .replace("</", "<\\/")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
     )
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Deckr Contract v1</title>
+  <link rel="stylesheet" href="https://unpkg.com/@asyncapi/react-component@{ASYNCAPI_REACT_COMPONENT_VERSION}/styles/default.min.css">
   <style>
     :root {{
       color-scheme: light;
@@ -772,22 +1261,50 @@ def _render_index(manifest: Mapping[str, Any]) -> str:
     }}
     body {{
       margin: 0;
-      background: #f6f7f9;
+      background: #f7f8fb;
       color: #17202a;
     }}
+    header {{
+      padding: 18px 24px;
+      border-bottom: 1px solid #d9dee7;
+      background: #fff;
+    }}
     main {{
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 32px 24px 48px;
+      margin: 0;
+      padding: 0;
     }}
     h1 {{
       margin: 0 0 8px;
-      font-size: 2rem;
+      font-size: 1.45rem;
       letter-spacing: 0;
     }}
     p {{
-      margin: 0 0 20px;
-      max-width: 760px;
+      margin: 0;
+      max-width: 860px;
+    }}
+    .links {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      margin-top: 12px;
+      font-size: 0.92rem;
+    }}
+    #asyncapi-viewer {{
+      min-height: calc(100vh - 132px);
+    }}
+    #viewer-status {{
+      margin: 24px;
+      padding: 14px 16px;
+      border: 1px solid #d9dee7;
+      background: #fff;
+    }}
+    #artifact-fallback {{
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 24px 24px 48px;
+    }}
+    #artifact-fallback[hidden] {{
+      display: none;
     }}
     table {{
       width: 100%;
@@ -822,13 +1339,27 @@ def _render_index(manifest: Mapping[str, Any]) -> str:
   </style>
 </head>
 <body>
-  <main>
+  <header>
     <h1>Deckr Contract v1</h1>
     <p>
       Generated contract artifact browser for Deckr package
       <code>{html.escape(str(manifest["deckrPackageVersion"]))}</code>.
-      The authoritative manifest is <a href="manifest.json">manifest.json</a>.
     </p>
+    <nav class="links" aria-label="Contract artifacts">
+      <a href="asyncapi.json">AsyncAPI JSON</a>
+      <a href="manifest.json">Manifest</a>
+      <a href="schemas/">Schemas</a>
+      <a href="fixtures/">Fixtures</a>
+      <a href="vectors/">Vectors</a>
+    </nav>
+  </header>
+  <main>
+    <div id="asyncapi-viewer"></div>
+    <div id="viewer-status" role="status">
+      Loading the AsyncAPI browser. If CDN scripts are unavailable, use the
+      artifact table below.
+    </div>
+    <section id="artifact-fallback" aria-label="Contract artifact table">
     <table>
       <thead>
         <tr>
@@ -842,7 +1373,37 @@ def _render_index(manifest: Mapping[str, Any]) -> str:
 {rows}
       </tbody>
     </table>
+    </section>
   </main>
+  <script id="asyncapi-spec" type="application/json">{asyncapi_json}</script>
+  <script src="https://unpkg.com/@asyncapi/react-component@{ASYNCAPI_REACT_COMPONENT_VERSION}/browser/standalone/index.js"></script>
+  <script>
+    const fallback = document.getElementById("artifact-fallback");
+    const status = document.getElementById("viewer-status");
+    const target = document.getElementById("asyncapi-viewer");
+    const rawSpec = document.getElementById("asyncapi-spec").textContent;
+
+    try {{
+      const schema = JSON.parse(rawSpec);
+      if (!window.AsyncApiStandalone) {{
+        throw new Error("AsyncAPI standalone renderer is unavailable");
+      }}
+      window.AsyncApiStandalone.render({{
+        schema,
+        config: {{
+          schemaID: "deckr-contract-v1",
+          show: {{
+            sidebar: true,
+            errors: true
+          }}
+        }}
+      }}, target);
+      fallback.hidden = true;
+      status.hidden = true;
+    }} catch (error) {{
+      status.textContent = `${{error.message}}. Showing the raw artifact table.`;
+    }}
+  </script>
 </body>
 </html>
 """

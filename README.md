@@ -52,6 +52,7 @@ docs/
 contract/v1/
   index.html
   manifest.json
+  asyncapi.json
   schemas/
   fixtures/
   vectors/
@@ -59,8 +60,10 @@ tests/
 ```
 
 The generated `contract/v1/` bundle is the checked, language-neutral v1
-contract artifact set. Open `contract/v1/index.html` locally to browse the
-manifest, schemas, fixtures, and vectors. Regenerate it with:
+contract artifact set. Open `contract/v1/index.html` locally for the AsyncAPI
+browser, or use `contract/v1/asyncapi.json` directly with AsyncAPI-compatible
+tooling. The manifest, JSON schemas, fixtures, and vectors remain available as
+plain files. Regenerate the bundle with:
 
 ```bash
 uv run python scripts/generate_contract_artifacts.py
