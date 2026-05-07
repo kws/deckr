@@ -1219,7 +1219,8 @@ def _model_schema(model: type[BaseModel], *, schema_id: str, title: str) -> dict
 
 
 def _package_version(repo_root: Path) -> str:
-    data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = repo_root / "libraries" / "python" / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     return str(data["project"]["version"])
 
 

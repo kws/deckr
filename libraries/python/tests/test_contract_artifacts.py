@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
+from repo_paths import contract_bundle_root, deckr_repo_root
 
 from deckr.actions.state import (
     action_provider_catalog_key,
@@ -40,14 +41,12 @@ from deckr.substrates.nats import _headers_for, _subject_for
 
 
 def _bundle_root() -> Path:
-    return Path(__file__).resolve().parents[1] / "contract" / "v1"
+    return contract_bundle_root()
 
 
 def _generate_contract_artifacts(output_root: Path) -> None:
     script_path = (
-        Path(__file__).resolve().parents[1]
-        / "scripts"
-        / "generate_contract_artifacts.py"
+        deckr_repo_root() / "scripts" / "generate_contract_artifacts.py"
     )
     spec = spec_from_file_location("deckr_generate_contract_artifacts", script_path)
     assert spec is not None

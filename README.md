@@ -1,10 +1,10 @@
 # deckr
 
-`deckr` is the shared core for the Deckr ecosystem.
+`deckr` is the shared spec/core repository for the Deckr ecosystem.
 
-It owns the reusable runtime model, lane contracts, message contracts, and
-wire-safe schemas that other Deckr components build on without pulling in
-controller-specific policy.
+It owns the reusable runtime model, lane contracts, message contracts,
+wire-safe schemas, and first-party language core libraries that other Deckr
+components build on without pulling in controller-specific policy.
 That includes:
 
 - the `Component` runtime abstraction
@@ -35,20 +35,6 @@ The controller now lives in its own sibling repository:
 ## Repository Layout
 
 ```text
-src/deckr/
-  components/  Public component model, lifecycle manager, and component host
-  contracts/   Wire-safe lane, envelope, endpoint, and delivery contracts
-  core/        Generic config, logging, and runtime utility helpers
-  actions/     Runtime-neutral actions lane body, endpoint, and catalog contracts
-  hardware/    Hardware-facing shared contracts and wire models
-  substrates/  Lane substrate implementations, currently NATS
-  lanes.py     Endpoint-bound lane handles and lane validation
-  runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
-  state.py     Current-state models, key helpers, and StateStore protocol
-docs/
-  nats-bus.md
-  runtime-architecture.md
-  runtime-modes.md
 contract/v1/
   index.html
   manifest.json
@@ -56,7 +42,20 @@ contract/v1/
   schemas/
   fixtures/
   vectors/
-tests/
+docs/
+  nats-bus.md
+  runtime-architecture.md
+  runtime-modes.md
+interop/
+  report.schema.json
+  runners/
+libraries/
+  python/
+    pyproject.toml
+    src/deckr/
+    tests/
+scripts/
+  generate_contract_artifacts.py
 ```
 
 The generated `contract/v1/` bundle is the checked, language-neutral v1
@@ -66,7 +65,7 @@ tooling. The manifest, JSON schemas, fixtures, and vectors remain available as
 plain files. Regenerate the bundle with:
 
 ```bash
-uv run python scripts/generate_contract_artifacts.py
+uv run --project libraries/python python scripts/generate_contract_artifacts.py
 ```
 
 ## Requirements
@@ -79,21 +78,22 @@ uv run python scripts/generate_contract_artifacts.py
 Install the project and development tooling:
 
 ```bash
-uv sync
+uv sync --project libraries/python
 ```
 
 Run the default validation suite:
 
 ```bash
-uv run ruff check .
-uv run lint-imports
-uv run pytest
+uv run --project libraries/python ruff check libraries/python scripts interop
+uv run --project libraries/python lint-imports --config libraries/python/.importlinter
+uv run --project libraries/python pytest
+uv run --project libraries/python python interop/runners/python/static_conformance.py
 ```
 
 Build distributables:
 
 ```bash
-uv build
+uv build --project libraries/python
 ```
 
 ## Architecture
@@ -139,23 +139,24 @@ and `Deckr.state(...)` for current-state declarations. The optional
 launcher can supervise a private local `nats-server` process. This is still the
 same NATS/KV runtime contract, not an in-memory or no-NATS product mode.
 
-A real-NATS smoke harness is available at `scripts/nats_smoke.py`, and
-`scripts/nats_state_report.py` summarizes the broker's current Deckr
-communication state.
+A real-NATS smoke harness is available at
+`libraries/python/scripts/nats_smoke.py`, and
+`libraries/python/scripts/nats_state_report.py` summarizes the broker's current
+Deckr communication state.
 
 Run the smoke harness against the included JetStream-enabled NATS compose service:
 
 ```bash
 docker compose -f docker/compose.nats-smoke.yaml up -d nats
-uv run --extra nats python scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
-uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
+uv run --project libraries/python --extra nats python libraries/python/scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
+uv run --project libraries/python --extra nats python libraries/python/scripts/nats_state_report.py --url nats://127.0.0.1:4222
 docker compose -f docker/compose.nats-smoke.yaml down -v
 ```
 
 Run the same smoke harness with a supervised local NATS server:
 
 ```bash
-uv run --extra supervised-nats python scripts/nats_smoke.py --supervised --check-ttl
+uv run --project libraries/python --extra supervised-nats python libraries/python/scripts/nats_smoke.py --supervised --check-ttl
 ```
 
 ## Package Boundaries
@@ -165,7 +166,7 @@ If code is specific to orchestration, rendering policy, device lifecycle
 management, controller configuration, or controller-owned state, it belongs in
 `deckr-controller`, not here.
 
-Internal boundaries are enforced with `.importlinter`:
+Internal boundaries are enforced with `libraries/python/.importlinter`:
 
 - `deckr.core` must not import `deckr.hardware`
 - `deckr.core` must not import `deckr.actions`
@@ -176,7 +177,7 @@ Internal boundaries are enforced with `.importlinter`:
 Run the contract checks with:
 
 ```bash
-uv run lint-imports
+uv run --project libraries/python lint-imports --config libraries/python/.importlinter
 ```
 
 ## Deckr Message Protocols
@@ -225,9 +226,10 @@ Import `deckr.hardware` directly in all code and docs.
 
 ## Releases
 
-This repository now releases a single distribution: `deckr`.
+This repository currently releases the Python core distribution: `deckr`.
 
-- The source of truth for the published version is the root `pyproject.toml`.
+- The source of truth for the Python published version is
+  `libraries/python/pyproject.toml`.
 - Use package tags in the form `deckr-vX.Y.Z`.
 - Stable releases use normal PEP 440 versions such as `0.3.0`.
 - After each stable release, bump immediately to the next development line,
@@ -235,19 +237,21 @@ This repository now releases a single distribution: `deckr`.
 
 ### Release Flow
 
-1. Update `version` in `pyproject.toml` to the stable release number.
+1. Update `version` in `libraries/python/pyproject.toml` to the stable release
+   number.
 2. Run the validation suite:
 
    ```bash
-   uv run ruff check .
-   uv run lint-imports
-   uv run pytest
+   uv run --project libraries/python ruff check libraries/python scripts interop
+   uv run --project libraries/python lint-imports --config libraries/python/.importlinter
+   uv run --project libraries/python pytest
+   uv run --project libraries/python python interop/runners/python/static_conformance.py
    ```
 
 3. Refresh the lockfile:
 
    ```bash
-   uv lock --refresh
+   uv lock --project libraries/python --refresh
    ```
 
 4. Commit the release, for example:
@@ -266,16 +270,16 @@ This repository now releases a single distribution: `deckr`.
 
    ```bash
    git checkout deckr-v0.3.0
-   uv build
+   uv build --project libraries/python
    git checkout -
    ```
 
 7. Publish the wheel and sdist using your usual PyPI workflow.
-8. Immediately bump `pyproject.toml` to the next development version, refresh
-   the lockfile, and commit that separately:
+8. Immediately bump `libraries/python/pyproject.toml` to the next development
+   version, refresh the lockfile, and commit that separately:
 
    ```bash
-   uv lock --refresh
+   uv lock --project libraries/python --refresh
    git commit -am "chore(deckr): bump to development release 0.4.0.dev0"
    ```
 

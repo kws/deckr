@@ -21,10 +21,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --project libraries/python --dev
 
       - name: Run unit tests with coverage
-        run: uv run pytest --cov=src/deckr --cov-report=term-missing --cov-report=xml
+        run: uv run --project libraries/python pytest --cov=deckr --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4

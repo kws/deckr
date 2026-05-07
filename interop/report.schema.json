@@ -1,0 +1,134 @@
+{
+  "$id": "dev.deckr.interop.report.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": {
+      "type": "string"
+    },
+    "groups": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "failed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "passed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "passed",
+          "failed",
+          "skipped",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "implementation": {
+      "additionalProperties": false,
+      "properties": {
+        "language": {
+          "const": "python"
+        },
+        "package": {
+          "const": "deckr"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "language",
+        "package",
+        "version"
+      ],
+      "type": "object"
+    },
+    "roles": {
+      "items": {
+        "enum": [
+          "validator"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema": {
+      "const": "dev.deckr.interop.report.v1"
+    },
+    "specVersion": {
+      "type": "string"
+    },
+    "summary": {
+      "additionalProperties": false,
+      "properties": {
+        "failed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "passed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "passed",
+        "failed",
+        "skipped"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "contractVersion",
+    "specVersion",
+    "implementation",
+    "roles",
+    "groups",
+    "summary"
+  ],
+  "type": "object"
+}

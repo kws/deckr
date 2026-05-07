@@ -8,13 +8,14 @@ README and use this file for placement rules and implementation hints.
 
 ## What Lives Here
 
-`deckr` is the controller-independent Python core for the Deckr ecosystem.
+`deckr` is the controller-independent spec/core repository for the Deckr
+ecosystem.
 
 Use this repo for:
 
 - shared hardware contracts and wire models
 - action-provider-facing manifests, messages, and lifecycle primitives
-- reusable runtime utilities that are not controller-specific
+- reusable language core libraries that are not controller-specific
 
 Do not place controller orchestration, rendering policy, filesystem config, or
 device-manager-specific behavior here. That belongs in the sibling
@@ -22,16 +23,20 @@ device-manager-specific behavior here. That belongs in the sibling
 
 ## Directory Guide
 
-- `src/deckr/core`
+- `contract/v1`
+  - Generated, checked language-neutral v1 contract artifact bundle.
+- `interop`
+  - Language-neutral conformance harnesses and report schemas.
+- `libraries/python/src/deckr/core`
   - Generic runtime utilities and messaging primitives.
   - Must not depend on `deckr.hardware` or `deckr.actions`.
-- `src/deckr/actions`
+- `libraries/python/src/deckr/actions`
   - Runtime-neutral `actions` lane wire contracts, provider-instance catalogs,
     settings targets, endpoint helpers, and action-facing capability contracts.
-- `src/deckr/hardware`
+- `libraries/python/src/deckr/hardware`
   - Shared hardware-facing contracts.
   - Must not depend on `deckr.actions`.
-- `tests`
+- `libraries/python/tests`
   - Tests for the core package only.
 
 ## Placement Rules
@@ -45,7 +50,8 @@ device-manager-specific behavior here. That belongs in the sibling
 
 ## Dependency Rules
 
-These are enforced in [`.importlinter`](./.importlinter):
+These are enforced in
+[`libraries/python/.importlinter`](./libraries/python/.importlinter):
 
 - `deckr.core` must not import `deckr.hardware`
 - `deckr.core` must not import `deckr.actions`
@@ -56,7 +62,7 @@ These are enforced in [`.importlinter`](./.importlinter):
 After touching package boundaries or import structure, run:
 
 ```bash
-uv run lint-imports
+uv run --project libraries/python lint-imports --config libraries/python/.importlinter
 ```
 
 ## Development Commands
@@ -64,11 +70,11 @@ uv run lint-imports
 Use `uv` consistently:
 
 ```bash
-uv sync
-uv run ruff check .
-uv run lint-imports
-uv run pytest
-uv build
+uv sync --project libraries/python
+uv run --project libraries/python ruff check libraries/python scripts interop
+uv run --project libraries/python lint-imports --config libraries/python/.importlinter
+uv run --project libraries/python pytest
+uv build --project libraries/python
 ```
 
 ## Release Notes
@@ -78,7 +84,7 @@ Do not duplicate the full release procedure here; follow the release section in
 
 Short version:
 
-- root `pyproject.toml` owns the published `deckr` version
+- `libraries/python/pyproject.toml` owns the published Python `deckr` version
 - tag stable releases as `deckr-vX.Y.Z`
 - after a stable release, bump immediately to the next `X.(Y+1).0.dev0`
 - refresh `uv.lock` after every version change

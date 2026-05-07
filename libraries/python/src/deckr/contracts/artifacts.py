@@ -57,4 +57,8 @@ def read_contract_artifact(
 
 
 def _source_checkout_bundle_root(version: str) -> Path:
-    return Path(__file__).resolve().parents[3] / "contract" / version
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "contract" / version
+        if candidate.exists():
+            return candidate
+    return Path(__file__).resolve().parent / "__missing_contract_bundle__"

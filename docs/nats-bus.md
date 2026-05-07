@@ -1052,15 +1052,15 @@ Request/reply permissions must allow the relevant `_INBOX` subjects or use NATS
 Run the smoke harness with a supervised local NATS server:
 
 ```bash
-uv run --extra supervised-nats python scripts/nats_smoke.py --supervised --check-ttl
+uv run --project libraries/python --extra supervised-nats python libraries/python/scripts/nats_smoke.py --supervised --check-ttl
 ```
 
 Run the `deckr` smoke broker from the `deckr` repository:
 
 ```bash
 docker compose -f docker/compose.nats-smoke.yaml up -d nats
-uv run --extra nats python scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
-uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
+uv run --project libraries/python --extra nats python libraries/python/scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
+uv run --project libraries/python --extra nats python libraries/python/scripts/nats_state_report.py --url nats://127.0.0.1:4222
 docker compose -f docker/compose.nats-smoke.yaml down -v
 ```
 
@@ -1083,7 +1083,7 @@ nats kv ls deckr_discovery_v1 --server nats://127.0.0.1:4222
 Inspect current Deckr communication state:
 
 ```bash
-uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
+uv run --project libraries/python --extra nats python libraries/python/scripts/nats_state_report.py --url nats://127.0.0.1:4222
 ```
 
 Watch lane traffic:

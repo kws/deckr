@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import copy
 import json
-from pathlib import Path
 
 import pytest
 from descriptor_fixtures import descriptor_payloads
 from pydantic import ValidationError
+from repo_paths import contract_bundle_root
 
 from deckr.hardware.descriptors import (
     CAPABILITY_DESCRIPTOR_SCHEMA_ID,
@@ -307,9 +307,7 @@ def test_capability_schema_requires_contract_keywords() -> None:
 
 def test_descriptor_schema_artifacts_match_checked_in_files() -> None:
     schema_dir = (
-        Path(__file__).resolve().parents[1]
-        / "contract"
-        / "v1"
+        contract_bundle_root()
         / "schemas"
         / "hardware"
     )

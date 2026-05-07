@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from repo_paths import contract_bundle_root
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.actions.messages import (
@@ -720,9 +720,7 @@ def test_typed_action_body_schemas_are_exportable() -> None:
 
 def test_action_schema_artifact_matches_checked_in_file() -> None:
     schema_path = (
-        Path(__file__).resolve().parents[1]
-        / "contract"
-        / "v1"
+        contract_bundle_root()
         / "schemas"
         / "actions"
         / "actions.v1.schema.json"
