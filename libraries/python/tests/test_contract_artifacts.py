@@ -9,6 +9,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from repo_paths import contract_bundle_root, deckr_repo_root
 
+from deckr.actions.messages import parse_settings_target_key, settings_target_key
 from deckr.actions.state import (
     action_provider_catalog_key,
     parse_action_provider_catalog_key,
@@ -37,7 +38,7 @@ from deckr.state import (
     parse_presence_endpoint_key,
     presence_endpoint_key,
 )
-from deckr.substrates.nats import _headers_for, _subject_for
+from deckr.substrates.nats import _headers_for, _payload_for, _subject_for
 
 
 def _bundle_root() -> Path:
@@ -225,6 +226,11 @@ def test_state_key_vectors_match_python_helpers_and_parsers() -> None:
                 "serviceNamespace": parsed[1],
                 "tokens": list(parsed[2]),
             }
+        elif helper == "settings_target_key":
+            parsed = parse_settings_target_key(case["key"])
+            assert parsed is not None
+            key = settings_target_key(parsed)
+            parsed_value = {"target": parsed.to_dict()}
         else:
             raise AssertionError(f"Unknown state-key helper {helper!r}")
 
@@ -240,3 +246,4 @@ def test_nats_lane_vectors_match_python_helpers() -> None:
 
         assert _subject_for(message) == case["subject"]
         assert dict(_headers_for(message)) == case["headers"]
+        assert json.loads(_payload_for(message)) == json.loads(case["payloadUtf8"])

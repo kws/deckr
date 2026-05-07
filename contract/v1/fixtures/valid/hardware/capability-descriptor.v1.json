@@ -1,0 +1,31 @@
+{
+  "access": [
+    "emits"
+  ],
+  "capabilityId": "button.press",
+  "commandTypes": [],
+  "constraints": [],
+  "direction": "input",
+  "eventTypes": [
+    "press"
+  ],
+  "family": "dev.deckr.input.button",
+  "sources": [],
+  "type": "activation",
+  "units": [],
+  "valueSchema": {
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "eventType": {
+          "const": "press"
+        }
+      },
+      "required": [
+        "eventType"
+      ],
+      "type": "object"
+    },
+    "schemaId": "dev.deckr.value.input.button.activation.v1"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "cardinality": "multi_instance",
+  "componentId": "dev.deckr.example.hardware",
+  "consumes": [
+    "hardware_messages"
+  ],
+  "dependencies": {
+    "controller": {
+      "endpoint": "controller:controller-main",
+      "kind": "endpoint",
+      "lane": "hardware_messages",
+      "mode": "required"
+    },
+    "media": {
+      "endpoint": "service:media-home",
+      "kind": "service",
+      "mode": "optional",
+      "namespace": "dev.deckr.media.service"
+    }
+  },
+  "endpointSlots": [
+    "hardware"
+  ],
+  "publishes": [
+    "hardware_messages"
+  ],
+  "role": "hardware_manager"
+}

@@ -1,0 +1,32 @@
+{
+  "body": {
+    "operation": "play",
+    "result": {
+      "accepted": true
+    },
+    "serviceNamespace": "dev.deckr.media.service",
+    "status": "ok"
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "inReplyTo": "fixture-service-command",
+  "lane": "services",
+  "messageId": "fixture-service-command-reply",
+  "messageType": "serviceCommandReply",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "service:media-home",
+  "senderSessionId": "service-session",
+  "subject": {
+    "identifiers": {
+      "namespace": "dev.deckr.media.service",
+      "operation": "play",
+      "serviceId": "media-home"
+    },
+    "kind": "service"
+  }
+}

@@ -56,10 +56,12 @@
       "additionalProperties": false,
       "properties": {
         "language": {
-          "const": "python"
+          "minLength": 1,
+          "type": "string"
         },
         "package": {
-          "const": "deckr"
+          "minLength": 1,
+          "type": "string"
         },
         "version": {
           "type": "string"

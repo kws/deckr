@@ -1,0 +1,150 @@
+{
+  "$id": "dev.deckr.components.component_manifest.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cardinality": {
+      "default": "singleton",
+      "enum": [
+        "singleton",
+        "multi_instance"
+      ]
+    },
+    "componentId": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "consumes": {
+      "default": [],
+      "items": {
+        "enum": [
+          "actions",
+          "hardware_messages",
+          "services"
+        ]
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "dependencies": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "endpoint"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "namespace"
+                ]
+              },
+              "required": [
+                "lane"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "service"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "lane"
+                ]
+              },
+              "required": [
+                "namespace"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "endpoint": {
+            "pattern": "^(action_provider|controller|hardware_manager|service):[^:]+$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "endpoint",
+              "service"
+            ]
+          },
+          "lane": {
+            "enum": [
+              "actions",
+              "hardware_messages",
+              "services"
+            ]
+          },
+          "mode": {
+            "enum": [
+              "required",
+              "optional",
+              "preferred",
+              "observed"
+            ]
+          },
+          "namespace": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "mode",
+          "endpoint"
+        ],
+        "type": "object"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "endpointSlots": {
+      "default": [],
+      "items": {
+        "enum": [
+          "action_provider",
+          "controller",
+          "hardware",
+          "hardware_manager",
+          "service"
+        ]
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "publishes": {
+      "default": [],
+      "items": {
+        "enum": [
+          "actions",
+          "hardware_messages",
+          "services"
+        ]
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "role": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "componentId"
+  ],
+  "title": "Component manifest",
+  "type": "object",
+  "x-deckr-schema-version": "1"
+}

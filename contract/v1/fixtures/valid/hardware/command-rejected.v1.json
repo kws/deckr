@@ -1,0 +1,37 @@
+{
+  "body": {
+    "capabilityId": "raster.bitmap",
+    "commandType": "set_frame",
+    "controlId": "key.0.0",
+    "deviceRef": {
+      "deviceId": "deck-1",
+      "fingerprint": "fingerprint:deck-1",
+      "managerId": "mirabox-main"
+    },
+    "message": "frame format unsupported",
+    "reason": "unsupported"
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "inReplyTo": "fixture-hardware-control-command",
+  "lane": "hardware_messages",
+  "messageId": "fixture-hardware-command-rejected",
+  "messageType": "commandRejected",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "hardware_manager:mirabox-main",
+  "senderSessionId": "manager-session",
+  "subject": {
+    "identifiers": {
+      "capabilityId": "raster.bitmap",
+      "controlId": "key.0.0",
+      "deviceId": "deck-1",
+      "managerId": "mirabox-main"
+    },
+    "kind": "hardware_capability"
+  }
+}

@@ -19,6 +19,7 @@ The normative architecture reference now lives in:
 - [docs/runtime-architecture.md](docs/runtime-architecture.md)
 - [docs/runtime-modes.md](docs/runtime-modes.md)
 - [docs/nats-bus.md](docs/nats-bus.md)
+- [docs/core-surfaces.md](docs/core-surfaces.md)
 
 Those documents are the source of truth for the current architecture. They are
 explicitly normative, alpha-stage, and intentionally non-backward-compatible.
@@ -43,6 +44,7 @@ contract/v1/
   fixtures/
   vectors/
 docs/
+  core-surfaces.md
   nats-bus.md
   runtime-architecture.md
   runtime-modes.md
@@ -54,6 +56,9 @@ libraries/
     pyproject.toml
     src/deckr/
     tests/
+  rust/
+    Cargo.toml
+    src/
 scripts/
   generate_contract_artifacts.py
 ```
@@ -72,6 +77,7 @@ uv run --project libraries/python python scripts/generate_contract_artifacts.py
 
 - Python 3.11+
 - `uv`
+- Rust toolchain with `cargo`
 
 ## Quick Start
 
@@ -88,13 +94,20 @@ uv run --project libraries/python ruff check libraries/python scripts interop
 uv run --project libraries/python lint-imports --config libraries/python/.importlinter
 uv run --project libraries/python pytest
 uv run --project libraries/python python interop/runners/python/static_conformance.py
+cargo test --manifest-path libraries/rust/Cargo.toml
+cargo run --manifest-path libraries/rust/Cargo.toml --bin deckr-rust-static-conformance -- --output /tmp/deckr-rust-report.json
 ```
 
 Build distributables:
 
 ```bash
 uv build --project libraries/python
+cargo build --manifest-path libraries/rust/Cargo.toml
 ```
+
+The Python and Rust libraries are peers. Parity means the same observable
+contract behavior against `contract/v1`, not identical module names or API
+layout.
 
 ## Architecture
 
@@ -246,6 +259,8 @@ This repository currently releases the Python core distribution: `deckr`.
    uv run --project libraries/python lint-imports --config libraries/python/.importlinter
    uv run --project libraries/python pytest
    uv run --project libraries/python python interop/runners/python/static_conformance.py
+   cargo test --manifest-path libraries/rust/Cargo.toml
+   cargo run --manifest-path libraries/rust/Cargo.toml --bin deckr-rust-static-conformance -- --output /tmp/deckr-rust-report.json
    ```
 
 3. Refresh the lockfile:

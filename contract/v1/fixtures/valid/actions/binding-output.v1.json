@@ -1,0 +1,88 @@
+{
+  "body": {
+    "binding": {
+      "actionId": "dev.deckr.clock.time",
+      "actionInstanceId": "clock-instance-1",
+      "bindingId": "binding-1",
+      "configId": "office-panel",
+      "contextId": "clock-context",
+      "controlRef": {
+        "controlId": "key.0.0",
+        "deviceRef": {
+          "deviceId": "deck-1",
+          "fingerprint": "fingerprint:deck-1",
+          "managerId": "mirabox-main"
+        }
+      },
+      "deviceRef": {
+        "deviceId": "deck-1",
+        "fingerprint": "fingerprint:deck-1",
+        "managerId": "mirabox-main"
+      },
+      "handler": "default",
+      "itemKey": "clock",
+      "matchedCapabilities": [
+        {
+          "capability": {
+            "capabilityId": "raster.bitmap",
+            "controlId": "key.0.0",
+            "deviceRef": {
+              "deviceId": "deck-1",
+              "fingerprint": "fingerprint:deck-1",
+              "managerId": "mirabox-main"
+            }
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "direction": "output",
+          "eventTypes": [],
+          "family": "dev.deckr.output.raster",
+          "provenance": "native",
+          "requirementName": "screen",
+          "type": "bitmap"
+        }
+      ],
+      "outputGeneration": 1,
+      "providerId": "dev.deckr.clock",
+      "providerInstanceId": "clock-main"
+    },
+    "capability": {
+      "capabilityId": "raster.bitmap",
+      "controlId": "key.0.0",
+      "deviceRef": {
+        "deviceId": "deck-1",
+        "fingerprint": "fingerprint:deck-1",
+        "managerId": "mirabox-main"
+      }
+    },
+    "commandType": "clear",
+    "generation": 1,
+    "params": {}
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "actions",
+  "messageId": "fixture-action-binding-output",
+  "messageType": "bindingOutput",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "action_provider:clock-main",
+  "senderSessionId": "provider-session",
+  "subject": {
+    "identifiers": {
+      "actionInstanceId": "clock-instance-1",
+      "bindingId": "binding-1",
+      "configId": "office-panel",
+      "contextId": "clock-context",
+      "providerId": "dev.deckr.clock",
+      "providerInstanceId": "clock-main"
+    },
+    "kind": "context"
+  }
+}

@@ -90,6 +90,35 @@
           "Kitchen/Main"
         ]
       }
+    },
+    {
+      "helper": "settings_target_key",
+      "id": "settings.target.action_instance",
+      "input": {
+        "target": {
+          "actionId": "dev.deckr.clock.time",
+          "actionInstanceId": "clock-instance-1",
+          "configId": "office-panel",
+          "controllerId": "controller-main",
+          "providerId": "dev.deckr.clock",
+          "providerInstanceId": "clock-main",
+          "scope": "action_instance",
+          "stableId": "clock"
+        }
+      },
+      "key": "settings.target.action_instance.controller-main.office-panel.clock-main.b64_ZGV2LmRlY2tyLmNsb2Nr.b64_ZGV2LmRlY2tyLmNsb2NrLnRpbWU.clock-instance-1.1.clock",
+      "parsed": {
+        "target": {
+          "actionId": "dev.deckr.clock.time",
+          "actionInstanceId": "clock-instance-1",
+          "configId": "office-panel",
+          "controllerId": "controller-main",
+          "providerId": "dev.deckr.clock",
+          "providerInstanceId": "clock-main",
+          "scope": "action_instance",
+          "stableId": "clock"
+        }
+      }
     }
   ],
   "schema": "dev.deckr.vector.state_keys.v1"

@@ -11,6 +11,24 @@
     },
     {
       "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.components.component_manifest.invalid_missing_component_id.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/components/component-manifest-missing-component-id.v1.json",
+      "schemaPath": "schemas/components/component-manifest.v1.schema.json",
+      "title": "Invalid component manifest missing componentId",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.hardware.capability_descriptor.invalid_missing_family.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/hardware/capability-descriptor-missing-family.v1.json",
+      "schemaPath": "schemas/hardware/capability-descriptor.v1.schema.json",
+      "title": "Invalid capability descriptor missing family",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
       "id": "dev.deckr.fixture.hardware.control_input.invalid_missing_device_ref.v1",
       "kind": "fixture",
       "path": "fixtures/invalid/hardware/control-input-missing-device-ref.v1.json",
@@ -38,11 +56,101 @@
     },
     {
       "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.actions.action_instance_created.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/actions/action-instance-created.v1.json",
+      "schemaPath": "schemas/actions/actions.v1.schema.json",
+      "title": "Valid actionInstanceCreated action message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.actions.binding_output.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/actions/binding-output.v1.json",
+      "schemaPath": "schemas/actions/actions.v1.schema.json",
+      "title": "Valid bindingOutput action message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.actions.open_page.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/actions/open-page.v1.json",
+      "schemaPath": "schemas/actions/actions.v1.schema.json",
+      "title": "Valid openPage action message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
       "id": "dev.deckr.fixture.actions.settings_request.valid.v1",
       "kind": "fixture",
       "path": "fixtures/valid/actions/settings-request.v1.json",
       "schemaPath": "schemas/actions/actions.v1.schema.json",
       "title": "Valid settingsRequest action message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.components.component_manifest.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/components/component-manifest.v1.json",
+      "schemaPath": "schemas/components/component-manifest.v1.schema.json",
+      "title": "Valid component manifest",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.capability_descriptor.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/capability-descriptor.v1.json",
+      "schemaPath": "schemas/hardware/capability-descriptor.v1.schema.json",
+      "title": "Valid capability descriptor",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.capability_state_changed.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/capability-state-changed.v1.json",
+      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
+      "title": "Valid capabilityStateChanged hardware message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.capability_state_request.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/capability-state-request.v1.json",
+      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
+      "title": "Valid capabilityStateRequest hardware message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.command_rejected.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/command-rejected.v1.json",
+      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
+      "title": "Valid commandRejected hardware message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.control_command.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/control-command.v1.json",
+      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
+      "title": "Valid controlCommand hardware message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.control_descriptor.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/control-descriptor.v1.json",
+      "schemaPath": "schemas/hardware/control-descriptor.v1.schema.json",
+      "title": "Valid control descriptor",
       "valid": true
     },
     {
@@ -61,6 +169,24 @@
       "path": "fixtures/valid/hardware/device-available.v1.json",
       "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
       "title": "Valid deviceAvailable hardware message",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.hardware.device_descriptor.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/hardware/device-descriptor.v1.json",
+      "schemaPath": "schemas/hardware/device-descriptor.v1.schema.json",
+      "title": "Valid device descriptor",
+      "valid": true
+    },
+    {
+      "description": "Valid fixture for schema validation.",
+      "id": "dev.deckr.fixture.services.service_command_reply.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/services/service-command-reply.v1.json",
+      "schemaPath": "schemas/services/services.v1.schema.json",
+      "title": "Valid serviceCommandReply service message",
       "valid": true
     },
     {
@@ -133,6 +259,14 @@
       "path": "schemas/actions/actions.v1.schema.json",
       "schemaId": "dev.deckr.message.actions.v1",
       "title": "Actions lane messages"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr component manifest and dependency declarations.",
+      "id": "dev.deckr.components.component_manifest.v1",
+      "kind": "schema",
+      "path": "schemas/components/component-manifest.v1.schema.json",
+      "schemaId": "dev.deckr.components.component_manifest.v1",
+      "title": "Component manifest"
     },
     {
       "description": "Canonical JSON Schema for Deckr CapabilityDescriptor.",
@@ -232,11 +366,32 @@
       "title": "Deckr AsyncAPI contract"
     },
     {
+      "description": "Acceptance vectors for Deckr component dependency readiness semantics.",
+      "id": "dev.deckr.vector.component_dependencies.v1",
+      "kind": "vector",
+      "path": "vectors/component-dependencies.v1.json",
+      "title": "Component dependency readiness vectors"
+    },
+    {
+      "description": "Acceptance vectors for Deckr endpoint identity and entity subject helpers.",
+      "id": "dev.deckr.vector.identity.v1",
+      "kind": "vector",
+      "path": "vectors/identity.v1.json",
+      "title": "Endpoint and subject identity vectors"
+    },
+    {
       "description": "Acceptance vectors for Deckr NATS-safe key token encoding.",
       "id": "dev.deckr.vector.key_tokens.v1",
       "kind": "vector",
       "path": "vectors/key-tokens.v1.json",
       "title": "Key token encoding vectors"
+    },
+    {
+      "description": "Acceptance vectors for message expiry and endpoint deliverability semantics.",
+      "id": "dev.deckr.vector.lane_runtime.v1",
+      "kind": "vector",
+      "path": "vectors/lane-runtime.v1.json",
+      "title": "Lane runtime semantic vectors"
     },
     {
       "description": "Acceptance vectors for Deckr NATS lane subject and header hints.",

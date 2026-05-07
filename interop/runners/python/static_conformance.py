@@ -4,18 +4,49 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from deckr.actions.messages import (
+    action_body,
+    context_subject,
+    parse_settings_target_key,
+    settings_target_key,
+)
 from deckr.actions.state import (
     action_provider_catalog_key,
     parse_action_provider_catalog_key,
 )
+from deckr.components._defs import ReadinessState
+from deckr.components.dependencies import (
+    DependencyCondition,
+    DependencyConditionState,
+    DependencyKind,
+    DependencyMode,
+    dependency_effective_readiness,
+)
 from deckr.contracts.artifacts import contract_bundle_path, contract_manifest
-from deckr.contracts.messages import DeckrMessage
+from deckr.contracts.lanes import CORE_LANE_CONTRACTS
+from deckr.contracts.messages import (
+    ACTIONS_LANE,
+    HARDWARE_MESSAGES_LANE,
+    SERVICES_LANE,
+    DeckrMessage,
+    message_is_expired,
+    message_targets_endpoint,
+    parse_endpoint_address,
+)
+from deckr.hardware.descriptors import CapabilityRef, DeviceRef
+from deckr.hardware.messages import (
+    hardware_body_from_message,
+    hardware_subject_for_capability,
+)
+from deckr.lanes import validate_message_for_contract
+from deckr.services.messages import service_body
 from deckr.services.state import (
     parse_service_catalog_key,
     parse_service_status_key,
@@ -34,7 +65,21 @@ from deckr.state import (
     parse_presence_endpoint_key,
     presence_endpoint_key,
 )
-from deckr.substrates.nats import _headers_for, _subject_for
+from deckr.substrates.nats import _headers_for, _payload_for, _subject_for
+
+
+REQUIRED_GROUP_IDS = (
+    "artifacts.manifest",
+    "schemas.fixtures",
+    "vectors.keys",
+    "vectors.identity",
+    "messages.actions",
+    "messages.hardware",
+    "messages.services",
+    "runtime.lane",
+    "substrate.nats",
+    "components.manifest",
+)
 
 
 @dataclass
@@ -101,11 +146,36 @@ def run_conformance(contract_root: Path) -> dict[str, Any]:
     manifest = _json(root / "manifest.json")
     groups = [
         _check_manifest(root, manifest),
-        _check_fixtures(root, manifest, valid=True),
-        _check_fixtures(root, manifest, valid=False),
-        _check_key_token_vectors(root),
-        _check_state_key_vectors(root),
+        _check_fixtures(root, manifest),
+        _check_key_vectors(root),
+        _check_identity_vectors(root),
+        _check_lane_messages(
+            root,
+            manifest,
+            group_id="messages.actions",
+            schema_path="schemas/actions/actions.v1.schema.json",
+            lane=ACTIONS_LANE,
+            body_checker=action_body,
+        ),
+        _check_lane_messages(
+            root,
+            manifest,
+            group_id="messages.hardware",
+            schema_path="schemas/hardware/hardware-messages.v1.schema.json",
+            lane=HARDWARE_MESSAGES_LANE,
+            body_checker=hardware_body_from_message,
+        ),
+        _check_lane_messages(
+            root,
+            manifest,
+            group_id="messages.services",
+            schema_path="schemas/services/services.v1.schema.json",
+            lane=SERVICES_LANE,
+            body_checker=service_body,
+        ),
+        _check_lane_runtime_vectors(root),
         _check_nats_lane_vectors(root),
+        _check_component_vectors(root, manifest),
     ]
     summary = {
         "passed": sum(group.passed for group in groups),
@@ -129,7 +199,7 @@ def run_conformance(contract_root: Path) -> dict[str, Any]:
 
 
 def _check_manifest(root: Path, manifest: dict[str, Any]) -> GroupResult:
-    group = GroupResult("manifest")
+    group = GroupResult("artifacts.manifest")
     try:
         package_manifest = dict(contract_manifest())
         if package_manifest == manifest:
@@ -156,21 +226,21 @@ def _check_manifest(root: Path, manifest: dict[str, Any]) -> GroupResult:
         group.pass_check()
     else:
         group.fail_check("Missing asyncapi.json")
+    if [group["id"] for group in _planned_groups()] == list(REQUIRED_GROUP_IDS):
+        group.pass_check()
+    else:
+        group.fail_check("Static runner group ids drifted from required ids")
     return group
 
 
-def _check_fixtures(
-    root: Path,
-    manifest: dict[str, Any],
-    *,
-    valid: bool,
-) -> GroupResult:
-    group = GroupResult("fixtures.valid" if valid else "fixtures.invalid")
+def _check_fixtures(root: Path, manifest: dict[str, Any]) -> GroupResult:
+    group = GroupResult("schemas.fixtures")
     for artifact in manifest["artifacts"]:
-        if artifact["kind"] != "fixture" or artifact["valid"] is not valid:
+        if artifact["kind"] != "fixture":
             continue
         schema = _json(root / artifact["schemaPath"])
         fixture = _json(root / artifact["path"])
+        valid = bool(artifact["valid"])
         try:
             Draft202012Validator.check_schema(schema)
             validator = Draft202012Validator(schema)
@@ -187,8 +257,8 @@ def _check_fixtures(
     return group
 
 
-def _check_key_token_vectors(root: Path) -> GroupResult:
-    group = GroupResult("vectors.key_tokens")
+def _check_key_vectors(root: Path) -> GroupResult:
+    group = GroupResult("vectors.keys")
     vector = _json(root / "vectors" / "key-tokens.v1.json")
     for case in vector["cases"]:
         encoded = encode_key_token(case["raw"])
@@ -199,11 +269,7 @@ def _check_key_token_vectors(root: Path) -> GroupResult:
             group.fail_check(f"{case['encoded']!r}: decoded as {decoded!r}")
         else:
             group.pass_check()
-    return group
 
-
-def _check_state_key_vectors(root: Path) -> GroupResult:
-    group = GroupResult("vectors.state_keys")
     vector = _json(root / "vectors" / "state-keys.v1.json")
     for case in vector["cases"]:
         try:
@@ -263,17 +329,140 @@ def _state_key_case(case: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "serviceNamespace": parsed[1],
             "tokens": list(parsed[2]),
         }
+    if helper == "settings_target_key":
+        target = parse_settings_target_key(case["key"])
+        if target is None:
+            raise ValueError("settings target key did not parse")
+        key = settings_target_key(target)
+        return key, {"target": target.to_dict()}
     raise ValueError(f"Unknown state-key helper {helper!r}")
 
 
+def _check_identity_vectors(root: Path) -> GroupResult:
+    group = GroupResult("vectors.identity")
+    vector = _json(root / "vectors" / "identity.v1.json")
+    for case in vector["endpointCases"]:
+        try:
+            endpoint = parse_endpoint_address(case["input"])
+        except Exception as exc:
+            if case["valid"]:
+                group.fail_check(f"{case['id']}: endpoint rejected: {exc}")
+            else:
+                group.pass_check()
+            continue
+        if not case["valid"]:
+            group.fail_check(f"{case['id']}: invalid endpoint accepted")
+        elif endpoint.family != case["family"] or endpoint.endpoint_id != case["endpointId"]:
+            group.fail_check(f"{case['id']}: parsed as {endpoint!s}")
+        else:
+            group.pass_check()
+
+    for case in vector["subjectCases"]:
+        try:
+            subject = _subject_case(case)
+        except Exception as exc:
+            group.fail_check(f"{case['id']}: helper failed: {exc}")
+            continue
+        if subject != case["subject"]:
+            group.fail_check(f"{case['id']}: subject {subject!r}")
+        else:
+            group.pass_check()
+    return group
+
+
+def _subject_case(case: dict[str, Any]) -> dict[str, Any]:
+    helper = case["helper"]
+    inputs = case["input"]
+    if helper == "context_subject":
+        return context_subject(
+            inputs["contextId"],
+            provider_instance_id=inputs.get("providerInstanceId"),
+            provider_id=inputs.get("providerId"),
+            config_id=inputs.get("configId"),
+            action_instance_id=inputs.get("actionInstanceId"),
+            binding_id=inputs.get("bindingId"),
+        ).model_dump(by_alias=True, exclude_none=True, mode="json")
+    if helper == "hardware_subject_for_capability":
+        ref = CapabilityRef(
+            deviceRef=DeviceRef(**inputs["deviceRef"]),
+            controlId=inputs.get("controlId"),
+            capabilityId=inputs["capabilityId"],
+        )
+        return hardware_subject_for_capability(ref).model_dump(
+            by_alias=True,
+            exclude_none=True,
+            mode="json",
+        )
+    raise ValueError(f"Unknown subject helper {helper!r}")
+
+
+def _check_lane_messages(
+    root: Path,
+    manifest: dict[str, Any],
+    *,
+    group_id: str,
+    schema_path: str,
+    lane: str,
+    body_checker,
+) -> GroupResult:
+    group = GroupResult(group_id)
+    for artifact in manifest["artifacts"]:
+        if (
+            artifact["kind"] != "fixture"
+            or artifact["schemaPath"] != schema_path
+            or not artifact["valid"]
+        ):
+            continue
+        try:
+            message = DeckrMessage.from_dict(_json(root / artifact["path"]))
+            validate_message_for_contract(message, CORE_LANE_CONTRACTS[lane])
+            body_checker(message)
+        except Exception as exc:
+            group.fail_check(f"{artifact['path']}: message helper rejected: {exc}")
+        else:
+            group.pass_check()
+    return group
+
+
+def _check_lane_runtime_vectors(root: Path) -> GroupResult:
+    group = GroupResult("runtime.lane")
+    vector = _json(root / "vectors" / "lane-runtime.v1.json")
+    for case in vector["cases"]:
+        try:
+            payload = case.get("message") or _json(root / case["fixture"])
+            message = DeckrMessage.from_dict(payload)
+            now = _parse_datetime(case["now"])
+            expired = message_is_expired(message, now=now)
+            targets_endpoint = message_targets_endpoint(message, case["endpoint"])
+            validate_message_for_contract(message, CORE_LANE_CONTRACTS[message.lane])
+            session_matches = (
+                message.recipient_session_id is None
+                or message.recipient_session_id == case["endpointSessionId"]
+            )
+            deliverable = (not expired) and targets_endpoint and session_matches
+        except Exception as exc:
+            group.fail_check(f"{case['id']}: helper failed: {exc}")
+            continue
+        if expired != case["expired"]:
+            group.fail_check(f"{case['id']}: expired {expired!r}")
+        elif targets_endpoint != case["targetsEndpoint"]:
+            group.fail_check(f"{case['id']}: targetsEndpoint {targets_endpoint!r}")
+        elif deliverable != case["deliverable"]:
+            group.fail_check(f"{case['id']}: deliverable {deliverable!r}")
+        else:
+            group.pass_check()
+    return group
+
+
 def _check_nats_lane_vectors(root: Path) -> GroupResult:
-    group = GroupResult("vectors.nats_lane")
+    group = GroupResult("substrate.nats")
     vector = _json(root / "vectors" / "nats-lane.v1.json")
     for case in vector["cases"]:
         try:
             message = DeckrMessage.from_dict(_json(root / case["fixture"]))
             subject = _subject_for(message)
             headers = dict(_headers_for(message))
+            payload = _payload_for(message).decode("utf-8")
         except Exception as exc:
             group.fail_check(f"{case['id']}: helper failed: {exc}")
             continue
@@ -281,9 +470,79 @@ def _check_nats_lane_vectors(root: Path) -> GroupResult:
             group.fail_check(f"{case['id']}: subject {subject!r}")
         elif headers != case["headers"]:
             group.fail_check(f"{case['id']}: headers {headers!r}")
+        elif payload != case["payloadUtf8"]:
+            group.fail_check(f"{case['id']}: payloadUtf8 differed")
         else:
             group.pass_check()
     return group
+
+
+def _check_component_vectors(root: Path, manifest: dict[str, Any]) -> GroupResult:
+    group = GroupResult("components.manifest")
+    schema_path = "schemas/components/component-manifest.v1.schema.json"
+    for artifact in manifest["artifacts"]:
+        if (
+            artifact["kind"] == "fixture"
+            and artifact["schemaPath"] == schema_path
+            and artifact["valid"]
+        ):
+            payload = _json(root / artifact["path"])
+            dependencies = payload.get("dependencies", {})
+            for name, source in dependencies.items():
+                if source["kind"] == "endpoint" and "lane" not in source:
+                    group.fail_check(f"{artifact['path']}: endpoint dependency lacks lane")
+                elif source["kind"] == "service" and "namespace" not in source:
+                    group.fail_check(
+                        f"{artifact['path']}: service dependency lacks namespace"
+                    )
+                else:
+                    group.pass_check()
+
+    vector = _json(root / "vectors" / "component-dependencies.v1.json")
+    for case in vector["cases"]:
+        try:
+            conditions = _component_conditions(case)
+            readiness, reasons, diagnostics = dependency_effective_readiness(
+                conditions
+            )
+        except Exception as exc:
+            group.fail_check(f"{case['id']}: helper failed: {exc}")
+            continue
+        if readiness.value != case["readiness"]:
+            group.fail_check(f"{case['id']}: readiness {readiness.value!r}")
+        elif list(reasons) != case["reasons"]:
+            group.fail_check(f"{case['id']}: reasons {list(reasons)!r}")
+        elif diagnostics != case["diagnostics"]:
+            group.fail_check(f"{case['id']}: diagnostics {diagnostics!r}")
+        else:
+            group.pass_check()
+    if ReadinessState.READY.value == "ready":
+        group.pass_check()
+    else:
+        group.fail_check("Unexpected readiness enum shape")
+    return group
+
+
+def _component_conditions(case: dict[str, Any]) -> dict[str, DependencyCondition]:
+    return {
+        name: DependencyCondition(
+            name=condition["name"],
+            kind=DependencyKind(condition["kind"]),
+            mode=DependencyMode(condition["mode"]),
+            state=DependencyConditionState(condition["state"]),
+            reason=condition.get("reason"),
+            diagnostics=condition.get("diagnostics", {}),
+        )
+        for name, condition in case["conditions"].items()
+    }
+
+
+def _planned_groups() -> list[dict[str, str]]:
+    return [{"id": group_id} for group_id in REQUIRED_GROUP_IDS]
+
+
+def _parse_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _default_contract_root() -> Path:

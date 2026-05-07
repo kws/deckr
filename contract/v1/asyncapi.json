@@ -395,6 +395,188 @@
         "description": "The payload is the full Deckr logical message envelope. The `body` field is discriminated by `messageType` inside the lane schema.",
         "examples": [
           {
+            "name": "actionInstanceCreated",
+            "payload": {
+              "body": {
+                "metadata": {
+                  "actionId": "dev.deckr.clock.time",
+                  "actionInstanceId": "clock-instance-1",
+                  "configId": "office-panel",
+                  "contextId": "clock-context",
+                  "providerId": "dev.deckr.clock",
+                  "providerInstanceId": "clock-main"
+                },
+                "settings": {
+                  "format": "24h"
+                }
+              },
+              "createdAt": "2026-04-29T10:00:00Z",
+              "lane": "actions",
+              "messageId": "fixture-action-instance-created",
+              "messageType": "actionInstanceCreated",
+              "protocolVersion": "1",
+              "recipient": {
+                "endpoint": "action_provider:clock-main",
+                "targetType": "endpoint"
+              },
+              "recipientSessionId": "provider-session",
+              "schemaVersion": "1",
+              "sender": "controller:controller-main",
+              "senderSessionId": "controller-session",
+              "subject": {
+                "identifiers": {
+                  "actionInstanceId": "clock-instance-1",
+                  "configId": "office-panel",
+                  "contextId": "clock-context",
+                  "providerId": "dev.deckr.clock",
+                  "providerInstanceId": "clock-main"
+                },
+                "kind": "context"
+              }
+            },
+            "summary": "Valid actionInstanceCreated action message"
+          },
+          {
+            "name": "bindingOutput",
+            "payload": {
+              "body": {
+                "binding": {
+                  "actionId": "dev.deckr.clock.time",
+                  "actionInstanceId": "clock-instance-1",
+                  "bindingId": "binding-1",
+                  "configId": "office-panel",
+                  "contextId": "clock-context",
+                  "controlRef": {
+                    "controlId": "key.0.0",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "deviceRef": {
+                    "deviceId": "deck-1",
+                    "fingerprint": "fingerprint:deck-1",
+                    "managerId": "mirabox-main"
+                  },
+                  "handler": "default",
+                  "itemKey": "clock",
+                  "matchedCapabilities": [
+                    {
+                      "capability": {
+                        "capabilityId": "raster.bitmap",
+                        "controlId": "key.0.0",
+                        "deviceRef": {
+                          "deviceId": "deck-1",
+                          "fingerprint": "fingerprint:deck-1",
+                          "managerId": "mirabox-main"
+                        }
+                      },
+                      "commandTypes": [
+                        "set_frame",
+                        "clear"
+                      ],
+                      "direction": "output",
+                      "eventTypes": [],
+                      "family": "dev.deckr.output.raster",
+                      "provenance": "native",
+                      "requirementName": "screen",
+                      "type": "bitmap"
+                    }
+                  ],
+                  "outputGeneration": 1,
+                  "providerId": "dev.deckr.clock",
+                  "providerInstanceId": "clock-main"
+                },
+                "capability": {
+                  "capabilityId": "raster.bitmap",
+                  "controlId": "key.0.0",
+                  "deviceRef": {
+                    "deviceId": "deck-1",
+                    "fingerprint": "fingerprint:deck-1",
+                    "managerId": "mirabox-main"
+                  }
+                },
+                "commandType": "clear",
+                "generation": 1,
+                "params": {}
+              },
+              "createdAt": "2026-04-29T10:00:00Z",
+              "lane": "actions",
+              "messageId": "fixture-action-binding-output",
+              "messageType": "bindingOutput",
+              "protocolVersion": "1",
+              "recipient": {
+                "endpoint": "controller:controller-main",
+                "targetType": "endpoint"
+              },
+              "recipientSessionId": "controller-session",
+              "schemaVersion": "1",
+              "sender": "action_provider:clock-main",
+              "senderSessionId": "provider-session",
+              "subject": {
+                "identifiers": {
+                  "actionInstanceId": "clock-instance-1",
+                  "bindingId": "binding-1",
+                  "configId": "office-panel",
+                  "contextId": "clock-context",
+                  "providerId": "dev.deckr.clock",
+                  "providerInstanceId": "clock-main"
+                },
+                "kind": "context"
+              }
+            },
+            "summary": "Valid bindingOutput action message"
+          },
+          {
+            "name": "openPage",
+            "payload": {
+              "body": {
+                "descriptor": {
+                  "bindings": [
+                    {
+                      "controlId": "key.0.0",
+                      "handler": "default",
+                      "itemKey": "clock",
+                      "settings": {
+                        "title": "Clock"
+                      },
+                      "target": {
+                        "kind": "self"
+                      }
+                    }
+                  ],
+                  "pageId": "clock-page"
+                }
+              },
+              "createdAt": "2026-04-29T10:00:00Z",
+              "lane": "actions",
+              "messageId": "fixture-action-open-page",
+              "messageType": "openPage",
+              "protocolVersion": "1",
+              "recipient": {
+                "endpoint": "controller:controller-main",
+                "targetType": "endpoint"
+              },
+              "recipientSessionId": "controller-session",
+              "schemaVersion": "1",
+              "sender": "action_provider:clock-main",
+              "senderSessionId": "provider-session",
+              "subject": {
+                "identifiers": {
+                  "actionInstanceId": "clock-instance-1",
+                  "bindingId": "binding-1",
+                  "configId": "office-panel",
+                  "contextId": "clock-context",
+                  "providerId": "dev.deckr.clock",
+                  "providerInstanceId": "clock-main"
+                },
+                "kind": "context"
+              }
+            },
+            "summary": "Valid openPage action message"
+          },
+          {
             "name": "settingsRequest",
             "payload": {
               "body": {
@@ -457,6 +639,166 @@
         "contentType": "application/json",
         "description": "The payload is the full Deckr logical message envelope. The `body` field is discriminated by `messageType` inside the lane schema.",
         "examples": [
+          {
+            "name": "capabilityStateChanged",
+            "payload": {
+              "body": {
+                "capabilityId": "button.press",
+                "controlId": "key.0.0",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                },
+                "occurredAt": "2026-04-29T10:00:00Z",
+                "sequence": 2,
+                "stateType": "pressed",
+                "value": false
+              },
+              "createdAt": "2026-04-29T10:00:00Z",
+              "lane": "hardware_messages",
+              "messageId": "fixture-hardware-state-changed",
+              "messageType": "capabilityStateChanged",
+              "protocolVersion": "1",
+              "recipient": {
+                "endpointFamily": "controller",
+                "scope": "controllers",
+                "targetType": "broadcast"
+              },
+              "schemaVersion": "1",
+              "sender": "hardware_manager:mirabox-main",
+              "senderSessionId": "manager-session",
+              "subject": {
+                "identifiers": {
+                  "capabilityId": "button.press",
+                  "controlId": "key.0.0",
+                  "deviceId": "deck-1",
+                  "managerId": "mirabox-main"
+                },
+                "kind": "hardware_capability"
+              }
+            },
+            "summary": "Valid capabilityStateChanged hardware message"
+          },
+          {
+            "name": "capabilityStateRequest",
+            "payload": {
+              "body": {
+                "capabilityId": "button.press",
+                "controlId": "key.0.0",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                },
+                "params": {},
+                "stateType": "pressed"
+              },
+              "createdAt": "2026-04-29T10:00:00Z",
+              "lane": "hardware_messages",
+              "messageId": "fixture-hardware-state-request",
+              "messageType": "capabilityStateRequest",
+              "protocolVersion": "1",
+              "recipient": {
+                "endpoint": "hardware_manager:mirabox-main",
+                "targetType": "endpoint"
+              },
+              "recipientSessionId": "manager-session",
+              "schemaVersion": "1",
+              "sender": "controller:controller-main",
+              "senderSessionId": "controller-session",
+              "subject": {
+                "identifiers": {
+                  "capabilityId": "button.press",
+                  "controlId": "key.0.0",
+                  "deviceId": "deck-1",
+                  "managerId": "mirabox-main"
+                },
+                "kind": "hardware_capability"
+              }
+            },
+            "summary": "Valid capabilityStateRequest hardware message"
+          },
+          {
+            "name": "commandRejected",
+            "payload": {
+              "body": {
+                "capabilityId": "raster.bitmap",
+                "commandType": "set_frame",
+                "controlId": "key.0.0",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                },
+                "message": "frame format unsupported",
+                "reason": "unsupported"
+              },
+              "createdAt": "2026-04-29T10:00:00Z",
+              "inReplyTo": "fixture-hardware-control-command",
+              "lane": "hardware_messages",
+              "messageId": "fixture-hardware-command-rejected",
+              "messageType": "commandRejected",
+              "protocolVersion": "1",
+              "recipient": {
+                "endpoint": "controller:controller-main",
+                "targetType": "endpoint"
+              },
+              "recipientSessionId": "controller-session",
+              "schemaVersion": "1",
+              "sender": "hardware_manager:mirabox-main",
+              "senderSessionId": "manager-session",
+              "subject": {
+                "identifiers": {
+                  "capabilityId": "raster.bitmap",
+                  "controlId": "key.0.0",
+                  "deviceId": "deck-1",
+                  "managerId": "mirabox-main"
+                },
+                "kind": "hardware_capability"
+              }
+            },
+            "summary": "Valid commandRejected hardware message"
+          },
+          {
+            "name": "controlCommand",
+            "payload": {
+              "body": {
+                "capabilityId": "raster.bitmap",
+                "commandType": "clear",
+                "controlId": "key.0.0",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                },
+                "params": {}
+              },
+              "createdAt": "2026-04-29T10:00:00Z",
+              "lane": "hardware_messages",
+              "messageId": "fixture-hardware-control-command",
+              "messageType": "controlCommand",
+              "protocolVersion": "1",
+              "recipient": {
+                "endpoint": "hardware_manager:mirabox-main",
+                "targetType": "endpoint"
+              },
+              "recipientSessionId": "manager-session",
+              "schemaVersion": "1",
+              "sender": "controller:controller-main",
+              "senderSessionId": "controller-session",
+              "subject": {
+                "identifiers": {
+                  "capabilityId": "raster.bitmap",
+                  "controlId": "key.0.0",
+                  "deviceId": "deck-1",
+                  "managerId": "mirabox-main"
+                },
+                "kind": "hardware_capability"
+              }
+            },
+            "summary": "Valid controlCommand hardware message"
+          },
           {
             "name": "controlInput",
             "payload": {
@@ -672,6 +1014,42 @@
         "contentType": "application/json",
         "description": "The payload is the full Deckr logical message envelope. The `body` field is discriminated by `messageType` inside the lane schema.",
         "examples": [
+          {
+            "name": "serviceCommandReply",
+            "payload": {
+              "body": {
+                "operation": "play",
+                "result": {
+                  "accepted": true
+                },
+                "serviceNamespace": "dev.deckr.media.service",
+                "status": "ok"
+              },
+              "createdAt": "2026-04-29T10:00:00Z",
+              "inReplyTo": "fixture-service-command",
+              "lane": "services",
+              "messageId": "fixture-service-command-reply",
+              "messageType": "serviceCommandReply",
+              "protocolVersion": "1",
+              "recipient": {
+                "endpoint": "controller:controller-main",
+                "targetType": "endpoint"
+              },
+              "recipientSessionId": "controller-session",
+              "schemaVersion": "1",
+              "sender": "service:media-home",
+              "senderSessionId": "service-session",
+              "subject": {
+                "identifiers": {
+                  "namespace": "dev.deckr.media.service",
+                  "operation": "play",
+                  "serviceId": "media-home"
+                },
+                "kind": "service"
+              }
+            },
+            "summary": "Valid serviceCommandReply service message"
+          },
           {
             "name": "serviceCommand",
             "payload": {
@@ -3366,6 +3744,162 @@
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.hardware.capability_descriptor.v1",
         "x-deckr-schema-path": "schemas/hardware/capability-descriptor.v1.schema.json"
+      },
+      "ComponentManifest": {
+        "schema": {
+          "$id": "dev.deckr.components.component_manifest.v1",
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "cardinality": {
+              "default": "singleton",
+              "enum": [
+                "singleton",
+                "multi_instance"
+              ]
+            },
+            "componentId": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "consumes": {
+              "default": [],
+              "items": {
+                "enum": [
+                  "actions",
+                  "hardware_messages",
+                  "services"
+                ]
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "dependencies": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "kind": {
+                          "const": "endpoint"
+                        }
+                      }
+                    },
+                    "then": {
+                      "not": {
+                        "required": [
+                          "namespace"
+                        ]
+                      },
+                      "required": [
+                        "lane"
+                      ]
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "kind": {
+                          "const": "service"
+                        }
+                      }
+                    },
+                    "then": {
+                      "not": {
+                        "required": [
+                          "lane"
+                        ]
+                      },
+                      "required": [
+                        "namespace"
+                      ]
+                    }
+                  }
+                ],
+                "properties": {
+                  "endpoint": {
+                    "pattern": "^(action_provider|controller|hardware_manager|service):[^:]+$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "endpoint",
+                      "service"
+                    ]
+                  },
+                  "lane": {
+                    "enum": [
+                      "actions",
+                      "hardware_messages",
+                      "services"
+                    ]
+                  },
+                  "mode": {
+                    "enum": [
+                      "required",
+                      "optional",
+                      "preferred",
+                      "observed"
+                    ]
+                  },
+                  "namespace": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "mode",
+                  "endpoint"
+                ],
+                "type": "object"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "endpointSlots": {
+              "default": [],
+              "items": {
+                "enum": [
+                  "action_provider",
+                  "controller",
+                  "hardware",
+                  "hardware_manager",
+                  "service"
+                ]
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "publishes": {
+              "default": [],
+              "items": {
+                "enum": [
+                  "actions",
+                  "hardware_messages",
+                  "services"
+                ]
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "role": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "componentId"
+          ],
+          "title": "Component manifest",
+          "type": "object",
+          "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
+          "x-deckr-schema-version": "1"
+        },
+        "schemaFormat": "application/schema+json;version=draft-07",
+        "x-deckr-schema-id": "dev.deckr.components.component_manifest.v1",
+        "x-deckr-schema-path": "schemas/components/component-manifest.v1.schema.json"
       },
       "ControlDescriptor": {
         "schema": {
@@ -8765,7 +9299,10 @@
     }
   ],
   "x-deckr-interop-vectors": [
+    "vectors/component-dependencies.v1.json",
+    "vectors/identity.v1.json",
     "vectors/key-tokens.v1.json",
+    "vectors/lane-runtime.v1.json",
     "vectors/nats-lane.v1.json",
     "vectors/state-keys.v1.json"
   ],

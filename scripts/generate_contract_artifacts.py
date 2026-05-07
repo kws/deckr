@@ -15,13 +15,35 @@ from pydantic import BaseModel
 from deckr.actions.endpoints import action_provider_address
 from deckr.actions.messages import (
     ACTION_MESSAGES_SCHEMA_ID,
+    ACTION_INSTANCE_CREATED,
+    BINDING_OUTPUT,
+    OPEN_PAGE,
     SETTINGS_REQUEST,
     ActionDescriptor,
+    ActionInstanceLifecycleBody,
+    ActionInstanceMetadata,
     ActionProviderCatalog,
+    BindingMetadata,
+    BindingOutputBody,
+    DynamicPageCommand,
+    OpenPageBody,
+    PageChildBindingDescriptor,
+    PageChildBindingTarget,
     SettingsTargetRef,
+    action_message,
     action_message_schema,
+    context_subject,
+    parse_settings_target_key,
+    settings_target_key,
 )
 from deckr.actions.state import action_provider_catalog_key
+from deckr.components.dependencies import (
+    DependencyCondition,
+    DependencyConditionState,
+    DependencyKind,
+    DependencyMode,
+    dependency_effective_readiness,
+)
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     DeliverySemantics,
@@ -30,9 +52,11 @@ from deckr.contracts.lanes import (
 )
 from deckr.contracts.messages import (
     ACTIONS_LANE,
+    CORE_LANE_NAMES,
     HARDWARE_MESSAGES_LANE,
     SERVICES_LANE,
     DeckrMessage,
+    broadcast_target,
     controller_address,
     endpoint_target,
     entity_subject,
@@ -47,19 +71,34 @@ from deckr.hardware.descriptors import (
     CAPABILITY_DESCRIPTOR_SCHEMA_ID,
     CONTROL_DESCRIPTOR_SCHEMA_ID,
     DEVICE_DESCRIPTOR_SCHEMA_ID,
+    CapabilityRef,
+    ControlRef,
     DeviceDescriptor,
+    DeviceRef,
     descriptor_schema_artifacts,
 )
 from deckr.hardware.messages import (
+    CAPABILITY_STATE_CHANGED,
+    CAPABILITY_STATE_REQUEST,
+    COMMAND_REJECTED,
+    CONTROL_COMMAND,
     HARDWARE_MESSAGES_SCHEMA_ID,
+    CapabilityStateChangedMessage,
+    CapabilityStateRequestMessage,
+    CommandRejectedMessage,
+    ControlCommandMessage,
     control_input_message,
     device_available_message,
+    hardware_message,
     hardware_message_schema,
+    hardware_subject_for_capability,
 )
 from deckr.services.messages import (
     SERVICE_COMMAND,
     SERVICE_MESSAGES_SCHEMA_ID,
     ServiceCommandBody,
+    ServiceCommandReplyBody,
+    service_command_reply_message,
     service_message_schema,
 )
 from deckr.services.state import (
@@ -80,7 +119,7 @@ from deckr.state import (
     hardware_inventory_key,
     presence_endpoint_key,
 )
-from deckr.substrates.nats import _headers_for, _subject_for
+from deckr.substrates.nats import _headers_for, _payload_for, _subject_for
 
 CONTRACT_VERSION = "v1"
 SPEC_VERSION = "1"
@@ -108,6 +147,7 @@ DESCRIPTOR_SCHEMA_FILENAMES = {
 
 SCHEMA_COMPONENTS = {
     "schemas/actions/actions.v1.schema.json": "ActionsLaneEnvelope",
+    "schemas/components/component-manifest.v1.schema.json": "ComponentManifest",
     "schemas/hardware/hardware-messages.v1.schema.json": "HardwareMessagesLaneEnvelope",
     "schemas/services/services.v1.schema.json": "ServicesLaneEnvelope",
     "schemas/hardware/device-descriptor.v1.schema.json": "DeviceDescriptor",
@@ -266,6 +306,15 @@ def _add_schemas(add_artifact) -> None:
         schemaId=SERVICE_MESSAGES_SCHEMA_ID,
         payload=service_message_schema(),
     )
+    add_artifact(
+        kind="schema",
+        artifact_id="dev.deckr.components.component_manifest.v1",
+        path="schemas/components/component-manifest.v1.schema.json",
+        title="Component manifest",
+        description="Canonical JSON Schema for Deckr component manifest and dependency declarations.",
+        schemaId="dev.deckr.components.component_manifest.v1",
+        payload=_component_manifest_schema(),
+    )
     for schema_id, schema in descriptor_schema_artifacts().items():
         add_artifact(
             kind="schema",
@@ -329,6 +378,50 @@ def _add_schemas(add_artifact) -> None:
 
 def _fixtures() -> list[dict[str, Any]]:
     descriptor = _device_descriptor()
+    descriptor_payload = descriptor.model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
+    control_payload = descriptor.controls[0].model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
+    capability_payload = descriptor.controls[0].input_capabilities[0].model_dump(
+        by_alias=True,
+        exclude_none=True,
+        mode="json",
+    )
+    device_ref = DeviceRef(
+        managerId="mirabox-main",
+        deviceId="deck-1",
+        fingerprint="fingerprint:deck-1",
+    )
+    control_ref = ControlRef(deviceRef=device_ref, controlId="key.0.0")
+    output_capability_ref = CapabilityRef(
+        deviceRef=device_ref,
+        controlId="key.0.0",
+        capabilityId="raster.bitmap",
+    )
+    input_capability_ref = CapabilityRef(
+        deviceRef=device_ref,
+        controlId="key.0.0",
+        capabilityId="button.press",
+    )
+    binding = _binding_metadata(
+        device_ref=device_ref,
+        control_ref=control_ref,
+        output_capability_ref=output_capability_ref,
+    )
+    action_instance_metadata = ActionInstanceMetadata(
+        providerInstanceId="clock-main",
+        providerId="dev.deckr.clock",
+        actionId="dev.deckr.clock.time",
+        actionInstanceId="clock-instance-1",
+        configId="office-panel",
+        contextId="clock-context",
+    )
     settings_request = _stable_message(
         DeckrMessage(
             lane=ACTIONS_LANE,
@@ -346,6 +439,84 @@ def _fixtures() -> list[dict[str, Any]]:
             body={"target": _settings_target().to_dict()},
         ),
         message_id="fixture-action-settings-request",
+    )
+    action_instance_created = _stable_message(
+        action_message(
+            sender=controller_address("controller-main"),
+            sender_session_id="controller-session",
+            recipient=endpoint_target(action_provider_address("clock-main")),
+            recipient_session_id="provider-session",
+            message_type=ACTION_INSTANCE_CREATED,
+            body=ActionInstanceLifecycleBody(
+                metadata=action_instance_metadata,
+                settings={"format": "24h"},
+            ),
+            subject=context_subject(
+                "clock-context",
+                provider_instance_id="clock-main",
+                provider_id="dev.deckr.clock",
+                config_id="office-panel",
+                action_instance_id="clock-instance-1",
+            ),
+        ),
+        message_id="fixture-action-instance-created",
+    )
+    binding_output = _stable_message(
+        action_message(
+            sender=action_provider_address("clock-main"),
+            sender_session_id="provider-session",
+            recipient=endpoint_target(controller_address("controller-main")),
+            recipient_session_id="controller-session",
+            message_type=BINDING_OUTPUT,
+            body=BindingOutputBody(
+                binding=binding,
+                capability=output_capability_ref,
+                commandType="clear",
+                params={},
+                generation=1,
+            ),
+            subject=context_subject(
+                "clock-context",
+                provider_instance_id="clock-main",
+                provider_id="dev.deckr.clock",
+                config_id="office-panel",
+                action_instance_id="clock-instance-1",
+                binding_id="binding-1",
+            ),
+        ),
+        message_id="fixture-action-binding-output",
+    )
+    open_page = _stable_message(
+        action_message(
+            sender=action_provider_address("clock-main"),
+            sender_session_id="provider-session",
+            recipient=endpoint_target(controller_address("controller-main")),
+            recipient_session_id="controller-session",
+            message_type=OPEN_PAGE,
+            body=OpenPageBody(
+                descriptor=DynamicPageCommand(
+                    pageId="clock-page",
+                    bindings=(
+                        PageChildBindingDescriptor(
+                            controlId="key.0.0",
+                            target=PageChildBindingTarget(kind="self"),
+                            itemKey="clock",
+                            handler="default",
+                            settings={"title": "Clock"},
+                        ),
+                    ),
+                )
+            ),
+            subject=context_subject(
+                "clock-context",
+                provider_instance_id="clock-main",
+                provider_id="dev.deckr.clock",
+                config_id="office-panel",
+                action_instance_id="clock-instance-1",
+                binding_id="binding-1",
+            ),
+        ),
+        message_id="fixture-action-open-page",
     )
     hardware_available = _stable_wire_message(
         device_available_message(
@@ -369,6 +540,81 @@ def _fixtures() -> list[dict[str, Any]]:
         ),
         message_id="fixture-hardware-control-input",
     )
+    hardware_command = _stable_message(
+        hardware_message(
+            sender=controller_address("controller-main"),
+            sender_session_id="controller-session",
+            recipient=endpoint_target(hardware_manager_address("mirabox-main")),
+            recipient_session_id="manager-session",
+            message_type=CONTROL_COMMAND,
+            body=ControlCommandMessage(
+                deviceRef=device_ref,
+                controlId="key.0.0",
+                capabilityId="raster.bitmap",
+                commandType="clear",
+                params={},
+            ),
+            subject=hardware_subject_for_capability(output_capability_ref),
+        ),
+        message_id="fixture-hardware-control-command",
+    )
+    hardware_state_changed = _stable_wire_message(
+        hardware_message(
+            sender=hardware_manager_address("mirabox-main"),
+            sender_session_id="manager-session",
+            recipient=broadcast_target(scope="controllers", endpoint_family="controller"),
+            message_type=CAPABILITY_STATE_CHANGED,
+            body=CapabilityStateChangedMessage(
+                deviceRef=device_ref,
+                controlId="key.0.0",
+                capabilityId="button.press",
+                stateType="pressed",
+                value=False,
+                sequence=2,
+                occurredAt=FIXED_NOW,
+            ),
+            subject=hardware_subject_for_capability(input_capability_ref),
+        ),
+        message_id="fixture-hardware-state-changed",
+    )
+    hardware_state_request = _stable_message(
+        hardware_message(
+            sender=controller_address("controller-main"),
+            sender_session_id="controller-session",
+            recipient=endpoint_target(hardware_manager_address("mirabox-main")),
+            recipient_session_id="manager-session",
+            message_type=CAPABILITY_STATE_REQUEST,
+            body=CapabilityStateRequestMessage(
+                deviceRef=device_ref,
+                controlId="key.0.0",
+                capabilityId="button.press",
+                stateType="pressed",
+                params={},
+            ),
+            subject=hardware_subject_for_capability(input_capability_ref),
+        ),
+        message_id="fixture-hardware-state-request",
+    )
+    hardware_command_rejected = _stable_message(
+        hardware_message(
+            sender=hardware_manager_address("mirabox-main"),
+            sender_session_id="manager-session",
+            recipient=endpoint_target(controller_address("controller-main")),
+            recipient_session_id="controller-session",
+            message_type=COMMAND_REJECTED,
+            body=CommandRejectedMessage(
+                deviceRef=device_ref,
+                controlId="key.0.0",
+                capabilityId="raster.bitmap",
+                commandType="set_frame",
+                reason="unsupported",
+                message="frame format unsupported",
+            ),
+            subject=hardware_subject_for_capability(output_capability_ref),
+            in_reply_to="fixture-hardware-control-command",
+        ),
+        message_id="fixture-hardware-command-rejected",
+    )
     service_command = _stable_message(
         DeckrMessage(
             lane=SERVICES_LANE,
@@ -391,6 +637,50 @@ def _fixtures() -> list[dict[str, Any]]:
         ),
         message_id="fixture-service-command",
     )
+    service_reply = _stable_message(
+        service_command_reply_message(
+            sender=service_address("media-home"),
+            sender_session_id="service-session",
+            recipient=endpoint_target(controller_address("controller-main")),
+            recipient_session_id="controller-session",
+            body=ServiceCommandReplyBody(
+                serviceNamespace="dev.deckr.media.service",
+                operation="play",
+                status="ok",
+                result={"accepted": True},
+            ),
+            subject=entity_subject(
+                "service",
+                serviceId="media-home",
+                namespace="dev.deckr.media.service",
+                operation="play",
+            ),
+            in_reply_to="fixture-service-command",
+        ),
+        message_id="fixture-service-command-reply",
+    )
+    component_manifest = {
+        "componentId": "dev.deckr.example.hardware",
+        "consumes": ["hardware_messages"],
+        "publishes": ["hardware_messages"],
+        "cardinality": "multi_instance",
+        "endpointSlots": ["hardware"],
+        "role": "hardware_manager",
+        "dependencies": {
+            "controller": {
+                "kind": "endpoint",
+                "mode": "required",
+                "lane": "hardware_messages",
+                "endpoint": "controller:controller-main",
+            },
+            "media": {
+                "kind": "service",
+                "mode": "optional",
+                "endpoint": "service:media-home",
+                "namespace": "dev.deckr.media.service",
+            },
+        },
+    }
 
     action_catalog = ActionProviderCatalog(
         providerInstanceId="clock-main",
@@ -434,6 +724,48 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=settings_request,
         ),
         _fixture(
+            artifact_id="dev.deckr.fixture.actions.action_instance_created.valid.v1",
+            path="fixtures/valid/actions/action-instance-created.v1.json",
+            title="Valid actionInstanceCreated action message",
+            schema_path="schemas/actions/actions.v1.schema.json",
+            payload=action_instance_created,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.actions.binding_output.valid.v1",
+            path="fixtures/valid/actions/binding-output.v1.json",
+            title="Valid bindingOutput action message",
+            schema_path="schemas/actions/actions.v1.schema.json",
+            payload=binding_output,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.actions.open_page.valid.v1",
+            path="fixtures/valid/actions/open-page.v1.json",
+            title="Valid openPage action message",
+            schema_path="schemas/actions/actions.v1.schema.json",
+            payload=open_page,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.hardware.device_descriptor.valid.v1",
+            path="fixtures/valid/hardware/device-descriptor.v1.json",
+            title="Valid device descriptor",
+            schema_path="schemas/hardware/device-descriptor.v1.schema.json",
+            payload=descriptor_payload,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.hardware.control_descriptor.valid.v1",
+            path="fixtures/valid/hardware/control-descriptor.v1.json",
+            title="Valid control descriptor",
+            schema_path="schemas/hardware/control-descriptor.v1.schema.json",
+            payload=control_payload,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.hardware.capability_descriptor.valid.v1",
+            path="fixtures/valid/hardware/capability-descriptor.v1.json",
+            title="Valid capability descriptor",
+            schema_path="schemas/hardware/capability-descriptor.v1.schema.json",
+            payload=capability_payload,
+        ),
+        _fixture(
             artifact_id="dev.deckr.fixture.hardware.device_available.valid.v1",
             path="fixtures/valid/hardware/device-available.v1.json",
             title="Valid deviceAvailable hardware message",
@@ -448,11 +780,53 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=hardware_input,
         ),
         _fixture(
+            artifact_id="dev.deckr.fixture.hardware.control_command.valid.v1",
+            path="fixtures/valid/hardware/control-command.v1.json",
+            title="Valid controlCommand hardware message",
+            schema_path="schemas/hardware/hardware-messages.v1.schema.json",
+            payload=hardware_command,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.hardware.capability_state_changed.valid.v1",
+            path="fixtures/valid/hardware/capability-state-changed.v1.json",
+            title="Valid capabilityStateChanged hardware message",
+            schema_path="schemas/hardware/hardware-messages.v1.schema.json",
+            payload=hardware_state_changed,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.hardware.capability_state_request.valid.v1",
+            path="fixtures/valid/hardware/capability-state-request.v1.json",
+            title="Valid capabilityStateRequest hardware message",
+            schema_path="schemas/hardware/hardware-messages.v1.schema.json",
+            payload=hardware_state_request,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.hardware.command_rejected.valid.v1",
+            path="fixtures/valid/hardware/command-rejected.v1.json",
+            title="Valid commandRejected hardware message",
+            schema_path="schemas/hardware/hardware-messages.v1.schema.json",
+            payload=hardware_command_rejected,
+        ),
+        _fixture(
             artifact_id="dev.deckr.fixture.services.service_command.valid.v1",
             path="fixtures/valid/services/service-command.v1.json",
             title="Valid serviceCommand service message",
             schema_path="schemas/services/services.v1.schema.json",
             payload=service_command,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.services.service_command_reply.valid.v1",
+            path="fixtures/valid/services/service-command-reply.v1.json",
+            title="Valid serviceCommandReply service message",
+            schema_path="schemas/services/services.v1.schema.json",
+            payload=service_reply,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.components.component_manifest.valid.v1",
+            path="fixtures/valid/components/component-manifest.v1.json",
+            title="Valid component manifest",
+            schema_path="schemas/components/component-manifest.v1.schema.json",
+            payload=component_manifest,
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.state.endpoint_presence.valid.v1",
@@ -534,6 +908,16 @@ def _fixtures() -> list[dict[str, Any]]:
             valid=False,
         ),
         _fixture(
+            artifact_id="dev.deckr.fixture.hardware.capability_descriptor.invalid_missing_family.v1",
+            path="fixtures/invalid/hardware/capability-descriptor-missing-family.v1.json",
+            title="Invalid capability descriptor missing family",
+            schema_path="schemas/hardware/capability-descriptor.v1.schema.json",
+            payload={
+                key: value for key, value in capability_payload.items() if key != "family"
+            },
+            valid=False,
+        ),
+        _fixture(
             artifact_id="dev.deckr.fixture.hardware.control_input.invalid_missing_device_ref.v1",
             path="fixtures/invalid/hardware/control-input-missing-device-ref.v1.json",
             title="Invalid controlInput missing deviceRef",
@@ -565,6 +949,18 @@ def _fixtures() -> list[dict[str, Any]]:
             },
             valid=False,
         ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.components.component_manifest.invalid_missing_component_id.v1",
+            path="fixtures/invalid/components/component-manifest-missing-component-id.v1.json",
+            title="Invalid component manifest missing componentId",
+            schema_path="schemas/components/component-manifest.v1.schema.json",
+            payload={
+                key: value
+                for key, value in component_manifest.items()
+                if key != "componentId"
+            },
+            valid=False,
+        ),
     ]
 
 
@@ -575,7 +971,18 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
         if fixture["kind"] == "fixture" and fixture["valid"]
     }
     action_fixture_path = "fixtures/valid/actions/settings-request.v1.json"
-    action_message = DeckrMessage.from_dict(valid_fixture_by_path[action_fixture_path])
+    lane_fixture_paths = [
+        fixture["path"]
+        for fixture in fixtures
+        if fixture["kind"] == "fixture"
+        and fixture["valid"]
+        and fixture["schemaPath"]
+        in {
+            "schemas/actions/actions.v1.schema.json",
+            "schemas/hardware/hardware-messages.v1.schema.json",
+            "schemas/services/services.v1.schema.json",
+        }
+    ]
 
     add_artifact(
         kind="vector",
@@ -674,6 +1081,111 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
                         "tokens": ["zones", "Kitchen/Main"],
                     },
                 },
+                {
+                    "id": "settings.target.action_instance",
+                    "helper": "settings_target_key",
+                    "input": {"target": _settings_target().to_dict()},
+                    "key": settings_target_key(_settings_target()),
+                    "parsed": {
+                        "target": parse_settings_target_key(
+                            settings_target_key(_settings_target())
+                        ).to_dict()
+                    },
+                },
+            ],
+        },
+    )
+    add_artifact(
+        kind="vector",
+        artifact_id="dev.deckr.vector.identity.v1",
+        path="vectors/identity.v1.json",
+        title="Endpoint and subject identity vectors",
+        description="Acceptance vectors for Deckr endpoint identity and entity subject helpers.",
+        payload={
+            "schema": "dev.deckr.vector.identity.v1",
+            "endpointCases": [
+                {
+                    "id": "controller.valid",
+                    "input": "controller:controller-main",
+                    "valid": True,
+                    "family": "controller",
+                    "endpointId": "controller-main",
+                },
+                {
+                    "id": "hardware_manager.valid",
+                    "input": "hardware_manager:mirabox-main",
+                    "valid": True,
+                    "family": "hardware_manager",
+                    "endpointId": "mirabox-main",
+                },
+                {
+                    "id": "action_provider.valid",
+                    "input": "action_provider:clock-main",
+                    "valid": True,
+                    "family": "action_provider",
+                    "endpointId": "clock-main",
+                },
+                {
+                    "id": "service.valid",
+                    "input": "service:media-home",
+                    "valid": True,
+                    "family": "service",
+                    "endpointId": "media-home",
+                },
+                {
+                    "id": "endpoint.empty-id",
+                    "input": "controller:",
+                    "valid": False,
+                },
+                {
+                    "id": "endpoint.unknown-family",
+                    "input": "driver:mirabox-main",
+                    "valid": False,
+                },
+            ],
+            "subjectCases": [
+                {
+                    "id": "context.full",
+                    "helper": "context_subject",
+                    "input": {
+                        "contextId": "clock-context",
+                        "providerInstanceId": "clock-main",
+                        "providerId": "dev.deckr.clock",
+                        "configId": "office-panel",
+                        "actionInstanceId": "clock-instance-1",
+                        "bindingId": "binding-1",
+                    },
+                    "subject": context_subject(
+                        "clock-context",
+                        provider_instance_id="clock-main",
+                        provider_id="dev.deckr.clock",
+                        config_id="office-panel",
+                        action_instance_id="clock-instance-1",
+                        binding_id="binding-1",
+                    ).model_dump(by_alias=True, exclude_none=True, mode="json"),
+                },
+                {
+                    "id": "hardware.capability",
+                    "helper": "hardware_subject_for_capability",
+                    "input": {
+                        "deviceRef": {
+                            "managerId": "mirabox-main",
+                            "deviceId": "deck-1",
+                        },
+                        "controlId": "key.0.0",
+                        "capabilityId": "raster.bitmap",
+                    },
+                    "subject": hardware_subject_for_capability(
+                        CapabilityRef(
+                            deviceRef=DeviceRef(
+                                managerId="mirabox-main",
+                                deviceId="deck-1",
+                            ),
+                            controlId="key.0.0",
+                            capabilityId="raster.bitmap",
+                        )
+                    ).model_dump(by_alias=True, exclude_none=True, mode="json"),
+                },
             ],
         },
     )
@@ -686,12 +1198,101 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
         payload={
             "schema": "dev.deckr.vector.nats_lane.v1",
             "cases": [
+                _nats_lane_case(path, valid_fixture_by_path[path])
+                for path in lane_fixture_paths
+            ],
+        },
+    )
+    add_artifact(
+        kind="vector",
+        artifact_id="dev.deckr.vector.lane_runtime.v1",
+        path="vectors/lane-runtime.v1.json",
+        title="Lane runtime semantic vectors",
+        description="Acceptance vectors for message expiry and endpoint deliverability semantics.",
+        payload={
+            "schema": "dev.deckr.vector.lane_runtime.v1",
+            "cases": [
                 {
-                    "id": "actions.settings_request",
+                    "id": "direct.accepts-target-endpoint",
                     "fixture": action_fixture_path,
-                    "subject": _subject_for(action_message),
-                    "headers": dict(_headers_for(action_message)),
-                }
+                    "endpoint": "controller:controller-main",
+                    "endpointSessionId": "controller-session",
+                    "now": "2026-04-29T10:00:00Z",
+                    "targetsEndpoint": True,
+                    "expired": False,
+                    "deliverable": True,
+                },
+                {
+                    "id": "direct.rejects-other-endpoint",
+                    "fixture": action_fixture_path,
+                    "endpoint": "controller:other",
+                    "endpointSessionId": "controller-session",
+                    "now": "2026-04-29T10:00:00Z",
+                    "targetsEndpoint": False,
+                    "expired": False,
+                    "deliverable": False,
+                },
+                {
+                    "id": "ttl-expired",
+                    "message": {
+                        **valid_fixture_by_path[action_fixture_path],
+                        "messageId": "vector-expired-message",
+                        "createdAt": "2026-04-29T10:00:00Z",
+                        "ttlMs": 1,
+                    },
+                    "endpoint": "controller:controller-main",
+                    "endpointSessionId": "controller-session",
+                    "now": "2026-04-29T10:00:01Z",
+                    "targetsEndpoint": True,
+                    "expired": True,
+                    "deliverable": False,
+                },
+            ],
+        },
+    )
+    add_artifact(
+        kind="vector",
+        artifact_id="dev.deckr.vector.component_dependencies.v1",
+        path="vectors/component-dependencies.v1.json",
+        title="Component dependency readiness vectors",
+        description="Acceptance vectors for Deckr component dependency readiness semantics.",
+        payload={
+            "schema": "dev.deckr.vector.component_dependencies.v1",
+            "cases": [
+                _component_dependency_case(
+                    "required.satisfied",
+                    {
+                        "controller": {
+                            "name": "controller",
+                            "kind": "endpoint",
+                            "mode": "required",
+                            "state": "satisfied",
+                        }
+                    },
+                ),
+                _component_dependency_case(
+                    "required.unknown",
+                    {
+                        "controller": {
+                            "name": "controller",
+                            "kind": "endpoint",
+                            "mode": "required",
+                            "state": "unknown",
+                        }
+                    },
+                ),
+                _component_dependency_case(
+                    "optional.unsatisfied",
+                    {
+                        "media": {
+                            "name": "media",
+                            "kind": "service",
+                            "mode": "optional",
+                            "state": "unsatisfied",
+                            "reason": "presence_absent",
+                        }
+                    },
+                ),
             ],
         },
     )
@@ -787,7 +1388,10 @@ def _asyncapi_document(
         "x-deckr-artifact-manifest": "manifest.json",
         "x-deckr-current-state": _asyncapi_state_artifacts(schema_payloads),
         "x-deckr-interop-vectors": [
+            "vectors/component-dependencies.v1.json",
+            "vectors/identity.v1.json",
             "vectors/key-tokens.v1.json",
+            "vectors/lane-runtime.v1.json",
             "vectors/nats-lane.v1.json",
             "vectors/state-keys.v1.json",
         ],
@@ -1085,6 +1689,90 @@ def _asyncapi_state_artifacts(
     ]
 
 
+def _component_manifest_schema() -> dict[str, Any]:
+    lane_enum = sorted(CORE_LANE_NAMES)
+    endpoint_family_enum = [
+        "action_provider",
+        "controller",
+        "hardware",
+        "hardware_manager",
+        "service",
+    ]
+    dependency = {
+        "type": "object",
+        "required": ["kind", "mode", "endpoint"],
+        "properties": {
+            "kind": {"enum": [item.value for item in DependencyKind]},
+            "mode": {"enum": [item.value for item in DependencyMode]},
+            "lane": {"enum": lane_enum},
+            "endpoint": {
+                "type": "string",
+                "pattern": (
+                    "^(action_provider|controller|hardware_manager|service):[^:]+$"
+                ),
+            },
+            "namespace": {"type": "string", "minLength": 1},
+        },
+        "allOf": [
+            {
+                "if": {"properties": {"kind": {"const": "endpoint"}}},
+                "then": {
+                    "required": ["lane"],
+                    "not": {"required": ["namespace"]},
+                },
+            },
+            {
+                "if": {"properties": {"kind": {"const": "service"}}},
+                "then": {
+                    "required": ["namespace"],
+                    "not": {"required": ["lane"]},
+                },
+            },
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "$schema": JSON_SCHEMA_URI,
+        "$id": "dev.deckr.components.component_manifest.v1",
+        "title": "Component manifest",
+        "type": "object",
+        "required": ["componentId"],
+        "properties": {
+            "componentId": {"type": "string", "minLength": 1},
+            "consumes": {
+                "type": "array",
+                "items": {"enum": lane_enum},
+                "uniqueItems": True,
+                "default": [],
+            },
+            "publishes": {
+                "type": "array",
+                "items": {"enum": lane_enum},
+                "uniqueItems": True,
+                "default": [],
+            },
+            "cardinality": {
+                "enum": ["singleton", "multi_instance"],
+                "default": "singleton",
+            },
+            "endpointSlots": {
+                "type": "array",
+                "items": {"enum": endpoint_family_enum},
+                "uniqueItems": True,
+                "default": [],
+            },
+            "role": {"type": "string", "minLength": 1},
+            "dependencies": {
+                "type": "object",
+                "additionalProperties": dependency,
+                "default": {},
+            },
+        },
+        "additionalProperties": False,
+        "x-deckr-schema-version": SPEC_VERSION,
+    }
+
+
 def _device_descriptor() -> DeviceDescriptor:
     return DeviceDescriptor.model_validate(
         {
@@ -1154,6 +1842,100 @@ def _settings_target() -> SettingsTargetRef:
         actionInstanceId="clock-instance-1",
         stableId="clock",
     )
+
+
+def _binding_metadata(
+    *,
+    device_ref: DeviceRef,
+    control_ref: ControlRef,
+    output_capability_ref: CapabilityRef,
+) -> BindingMetadata:
+    return BindingMetadata(
+        providerInstanceId="clock-main",
+        providerId="dev.deckr.clock",
+        actionId="dev.deckr.clock.time",
+        actionInstanceId="clock-instance-1",
+        configId="office-panel",
+        contextId="clock-context",
+        bindingId="binding-1",
+        deviceRef=device_ref,
+        controlRef=control_ref,
+        itemKey="clock",
+        handler="default",
+        outputGeneration=1,
+        matchedCapabilities=(
+            {
+                "requirementName": "screen",
+                "capability": output_capability_ref,
+                "family": "dev.deckr.output.raster",
+                "type": "bitmap",
+                "direction": "output",
+                "commandTypes": ["set_frame", "clear"],
+                "provenance": "native",
+            },
+        ),
+    )
+
+
+def _component_dependency_case(
+    case_id: str,
+    conditions: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    parsed = {
+        name: DependencyCondition(
+            name=str(source.get("name", name)),
+            kind=DependencyKind(str(source["kind"])),
+            mode=DependencyMode(str(source["mode"])),
+            state=DependencyConditionState(str(source["state"])),
+            reason=(
+                str(source["reason"])
+                if source.get("reason") is not None
+                else None
+            ),
+            diagnostics=dict(source.get("diagnostics", {})),
+        )
+        for name, source in conditions.items()
+    }
+    readiness, reasons, diagnostics = dependency_effective_readiness(parsed)
+    return {
+        "id": case_id,
+        "conditions": {
+            name: {
+                "name": condition.name,
+                "kind": condition.kind.value,
+                "mode": condition.mode.value,
+                "state": condition.state.value,
+                **(
+                    {"reason": condition.reason}
+                    if condition.reason is not None
+                    else {}
+                ),
+                **(
+                    {"diagnostics": dict(condition.diagnostics)}
+                    if condition.diagnostics
+                    else {}
+                ),
+            }
+            for name, condition in sorted(parsed.items())
+        },
+        "readiness": readiness.value,
+        "reasons": list(reasons),
+        "diagnostics": diagnostics,
+    }
+
+
+def _nats_lane_case(path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    stored_payload = json.loads(json.dumps(payload, sort_keys=True))
+    message = DeckrMessage.from_dict(stored_payload)
+    return {
+        "id": Path(path).stem.removesuffix(".v1"),
+        "fixture": path,
+        "lane": message.lane,
+        "messageType": message.message_type,
+        "subject": _subject_for(message),
+        "headers": dict(_headers_for(message)),
+        "payloadUtf8": _payload_for(message).decode("utf-8"),
+    }
 
 
 def _stable_wire_message(message: DeckrMessage, *, message_id: str) -> dict[str, Any]:

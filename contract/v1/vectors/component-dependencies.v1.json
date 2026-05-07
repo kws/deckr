@@ -1,0 +1,69 @@
+{
+  "cases": [
+    {
+      "conditions": {
+        "controller": {
+          "kind": "endpoint",
+          "mode": "required",
+          "name": "controller",
+          "state": "satisfied"
+        }
+      },
+      "diagnostics": {
+        "dependencies": {}
+      },
+      "id": "required.satisfied",
+      "readiness": "ready",
+      "reasons": []
+    },
+    {
+      "conditions": {
+        "controller": {
+          "kind": "endpoint",
+          "mode": "required",
+          "name": "controller",
+          "state": "unknown"
+        }
+      },
+      "diagnostics": {
+        "dependencies": {
+          "controller": {
+            "kind": "endpoint",
+            "mode": "required",
+            "state": "unknown"
+          }
+        }
+      },
+      "id": "required.unknown",
+      "readiness": "unready",
+      "reasons": [
+        "dependency.controller.unknown"
+      ]
+    },
+    {
+      "conditions": {
+        "media": {
+          "kind": "service",
+          "mode": "optional",
+          "name": "media",
+          "reason": "presence_absent",
+          "state": "unsatisfied"
+        }
+      },
+      "diagnostics": {
+        "dependencies": {
+          "media": {
+            "kind": "service",
+            "mode": "optional",
+            "reason": "presence_absent",
+            "state": "unsatisfied"
+          }
+        }
+      },
+      "id": "optional.unsatisfied",
+      "readiness": "ready",
+      "reasons": []
+    }
+  ],
+  "schema": "dev.deckr.vector.component_dependencies.v1"
+}

@@ -10,8 +10,186 @@
         "Deckr-Sender": "action_provider:clock-main",
         "Deckr-Sender-Session": "provider-session"
       },
-      "id": "actions.settings_request",
+      "id": "settings-request",
+      "lane": "actions",
+      "messageType": "settingsRequest",
+      "payloadUtf8": "{\"messageId\":\"fixture-action-settings-request\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"actions\",\"messageType\":\"settingsRequest\",\"sender\":\"action_provider:clock-main\",\"senderSessionId\":\"provider-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"controller:controller-main\"},\"recipientSessionId\":\"controller-session\",\"subject\":{\"kind\":\"settings\",\"identifiers\":{\"actionInstanceId\":\"clock-instance-1\",\"controllerId\":\"controller-main\",\"providerInstanceId\":\"clock-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"target\":{\"actionId\":\"dev.deckr.clock.time\",\"actionInstanceId\":\"clock-instance-1\",\"configId\":\"office-panel\",\"controllerId\":\"controller-main\",\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\",\"scope\":\"action_instance\",\"stableId\":\"clock\"}}}",
       "subject": "deckr.lane.actions.action_provider.clock-main"
+    },
+    {
+      "fixture": "fixtures/valid/actions/action-instance-created.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-action-instance-created",
+        "Deckr-Message-Type": "actionInstanceCreated",
+        "Deckr-Recipient": "action_provider:clock-main",
+        "Deckr-Recipient-Session": "provider-session",
+        "Deckr-Sender": "controller:controller-main",
+        "Deckr-Sender-Session": "controller-session"
+      },
+      "id": "action-instance-created",
+      "lane": "actions",
+      "messageType": "actionInstanceCreated",
+      "payloadUtf8": "{\"messageId\":\"fixture-action-instance-created\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"actions\",\"messageType\":\"actionInstanceCreated\",\"sender\":\"controller:controller-main\",\"senderSessionId\":\"controller-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"action_provider:clock-main\"},\"recipientSessionId\":\"provider-session\",\"subject\":{\"kind\":\"context\",\"identifiers\":{\"actionInstanceId\":\"clock-instance-1\",\"configId\":\"office-panel\",\"contextId\":\"clock-context\",\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"metadata\":{\"actionId\":\"dev.deckr.clock.time\",\"actionInstanceId\":\"clock-instance-1\",\"configId\":\"office-panel\",\"contextId\":\"clock-context\",\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\"},\"settings\":{\"format\":\"24h\"}}}",
+      "subject": "deckr.lane.actions.controller.controller-main"
+    },
+    {
+      "fixture": "fixtures/valid/actions/binding-output.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-action-binding-output",
+        "Deckr-Message-Type": "bindingOutput",
+        "Deckr-Recipient": "controller:controller-main",
+        "Deckr-Recipient-Session": "controller-session",
+        "Deckr-Sender": "action_provider:clock-main",
+        "Deckr-Sender-Session": "provider-session"
+      },
+      "id": "binding-output",
+      "lane": "actions",
+      "messageType": "bindingOutput",
+      "payloadUtf8": "{\"messageId\":\"fixture-action-binding-output\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"actions\",\"messageType\":\"bindingOutput\",\"sender\":\"action_provider:clock-main\",\"senderSessionId\":\"provider-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"controller:controller-main\"},\"recipientSessionId\":\"controller-session\",\"subject\":{\"kind\":\"context\",\"identifiers\":{\"actionInstanceId\":\"clock-instance-1\",\"bindingId\":\"binding-1\",\"configId\":\"office-panel\",\"contextId\":\"clock-context\",\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"binding\":{\"actionId\":\"dev.deckr.clock.time\",\"actionInstanceId\":\"clock-instance-1\",\"bindingId\":\"binding-1\",\"configId\":\"office-panel\",\"contextId\":\"clock-context\",\"controlRef\":{\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"}},\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"handler\":\"default\",\"itemKey\":\"clock\",\"matchedCapabilities\":[{\"capability\":{\"capabilityId\":\"raster.bitmap\",\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"}},\"commandTypes\":[\"set_frame\",\"clear\"],\"direction\":\"output\",\"eventTypes\":[],\"family\":\"dev.deckr.output.raster\",\"provenance\":\"native\",\"requirementName\":\"screen\",\"type\":\"bitmap\"}],\"outputGeneration\":1,\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\"},\"capability\":{\"capabilityId\":\"raster.bitmap\",\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"}},\"commandType\":\"clear\",\"generation\":1,\"params\":{}}}",
+      "subject": "deckr.lane.actions.action_provider.clock-main"
+    },
+    {
+      "fixture": "fixtures/valid/actions/open-page.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-action-open-page",
+        "Deckr-Message-Type": "openPage",
+        "Deckr-Recipient": "controller:controller-main",
+        "Deckr-Recipient-Session": "controller-session",
+        "Deckr-Sender": "action_provider:clock-main",
+        "Deckr-Sender-Session": "provider-session"
+      },
+      "id": "open-page",
+      "lane": "actions",
+      "messageType": "openPage",
+      "payloadUtf8": "{\"messageId\":\"fixture-action-open-page\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"actions\",\"messageType\":\"openPage\",\"sender\":\"action_provider:clock-main\",\"senderSessionId\":\"provider-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"controller:controller-main\"},\"recipientSessionId\":\"controller-session\",\"subject\":{\"kind\":\"context\",\"identifiers\":{\"actionInstanceId\":\"clock-instance-1\",\"bindingId\":\"binding-1\",\"configId\":\"office-panel\",\"contextId\":\"clock-context\",\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"descriptor\":{\"bindings\":[{\"controlId\":\"key.0.0\",\"handler\":\"default\",\"itemKey\":\"clock\",\"settings\":{\"title\":\"Clock\"},\"target\":{\"kind\":\"self\"}}],\"pageId\":\"clock-page\"}}}",
+      "subject": "deckr.lane.actions.action_provider.clock-main"
+    },
+    {
+      "fixture": "fixtures/valid/hardware/device-available.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-hardware-device-available",
+        "Deckr-Message-Type": "deviceAvailable",
+        "Deckr-Recipient": "broadcast:controllers:controller",
+        "Deckr-Sender": "hardware_manager:mirabox-main",
+        "Deckr-Sender-Session": "manager-session"
+      },
+      "id": "device-available",
+      "lane": "hardware_messages",
+      "messageType": "deviceAvailable",
+      "payloadUtf8": "{\"messageId\":\"fixture-hardware-device-available\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"hardware_messages\",\"messageType\":\"deviceAvailable\",\"sender\":\"hardware_manager:mirabox-main\",\"senderSessionId\":\"manager-session\",\"recipient\":{\"targetType\":\"broadcast\",\"scope\":\"controllers\",\"endpointFamily\":\"controller\"},\"subject\":{\"kind\":\"hardware_device\",\"identifiers\":{\"deviceId\":\"deck-1\",\"managerId\":\"mirabox-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"descriptor\":{\"capabilities\":[],\"connections\":[],\"controls\":[{\"configCapabilities\":[],\"controlId\":\"key.0.0\",\"diagnosticCapabilities\":[],\"geometry\":{\"height\":1.0,\"unit\":\"grid\",\"width\":1.0,\"x\":0.0,\"y\":0.0},\"inputCapabilities\":[{\"access\":[\"emits\"],\"capabilityId\":\"button.press\",\"commandTypes\":[],\"constraints\":[],\"direction\":\"input\",\"eventTypes\":[\"press\"],\"family\":\"dev.deckr.input.button\",\"sources\":[],\"type\":\"activation\",\"units\":[],\"valueSchema\":{\"schema\":{\"additionalProperties\":false,\"properties\":{\"eventType\":{\"const\":\"press\"}},\"required\":[\"eventType\"],\"type\":\"object\"},\"schemaId\":\"dev.deckr.value.input.button.activation.v1\"}}],\"kind\":\"key\",\"outputCapabilities\":[{\"access\":[\"settable\",\"invokable\"],\"capabilityId\":\"raster.bitmap\",\"commandSchema\":{\"schema\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"encoding\":{\"enum\":[\"jpeg\",\"png\"]},\"height\":{\"const\":72},\"image\":{\"contentEncoding\":\"base64\",\"type\":\"string\"},\"width\":{\"const\":72}},\"required\":[\"image\",\"encoding\"],\"type\":\"object\"},{\"maxProperties\":0,\"type\":\"object\"}]},\"schemaId\":\"dev.deckr.command.output.raster.bitmap.v1\"},\"commandTypes\":[\"set_frame\",\"clear\"],\"constraints\":[],\"direction\":\"output\",\"eventTypes\":[],\"family\":\"dev.deckr.output.raster\",\"sources\":[],\"type\":\"bitmap\",\"units\":[]}],\"relatedControlIds\":[],\"sources\":[],\"stateCapabilities\":[]}],\"deviceId\":\"deck-1\",\"displayName\":\"Example Deck\",\"fingerprint\":\"fingerprint:deck-1\",\"identifiers\":[],\"manufacturer\":\"Deckr\",\"model\":\"Fixture Panel\",\"sources\":[]}}}",
+      "subject": "deckr.lane.hardware_messages.hardware_manager.mirabox-main"
+    },
+    {
+      "fixture": "fixtures/valid/hardware/control-input.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-hardware-control-input",
+        "Deckr-Message-Type": "controlInput",
+        "Deckr-Recipient": "broadcast:controllers:controller",
+        "Deckr-Sender": "hardware_manager:mirabox-main",
+        "Deckr-Sender-Session": "manager-session"
+      },
+      "id": "control-input",
+      "lane": "hardware_messages",
+      "messageType": "controlInput",
+      "payloadUtf8": "{\"messageId\":\"fixture-hardware-control-input\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"hardware_messages\",\"messageType\":\"controlInput\",\"sender\":\"hardware_manager:mirabox-main\",\"senderSessionId\":\"manager-session\",\"recipient\":{\"targetType\":\"broadcast\",\"scope\":\"controllers\",\"endpointFamily\":\"controller\"},\"subject\":{\"kind\":\"hardware_capability\",\"identifiers\":{\"capabilityId\":\"button.press\",\"controlId\":\"key.0.0\",\"deviceId\":\"deck-1\",\"managerId\":\"mirabox-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"capabilityId\":\"button.press\",\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"eventType\":\"press\",\"occurredAt\":\"2026-04-29T10:00:00Z\",\"sequence\":1,\"sources\":[],\"value\":{\"eventType\":\"press\"}}}",
+      "subject": "deckr.lane.hardware_messages.hardware_manager.mirabox-main"
+    },
+    {
+      "fixture": "fixtures/valid/hardware/control-command.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-hardware-control-command",
+        "Deckr-Message-Type": "controlCommand",
+        "Deckr-Recipient": "hardware_manager:mirabox-main",
+        "Deckr-Recipient-Session": "manager-session",
+        "Deckr-Sender": "controller:controller-main",
+        "Deckr-Sender-Session": "controller-session"
+      },
+      "id": "control-command",
+      "lane": "hardware_messages",
+      "messageType": "controlCommand",
+      "payloadUtf8": "{\"messageId\":\"fixture-hardware-control-command\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"hardware_messages\",\"messageType\":\"controlCommand\",\"sender\":\"controller:controller-main\",\"senderSessionId\":\"controller-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"hardware_manager:mirabox-main\"},\"recipientSessionId\":\"manager-session\",\"subject\":{\"kind\":\"hardware_capability\",\"identifiers\":{\"capabilityId\":\"raster.bitmap\",\"controlId\":\"key.0.0\",\"deviceId\":\"deck-1\",\"managerId\":\"mirabox-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"capabilityId\":\"raster.bitmap\",\"commandType\":\"clear\",\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"params\":{}}}",
+      "subject": "deckr.lane.hardware_messages.controller.controller-main"
+    },
+    {
+      "fixture": "fixtures/valid/hardware/capability-state-changed.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-hardware-state-changed",
+        "Deckr-Message-Type": "capabilityStateChanged",
+        "Deckr-Recipient": "broadcast:controllers:controller",
+        "Deckr-Sender": "hardware_manager:mirabox-main",
+        "Deckr-Sender-Session": "manager-session"
+      },
+      "id": "capability-state-changed",
+      "lane": "hardware_messages",
+      "messageType": "capabilityStateChanged",
+      "payloadUtf8": "{\"messageId\":\"fixture-hardware-state-changed\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"hardware_messages\",\"messageType\":\"capabilityStateChanged\",\"sender\":\"hardware_manager:mirabox-main\",\"senderSessionId\":\"manager-session\",\"recipient\":{\"targetType\":\"broadcast\",\"scope\":\"controllers\",\"endpointFamily\":\"controller\"},\"subject\":{\"kind\":\"hardware_capability\",\"identifiers\":{\"capabilityId\":\"button.press\",\"controlId\":\"key.0.0\",\"deviceId\":\"deck-1\",\"managerId\":\"mirabox-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"capabilityId\":\"button.press\",\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"occurredAt\":\"2026-04-29T10:00:00Z\",\"sequence\":2,\"stateType\":\"pressed\",\"value\":false}}",
+      "subject": "deckr.lane.hardware_messages.hardware_manager.mirabox-main"
+    },
+    {
+      "fixture": "fixtures/valid/hardware/capability-state-request.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-hardware-state-request",
+        "Deckr-Message-Type": "capabilityStateRequest",
+        "Deckr-Recipient": "hardware_manager:mirabox-main",
+        "Deckr-Recipient-Session": "manager-session",
+        "Deckr-Sender": "controller:controller-main",
+        "Deckr-Sender-Session": "controller-session"
+      },
+      "id": "capability-state-request",
+      "lane": "hardware_messages",
+      "messageType": "capabilityStateRequest",
+      "payloadUtf8": "{\"messageId\":\"fixture-hardware-state-request\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"hardware_messages\",\"messageType\":\"capabilityStateRequest\",\"sender\":\"controller:controller-main\",\"senderSessionId\":\"controller-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"hardware_manager:mirabox-main\"},\"recipientSessionId\":\"manager-session\",\"subject\":{\"kind\":\"hardware_capability\",\"identifiers\":{\"capabilityId\":\"button.press\",\"controlId\":\"key.0.0\",\"deviceId\":\"deck-1\",\"managerId\":\"mirabox-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"capabilityId\":\"button.press\",\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"params\":{},\"stateType\":\"pressed\"}}",
+      "subject": "deckr.lane.hardware_messages.controller.controller-main"
+    },
+    {
+      "fixture": "fixtures/valid/hardware/command-rejected.v1.json",
+      "headers": {
+        "Deckr-In-Reply-To": "fixture-hardware-control-command",
+        "Deckr-Message-Id": "fixture-hardware-command-rejected",
+        "Deckr-Message-Type": "commandRejected",
+        "Deckr-Recipient": "controller:controller-main",
+        "Deckr-Recipient-Session": "controller-session",
+        "Deckr-Sender": "hardware_manager:mirabox-main",
+        "Deckr-Sender-Session": "manager-session"
+      },
+      "id": "command-rejected",
+      "lane": "hardware_messages",
+      "messageType": "commandRejected",
+      "payloadUtf8": "{\"messageId\":\"fixture-hardware-command-rejected\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"hardware_messages\",\"messageType\":\"commandRejected\",\"sender\":\"hardware_manager:mirabox-main\",\"senderSessionId\":\"manager-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"controller:controller-main\"},\"recipientSessionId\":\"controller-session\",\"subject\":{\"kind\":\"hardware_capability\",\"identifiers\":{\"capabilityId\":\"raster.bitmap\",\"controlId\":\"key.0.0\",\"deviceId\":\"deck-1\",\"managerId\":\"mirabox-main\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"inReplyTo\":\"fixture-hardware-control-command\",\"body\":{\"capabilityId\":\"raster.bitmap\",\"commandType\":\"set_frame\",\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"message\":\"frame format unsupported\",\"reason\":\"unsupported\"}}",
+      "subject": "deckr.lane.hardware_messages.hardware_manager.mirabox-main"
+    },
+    {
+      "fixture": "fixtures/valid/services/service-command.v1.json",
+      "headers": {
+        "Deckr-Message-Id": "fixture-service-command",
+        "Deckr-Message-Type": "serviceCommand",
+        "Deckr-Recipient": "service:media-home",
+        "Deckr-Recipient-Session": "service-session",
+        "Deckr-Sender": "controller:controller-main",
+        "Deckr-Sender-Session": "controller-session"
+      },
+      "id": "service-command",
+      "lane": "services",
+      "messageType": "serviceCommand",
+      "payloadUtf8": "{\"messageId\":\"fixture-service-command\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"services\",\"messageType\":\"serviceCommand\",\"sender\":\"controller:controller-main\",\"senderSessionId\":\"controller-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"service:media-home\"},\"recipientSessionId\":\"service-session\",\"subject\":{\"kind\":\"service\",\"identifiers\":{\"namespace\":\"dev.deckr.media.service\",\"operation\":\"play\",\"serviceId\":\"media-home\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"body\":{\"operation\":\"play\",\"params\":{\"zone\":\"kitchen\"},\"serviceNamespace\":\"dev.deckr.media.service\"}}",
+      "subject": "deckr.lane.services.controller.controller-main"
+    },
+    {
+      "fixture": "fixtures/valid/services/service-command-reply.v1.json",
+      "headers": {
+        "Deckr-In-Reply-To": "fixture-service-command",
+        "Deckr-Message-Id": "fixture-service-command-reply",
+        "Deckr-Message-Type": "serviceCommandReply",
+        "Deckr-Recipient": "controller:controller-main",
+        "Deckr-Recipient-Session": "controller-session",
+        "Deckr-Sender": "service:media-home",
+        "Deckr-Sender-Session": "service-session"
+      },
+      "id": "service-command-reply",
+      "lane": "services",
+      "messageType": "serviceCommandReply",
+      "payloadUtf8": "{\"messageId\":\"fixture-service-command-reply\",\"protocolVersion\":\"1\",\"schemaVersion\":\"1\",\"lane\":\"services\",\"messageType\":\"serviceCommandReply\",\"sender\":\"service:media-home\",\"senderSessionId\":\"service-session\",\"recipient\":{\"targetType\":\"endpoint\",\"endpoint\":\"controller:controller-main\"},\"recipientSessionId\":\"controller-session\",\"subject\":{\"kind\":\"service\",\"identifiers\":{\"namespace\":\"dev.deckr.media.service\",\"operation\":\"play\",\"serviceId\":\"media-home\"}},\"createdAt\":\"2026-04-29T10:00:00Z\",\"inReplyTo\":\"fixture-service-command\",\"body\":{\"operation\":\"play\",\"result\":{\"accepted\":true},\"serviceNamespace\":\"dev.deckr.media.service\",\"status\":\"ok\"}}",
+      "subject": "deckr.lane.services.service.media-home"
     }
   ],
   "schema": "dev.deckr.vector.nats_lane.v1"

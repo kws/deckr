@@ -1,0 +1,89 @@
+{
+  "endpointCases": [
+    {
+      "endpointId": "controller-main",
+      "family": "controller",
+      "id": "controller.valid",
+      "input": "controller:controller-main",
+      "valid": true
+    },
+    {
+      "endpointId": "mirabox-main",
+      "family": "hardware_manager",
+      "id": "hardware_manager.valid",
+      "input": "hardware_manager:mirabox-main",
+      "valid": true
+    },
+    {
+      "endpointId": "clock-main",
+      "family": "action_provider",
+      "id": "action_provider.valid",
+      "input": "action_provider:clock-main",
+      "valid": true
+    },
+    {
+      "endpointId": "media-home",
+      "family": "service",
+      "id": "service.valid",
+      "input": "service:media-home",
+      "valid": true
+    },
+    {
+      "id": "endpoint.empty-id",
+      "input": "controller:",
+      "valid": false
+    },
+    {
+      "id": "endpoint.unknown-family",
+      "input": "driver:mirabox-main",
+      "valid": false
+    }
+  ],
+  "schema": "dev.deckr.vector.identity.v1",
+  "subjectCases": [
+    {
+      "helper": "context_subject",
+      "id": "context.full",
+      "input": {
+        "actionInstanceId": "clock-instance-1",
+        "bindingId": "binding-1",
+        "configId": "office-panel",
+        "contextId": "clock-context",
+        "providerId": "dev.deckr.clock",
+        "providerInstanceId": "clock-main"
+      },
+      "subject": {
+        "identifiers": {
+          "actionInstanceId": "clock-instance-1",
+          "bindingId": "binding-1",
+          "configId": "office-panel",
+          "contextId": "clock-context",
+          "providerId": "dev.deckr.clock",
+          "providerInstanceId": "clock-main"
+        },
+        "kind": "context"
+      }
+    },
+    {
+      "helper": "hardware_subject_for_capability",
+      "id": "hardware.capability",
+      "input": {
+        "capabilityId": "raster.bitmap",
+        "controlId": "key.0.0",
+        "deviceRef": {
+          "deviceId": "deck-1",
+          "managerId": "mirabox-main"
+        }
+      },
+      "subject": {
+        "identifiers": {
+          "capabilityId": "raster.bitmap",
+          "controlId": "key.0.0",
+          "deviceId": "deck-1",
+          "managerId": "mirabox-main"
+        },
+        "kind": "hardware_capability"
+      }
+    }
+  ]
+}

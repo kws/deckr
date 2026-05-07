@@ -1,0 +1,44 @@
+{
+  "body": {
+    "descriptor": {
+      "bindings": [
+        {
+          "controlId": "key.0.0",
+          "handler": "default",
+          "itemKey": "clock",
+          "settings": {
+            "title": "Clock"
+          },
+          "target": {
+            "kind": "self"
+          }
+        }
+      ],
+      "pageId": "clock-page"
+    }
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "actions",
+  "messageId": "fixture-action-open-page",
+  "messageType": "openPage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "action_provider:clock-main",
+  "senderSessionId": "provider-session",
+  "subject": {
+    "identifiers": {
+      "actionInstanceId": "clock-instance-1",
+      "bindingId": "binding-1",
+      "configId": "office-panel",
+      "contextId": "clock-context",
+      "providerId": "dev.deckr.clock",
+      "providerInstanceId": "clock-main"
+    },
+    "kind": "context"
+  }
+}
