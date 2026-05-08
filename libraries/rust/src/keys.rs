@@ -5,7 +5,7 @@ use regex::Regex;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::identity::EndpointAddress;
+use crate::identity::{EndpointAddress, HARDWARE_MESSAGES_LANE};
 
 #[derive(Debug, Error)]
 pub enum KeyError {
@@ -43,6 +43,18 @@ pub fn presence_endpoint_key(lane: &str, endpoint: &EndpointAddress) -> String {
     )
 }
 
+pub fn presence_endpoint_prefix(lane: &str, endpoint_family: &str) -> String {
+    format!(
+        "presence.endpoint.{}.{}.",
+        encode_key_token(lane),
+        encode_key_token(endpoint_family)
+    )
+}
+
+pub fn controller_presence_prefix() -> String {
+    presence_endpoint_prefix(HARDWARE_MESSAGES_LANE, "controller")
+}
+
 pub fn parse_presence_endpoint_key(
     key: &str,
 ) -> Result<Option<(String, EndpointAddress)>, KeyError> {
@@ -76,6 +88,10 @@ pub fn device_claim_key(manager_id: &str, device_id: &str) -> String {
         encode_key_token(manager_id),
         encode_key_token(device_id)
     )
+}
+
+pub fn device_claim_prefix(manager_id: &str) -> String {
+    format!("claim.device.{}.", encode_key_token(manager_id))
 }
 
 pub fn parse_device_claim_key(key: &str) -> Result<Option<(String, String)>, KeyError> {

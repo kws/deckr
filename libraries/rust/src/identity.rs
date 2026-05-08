@@ -1,6 +1,7 @@
-use std::{fmt, str::FromStr};
+use std::{fmt, str::FromStr, sync::LazyLock};
 
 use chrono::{DateTime, Duration, Utc};
+use regex::Regex;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
@@ -8,6 +9,10 @@ use thiserror::Error;
 pub const ACTIONS_LANE: &str = "actions";
 pub const HARDWARE_MESSAGES_LANE: &str = "hardware_messages";
 pub const SERVICES_LANE: &str = "services";
+
+static PROVIDER_INSTANCE_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*$").expect("valid regex"));
+const RESERVED_ACTION_PROVIDER_INSTANCE_IDS: &[&str] = &["dev.deckr.controller.builtin"];
 
 #[derive(Debug, Error)]
 pub enum IdentityError {
@@ -19,6 +24,10 @@ pub enum IdentityError {
     EmptyEndpointId,
     #[error("endpoint id must not contain ':'")]
     InvalidEndpointId,
+    #[error("action provider endpoint id is not a valid provider instance id")]
+    InvalidActionProviderId,
+    #[error("action provider endpoint id {0} is reserved")]
+    ReservedActionProviderId(String),
     #[error("message lane {0} is not a core Deckr lane")]
     UnknownLane(String),
     #[error("message type {message_type} is not supported on lane {lane}")]
@@ -48,6 +57,9 @@ impl EndpointAddress {
     ) -> Result<Self, IdentityError> {
         let family = family.into();
         let endpoint_id = endpoint_id.into();
+        if family.trim() != family || endpoint_id.trim() != endpoint_id {
+            return Err(IdentityError::InvalidEndpointId);
+        }
         if !matches!(
             family.as_str(),
             "action_provider" | "controller" | "hardware_manager" | "service"
@@ -60,11 +72,44 @@ impl EndpointAddress {
         if endpoint_id.contains(':') {
             return Err(IdentityError::InvalidEndpointId);
         }
+        if family == "action_provider" {
+            if RESERVED_ACTION_PROVIDER_INSTANCE_IDS.contains(&endpoint_id.as_str()) {
+                return Err(IdentityError::ReservedActionProviderId(endpoint_id));
+            }
+            if !PROVIDER_INSTANCE_ID_RE.is_match(&endpoint_id) {
+                return Err(IdentityError::InvalidActionProviderId);
+            }
+        }
         Ok(Self {
             family,
             endpoint_id,
         })
     }
+}
+
+pub fn endpoint_address(
+    family: impl Into<String>,
+    endpoint_id: impl Into<String>,
+) -> Result<EndpointAddress, IdentityError> {
+    EndpointAddress::new(family, endpoint_id)
+}
+
+pub fn action_provider_address(
+    provider_instance_id: &str,
+) -> Result<EndpointAddress, IdentityError> {
+    EndpointAddress::new("action_provider", provider_instance_id)
+}
+
+pub fn controller_address(controller_id: &str) -> Result<EndpointAddress, IdentityError> {
+    EndpointAddress::new("controller", controller_id)
+}
+
+pub fn hardware_manager_address(manager_id: &str) -> Result<EndpointAddress, IdentityError> {
+    EndpointAddress::new("hardware_manager", manager_id)
+}
+
+pub fn service_address(service_id: &str) -> Result<EndpointAddress, IdentityError> {
+    EndpointAddress::new("service", service_id)
 }
 
 impl fmt::Display for EndpointAddress {
@@ -143,6 +188,16 @@ pub struct EntitySubject {
     pub identifiers: serde_json::Map<String, Value>,
 }
 
+impl EntitySubject {
+    pub fn device_id(&self) -> Option<&str> {
+        self.identifiers.get("deviceId").and_then(Value::as_str)
+    }
+
+    pub fn manager_id(&self) -> Option<&str> {
+        self.identifiers.get("managerId").and_then(Value::as_str)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeckrMessage {
@@ -169,6 +224,31 @@ pub struct DeckrMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<Value>,
     pub body: Value,
+}
+
+impl DeckrMessage {
+    pub fn to_text(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    pub fn from_text(text: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(text)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(bytes)
+    }
+
+    pub fn recipient_endpoint(&self) -> Option<&EndpointAddress> {
+        match &self.recipient {
+            MessageTarget::Endpoint(target) => Some(&target.endpoint),
+            MessageTarget::Broadcast(_) => None,
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        message_is_expired_at(self, Utc::now())
+    }
 }
 
 pub fn message_targets_endpoint(message: &DeckrMessage, endpoint: &EndpointAddress) -> bool {

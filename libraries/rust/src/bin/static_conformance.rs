@@ -7,13 +7,14 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use deckr_core::{
     action_provider_catalog_key, context_subject, decode_key_token, default_contract_root,
-    device_claim_key, encode_key_token, hardware_inventory_key, hardware_subject_for_capability,
-    headers_for, load_manifest, message_is_expired_at, message_targets_endpoint,
-    parse_action_provider_catalog_key, parse_device_claim_key, parse_hardware_inventory_key,
-    parse_presence_endpoint_key, parse_service_catalog_key, parse_service_status_key,
-    parse_service_view_key, parse_settings_target_key, payload_json_bytes, presence_endpoint_key,
-    read_json, service_catalog_key, service_status_key, service_view_key, settings_target_key,
-    subject_for, validate_lane_message, DeckrMessage, EndpointAddress,
+    device_claim_key, encode_key_token, hardware_body_from_message, hardware_inventory_key,
+    hardware_subject_for_capability, headers_for, load_manifest, message_is_expired_at,
+    message_targets_endpoint, parse_action_provider_catalog_key, parse_device_claim_key,
+    parse_hardware_inventory_key, parse_presence_endpoint_key, parse_service_catalog_key,
+    parse_service_status_key, parse_service_view_key, parse_settings_target_key,
+    payload_json_bytes, presence_endpoint_key, read_json, service_catalog_key, service_status_key,
+    service_view_key, settings_target_key, subject_for, validate_lane_message, DeckrMessage,
+    EndpointAddress,
 };
 use jsonschema::{Draft, JSONSchema};
 use serde::Serialize;
@@ -583,6 +584,12 @@ fn check_lane_messages(
                 seen_types.insert(message.message_type.clone());
                 if let Err(error) = validate_lane_message(&message) {
                     group.fail(format!("{path}: {error}"));
+                } else if lane == deckr_core::HARDWARE_MESSAGES_LANE {
+                    if let Err(error) = hardware_body_from_message(&message) {
+                        group.fail(format!("{path}: {error}"));
+                    } else {
+                        group.pass();
+                    }
                 } else if !message.body.is_object() {
                     group.fail(format!("{path}: message body is not an object"));
                 } else {
