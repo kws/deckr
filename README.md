@@ -31,9 +31,11 @@ Those documents are the source of truth for the current architecture. They are
 explicitly normative, alpha-stage, and intentionally non-backward-compatible.
 The distributed bus replacement has closed on NATS as the Deckr distributed
 substrate: Core NATS carries lane traffic and JetStream KV carries current
-state. The supported NATS/KV contract now lives in
-[docs/nats-bus.md](docs/nats-bus.md). Future bus ideas live outside this package
-until they become implementor- or user-relevant specification.
+state. The machine-readable NATS/KV binding lives in
+`contract/v1/bindings/nats.v1.json`; [docs/nats-bus.md](docs/nats-bus.md)
+explains the same contract for implementors and operators. Future bus ideas live
+outside this package until they become implementor- or user-relevant
+specification.
 
 The controller now lives in its own sibling repository:
 
@@ -46,6 +48,7 @@ contract/v1/
   index.html
   manifest.json
   asyncapi.json
+  bindings/
   schemas/
   fixtures/
   vectors/
@@ -80,9 +83,9 @@ scripts/
 
 The generated `contract/v1/` bundle is the checked, language-neutral v1
 contract artifact set. Open `contract/v1/index.html` locally for the AsyncAPI
-browser, or use `contract/v1/asyncapi.json` directly with AsyncAPI-compatible
-tooling. The manifest, JSON schemas, fixtures, and vectors remain available as
-plain files.
+browser and NATS binding preview, or use `contract/v1/asyncapi.json` directly
+with AsyncAPI-compatible tooling. The manifest, JSON schemas, binding artifacts,
+fixtures, and vectors remain available as plain files.
 
 Neutral authoring inputs for schema descriptions, examples, and coverage live
 under `contract/authoring/v1/`. Python/Pydantic is currently the compiler layer
@@ -164,7 +167,9 @@ Public contract identifier ownership and collision-avoidance rules live in
 The Deckr distributed lane substrate is NATS. Read
 [docs/nats-bus.md](docs/nats-bus.md) for endpoint-bound lane handles, recipient
 filtering, KV current state, device claims, action resolution, and broker
-diagnostics.
+diagnostics. The normative generated binding artifact for subject templates,
+headers, payload rules, bucket names, and TTL/renewal policy is
+`contract/v1/bindings/nats.v1.json`.
 
 The old home-grown WebSocket/MQTT lane transports, route table, route leases,
 route metadata, and remote-endpoint hint architecture are removal targets. This

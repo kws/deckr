@@ -1,6 +1,14 @@
 {
   "artifacts": [
     {
+      "description": "Machine-readable Deckr NATS lane and KV current-state binding rules.",
+      "id": "dev.deckr.binding.nats.v1",
+      "kind": "binding",
+      "path": "bindings/nats.v1.json",
+      "protocol": "nats",
+      "title": "Deckr NATS binding"
+    },
+    {
       "description": "Invalid fixture that must be rejected by schema validation.",
       "id": "dev.deckr.fixture.actions.settings_request.invalid_lane_case.v1",
       "kind": "fixture",

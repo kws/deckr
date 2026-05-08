@@ -6,7 +6,8 @@ normative reference for language implementors:
 - JSON Schemas define accepted and rejected data shapes.
 - fixtures define representative valid and invalid payloads.
 - vectors define deterministic helper behavior.
-- `asyncapi.json` documents the NATS lane binding.
+- `bindings/nats.v1.json` defines the NATS lane and current-state binding.
+- `asyncapi.json` documents the NATS lane channels and links to the binding.
 - static conformance reports prove each core library behaves against the same
   contract bundle.
 

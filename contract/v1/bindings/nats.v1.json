@@ -1,0 +1,135 @@
+{
+  "contractVersion": "v1",
+  "currentState": {
+    "buckets": {
+      "discovery": {
+        "allowPerWriteTtl": false,
+        "brokerTtlSeconds": null,
+        "description": "Non-TTL current state for descriptive discovery records.",
+        "history": 1,
+        "maxMessagesPerSubject": 1,
+        "messageTtlMarkers": "notUsed",
+        "name": "deckr_discovery_v1",
+        "perWriteTtlSeconds": null,
+        "renewalIntervalSeconds": null,
+        "writes": [
+          "hardwareInventory",
+          "actionProviderCatalog",
+          "serviceCatalog",
+          "serviceStatus",
+          "serviceView"
+        ]
+      },
+      "lease": {
+        "allowPerWriteTtl": true,
+        "brokerTtlSeconds": 30,
+        "description": "TTL-bound current state for endpoint presence and device claims.",
+        "history": 1,
+        "maxMessagesPerSubject": 1,
+        "messageTtlMarkers": "enabledWhereSupported",
+        "name": "deckr_lease_v1",
+        "perWriteTtlSeconds": 30,
+        "renewalIntervalSeconds": 5.0,
+        "writes": [
+          "endpointPresence",
+          "deviceClaim"
+        ]
+      }
+    },
+    "payload": {
+      "contentType": "application/json",
+      "description": "Current-state values are JSON object payloads encoded as compact UTF-8 JSON bytes.",
+      "serialization": "utf8-json"
+    }
+  },
+  "excluded": [
+    "brokerUrl",
+    "auth",
+    "permissions",
+    "accountTopology",
+    "serverTopology",
+    "privatePackageBuckets"
+  ],
+  "laneMessages": {
+    "headers": [
+      {
+        "name": "Deckr-Message-Id",
+        "required": true,
+        "source": "messageId"
+      },
+      {
+        "name": "Deckr-Message-Type",
+        "required": true,
+        "source": "messageType"
+      },
+      {
+        "name": "Deckr-Sender",
+        "required": true,
+        "source": "sender"
+      },
+      {
+        "name": "Deckr-Sender-Session",
+        "required": true,
+        "source": "senderSessionId"
+      },
+      {
+        "name": "Deckr-Recipient",
+        "required": true,
+        "source": "recipient"
+      },
+      {
+        "name": "Deckr-Recipient-Session",
+        "required": false,
+        "source": "recipientSessionId"
+      },
+      {
+        "name": "Deckr-In-Reply-To",
+        "required": false,
+        "source": "inReplyTo"
+      }
+    ],
+    "lanes": {
+      "actions": {
+        "allowedSenderFamilies": [
+          "action_provider",
+          "controller"
+        ],
+        "publishSubjectTemplate": "deckr.lane.actions.{senderFamily}.{senderEndpointToken}",
+        "subscribeSubject": "deckr.lane.actions.>"
+      },
+      "hardware_messages": {
+        "allowedSenderFamilies": [
+          "controller",
+          "hardware_manager"
+        ],
+        "publishSubjectTemplate": "deckr.lane.hardware_messages.{senderFamily}.{senderEndpointToken}",
+        "subscribeSubject": "deckr.lane.hardware_messages.>"
+      },
+      "services": {
+        "allowedSenderFamilies": [
+          "action_provider",
+          "controller",
+          "service"
+        ],
+        "publishSubjectTemplate": "deckr.lane.services.{senderFamily}.{senderEndpointToken}",
+        "subscribeSubject": "deckr.lane.services.>"
+      }
+    },
+    "payload": {
+      "authority": "payload",
+      "contentType": "application/json",
+      "description": "The payload is the canonical Deckr message envelope serialized as compact JSON bytes.",
+      "serialization": "utf8-json"
+    },
+    "publishSubjectTemplate": "deckr.lane.{lane}.{senderFamily}.{senderEndpointToken}",
+    "subjectRoot": "deckr.lane",
+    "subscribeSubjectTemplate": "deckr.lane.{lane}.>",
+    "tokenEncoding": "vectors/key-tokens.v1.json",
+    "validation": {
+      "headers": "Reject messages whose present Deckr-owned NATS headers disagree with the envelope.",
+      "subjectHint": "Reject messages whose Deckr-owned NATS subject disagrees with the envelope sender."
+    }
+  },
+  "schema": "dev.deckr.binding.nats.v1",
+  "specVersion": "1"
+}

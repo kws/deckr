@@ -6,8 +6,11 @@
 > update the document to match current behavior or make an intentional
 > code/schema/test change to match the intended v1 contract.
 
-This document is the normative implementor and operator reference for Deckr's
-distributed bus.
+This document is the human implementor and operator reference for Deckr's
+distributed bus. The generated machine-readable binding artifact at
+`contract/v1/bindings/nats.v1.json` is the normative reference for subject
+templates, subscription wildcards, Deckr-owned headers, JSON payload rules,
+default bucket names, TTL policy, and renewal cadence.
 
 Deckr uses:
 
@@ -19,6 +22,10 @@ handles, Deckr envelopes, Deckr endpoint addresses, Deckr subjects, and Deckr
 current-state models. NATS subjects, reply inboxes, JetStream streams, KV bucket
 subjects, queue groups, connection ids, and NATS Service API ids remain
 substrate details.
+
+Deployment-specific broker URL, authentication, account/server topology,
+permissions, and private package bucket declarations are intentionally not part
+of the shared binding artifact.
 
 ## Runtime Surface
 
@@ -137,6 +144,12 @@ Lane subjects use this shape:
 deckr.lane.<lane>.<sender-family>.<sender-id>
 ```
 
+Lane subscribers use this wildcard shape:
+
+```text
+deckr.lane.<lane>.>
+```
+
 Examples:
 
 ```text
@@ -149,8 +162,9 @@ deckr.lane.services.action_provider.python-media
 ```
 
 `<lane>`, `<sender-family>`, and `<sender-id>` are encoded with the same
-NATS-safe token rules used by state keys. Raw endpoint addresses such as
-`hardware_manager:main` are not placed into one subject token.
+NATS-safe token rules used by state keys. The examples above use ids that need
+no escaping. Raw endpoint addresses such as `hardware_manager:main` are not
+placed into one subject token.
 
 The NATS message payload is the canonical Deckr envelope serialized as JSON. The
 payload is authoritative. NATS headers are hints for adapter behavior and
@@ -318,6 +332,9 @@ The default Deckr current-state buckets are:
 deckr_lease_v1
 deckr_discovery_v1
 ```
+
+These defaults and their policy fields are also exported in
+`contract/v1/bindings/nats.v1.json`.
 
 Lease bucket requirements for `deckr_lease_v1`:
 

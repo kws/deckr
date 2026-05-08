@@ -34,9 +34,17 @@ from deckr.contracts.messages import (
     parse_endpoint_address,
 )
 from deckr.contracts.nats import (
+    DECKR_NATS_HEADERS,
+    LANE_SUBJECT_PREFIX,
+    LANE_SUBJECT_TEMPLATE,
+    LANE_SUBSCRIBE_TEMPLATE,
+    NATS_BINDING_PATH,
+    NATS_BINDING_SCHEMA_ID,
+    REQUIRED_DECKR_NATS_HEADERS,
     lane_message_headers,
     lane_message_payload,
     lane_message_subject,
+    lane_subscribe_subject,
 )
 from deckr.hardware.descriptors import CapabilityRef, DeviceRef
 from deckr.hardware.messages import (
@@ -54,6 +62,10 @@ from deckr.services.state import (
     service_view_key,
 )
 from deckr.state import (
+    DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    DEFAULT_LEASE_STATE_STORE_NAME,
+    DEFAULT_STATE_LEASE_TTL_SECONDS,
+    DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS,
     decode_key_token,
     device_claim_key,
     encode_key_token,
@@ -526,6 +538,39 @@ def _check_lane_runtime_vectors(root: Path) -> GroupResult:
 
 def _check_nats_lane_vectors(root: Path) -> GroupResult:
     group = GroupResult("substrate.nats")
+    try:
+        binding = _json(root / NATS_BINDING_PATH)
+        lane_messages = binding["laneMessages"]
+        buckets = binding["currentState"]["buckets"]
+        checks = [
+            binding["schema"] == NATS_BINDING_SCHEMA_ID,
+            lane_messages["subjectRoot"] == LANE_SUBJECT_PREFIX,
+            lane_messages["publishSubjectTemplate"] == LANE_SUBJECT_TEMPLATE,
+            lane_messages["subscribeSubjectTemplate"] == LANE_SUBSCRIBE_TEMPLATE,
+            [header["name"] for header in lane_messages["headers"]]
+            == list(DECKR_NATS_HEADERS),
+            [
+                header["name"]
+                for header in lane_messages["headers"]
+                if header["required"]
+            ]
+            == list(REQUIRED_DECKR_NATS_HEADERS),
+            lane_messages["lanes"][HARDWARE_MESSAGES_LANE]["subscribeSubject"]
+            == lane_subscribe_subject(HARDWARE_MESSAGES_LANE),
+            buckets["lease"]["name"] == DEFAULT_LEASE_STATE_STORE_NAME,
+            buckets["lease"]["brokerTtlSeconds"] == DEFAULT_STATE_LEASE_TTL_SECONDS,
+            buckets["lease"]["renewalIntervalSeconds"]
+            == DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS,
+            buckets["discovery"]["name"] == DEFAULT_DISCOVERY_STATE_STORE_NAME,
+            buckets["discovery"]["brokerTtlSeconds"] is None,
+        ]
+        if all(checks):
+            group.pass_check()
+        else:
+            group.fail_check("NATS binding artifact disagrees with Python helpers")
+    except Exception as exc:
+        group.fail_check(f"NATS binding check failed: {exc}")
+
     vector = _json(root / "vectors" / "nats-lane.v1.json")
     for case in vector["cases"]:
         try:

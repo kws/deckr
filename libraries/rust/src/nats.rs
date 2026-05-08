@@ -8,7 +8,27 @@ use crate::{
     keys::encode_key_token,
 };
 
-const LANE_PREFIX: &str = "deckr.lane";
+pub const LANE_SUBJECT_PREFIX: &str = "deckr.lane";
+pub const LANE_SUBJECT_TEMPLATE: &str = "deckr.lane.{lane}.{senderFamily}.{senderEndpointToken}";
+pub const LANE_SUBSCRIBE_TEMPLATE: &str = "deckr.lane.{lane}.>";
+pub const NATS_BINDING_SCHEMA_ID: &str = "dev.deckr.binding.nats.v1";
+pub const NATS_BINDING_PATH: &str = "bindings/nats.v1.json";
+pub const DECKR_NATS_HEADERS: &[&str] = &[
+    "Deckr-Message-Id",
+    "Deckr-Message-Type",
+    "Deckr-Sender",
+    "Deckr-Sender-Session",
+    "Deckr-Recipient",
+    "Deckr-Recipient-Session",
+    "Deckr-In-Reply-To",
+];
+pub const REQUIRED_DECKR_NATS_HEADERS: &[&str] = &[
+    "Deckr-Message-Id",
+    "Deckr-Message-Type",
+    "Deckr-Sender",
+    "Deckr-Sender-Session",
+    "Deckr-Recipient",
+];
 
 #[derive(Debug, Error)]
 pub enum NatsBindingError {
@@ -20,11 +40,15 @@ pub enum NatsBindingError {
 
 pub fn subject_for(message: &DeckrMessage) -> String {
     format!(
-        "{LANE_PREFIX}.{}.{}.{}",
+        "{LANE_SUBJECT_PREFIX}.{}.{}.{}",
         encode_key_token(&message.lane),
         encode_key_token(&message.sender.family),
         encode_key_token(&message.sender.endpoint_id)
     )
+}
+
+pub fn subscribe_subject_for_lane(lane: &str) -> String {
+    format!("{LANE_SUBJECT_PREFIX}.{}.>", encode_key_token(lane))
 }
 
 pub fn recipient_header(message: &DeckrMessage) -> String {
@@ -38,22 +62,28 @@ pub fn recipient_header(message: &DeckrMessage) -> String {
 
 pub fn headers_for(message: &DeckrMessage) -> BTreeMap<String, String> {
     let mut headers = BTreeMap::new();
-    headers.insert("Deckr-Message-Id".to_string(), message.message_id.clone());
     headers.insert(
-        "Deckr-Message-Type".to_string(),
+        DECKR_NATS_HEADERS[0].to_string(),
+        message.message_id.clone(),
+    );
+    headers.insert(
+        DECKR_NATS_HEADERS[1].to_string(),
         message.message_type.clone(),
     );
-    headers.insert("Deckr-Sender".to_string(), message.sender.to_string());
     headers.insert(
-        "Deckr-Sender-Session".to_string(),
+        DECKR_NATS_HEADERS[2].to_string(),
+        message.sender.to_string(),
+    );
+    headers.insert(
+        DECKR_NATS_HEADERS[3].to_string(),
         message.sender_session_id.clone(),
     );
-    headers.insert("Deckr-Recipient".to_string(), recipient_header(message));
+    headers.insert(DECKR_NATS_HEADERS[4].to_string(), recipient_header(message));
     if let Some(value) = &message.recipient_session_id {
-        headers.insert("Deckr-Recipient-Session".to_string(), value.clone());
+        headers.insert(DECKR_NATS_HEADERS[5].to_string(), value.clone());
     }
     if let Some(value) = &message.in_reply_to {
-        headers.insert("Deckr-In-Reply-To".to_string(), value.clone());
+        headers.insert(DECKR_NATS_HEADERS[6].to_string(), value.clone());
     }
     headers
 }
@@ -72,7 +102,7 @@ pub fn validate_subject_hint(
     subject: &str,
     message: &DeckrMessage,
 ) -> Result<(), NatsBindingError> {
-    let prefix = format!("{LANE_PREFIX}.");
+    let prefix = format!("{LANE_SUBJECT_PREFIX}.");
     if !subject.starts_with(&prefix) {
         return Ok(());
     }
@@ -100,4 +130,21 @@ pub fn validate_headers(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subscribe_subject_encodes_lane_token() {
+        assert_eq!(
+            subscribe_subject_for_lane("hardware_messages"),
+            "deckr.lane.hardware_messages.>"
+        );
+        assert_eq!(
+            subscribe_subject_for_lane("owner/custom lane"),
+            "deckr.lane.b64_b3duZXIvY3VzdG9tIGxhbmU.>"
+        );
+    }
 }

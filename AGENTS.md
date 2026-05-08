@@ -26,6 +26,8 @@ policy belongs in the sibling `deckr-controller` repo.
 
 - `contract/v1`
   - Generated, checked language-neutral v1 contract artifact bundle.
+  - Includes `bindings/nats.v1.json`, the generated NATS/KV binding reference
+    for subject templates, headers, payload rules, bucket names, and TTL policy.
 - `contract/authoring/v1`
   - Neutral contract authoring inputs for schema metadata and coverage. These
     files feed the generator; do not hand-edit generated `contract/v1` output.

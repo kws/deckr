@@ -1,8 +1,8 @@
 # Contract Coverage
 
 `contract/authoring/v1/coverage.json` is the machine-readable coverage matrix
-for `contract/v1`. It maps each core surface to the schemas, fixtures, vectors,
-and static conformance groups that currently certify that surface.
+for `contract/v1`. It maps each core surface to the bindings, schemas, fixtures,
+vectors, and static conformance groups that currently certify that surface.
 
 The current required static conformance groups are:
 
@@ -47,5 +47,6 @@ vectors, and state-key vectors.
 `runtime.lane` covers deterministic lane runtime semantics: expiry, endpoint
 targeting, recipient-session checks, and deliverability.
 
-`substrate.nats` covers NATS subject, header, and canonical payload JSON bytes
-for lane messages.
+`substrate.nats` covers the generated NATS binding artifact, lane subjects,
+headers, default current-state buckets, TTL policy, and canonical payload JSON
+bytes for lane messages.

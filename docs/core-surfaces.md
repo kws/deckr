@@ -17,7 +17,7 @@ wire/state artifacts, and pass the same conformance groups.
 
 The authoring rules for those contract artifacts live in
 [contract-authoring.md](contract-authoring.md). The current schema, fixture,
-vector, and conformance coverage matrix is summarized in
+binding, vector, and conformance coverage matrix is summarized in
 [contract-coverage.md](contract-coverage.md).
 
 ## Parity Rule
@@ -225,7 +225,9 @@ Current Python source:
 
 Use cases:
 
+- load the generated `bindings/nats.v1.json` artifact
 - map Deckr lane messages to NATS subjects
+- build lane subscription wildcard subjects
 - encode Deckr headers
 - encode canonical JSON payload bytes
 - encode canonical current-state JSON payload bytes
@@ -234,8 +236,9 @@ Use cases:
 - handle missing keys and revision conflicts consistently
 
 Parity expectation: NATS/KV is part of the v1 distributed contract. Libraries
-may wrap different NATS clients, but subject, header, payload, bucket, key,
-lease, and revision behavior must match.
+may wrap different NATS clients, but the generated binding artifact's subject
+templates, subscription wildcards, headers, payload rules, bucket names, lease
+policy, and renewal cadence must match.
 
 ## Optional Or Language-Native Runtime Surfaces
 

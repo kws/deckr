@@ -13,8 +13,12 @@ use deckr_core::{
     parse_hardware_inventory_key, parse_presence_endpoint_key, parse_service_catalog_key,
     parse_service_status_key, parse_service_view_key, parse_settings_target_key,
     payload_json_bytes, presence_endpoint_key, read_json, service_catalog_key, service_status_key,
-    service_view_key, settings_target_key, subject_for, validate_lane_message, DeckrMessage,
-    EndpointAddress,
+    service_view_key, settings_target_key, subject_for, subscribe_subject_for_lane,
+    validate_lane_message, DeckrMessage, EndpointAddress, DECKR_NATS_HEADERS,
+    DEFAULT_DISCOVERY_STATE_BUCKET, DEFAULT_LEASE_STATE_BUCKET, HARDWARE_MESSAGES_LANE,
+    LANE_SUBJECT_PREFIX, LANE_SUBJECT_TEMPLATE, LANE_SUBSCRIBE_TEMPLATE, NATS_BINDING_PATH,
+    NATS_BINDING_SCHEMA_ID, REQUIRED_DECKR_NATS_HEADERS, STATE_RENEWAL_INTERVAL_SECONDS,
+    STATE_TTL_SECONDS,
 };
 use jsonschema::{Draft, JSONSchema};
 use serde::Serialize;
@@ -678,6 +682,52 @@ fn check_lane_runtime_vectors(root: &Path) -> GroupResult {
 
 fn check_nats_lane_vectors(root: &Path) -> GroupResult {
     let mut group = GroupResult::new("substrate.nats");
+    match read_json(root.join(NATS_BINDING_PATH)) {
+        Ok(binding) => {
+            let lane_messages = &binding["laneMessages"];
+            let buckets = &binding["currentState"]["buckets"];
+            let headers = lane_messages["headers"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item["name"].as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let required_headers = lane_messages["headers"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter(|item| item["required"].as_bool().unwrap_or(false))
+                        .filter_map(|item| item["name"].as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let binding_ok = binding["schema"] == json!(NATS_BINDING_SCHEMA_ID)
+                && lane_messages["subjectRoot"] == json!(LANE_SUBJECT_PREFIX)
+                && lane_messages["publishSubjectTemplate"] == json!(LANE_SUBJECT_TEMPLATE)
+                && lane_messages["subscribeSubjectTemplate"] == json!(LANE_SUBSCRIBE_TEMPLATE)
+                && headers == DECKR_NATS_HEADERS
+                && required_headers == REQUIRED_DECKR_NATS_HEADERS
+                && lane_messages["lanes"][HARDWARE_MESSAGES_LANE]["subscribeSubject"]
+                    == json!(subscribe_subject_for_lane(HARDWARE_MESSAGES_LANE))
+                && buckets["lease"]["name"] == json!(DEFAULT_LEASE_STATE_BUCKET)
+                && buckets["lease"]["brokerTtlSeconds"] == json!(STATE_TTL_SECONDS)
+                && buckets["lease"]["renewalIntervalSeconds"].as_f64()
+                    == Some(STATE_RENEWAL_INTERVAL_SECONDS as f64)
+                && buckets["discovery"]["name"] == json!(DEFAULT_DISCOVERY_STATE_BUCKET)
+                && buckets["discovery"]["brokerTtlSeconds"].is_null();
+            if binding_ok {
+                group.pass();
+            } else {
+                group.fail("NATS binding artifact disagrees with Rust helpers");
+            }
+        }
+        Err(error) => group.fail(format!("NATS binding check failed: {error}")),
+    }
+
     let vector = match read_json(root.join("vectors/nats-lane.v1.json")) {
         Ok(value) => value,
         Err(error) => {

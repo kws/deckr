@@ -23,9 +23,17 @@ from deckr.contracts.artifacts import (
 )
 from deckr.contracts.messages import DeckrMessage
 from deckr.contracts.nats import (
+    DECKR_NATS_HEADERS,
+    LANE_SUBJECT_PREFIX,
+    LANE_SUBJECT_TEMPLATE,
+    LANE_SUBSCRIBE_TEMPLATE,
+    NATS_BINDING_PATH,
+    NATS_BINDING_SCHEMA_ID,
+    REQUIRED_DECKR_NATS_HEADERS,
     lane_message_headers,
     lane_message_payload,
     lane_message_subject,
+    lane_subscribe_subject,
 )
 from deckr.services.state import (
     parse_service_catalog_key,
@@ -36,6 +44,10 @@ from deckr.services.state import (
     service_view_key,
 )
 from deckr.state import (
+    DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    DEFAULT_LEASE_STATE_STORE_NAME,
+    DEFAULT_STATE_LEASE_TTL_SECONDS,
+    DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS,
     decode_key_token,
     device_claim_key,
     encode_key_token,
@@ -132,12 +144,44 @@ def test_contract_manifest_is_available_through_public_helper() -> None:
         artifact["kind"] == "spec" and artifact["path"] == "asyncapi.json"
         for artifact in manifest["artifacts"]
     )
+    assert any(
+        artifact["kind"] == "binding" and artifact["path"] == NATS_BINDING_PATH
+        for artifact in manifest["artifacts"]
+    )
     assert read_contract_artifact("manifest.json") == (
         _bundle_root() / "manifest.json"
     ).read_text(encoding="utf-8")
     with contract_bundle_path() as bundle:
         assert (bundle / "index.html").exists()
         assert (bundle / "asyncapi.json").exists()
+
+
+def test_nats_binding_artifact_matches_core_helpers() -> None:
+    binding = _json(_bundle_root() / NATS_BINDING_PATH)
+    lane_messages = binding["laneMessages"]
+    buckets = binding["currentState"]["buckets"]
+
+    assert binding["schema"] == NATS_BINDING_SCHEMA_ID
+    assert lane_messages["subjectRoot"] == LANE_SUBJECT_PREFIX
+    assert lane_messages["publishSubjectTemplate"] == LANE_SUBJECT_TEMPLATE
+    assert lane_messages["subscribeSubjectTemplate"] == LANE_SUBSCRIBE_TEMPLATE
+    assert [header["name"] for header in lane_messages["headers"]] == list(
+        DECKR_NATS_HEADERS
+    )
+    assert [
+        header["name"] for header in lane_messages["headers"] if header["required"]
+    ] == list(REQUIRED_DECKR_NATS_HEADERS)
+    assert lane_messages["lanes"]["hardware_messages"][
+        "subscribeSubject"
+    ] == lane_subscribe_subject("hardware_messages")
+    assert buckets["lease"]["name"] == DEFAULT_LEASE_STATE_STORE_NAME
+    assert buckets["lease"]["brokerTtlSeconds"] == DEFAULT_STATE_LEASE_TTL_SECONDS
+    assert (
+        buckets["lease"]["renewalIntervalSeconds"]
+        == DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS
+    )
+    assert buckets["discovery"]["name"] == DEFAULT_DISCOVERY_STATE_STORE_NAME
+    assert buckets["discovery"]["brokerTtlSeconds"] is None
 
 
 def test_contract_authoring_inputs_validate_against_their_schemas() -> None:
@@ -193,13 +237,16 @@ def test_contract_coverage_matrix_references_existing_artifacts() -> None:
     coverage = _json(_authoring_root() / "coverage.json")
     manifest = _json(_bundle_root() / "manifest.json")
     artifacts_by_kind = {
+        "binding": set(),
         "schema": set(),
         "validFixture": set(),
         "invalidFixture": set(),
         "vector": set(),
     }
     for artifact in manifest["artifacts"]:
-        if artifact["kind"] == "schema":
+        if artifact["kind"] == "binding":
+            artifacts_by_kind["binding"].add(artifact["path"])
+        elif artifact["kind"] == "schema":
             artifacts_by_kind["schema"].add(artifact["path"])
         elif artifact["kind"] == "vector":
             artifacts_by_kind["vector"].add(artifact["path"])
@@ -209,6 +256,7 @@ def test_contract_coverage_matrix_references_existing_artifacts() -> None:
             artifacts_by_kind["invalidFixture"].add(artifact["path"])
 
     covered = {
+        "binding": set(),
         "schema": set(),
         "validFixture": set(),
         "invalidFixture": set(),
@@ -216,10 +264,12 @@ def test_contract_coverage_matrix_references_existing_artifacts() -> None:
     }
     for surface in coverage["surfaces"]:
         assert set(surface["conformanceGroups"]) <= REQUIRED_STATIC_GROUP_IDS
+        assert set(surface["bindings"]) <= artifacts_by_kind["binding"]
         assert set(surface["schemas"]) <= artifacts_by_kind["schema"]
         assert set(surface["validFixtures"]) <= artifacts_by_kind["validFixture"]
         assert set(surface["invalidFixtures"]) <= artifacts_by_kind["invalidFixture"]
         assert set(surface["vectors"]) <= artifacts_by_kind["vector"]
+        covered["binding"].update(surface["bindings"])
         covered["schema"].update(surface["schemas"])
         covered["validFixture"].update(surface["validFixtures"])
         covered["invalidFixture"].update(surface["invalidFixtures"])
@@ -235,6 +285,7 @@ def test_asyncapi_artifact_indexes_core_lane_contracts() -> None:
     assert asyncapi["asyncapi"] == "3.0.0"
     assert asyncapi["defaultContentType"] == "application/json"
     assert asyncapi["servers"]["deckrNats"]["protocol"] == "nats"
+    assert asyncapi["x-deckr-nats-binding"] == NATS_BINDING_PATH
 
     expected_lanes = {
         "actionsLane": (
@@ -282,6 +333,16 @@ def test_asyncapi_artifact_indexes_core_lane_contracts() -> None:
         assert {
             "$ref": f"#/channels/{channel_name}/messages/{channel_message_name}"
         } in operation_refs
+
+
+def test_contract_browser_previews_nats_binding() -> None:
+    html = (_bundle_root() / "index.html").read_text(encoding="utf-8")
+
+    assert "NATS Binding" in html
+    assert NATS_BINDING_PATH in html
+    assert "vectors/nats-lane.v1.json" in html
+    assert LANE_SUBJECT_TEMPLATE in html
+    assert LANE_SUBSCRIBE_TEMPLATE.replace(">", "&gt;") in html
 
 
 def test_asyncapi_embeds_enriched_schema_metadata() -> None:

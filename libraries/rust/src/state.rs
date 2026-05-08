@@ -20,6 +20,7 @@ pub use crate::keys::{
 pub const DEFAULT_LEASE_STATE_BUCKET: &str = "deckr_lease_v1";
 pub const DEFAULT_DISCOVERY_STATE_BUCKET: &str = "deckr_discovery_v1";
 pub const STATE_TTL_SECONDS: u64 = 30;
+pub const STATE_RENEWAL_INTERVAL_SECONDS: u64 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

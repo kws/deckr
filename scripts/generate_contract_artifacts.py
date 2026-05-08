@@ -56,9 +56,17 @@ from deckr.contracts.messages import (
     service_address,
 )
 from deckr.contracts.nats import (
+    DECKR_NATS_HEADERS,
+    LANE_SUBJECT_PREFIX,
+    LANE_SUBJECT_TEMPLATE,
+    LANE_SUBSCRIBE_TEMPLATE,
+    NATS_BINDING_PATH,
+    NATS_BINDING_SCHEMA_ID,
+    REQUIRED_DECKR_NATS_HEADERS,
     lane_message_headers,
     lane_message_payload,
     lane_message_subject,
+    lane_subscribe_subject,
 )
 from deckr.hardware.capabilities import (
     button_activation_value_schema,
@@ -107,6 +115,10 @@ from deckr.services.state import (
     service_view_key,
 )
 from deckr.state import (
+    DEFAULT_DISCOVERY_STATE_STORE_NAME,
+    DEFAULT_LEASE_STATE_STORE_NAME,
+    DEFAULT_STATE_LEASE_TTL_SECONDS,
+    DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS,
     DeviceClaim,
     EndpointPresence,
     HardwareInventory,
@@ -301,11 +313,22 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
     _add_vectors(add_artifact, fixtures=fixtures)
 
     package_version = _package_version(repo_root)
+    nats_binding = _nats_binding()
+    add_artifact(
+        kind="binding",
+        artifact_id=NATS_BINDING_SCHEMA_ID,
+        path=NATS_BINDING_PATH,
+        title="Deckr NATS binding",
+        description="Machine-readable Deckr NATS lane and KV current-state binding rules.",
+        payload=nats_binding,
+        protocol="nats",
+    )
     asyncapi_document = _asyncapi_document(
         package_version=package_version,
         schema_payloads=schema_payloads,
         fixtures=fixtures,
         valid_fixture_payloads=valid_fixture_payloads,
+        nats_binding=nats_binding,
     )
     add_artifact(
         kind="spec",
@@ -328,7 +351,10 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
         "artifacts": sorted(artifacts, key=lambda item: (item["kind"], item["path"])),
     }
     _write_json(bundle_root / "manifest.json", manifest)
-    _write_text(bundle_root / "index.html", _render_index(manifest, asyncapi_document))
+    _write_text(
+        bundle_root / "index.html",
+        _render_index(manifest, asyncapi_document, nats_binding),
+    )
 
 
 def _load_schema_metadata(repo_root: Path) -> Mapping[str, Mapping[str, Mapping[str, Any]]]:
@@ -1436,6 +1462,7 @@ def _asyncapi_document(
     schema_payloads: Mapping[str, Mapping[str, Any]],
     fixtures: list[dict[str, Any]],
     valid_fixture_payloads: Mapping[str, Mapping[str, Any]],
+    nats_binding: Mapping[str, Any],
 ) -> dict[str, Any]:
     schema_components = _asyncapi_schema_components(schema_payloads)
     channels = {
@@ -1518,6 +1545,7 @@ def _asyncapi_document(
         "x-deckr-contract-version": CONTRACT_VERSION,
         "x-deckr-spec-version": SPEC_VERSION,
         "x-deckr-artifact-manifest": "manifest.json",
+        "x-deckr-nats-binding": NATS_BINDING_PATH,
         "x-deckr-current-state": _asyncapi_state_artifacts(schema_payloads),
         "x-deckr-interop-vectors": [
             "vectors/identity.v1.json",
@@ -1938,6 +1966,110 @@ def _nats_lane_case(path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _nats_binding() -> dict[str, Any]:
+    return {
+        "schema": NATS_BINDING_SCHEMA_ID,
+        "contractVersion": CONTRACT_VERSION,
+        "specVersion": SPEC_VERSION,
+        "laneMessages": {
+            "subjectRoot": LANE_SUBJECT_PREFIX,
+            "publishSubjectTemplate": LANE_SUBJECT_TEMPLATE,
+            "subscribeSubjectTemplate": LANE_SUBSCRIBE_TEMPLATE,
+            "tokenEncoding": "vectors/key-tokens.v1.json",
+            "payload": {
+                "contentType": "application/json",
+                "serialization": "utf8-json",
+                "authority": "payload",
+                "description": "The payload is the canonical Deckr message envelope serialized as compact JSON bytes.",
+            },
+            "headers": [
+                {
+                    "name": name,
+                    "required": name in REQUIRED_DECKR_NATS_HEADERS,
+                    "source": _nats_header_source(name),
+                }
+                for name in DECKR_NATS_HEADERS
+            ],
+            "validation": {
+                "subjectHint": "Reject messages whose Deckr-owned NATS subject disagrees with the envelope sender.",
+                "headers": "Reject messages whose present Deckr-owned NATS headers disagree with the envelope.",
+            },
+            "lanes": {
+                lane: {
+                    "publishSubjectTemplate": (
+                        f"{LANE_SUBJECT_PREFIX}.{encode_key_token(lane)}."
+                        "{senderFamily}.{senderEndpointToken}"
+                    ),
+                    "subscribeSubject": lane_subscribe_subject(lane),
+                    "allowedSenderFamilies": sorted(
+                        CORE_LANE_CONTRACTS[lane].allowed_sender_families or ()
+                    ),
+                }
+                for lane in sorted(CORE_LANE_CONTRACTS)
+            },
+        },
+        "currentState": {
+            "payload": {
+                "contentType": "application/json",
+                "serialization": "utf8-json",
+                "description": "Current-state values are JSON object payloads encoded as compact UTF-8 JSON bytes.",
+            },
+            "buckets": {
+                "lease": {
+                    "name": DEFAULT_LEASE_STATE_STORE_NAME,
+                    "description": "TTL-bound current state for endpoint presence and device claims.",
+                    "history": 1,
+                    "maxMessagesPerSubject": 1,
+                    "brokerTtlSeconds": DEFAULT_STATE_LEASE_TTL_SECONDS,
+                    "allowPerWriteTtl": True,
+                    "perWriteTtlSeconds": DEFAULT_STATE_LEASE_TTL_SECONDS,
+                    "messageTtlMarkers": "enabledWhereSupported",
+                    "renewalIntervalSeconds": DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS,
+                    "writes": ["endpointPresence", "deviceClaim"],
+                },
+                "discovery": {
+                    "name": DEFAULT_DISCOVERY_STATE_STORE_NAME,
+                    "description": "Non-TTL current state for descriptive discovery records.",
+                    "history": 1,
+                    "maxMessagesPerSubject": 1,
+                    "brokerTtlSeconds": None,
+                    "allowPerWriteTtl": False,
+                    "perWriteTtlSeconds": None,
+                    "messageTtlMarkers": "notUsed",
+                    "renewalIntervalSeconds": None,
+                    "writes": [
+                        "hardwareInventory",
+                        "actionProviderCatalog",
+                        "serviceCatalog",
+                        "serviceStatus",
+                        "serviceView",
+                    ],
+                },
+            },
+        },
+        "excluded": [
+            "brokerUrl",
+            "auth",
+            "permissions",
+            "accountTopology",
+            "serverTopology",
+            "privatePackageBuckets",
+        ],
+    }
+
+
+def _nats_header_source(name: str) -> str:
+    return {
+        "Deckr-Message-Id": "messageId",
+        "Deckr-Message-Type": "messageType",
+        "Deckr-Sender": "sender",
+        "Deckr-Sender-Session": "senderSessionId",
+        "Deckr-Recipient": "recipient",
+        "Deckr-Recipient-Session": "recipientSessionId",
+        "Deckr-In-Reply-To": "inReplyTo",
+    }[name]
+
+
 def _stable_wire_message(message: DeckrMessage, *, message_id: str) -> dict[str, Any]:
     wire = _stable_message(message, message_id=message_id)
     body = wire.get("body")
@@ -2022,8 +2154,10 @@ def _write_text(path: Path, payload: str) -> None:
 def _render_index(
     manifest: Mapping[str, Any],
     asyncapi_document: Mapping[str, Any],
+    nats_binding: Mapping[str, Any],
 ) -> str:
     rows = "\n".join(_artifact_row(artifact) for artifact in manifest["artifacts"])
+    nats_binding_preview = _render_nats_binding_preview(nats_binding)
     asyncapi_json = (
         json.dumps(asyncapi_document, sort_keys=True, separators=(",", ":"))
         .replace("</", "<\\/")
@@ -2073,7 +2207,40 @@ def _render_index(
       font-size: 0.92rem;
     }}
     #asyncapi-viewer {{
-      min-height: calc(100vh - 132px);
+      min-height: calc(100vh - 360px);
+    }}
+    #nats-binding {{
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 20px 24px 8px;
+    }}
+    #nats-binding h2 {{
+      margin: 0 0 12px;
+      font-size: 1.12rem;
+      letter-spacing: 0;
+    }}
+    .binding-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }}
+    .binding-panel {{
+      background: #fff;
+      border: 1px solid #d9dee7;
+      padding: 12px;
+    }}
+    .binding-panel h3 {{
+      margin: 0 0 8px;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      color: #4c596a;
+      letter-spacing: 0;
+    }}
+    .binding-panel p {{
+      margin: 4px 0;
+      font-size: 0.92rem;
+      overflow-wrap: anywhere;
     }}
     #viewer-status {{
       margin: 24px;
@@ -2131,12 +2298,14 @@ def _render_index(
     <nav class="links" aria-label="Contract artifacts">
       <a href="asyncapi.json">AsyncAPI JSON</a>
       <a href="manifest.json">Manifest</a>
+      <a href="{NATS_BINDING_PATH}">NATS Binding</a>
       <a href="schemas/">Schemas</a>
       <a href="fixtures/">Fixtures</a>
       <a href="vectors/">Vectors</a>
     </nav>
   </header>
   <main>
+    {nats_binding_preview}
     <div id="asyncapi-viewer"></div>
     <div id="viewer-status" role="status">
       Loading the AsyncAPI browser. If CDN scripts are unavailable, use the
@@ -2190,6 +2359,41 @@ def _render_index(
 </body>
 </html>
 """
+
+
+def _render_nats_binding_preview(nats_binding: Mapping[str, Any]) -> str:
+    lane_messages = nats_binding["laneMessages"]
+    current_state = nats_binding["currentState"]
+    buckets = current_state["buckets"]
+    headers = ", ".join(
+        f"<code>{html.escape(str(header['name']))}</code>"
+        for header in lane_messages["headers"]
+    )
+    return f"""<section id="nats-binding" aria-label="NATS binding summary">
+	      <h2>NATS Binding</h2>
+	      <div class="binding-grid">
+	        <div class="binding-panel">
+	          <h3>Lane Subjects</h3>
+	          <p>Root <code>{html.escape(str(lane_messages["subjectRoot"]))}</code></p>
+	          <p>Publish <code>{html.escape(str(lane_messages["publishSubjectTemplate"]))}</code></p>
+	          <p>Subscribe <code>{html.escape(str(lane_messages["subscribeSubjectTemplate"]))}</code></p>
+	        </div>
+	        <div class="binding-panel">
+	          <h3>Headers</h3>
+	          <p>{headers}</p>
+	        </div>
+	        <div class="binding-panel">
+	          <h3>Current State</h3>
+	          <p>Lease <code>{html.escape(str(buckets["lease"]["name"]))}</code>, {html.escape(str(buckets["lease"]["brokerTtlSeconds"]))}s TTL, renew every {html.escape(str(buckets["lease"]["renewalIntervalSeconds"]))}s</p>
+	          <p>Discovery <code>{html.escape(str(buckets["discovery"]["name"]))}</code>, no broker TTL</p>
+	        </div>
+	        <div class="binding-panel">
+	          <h3>Artifacts</h3>
+	          <p><a href="{NATS_BINDING_PATH}">Binding JSON</a></p>
+	          <p><a href="vectors/nats-lane.v1.json">NATS lane vectors</a></p>
+	        </div>
+	      </div>
+	    </section>"""
 
 
 def _artifact_row(artifact: Mapping[str, Any]) -> str:

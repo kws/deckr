@@ -37,10 +37,12 @@ pub use keys::{
 };
 pub use nats::{
     headers_for, payload_json_bytes, recipient_header, state_payload_json_bytes, subject_for,
-    validate_headers, validate_subject_hint, NatsBindingError,
+    subscribe_subject_for_lane, validate_headers, validate_subject_hint, NatsBindingError,
+    DECKR_NATS_HEADERS, LANE_SUBJECT_PREFIX, LANE_SUBJECT_TEMPLATE, LANE_SUBSCRIBE_TEMPLATE,
+    NATS_BINDING_PATH, NATS_BINDING_SCHEMA_ID, REQUIRED_DECKR_NATS_HEADERS,
 };
 pub use state::{
     ActionProviderCatalog, DeviceClaim, EndpointPresence, HardwareInventory,
     HardwareInventoryDevice, ServiceCatalog, ServiceStatus, DEFAULT_DISCOVERY_STATE_BUCKET,
-    DEFAULT_LEASE_STATE_BUCKET, STATE_TTL_SECONDS,
+    DEFAULT_LEASE_STATE_BUCKET, STATE_RENEWAL_INTERVAL_SECONDS, STATE_TTL_SECONDS,
 };

@@ -9274,5 +9274,6 @@
     "vectors/nats-lane.v1.json",
     "vectors/state-keys.v1.json"
   ],
+  "x-deckr-nats-binding": "bindings/nats.v1.json",
   "x-deckr-spec-version": "1"
 }

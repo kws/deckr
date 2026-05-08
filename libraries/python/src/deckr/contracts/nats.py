@@ -9,6 +9,26 @@ from deckr.contracts.messages import DeckrMessage, EndpointTarget
 from deckr.contracts.models import thaw_json
 
 LANE_SUBJECT_PREFIX = "deckr.lane"
+LANE_SUBJECT_TEMPLATE = f"{LANE_SUBJECT_PREFIX}.{{lane}}.{{senderFamily}}.{{senderEndpointToken}}"
+LANE_SUBSCRIBE_TEMPLATE = f"{LANE_SUBJECT_PREFIX}.{{lane}}.>"
+NATS_BINDING_SCHEMA_ID = "dev.deckr.binding.nats.v1"
+NATS_BINDING_PATH = "bindings/nats.v1.json"
+DECKR_NATS_HEADERS = (
+    "Deckr-Message-Id",
+    "Deckr-Message-Type",
+    "Deckr-Sender",
+    "Deckr-Sender-Session",
+    "Deckr-Recipient",
+    "Deckr-Recipient-Session",
+    "Deckr-In-Reply-To",
+)
+REQUIRED_DECKR_NATS_HEADERS = (
+    "Deckr-Message-Id",
+    "Deckr-Message-Type",
+    "Deckr-Sender",
+    "Deckr-Sender-Session",
+    "Deckr-Recipient",
+)
 
 
 def lane_message_subject(message: DeckrMessage) -> str:
@@ -20,6 +40,10 @@ def lane_message_subject(message: DeckrMessage) -> str:
             encode_key_token(message.sender.endpoint_id),
         )
     )
+
+
+def lane_subscribe_subject(lane: str) -> str:
+    return f"{LANE_SUBJECT_PREFIX}.{encode_key_token(lane)}.>"
 
 
 def lane_message_payload(message: DeckrMessage) -> bytes:
@@ -81,10 +105,17 @@ def state_payload(value: Mapping[str, Any]) -> bytes:
 
 
 __all__ = [
+    "DECKR_NATS_HEADERS",
     "LANE_SUBJECT_PREFIX",
+    "LANE_SUBJECT_TEMPLATE",
+    "LANE_SUBSCRIBE_TEMPLATE",
+    "NATS_BINDING_PATH",
+    "NATS_BINDING_SCHEMA_ID",
+    "REQUIRED_DECKR_NATS_HEADERS",
     "lane_message_headers",
     "lane_message_payload",
     "lane_message_subject",
+    "lane_subscribe_subject",
     "lane_recipient_header",
     "state_payload",
     "validate_lane_headers",

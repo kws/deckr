@@ -2,6 +2,7 @@
   "schema": "dev.deckr.contract.coverage.v1",
   "surfaces": [
     {
+      "bindings": [],
       "conformanceGroups": [
         "artifacts.manifest"
       ],
@@ -12,6 +13,7 @@
       "vectors": []
     },
     {
+      "bindings": [],
       "conformanceGroups": [
         "schemas.fixtures"
       ],
@@ -68,6 +70,7 @@
       "vectors": []
     },
     {
+      "bindings": [],
       "conformanceGroups": [
         "vectors.keys"
       ],
@@ -81,6 +84,7 @@
       ]
     },
     {
+      "bindings": [],
       "conformanceGroups": [
         "vectors.identity"
       ],
@@ -93,6 +97,7 @@
       ]
     },
     {
+      "bindings": [],
       "conformanceGroups": [
         "messages.actions"
       ],
@@ -114,6 +119,7 @@
       "vectors": []
     },
     {
+      "bindings": [],
       "conformanceGroups": [
         "messages.hardware"
       ],
@@ -143,6 +149,7 @@
       "vectors": []
     },
     {
+      "bindings": [],
       "conformanceGroups": [
         "messages.services"
       ],
@@ -161,6 +168,7 @@
       "vectors": []
     },
     {
+      "bindings": [],
       "conformanceGroups": [
         "schemas.fixtures",
         "vectors.keys"
@@ -192,6 +200,7 @@
       ]
     },
     {
+      "bindings": [],
       "conformanceGroups": [
         "runtime.lane"
       ],
@@ -210,6 +219,9 @@
       ]
     },
     {
+      "bindings": [
+        "bindings/nats.v1.json"
+      ],
       "conformanceGroups": [
         "substrate.nats"
       ],

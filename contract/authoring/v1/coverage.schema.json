@@ -17,6 +17,13 @@
             "type": "array",
             "uniqueItems": true
           },
+          "bindings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
           "id": {
             "minLength": 1,
             "type": "string"
@@ -52,6 +59,7 @@
         },
         "required": [
           "id",
+          "bindings",
           "schemas",
           "validFixtures",
           "invalidFixtures",

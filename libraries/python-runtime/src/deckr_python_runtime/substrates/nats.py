@@ -13,10 +13,10 @@ from deckr.contracts.messages import (
     EndpointAddress,
 )
 from deckr.contracts.nats import (
-    LANE_SUBJECT_PREFIX,
     lane_message_headers,
     lane_message_payload,
     lane_message_subject,
+    lane_subscribe_subject,
     state_payload,
     validate_lane_headers,
     validate_lane_subject_hint,
@@ -25,7 +25,6 @@ from deckr.state import (
     DEFAULT_DISCOVERY_STATE_STORE_NAME,
     DEFAULT_LEASE_STATE_STORE_NAME,
     DEFAULT_STATE_LEASE_TTL_SECONDS,
-    encode_key_token,
 )
 from pydantic import ValidationError
 
@@ -215,7 +214,7 @@ class NatsSubstrate:
                 logger.exception("Dropped invalid NATS Deckr lane message")
 
         subscription = await self._nc.subscribe(
-            f"{LANE_SUBJECT_PREFIX}.{encode_key_token(lane)}.>",
+            lane_subscribe_subject(lane),
             cb=callback,
         )
         try:
