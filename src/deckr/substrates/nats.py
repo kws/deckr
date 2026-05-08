@@ -339,6 +339,9 @@ class NatsStateStore:
                         }:
                             entries.pop(key, None)
                             continue
+                        if _kv_entry_is_absent_marker(entry):
+                            entries.pop(key, None)
+                            continue
                         if entry.value is not None:
                             entries[key] = _state_entry_from_kv(entry)
             except TimeoutError as exc:
@@ -379,6 +382,13 @@ class NatsStateStore:
             revision = await kv.create(key, _state_payload(normalized))
         except Exception as exc:
             if _is_revision_conflict(exc):
+                reclaimed = await self._try_reclaim_absent_marker(
+                    kv,
+                    key,
+                    normalized,
+                )
+                if reclaimed is not None:
+                    return reclaimed
                 raise StateConflict(f"State key {key!r} already exists") from exc
             raise StateUnavailable(f"Could not create state key {key!r}") from exc
         return StateEntry(key=key, value=normalized, revision=int(revision))
@@ -584,7 +594,36 @@ class NatsStateStore:
             if _is_key_missing(exc):
                 return None
             raise StateUnavailable(f"Could not get state key {key!r}") from exc
+        if _kv_entry_is_absent_marker(entry):
+            return None
         return _state_entry_from_kv(entry)
+
+    async def _try_reclaim_absent_marker(
+        self,
+        kv,
+        key: str,
+        value: Mapping[str, Any],
+    ) -> StateEntry | None:
+        try:
+            current = await kv.get(key)
+        except Exception as get_exc:
+            if _is_key_missing(get_exc):
+                return None
+            raise StateUnavailable(f"Could not inspect state key {key!r}") from get_exc
+        if not _kv_entry_is_absent_marker(current):
+            return None
+        marker_revision = int(current.revision)
+        try:
+            revision = await kv.update(
+                key,
+                _state_payload(value),
+                last=marker_revision,
+            )
+        except Exception as update_exc:
+            if _is_revision_conflict(update_exc):
+                raise StateConflict(f"State key {key!r} already exists") from update_exc
+            raise StateUnavailable(f"Could not create state key {key!r}") from update_exc
+        return StateEntry(key=key, value=value, revision=int(revision))
 
     def _validate_ttl(self, ttl: float | None) -> None:
         if not self._policy.allow_write_ttl:
@@ -679,6 +718,15 @@ def _state_entry_from_kv(entry) -> StateEntry:
         value=state_value(value),
         revision=int(entry.revision),
     )
+
+
+def _kv_entry_is_absent_marker(entry) -> bool:
+    if getattr(entry, "operation", None) in {
+        _KV_DELETE_OPERATION,
+        _KV_PURGE_OPERATION,
+    }:
+        return True
+    return getattr(entry, "value", None) in {None, b""}
 
 
 def _nats_msg_revision(msg) -> int:

@@ -593,6 +593,38 @@ async def test_nats_state_create_reclaims_broker_expired_claim() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nats_state_get_treats_max_age_marker_as_missing() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+    key = "claim.device.main.stale"
+
+    await store.create(key, {"owner": "dead-controller"})
+    await fake_js.kv.expire(key)
+
+    assert await store.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_nats_state_items_omit_max_age_marker() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+    key = "claim.device.main.stale"
+
+    await store.create(key, {"owner": "dead-controller"})
+    await fake_js.kv.expire(key)
+
+    assert await store.items("claim.device.") == ()
+
+
+@pytest.mark.asyncio
 async def test_nats_state_update_rejects_broker_expired_claim_refresh() -> None:
     fake_js = _FakeJs()
     store = NatsStateStore(
@@ -806,11 +838,13 @@ class _FakeKvEntry:
         value: bytes,
         revision: int,
         operation: str = "PUT",
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.key = key
         self.value = value
         self.revision = revision
         self.operation = operation
+        self.headers = headers or {}
 
 
 class _PartialState:
@@ -885,7 +919,7 @@ class _FakeKv:
         if self.fail_create is not None:
             raise self.fail_create
         if key in self._entries:
-            raise RuntimeError("exists")
+            raise RuntimeError("wrong last")
         return await self.put(key, value)
 
     async def update(self, key: str, value: bytes, *, last: int, **kwargs) -> int:
@@ -912,7 +946,12 @@ class _FakeKv:
 
     async def expire(self, key: str) -> None:
         self._revision += 1
-        self._entries.pop(key, None)
+        self._entries[key] = _FakeKvEntry(
+            key=key,
+            value=b"",
+            revision=self._revision,
+            headers={"Nats-Marker-Reason": "MaxAge"},
+        )
         await self._js.publish_state(
             key,
             b"",
@@ -1089,7 +1128,7 @@ class _FakeJs:
                 _FakeMsg(
                     subject=f"$KV.{self.bucket}.{entry.key}",
                     data=entry.value,
-                    headers={},
+                    headers=entry.headers,
                     revision=entry.revision,
                     num_pending=total - index - 1,
                 )
