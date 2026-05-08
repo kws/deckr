@@ -874,15 +874,17 @@ A `bindingOverlayClear` body carries:
 ```
 
 The bundled controller supports the semantic templates `ok`, `error`,
-`unavailable`, `loading`, and `unknown`. If another template is requested, the
-controller logs/diagnoses the unknown template and renders the `unknown`
-question-mark overlay as fallback.
+`unavailable`, `pending`, `loading`, and `unknown`. If another template is
+requested, the controller logs/diagnoses the unknown template and renders the
+`unknown` question-mark overlay as fallback.
 
 Overlay timing is controller policy. The initial defaults are 1.2 seconds for
 `ok`, 2.0 seconds for `error`, `unavailable`, and `unknown`, and persistent for
-`loading` until it is cleared, replaced, a new base output arrives, or the
-binding/page/provider is cleaned up. A supplied `durationSeconds` overrides the
-template default for that request.
+`pending` and `loading` until cleared, replaced, a new base output arrives, or
+the binding/page/provider is cleaned up. `pending` is the activation
+acknowledgement template for work that has been accepted but has not yet
+completed. `loading` is for persistent loading/content states. A supplied
+`durationSeconds` overrides the template default for that request.
 
 The controller tracks the latest accepted base output generation and active
 overlay generation per binding. Overlay show/clear messages are ignored if the
