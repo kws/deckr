@@ -1,0 +1,301 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
+from typing import Any
+
+import anyio
+from deckr.contracts.lanes import (
+    CORE_LANE_CONTRACTS,
+    LaneContract,
+    LaneContractRegistry,
+)
+from deckr.contracts.messages import DeckrMessage, EndpointAddress
+from deckr.contracts.models import DeckrModel
+from deckr.state import (
+    DEFAULT_STATE_STORE_NAME,
+)
+
+from deckr_python_runtime.lanes import (
+    ReplyPredicate,
+    message_is_deliverable,
+    message_sender_session_is_current,
+    reply_is_accepted,
+    validate_message_for_contract,
+)
+from deckr_python_runtime.runtime import Deckr
+from deckr_python_runtime.state import (
+    StateChange,
+    StateConflict,
+    StateEntry,
+    StateStore,
+    StateStorePolicy,
+    state_value,
+)
+
+
+def memory_deckr(
+    *,
+    lane_contracts: LaneContractRegistry | Sequence[LaneContract] = (),
+    lanes: Sequence[str] = (),
+) -> Deckr:
+    registry = _lane_contract_registry(lane_contracts)
+    return Deckr(
+        lane_contracts=registry,
+        lanes=lanes,
+        substrate=MemoryLaneSubstrate(lane_contracts=registry),
+    )
+
+
+def _lane_contract_registry(
+    lane_contracts: LaneContractRegistry | Sequence[LaneContract],
+) -> LaneContractRegistry:
+    if isinstance(lane_contracts, LaneContractRegistry):
+        provided = tuple(lane_contracts.contracts.values())
+    else:
+        provided = tuple(lane_contracts)
+    contracts = dict(CORE_LANE_CONTRACTS)
+    contracts.update((contract.lane, contract) for contract in provided)
+    return LaneContractRegistry(contracts.values())
+
+
+class MemoryLaneSubstrate:
+    def __init__(
+        self,
+        *,
+        lane_contracts: LaneContractRegistry,
+        buffer_size: int = 100,
+        default_state_name: str = DEFAULT_STATE_STORE_NAME,
+    ) -> None:
+        self._lane_contracts = lane_contracts
+        self.default_state_name = default_state_name
+        self._buffer_size = buffer_size
+        self._lock = anyio.Lock()
+        self._subscribers: dict[
+            tuple[str, EndpointAddress],
+            set[anyio.abc.ObjectSendStream[DeckrMessage]],
+        ] = {}
+        self._states: dict[str, MemoryStateStore] = {}
+
+    async def publish(self, message: DeckrMessage) -> None:
+        contract = self._lane_contracts.contract_for(message.lane)
+        validate_message_for_contract(message, contract)
+        if not await message_sender_session_is_current(
+            message,
+            state=self.state(self.default_state_name),
+        ):
+            return
+        async with self._lock:
+            subscribers = [
+                (endpoint, endpoint_session_id, tuple(streams))
+                for (lane, endpoint, endpoint_session_id), streams in self._subscribers.items()
+                if lane == message.lane
+            ]
+        for endpoint, endpoint_session_id, streams in subscribers:
+            if not message_is_deliverable(
+                message,
+                endpoint=endpoint,
+                endpoint_session_id=endpoint_session_id,
+                contract=contract,
+            ):
+                continue
+            for stream in streams:
+                await stream.send(message)
+
+    async def publish_reply(
+        self,
+        message: DeckrMessage,
+        *,
+        request: DeckrMessage,
+    ) -> None:
+        del request
+        await self.publish(message)
+
+    async def request(
+        self,
+        message: DeckrMessage,
+        *,
+        timeout: float = 2.0,
+        accept: ReplyPredicate | None = None,
+    ) -> DeckrMessage:
+        async with self.subscribe(
+            message.lane,
+            message.sender,
+            endpoint_session_id=message.sender_session_id,
+        ) as stream:
+            await self.publish(message)
+            with anyio.fail_after(timeout):
+                while True:
+                    reply = await stream.receive()
+                    if await reply_is_accepted(reply, request=message, accept=accept):
+                        return reply
+
+    @asynccontextmanager
+    async def subscribe(
+        self,
+        lane: str,
+        endpoint: EndpointAddress,
+        *,
+        endpoint_session_id: str,
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[DeckrMessage]]:
+        send, receive = anyio.create_memory_object_stream[DeckrMessage](
+            max_buffer_size=self._buffer_size
+        )
+        key = (lane, endpoint, endpoint_session_id)
+        async with self._lock:
+            self._subscribers.setdefault(key, set()).add(send)
+        try:
+            yield receive
+        finally:
+            async with self._lock:
+                streams = self._subscribers.get(key)
+                if streams is not None:
+                    streams.discard(send)
+                    if not streams:
+                        self._subscribers.pop(key, None)
+            await send.aclose()
+            await receive.aclose()
+
+    def state(
+        self,
+        name: str,
+        *,
+        policy: StateStorePolicy | None = None,
+    ) -> StateStore:
+        del policy
+        store = self._states.get(name)
+        if store is None:
+            store = MemoryStateStore(name=name, buffer_size=self._buffer_size)
+            self._states[name] = store
+        return store
+
+
+class MemoryStateStore:
+    def __init__(self, *, name: str, buffer_size: int = 100) -> None:
+        self.name = name
+        self._buffer_size = buffer_size
+        self._lock = anyio.Lock()
+        self._revision = 0
+        self._entries: dict[str, StateEntry] = {}
+        self._watchers: dict[anyio.abc.ObjectSendStream[StateChange], str] = {}
+
+    async def get(self, key: str) -> StateEntry | None:
+        async with self._lock:
+            return self._entries.get(key)
+
+    async def items(self, prefix: str = "") -> tuple[StateEntry, ...]:
+        async with self._lock:
+            return tuple(
+                entry
+                for key, entry in sorted(self._entries.items())
+                if key.startswith(prefix)
+            )
+
+    async def put(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        ttl: float | None = None,
+    ) -> StateEntry:
+        del ttl
+        normalized = state_value(value)
+        async with self._lock:
+            entry = self._next_entry(key, normalized)
+            self._entries[key] = entry
+            watchers = self._watchers_for(key)
+        await self._publish(watchers, StateChange("put", key, entry))
+        return entry
+
+    async def create(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        ttl: float | None = None,
+    ) -> StateEntry:
+        del ttl
+        normalized = state_value(value)
+        async with self._lock:
+            if key in self._entries:
+                raise StateConflict(f"State key {key!r} already exists")
+            entry = self._next_entry(key, normalized)
+            self._entries[key] = entry
+            watchers = self._watchers_for(key)
+        await self._publish(watchers, StateChange("put", key, entry))
+        return entry
+
+    async def update(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        revision: int,
+        ttl: float | None = None,
+    ) -> StateEntry:
+        del ttl
+        normalized = state_value(value)
+        async with self._lock:
+            current = self._entries.get(key)
+            if current is None or current.revision != revision:
+                raise StateConflict(f"State key {key!r} revision changed")
+            entry = self._next_entry(key, normalized)
+            self._entries[key] = entry
+            watchers = self._watchers_for(key)
+        await self._publish(watchers, StateChange("put", key, entry))
+        return entry
+
+    async def delete(self, key: str, *, revision: int | None = None) -> None:
+        async with self._lock:
+            current = self._entries.get(key)
+            if current is None:
+                return
+            if revision is not None and current.revision != revision:
+                raise StateConflict(f"State key {key!r} revision changed")
+            self._entries.pop(key, None)
+            watchers = self._watchers_for(key)
+        await self._publish(watchers, StateChange("delete", key, None))
+
+    @asynccontextmanager
+    async def watch(
+        self,
+        prefix: str = "",
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[StateChange]]:
+        send, receive = anyio.create_memory_object_stream[StateChange](
+            max_buffer_size=self._buffer_size
+        )
+        async with self._lock:
+            self._watchers[send] = prefix
+            snapshot = tuple(
+                entry
+                for key, entry in sorted(self._entries.items())
+                if key.startswith(prefix)
+            )
+        for entry in snapshot:
+            await send.send(StateChange("put", entry.key, entry))
+        try:
+            yield receive
+        finally:
+            async with self._lock:
+                self._watchers.pop(send, None)
+            await send.aclose()
+            await receive.aclose()
+
+    def _next_entry(self, key: str, value: Mapping[str, Any]) -> StateEntry:
+        self._revision += 1
+        return StateEntry(key=key, value=value, revision=self._revision)
+
+    def _watchers_for(
+        self, key: str
+    ) -> tuple[anyio.abc.ObjectSendStream[StateChange], ...]:
+        return tuple(
+            stream for stream, prefix in self._watchers.items() if key.startswith(prefix)
+        )
+
+    async def _publish(
+        self,
+        watchers: tuple[anyio.abc.ObjectSendStream[StateChange], ...],
+        change: StateChange,
+    ) -> None:
+        for watcher in watchers:
+            await watcher.send(change)

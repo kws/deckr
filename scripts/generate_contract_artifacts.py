@@ -37,13 +37,6 @@ from deckr.actions.messages import (
     settings_target_key,
 )
 from deckr.actions.state import action_provider_catalog_key
-from deckr.components.dependencies import (
-    DependencyCondition,
-    DependencyConditionState,
-    DependencyKind,
-    DependencyMode,
-    dependency_effective_readiness,
-)
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     DeliverySemantics,
@@ -52,7 +45,6 @@ from deckr.contracts.lanes import (
 )
 from deckr.contracts.messages import (
     ACTIONS_LANE,
-    CORE_LANE_NAMES,
     HARDWARE_MESSAGES_LANE,
     SERVICES_LANE,
     DeckrMessage,
@@ -62,6 +54,11 @@ from deckr.contracts.messages import (
     entity_subject,
     hardware_manager_address,
     service_address,
+)
+from deckr.contracts.nats import (
+    lane_message_headers,
+    lane_message_payload,
+    lane_message_subject,
 )
 from deckr.hardware.capabilities import (
     button_activation_value_schema,
@@ -119,7 +116,6 @@ from deckr.state import (
     hardware_inventory_key,
     presence_endpoint_key,
 )
-from deckr.substrates.nats import _headers_for, _payload_for, _subject_for
 
 CONTRACT_VERSION = "v1"
 SPEC_VERSION = "1"
@@ -147,7 +143,6 @@ DESCRIPTOR_SCHEMA_FILENAMES = {
 
 SCHEMA_COMPONENTS = {
     "schemas/actions/actions.v1.schema.json": "ActionsLaneEnvelope",
-    "schemas/components/component-manifest.v1.schema.json": "ComponentManifest",
     "schemas/hardware/hardware-messages.v1.schema.json": "HardwareMessagesLaneEnvelope",
     "schemas/services/services.v1.schema.json": "ServicesLaneEnvelope",
     "schemas/hardware/device-descriptor.v1.schema.json": "DeviceDescriptor",
@@ -305,15 +300,6 @@ def _add_schemas(add_artifact) -> None:
         description="Canonical JSON Schema for Deckr services lane envelopes and bodies.",
         schemaId=SERVICE_MESSAGES_SCHEMA_ID,
         payload=service_message_schema(),
-    )
-    add_artifact(
-        kind="schema",
-        artifact_id="dev.deckr.components.component_manifest.v1",
-        path="schemas/components/component-manifest.v1.schema.json",
-        title="Component manifest",
-        description="Canonical JSON Schema for Deckr component manifest and dependency declarations.",
-        schemaId="dev.deckr.components.component_manifest.v1",
-        payload=_component_manifest_schema(),
     )
     for schema_id, schema in descriptor_schema_artifacts().items():
         add_artifact(
@@ -659,29 +645,6 @@ def _fixtures() -> list[dict[str, Any]]:
         ),
         message_id="fixture-service-command-reply",
     )
-    component_manifest = {
-        "componentId": "dev.deckr.example.hardware",
-        "consumes": ["hardware_messages"],
-        "publishes": ["hardware_messages"],
-        "cardinality": "multi_instance",
-        "endpointSlots": ["hardware"],
-        "role": "hardware_manager",
-        "dependencies": {
-            "controller": {
-                "kind": "endpoint",
-                "mode": "required",
-                "lane": "hardware_messages",
-                "endpoint": "controller:controller-main",
-            },
-            "media": {
-                "kind": "service",
-                "mode": "optional",
-                "endpoint": "service:media-home",
-                "namespace": "dev.deckr.media.service",
-            },
-        },
-    }
-
     action_catalog = ActionProviderCatalog(
         providerInstanceId="clock-main",
         providerEndpoint=action_provider_address("clock-main"),
@@ -822,13 +785,6 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=service_reply,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.components.component_manifest.valid.v1",
-            path="fixtures/valid/components/component-manifest.v1.json",
-            title="Valid component manifest",
-            schema_path="schemas/components/component-manifest.v1.schema.json",
-            payload=component_manifest,
-        ),
-        _fixture(
             artifact_id="dev.deckr.fixture.state.endpoint_presence.valid.v1",
             path="fixtures/valid/state/endpoint-presence.v1.json",
             title="Valid endpoint presence state",
@@ -946,18 +902,6 @@ def _fixtures() -> list[dict[str, Any]]:
                 "lane": "actions",
                 "timestamp": "2026-04-29T10:00:00Z",
                 "ttlSeconds": 30,
-            },
-            valid=False,
-        ),
-        _fixture(
-            artifact_id="dev.deckr.fixture.components.component_manifest.invalid_missing_component_id.v1",
-            path="fixtures/invalid/components/component-manifest-missing-component-id.v1.json",
-            title="Invalid component manifest missing componentId",
-            schema_path="schemas/components/component-manifest.v1.schema.json",
-            payload={
-                key: value
-                for key, value in component_manifest.items()
-                if key != "componentId"
             },
             valid=False,
         ),
@@ -1250,54 +1194,6 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
             ],
         },
     )
-    add_artifact(
-        kind="vector",
-        artifact_id="dev.deckr.vector.component_dependencies.v1",
-        path="vectors/component-dependencies.v1.json",
-        title="Component dependency readiness vectors",
-        description="Acceptance vectors for Deckr component dependency readiness semantics.",
-        payload={
-            "schema": "dev.deckr.vector.component_dependencies.v1",
-            "cases": [
-                _component_dependency_case(
-                    "required.satisfied",
-                    {
-                        "controller": {
-                            "name": "controller",
-                            "kind": "endpoint",
-                            "mode": "required",
-                            "state": "satisfied",
-                        }
-                    },
-                ),
-                _component_dependency_case(
-                    "required.unknown",
-                    {
-                        "controller": {
-                            "name": "controller",
-                            "kind": "endpoint",
-                            "mode": "required",
-                            "state": "unknown",
-                        }
-                    },
-                ),
-                _component_dependency_case(
-                    "optional.unsatisfied",
-                    {
-                        "media": {
-                            "name": "media",
-                            "kind": "service",
-                            "mode": "optional",
-                            "state": "unsatisfied",
-                            "reason": "presence_absent",
-                        }
-                    },
-                ),
-            ],
-        },
-    )
-
-
 def _asyncapi_document(
     *,
     package_version: str,
@@ -1388,7 +1284,6 @@ def _asyncapi_document(
         "x-deckr-artifact-manifest": "manifest.json",
         "x-deckr-current-state": _asyncapi_state_artifacts(schema_payloads),
         "x-deckr-interop-vectors": [
-            "vectors/component-dependencies.v1.json",
             "vectors/identity.v1.json",
             "vectors/key-tokens.v1.json",
             "vectors/lane-runtime.v1.json",
@@ -1689,90 +1584,6 @@ def _asyncapi_state_artifacts(
     ]
 
 
-def _component_manifest_schema() -> dict[str, Any]:
-    lane_enum = sorted(CORE_LANE_NAMES)
-    endpoint_family_enum = [
-        "action_provider",
-        "controller",
-        "hardware",
-        "hardware_manager",
-        "service",
-    ]
-    dependency = {
-        "type": "object",
-        "required": ["kind", "mode", "endpoint"],
-        "properties": {
-            "kind": {"enum": [item.value for item in DependencyKind]},
-            "mode": {"enum": [item.value for item in DependencyMode]},
-            "lane": {"enum": lane_enum},
-            "endpoint": {
-                "type": "string",
-                "pattern": (
-                    "^(action_provider|controller|hardware_manager|service):[^:]+$"
-                ),
-            },
-            "namespace": {"type": "string", "minLength": 1},
-        },
-        "allOf": [
-            {
-                "if": {"properties": {"kind": {"const": "endpoint"}}},
-                "then": {
-                    "required": ["lane"],
-                    "not": {"required": ["namespace"]},
-                },
-            },
-            {
-                "if": {"properties": {"kind": {"const": "service"}}},
-                "then": {
-                    "required": ["namespace"],
-                    "not": {"required": ["lane"]},
-                },
-            },
-        ],
-        "additionalProperties": False,
-    }
-    return {
-        "$schema": JSON_SCHEMA_URI,
-        "$id": "dev.deckr.components.component_manifest.v1",
-        "title": "Component manifest",
-        "type": "object",
-        "required": ["componentId"],
-        "properties": {
-            "componentId": {"type": "string", "minLength": 1},
-            "consumes": {
-                "type": "array",
-                "items": {"enum": lane_enum},
-                "uniqueItems": True,
-                "default": [],
-            },
-            "publishes": {
-                "type": "array",
-                "items": {"enum": lane_enum},
-                "uniqueItems": True,
-                "default": [],
-            },
-            "cardinality": {
-                "enum": ["singleton", "multi_instance"],
-                "default": "singleton",
-            },
-            "endpointSlots": {
-                "type": "array",
-                "items": {"enum": endpoint_family_enum},
-                "uniqueItems": True,
-                "default": [],
-            },
-            "role": {"type": "string", "minLength": 1},
-            "dependencies": {
-                "type": "object",
-                "additionalProperties": dependency,
-                "default": {},
-            },
-        },
-        "additionalProperties": False,
-        "x-deckr-schema-version": SPEC_VERSION,
-    }
-
-
 def _device_descriptor() -> DeviceDescriptor:
     return DeviceDescriptor.model_validate(
         {
@@ -1877,53 +1688,6 @@ def _binding_metadata(
     )
 
 
-def _component_dependency_case(
-    case_id: str,
-    conditions: Mapping[str, Mapping[str, Any]],
-) -> dict[str, Any]:
-    parsed = {
-        name: DependencyCondition(
-            name=str(source.get("name", name)),
-            kind=DependencyKind(str(source["kind"])),
-            mode=DependencyMode(str(source["mode"])),
-            state=DependencyConditionState(str(source["state"])),
-            reason=(
-                str(source["reason"])
-                if source.get("reason") is not None
-                else None
-            ),
-            diagnostics=dict(source.get("diagnostics", {})),
-        )
-        for name, source in conditions.items()
-    }
-    readiness, reasons, diagnostics = dependency_effective_readiness(parsed)
-    return {
-        "id": case_id,
-        "conditions": {
-            name: {
-                "name": condition.name,
-                "kind": condition.kind.value,
-                "mode": condition.mode.value,
-                "state": condition.state.value,
-                **(
-                    {"reason": condition.reason}
-                    if condition.reason is not None
-                    else {}
-                ),
-                **(
-                    {"diagnostics": dict(condition.diagnostics)}
-                    if condition.diagnostics
-                    else {}
-                ),
-            }
-            for name, condition in sorted(parsed.items())
-        },
-        "readiness": readiness.value,
-        "reasons": list(reasons),
-        "diagnostics": diagnostics,
-    }
-
-
 def _nats_lane_case(path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     stored_payload = json.loads(json.dumps(payload, sort_keys=True))
     message = DeckrMessage.from_dict(stored_payload)
@@ -1932,9 +1696,9 @@ def _nats_lane_case(path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         "fixture": path,
         "lane": message.lane,
         "messageType": message.message_type,
-        "subject": _subject_for(message),
-        "headers": dict(_headers_for(message)),
-        "payloadUtf8": _payload_for(message).decode("utf-8"),
+        "subject": lane_message_subject(message),
+        "headers": dict(lane_message_headers(message)),
+        "payloadUtf8": lane_message_payload(message).decode("utf-8"),
     }
 
 

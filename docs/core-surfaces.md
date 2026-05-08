@@ -1,7 +1,9 @@
 # Common Core Surfaces
 
-This document names the functional groupings in the current Python `deckr`
-library that should be represented in the cross-platform Deckr core libraries.
+This document names the functional groupings in the current Python `deckr` core
+library, with notes where Python runtime support now lives in
+`deckr-python-runtime`, that should be represented in the cross-platform Deckr
+core libraries.
 
 The word "component" is already a runtime concept in Deckr: a `Component` is a
 participant lifecycle unit hosted by a runtime. To avoid overloading that word,
@@ -86,11 +88,10 @@ Use cases:
 
 - expose the core lane names and lane contract registry
 - describe delivery semantics, message families, and unsupported delivery modes
-- let participants declare which lanes they consume and publish
+- let participants and runtime helpers reason about lane capabilities
 
 Parity expectation: every language can reason about the same lane contract
-metadata, even if component manifests and host configuration are represented
-differently.
+metadata, even if runtime host configuration is represented differently.
 
 ### 4. Current-State And KV Contracts
 
@@ -195,15 +196,16 @@ controllers or providers in another.
 Current Python source:
 
 - `deckr.lanes`
+- `deckr_python_runtime.lanes` for the Python endpoint-session helper
 
 Use cases:
 
-- register endpoint sessions on a lane
-- stamp and validate sender endpoint/session authority
+- validate lane messages against lane contracts
 - filter direct and broadcast recipient targets
-- validate messages against lane contracts
-- reject malformed, expired, stale, or session-mismatched messages
+- reject malformed, expired, or recipient-session-mismatched messages
 - validate reply acceptance and recipient-session fencing
+- where a runtime helper is provided, register endpoint sessions and validate
+  sender endpoint/session authority
 
 Parity expectation: runtime helper APIs should be language-native, but their
 observable behavior must match. The same message should be accepted, rejected,
@@ -213,13 +215,15 @@ dropped, or fenced for the same reason in every implementation.
 
 Current Python source:
 
-- `deckr.substrates.nats`
+- `deckr.contracts.nats`
+- `deckr_python_runtime.substrates.nats` for the concrete Python NATS client
 
 Use cases:
 
 - map Deckr lane messages to NATS subjects
 - encode Deckr headers
 - encode canonical JSON payload bytes
+- encode canonical current-state JSON payload bytes
 - map JetStream KV entries and watches into Deckr state entries and changes
 - implement Deckr bucket/key conventions
 - handle missing keys and revision conflicts consistently
@@ -228,40 +232,21 @@ Parity expectation: NATS/KV is part of the v1 distributed contract. Libraries
 may wrap different NATS clients, but subject, header, payload, bucket, key,
 lease, and revision behavior must match.
 
-### 11. Component Manifest And Lifecycle Contract
-
-Current Python source:
-
-- `deckr.components._defs`
-- `deckr.components.dependencies`
-- selected contract-shaped parts of `deckr.components._host`
-
-Use cases:
-
-- describe the `Component` lifecycle concept
-- represent component state, readiness state, status, and lifecycle events
-- describe component manifests, lane declarations, endpoint declarations, and
-  dependency declarations
-- calculate dependency/readiness effects
-
-Parity expectation: each language should be able to describe and host Deckr
-participants in a way compatible with the same manifest and dependency concepts.
-The exact host, task, plugin, or package discovery mechanism can be
-language-native.
-
 ## Optional Or Language-Native Runtime Surfaces
 
 These Python areas are useful but should not automatically become identical
 cross-platform APIs:
 
-- `deckr.runtime`
+- `deckr_python_runtime.runtime`
   - Python's `Deckr` helper is the current managed runtime facade. Other
     languages should offer an equivalent ergonomic entry point if useful, but
     the public shape should fit the language runtime.
-- `deckr.components._host`
-  - the planning rules and manifest semantics matter; Python entry-point
-    discovery and exact host internals do not need to be cloned.
-- `deckr.core.config`
+- `deckr_python_runtime.components`
+  - Python component manifests, readiness, dependency evaluation, entry-point
+    discovery, and host internals are Python runtime concepts. Rust and
+    TypeScript core libraries do not need matching component APIs to implement
+    Deckr protocol behavior.
+- `deckr_python_runtime.config`
   - configuration source behavior is useful in Python today, but config loading
     and plugin discovery may reasonably differ by language and host.
 
@@ -269,15 +254,16 @@ cross-platform APIs:
 
 These current Python areas are not common Deckr core surfaces:
 
-- `deckr.cli`
-- `deckr.launcher`
-- `deckr.core.logging`
-- `deckr.core.util.anyio`
-- `deckr.core.util.runtime_id`, except where a value format becomes an explicit
-  contract fixture or vector
-- `deckr.substrates.supervised_nats`
+- `deckr_python_runtime.cli`
+- `deckr_python_runtime.launcher`
+- `deckr_python_runtime.logging`
+- `deckr_python_runtime.util.anyio`
+- `deckr_python_runtime.util.runtime_id`, except where a value format becomes an
+  explicit contract fixture or vector
+- `deckr_python_runtime.substrates.supervised_nats`
 - Python package entry-point discovery
-- local smoke scripts under `libraries/python/scripts`
+- Python component manifests, readiness, and dependency evaluation
+- local smoke scripts under `libraries/python-runtime/scripts`
 - schema generation internals in `scripts/generate_contract_artifacts.py`
 
 They can remain valuable Python implementation or development tooling, but they
@@ -307,10 +293,10 @@ When new Python code is proposed for `deckr`, ask:
 - Does a Rust or TypeScript participant need the same behavior to speak Deckr
   correctly?
 - Is this behavior visible in wire JSON, state keys, NATS subjects/headers,
-  current-state payloads, endpoint/session semantics, or participant manifests?
+  current-state payloads, or endpoint/session semantics?
 - Could a conformance fixture, vector, or live scenario prove the behavior?
-- Is the code controller policy, device protocol handling, SDK ergonomics, or
-  launcher convenience instead?
+- Is the code Python component hosting, controller policy, device protocol
+  handling, SDK ergonomics, or launcher convenience instead?
 
 If the behavior is contract-visible and should be testable across languages, it
 belongs in a common core surface. If it is a Python convenience around that

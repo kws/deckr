@@ -1,10 +1,11 @@
 # Runtime Architecture
 
 > Live implementation reference: this document describes behavior currently
-> implemented in `deckr`. It should stay in sync with code, tests, and generated
-> schemas. If it differs from the implementation, treat that as a bug: either
-> update the document to match current behavior or make an intentional
-> code/schema/test change to match the intended v1 contract.
+> implemented across `deckr` and `deckr-python-runtime`. It should stay in sync
+> with code, tests, and generated schemas. If it differs from the
+> implementation, treat that as a bug: either update the document to match
+> current behavior or make an intentional code/schema/test change to match the
+> intended v1 contract.
 
 Deckr is in ALPHA. We are still deciding what the architecture is. Because of
 that, backwards compatibility is not a goal. Compatibility shims, aliases,
@@ -31,17 +32,23 @@ The two external realities shaping this architecture are:
 - Action provider runtimes that bind actions to those controls and react to
   lifecycle and input events.
 
-The shared APIs and runtime primitives for this architecture belong in `deckr`.
-That includes the core message specifications, endpoint identity rules,
-lane-level delivery metadata, and wire-safe contracts that move across event
-lanes and across the distributed lane substrate.
+The shared protocol/data APIs for this architecture belong in `deckr`. That
+includes the core message specifications, endpoint identity rules, lane-level
+delivery metadata, and wire-safe contracts that move across event lanes and
+across the distributed lane substrate.
+
+The Python component host model belongs in `deckr-python-runtime`. Its
+manifests, readiness states, dependency evaluation, entry-point discovery, and
+AnyIO lifecycle machinery are Python runtime concepts, not cross-language core
+contracts that Rust or TypeScript libraries must copy.
 
 ## Architectural Model
 
-There is exactly one runtime participant abstraction in Deckr: `Component`.
+The Python runtime has exactly one local runtime participant abstraction:
+`Component`.
 
-There is exactly one discovery mechanism in Deckr: components are discovered
-uniformly through a single entry-point based mechanism.
+The Python runtime has exactly one local discovery mechanism: components are
+discovered uniformly through a single entry-point based mechanism.
 
 There are not separate architectural discovery systems for:
 
@@ -53,14 +60,15 @@ There are not separate architectural discovery systems for:
 
 Those are semantic roles, not different runtime kinds.
 
-A controller is a component. A hardware manager is a component. An action
-provider runtime is a component. Any future third-party participant is also just
-a component.
+A controller may be hosted as a Python component. A hardware manager may be
+hosted as a Python component. An action provider runtime may be hosted as a
+Python component. Non-Python processes only need to implement the shared Deckr
+protocol surfaces for their role; they do not need the Python component API.
 
 If a design introduces a second generic discovery abstraction because one role
 "feels special", that design is wrong.
 
-There is also one runtime host contract.
+There is also one Python runtime host contract.
 
 A runtime host is the process or application that embeds Deckr's runtime
 infrastructure. The bundled Deckr launcher is the reference runtime host, but it
@@ -81,20 +89,20 @@ host must satisfy.
 
 ## Event Lanes
 
-Components are wired together through named event bus lanes.
+Runtime participants are wired together through named event bus lanes.
 
-A component declares which lanes it consumes and which lanes it publishes to.
-That declaration is part of the component's manifest or metadata contract.
+Python components declare which lanes they consume and which lanes they publish
+to through Python runtime manifest metadata.
 
-A runtime host that uses Deckr components is responsible for:
+A Python runtime host that uses Deckr components is responsible for:
 
 - discovering components
 - constructing the available named lanes
 - instantiating components
 - wiring components against one shared runtime context
 
-A runtime host must resolve the full set of required lanes and construct their
-handles before starting any component. No component may rely on another
+A Python runtime host must resolve the full set of required lanes and construct
+their handles before starting any component. No component may rely on another
 component having already started in order for a core lane to exist.
 
 The runtime host does not care whether a component is "really" a controller,
@@ -502,10 +510,10 @@ What matters is that configuration creates explicit component instances. Runtime
 activation is not inferred from installed packages, component roles, endpoint
 families, or old role-shaped table paths.
 
-### Component Manifest Contract
+### Python Runtime Component Manifest
 
-Every discoverable component must declare, in its manifest or equivalent
-metadata:
+Every discoverable Python runtime component must declare, in its manifest or
+equivalent Python runtime metadata:
 
 - `component_id`
 - `consumes`
@@ -897,8 +905,8 @@ to understand component-specific settings.
 
 ## Hard Rules
 
-- There is one component model.
-- There is one discovery model.
+- The Python runtime has one component host model.
+- The Python runtime has one component discovery model.
 - Lane contracts are the only generic wiring primitive.
 - The runtime host creates the full core lane set before component startup.
 - Core lane names belong in `deckr`.
@@ -919,8 +927,8 @@ to understand component-specific settings.
   for non-Python implementations.
 - Transport-local framing may exist, but it must not redefine the carried Deckr
   message contract.
-- NATS must not replace Deckr lanes, envelopes, endpoint addresses, subjects,
-  discovery, or component lifecycle semantics.
+- NATS must not replace Deckr lanes, envelopes, endpoint addresses, subjects, or
+  Python runtime discovery/component lifecycle semantics.
 - Substrate-local identity must not leak into application-level addressing or
   delivery.
 - Endpoint identity and endpoint reachability are distinct from component lifecycle
@@ -929,10 +937,10 @@ to understand component-specific settings.
   lane messages.
 - Client/session identity, transport addresses, component runtime identity, and
   protocol endpoint identity are separate.
-- Configuration creates explicit generic component instances.
-- Components parse only their own resolved configuration mapping.
-- Installed component definitions do not activate components.
-- The runtime host does not provide a generic component `enabled` flag.
+- Python runtime configuration creates explicit component instances.
+- Python components parse only their own resolved configuration mapping.
+- Installed Python component definitions do not activate components.
+- The Python runtime host does not provide a generic component `enabled` flag.
 - Runtime context may carry only generic runtime-host metadata and lane handles
   as a generic primitive.
 - External protocol adapters may be components, but they must not preserve the

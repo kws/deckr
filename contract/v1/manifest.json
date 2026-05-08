@@ -11,15 +11,6 @@
     },
     {
       "description": "Invalid fixture that must be rejected by schema validation.",
-      "id": "dev.deckr.fixture.components.component_manifest.invalid_missing_component_id.v1",
-      "kind": "fixture",
-      "path": "fixtures/invalid/components/component-manifest-missing-component-id.v1.json",
-      "schemaPath": "schemas/components/component-manifest.v1.schema.json",
-      "title": "Invalid component manifest missing componentId",
-      "valid": false
-    },
-    {
-      "description": "Invalid fixture that must be rejected by schema validation.",
       "id": "dev.deckr.fixture.hardware.capability_descriptor.invalid_missing_family.v1",
       "kind": "fixture",
       "path": "fixtures/invalid/hardware/capability-descriptor-missing-family.v1.json",
@@ -88,15 +79,6 @@
       "path": "fixtures/valid/actions/settings-request.v1.json",
       "schemaPath": "schemas/actions/actions.v1.schema.json",
       "title": "Valid settingsRequest action message",
-      "valid": true
-    },
-    {
-      "description": "Valid fixture for schema validation.",
-      "id": "dev.deckr.fixture.components.component_manifest.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/components/component-manifest.v1.json",
-      "schemaPath": "schemas/components/component-manifest.v1.schema.json",
-      "title": "Valid component manifest",
       "valid": true
     },
     {
@@ -261,14 +243,6 @@
       "title": "Actions lane messages"
     },
     {
-      "description": "Canonical JSON Schema for Deckr component manifest and dependency declarations.",
-      "id": "dev.deckr.components.component_manifest.v1",
-      "kind": "schema",
-      "path": "schemas/components/component-manifest.v1.schema.json",
-      "schemaId": "dev.deckr.components.component_manifest.v1",
-      "title": "Component manifest"
-    },
-    {
       "description": "Canonical JSON Schema for Deckr CapabilityDescriptor.",
       "id": "dev.deckr.hardware.capability_descriptor.v1",
       "kind": "schema",
@@ -364,13 +338,6 @@
       "kind": "spec",
       "path": "asyncapi.json",
       "title": "Deckr AsyncAPI contract"
-    },
-    {
-      "description": "Acceptance vectors for Deckr component dependency readiness semantics.",
-      "id": "dev.deckr.vector.component_dependencies.v1",
-      "kind": "vector",
-      "path": "vectors/component-dependencies.v1.json",
-      "title": "Component dependency readiness vectors"
     },
     {
       "description": "Acceptance vectors for Deckr endpoint identity and entity subject helpers.",

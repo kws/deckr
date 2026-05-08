@@ -22,10 +22,10 @@ substrate details.
 
 ## Runtime Surface
 
-The default distributed runtime uses `NatsSubstrate` through `Deckr`:
+The default distributed Python runtime uses `NatsSubstrate` through `Deckr`:
 
 ```python
-from deckr.runtime import Deckr
+from deckr_python_runtime.runtime import Deckr
 
 async with Deckr() as deckr:
     hardware = deckr.lane("hardware_messages")
@@ -39,16 +39,17 @@ async with Deckr() as deckr:
                 ...
 ```
 
-The NATS implementation is installed with the `deckr[nats]` extra. A host that
-constructs its own substrate must provide the same lane and state semantics.
+The Python NATS implementation is installed with the
+`deckr-python-runtime[nats]` extra. A host that constructs its own substrate
+must provide the same lane and state semantics.
 
 For local full-stack or embedded runtimes that should not require Docker or a
 separately managed broker, Deckr also provides `SupervisedNatsSubstrate` through
-the `deckr[supervised-nats]` extra:
+the `deckr-python-runtime[supervised-nats]` extra:
 
 ```python
-from deckr.runtime import Deckr
-from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
+from deckr_python_runtime.runtime import Deckr
+from deckr_python_runtime.substrates.supervised_nats import SupervisedNatsSubstrate
 
 async with Deckr(
     substrate=SupervisedNatsSubstrate(lane_contracts=...),
@@ -1052,15 +1053,15 @@ Request/reply permissions must allow the relevant `_INBOX` subjects or use NATS
 Run the smoke harness with a supervised local NATS server:
 
 ```bash
-uv run --project libraries/python --extra supervised-nats python libraries/python/scripts/nats_smoke.py --supervised --check-ttl
+uv run --project libraries/python-runtime --extra supervised-nats python libraries/python-runtime/scripts/nats_smoke.py --supervised --check-ttl
 ```
 
 Run the `deckr` smoke broker from the `deckr` repository:
 
 ```bash
 docker compose -f docker/compose.nats-smoke.yaml up -d nats
-uv run --project libraries/python --extra nats python libraries/python/scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
-uv run --project libraries/python --extra nats python libraries/python/scripts/nats_state_report.py --url nats://127.0.0.1:4222
+uv run --project libraries/python-runtime --extra nats python libraries/python-runtime/scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
+uv run --project libraries/python-runtime --extra nats python libraries/python-runtime/scripts/nats_state_report.py --url nats://127.0.0.1:4222
 docker compose -f docker/compose.nats-smoke.yaml down -v
 ```
 
@@ -1083,7 +1084,7 @@ nats kv ls deckr_discovery_v1 --server nats://127.0.0.1:4222
 Inspect current Deckr communication state:
 
 ```bash
-uv run --project libraries/python --extra nats python libraries/python/scripts/nats_state_report.py --url nats://127.0.0.1:4222
+uv run --project libraries/python-runtime --extra nats python libraries/python-runtime/scripts/nats_state_report.py --url nats://127.0.0.1:4222
 ```
 
 Watch lane traffic:

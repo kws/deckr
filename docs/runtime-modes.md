@@ -1,10 +1,14 @@
 # Deckr Runtime Modes
 
 > Live implementation reference: this document describes behavior currently
-> implemented in `deckr`. It should stay in sync with code, tests, and generated
-> schemas. If it differs from the implementation, treat that as a bug: either
-> update the document to match current behavior or make an intentional
-> code/schema/test change to match the intended v1 contract.
+> implemented in `deckr-python-runtime` on top of the `deckr` core contracts. It
+> should stay in sync with code, tests, and generated schemas. If it differs
+> from the implementation, treat that as a bug: either update the document to
+> match current behavior or make an intentional code/schema/test change to match
+> the intended v1 contract.
+
+These runtime modes are Python hosting modes. They are useful product behavior,
+but they are not required surfaces for Rust or TypeScript core libraries.
 
 Deckr runtime modes are ordinary composition over the same primitives:
 
@@ -34,10 +38,10 @@ components from one component host plan. The NATS lane substrate itself is runti
 infrastructure, not a discovered component.
 
 ```python
-from deckr.components import resolve_component_host_plan, start_components
-from deckr.core.config import load_config_document
-from deckr.launcher import build_runtime_substrate
-from deckr.runtime import Deckr
+from deckr_python_runtime.components import resolve_component_host_plan, start_components
+from deckr_python_runtime.config import load_config_document
+from deckr_python_runtime.launcher import build_runtime_substrate
+from deckr_python_runtime.runtime import Deckr
 
 document = load_config_document(None)
 plan = resolve_component_host_plan(document)
@@ -140,8 +144,8 @@ planned instance.
 Embedded applications can use the same external NATS substrate directly:
 
 ```python
-from deckr.runtime import Deckr
-from deckr.substrates.nats import NatsSubstrate
+from deckr_python_runtime.runtime import Deckr
+from deckr_python_runtime.substrates.nats import NatsSubstrate
 
 async with Deckr(
     substrate=NatsSubstrate(url="nats://127.0.0.1:4222", lane_contracts=...),
@@ -152,8 +156,8 @@ async with Deckr(
 They can also supervise a private local `nats-server` process:
 
 ```python
-from deckr.runtime import Deckr
-from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
+from deckr_python_runtime.runtime import Deckr
+from deckr_python_runtime.substrates.supervised_nats import SupervisedNatsSubstrate
 
 substrate = SupervisedNatsSubstrate(lane_contracts=...)
 

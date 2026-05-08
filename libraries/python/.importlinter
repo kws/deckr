@@ -4,22 +4,6 @@ root_packages =
 
 include_external_packages = True
 
-[importlinter:contract:core_must_not_import_hardware]
-name = Core must not import hardware
-type = forbidden
-source_modules =
-    deckr.core
-forbidden_modules =
-    deckr.hardware
-
-[importlinter:contract:core_must_not_import_actions]
-name = Core must not import action APIs
-type = forbidden
-source_modules =
-    deckr.core
-forbidden_modules =
-    deckr.actions
-
 [importlinter:contract:contracts_must_not_import_actions_or_hardware]
 name = Contracts must not import action or hardware APIs
 type = forbidden
@@ -44,3 +28,15 @@ source_modules =
     deckr.hardware
 forbidden_modules =
     deckr.actions
+
+[importlinter:contract:core_package_must_not_import_python_runtime]
+name = Deckr core package must not import Python runtime support
+type = forbidden
+source_modules =
+    deckr
+forbidden_modules =
+    anyio
+    click
+    nats
+    deckr_nats_server_bin
+    deckr_python_runtime

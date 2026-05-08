@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::{Path, PathBuf},
 };
 
@@ -7,14 +7,13 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use deckr_core::{
     action_provider_catalog_key, context_subject, decode_key_token, default_contract_root,
-    dependency_effective_readiness, device_claim_key, encode_key_token, hardware_inventory_key,
-    hardware_subject_for_capability, headers_for, load_manifest, message_is_expired_at,
-    message_targets_endpoint, parse_action_provider_catalog_key, parse_device_claim_key,
-    parse_hardware_inventory_key, parse_presence_endpoint_key, parse_service_catalog_key,
-    parse_service_status_key, parse_service_view_key, parse_settings_target_key,
-    payload_json_bytes, presence_endpoint_key, read_json, service_catalog_key, service_status_key,
-    service_view_key, settings_target_key, subject_for, validate_lane_message, DeckrMessage,
-    DependencyCondition, EndpointAddress,
+    device_claim_key, encode_key_token, hardware_inventory_key, hardware_subject_for_capability,
+    headers_for, load_manifest, message_is_expired_at, message_targets_endpoint,
+    parse_action_provider_catalog_key, parse_device_claim_key, parse_hardware_inventory_key,
+    parse_presence_endpoint_key, parse_service_catalog_key, parse_service_status_key,
+    parse_service_view_key, parse_settings_target_key, payload_json_bytes, presence_endpoint_key,
+    read_json, service_catalog_key, service_status_key, service_view_key, settings_target_key,
+    subject_for, validate_lane_message, DeckrMessage, EndpointAddress,
 };
 use jsonschema::{Draft, JSONSchema};
 use serde::Serialize;
@@ -30,7 +29,6 @@ const REQUIRED_GROUP_IDS: &[&str] = &[
     "messages.services",
     "runtime.lane",
     "substrate.nats",
-    "components.manifest",
 ];
 
 #[derive(Debug, Parser)]
@@ -185,7 +183,6 @@ fn run_conformance(root: &Path) -> Result<Report, Box<dyn std::error::Error>> {
         ),
         check_lane_runtime_vectors(root),
         check_nats_lane_vectors(root),
-        check_component_vectors(root, &manifest),
     ];
     let passed = groups.iter().map(|group| group.passed).sum();
     let failed = groups.iter().map(|group| group.failed).sum();
@@ -649,83 +646,6 @@ fn check_nats_lane_vectors(root: &Path) -> GroupResult {
     group
 }
 
-fn check_component_vectors(root: &Path, manifest: &Value) -> GroupResult {
-    let mut group = GroupResult::new("components.manifest");
-    for artifact in artifacts(manifest) {
-        if artifact.get("kind").and_then(Value::as_str) != Some("fixture")
-            || artifact.get("schemaPath").and_then(Value::as_str)
-                != Some("schemas/components/component-manifest.v1.schema.json")
-            || artifact.get("valid").and_then(Value::as_bool) != Some(true)
-        {
-            continue;
-        }
-        let path = artifact["path"].as_str().unwrap_or_default();
-        match read_json(root.join(path)) {
-            Ok(value) => {
-                if value["componentId"].as_str().unwrap_or_default().is_empty() {
-                    group.fail(format!("{path}: missing componentId"));
-                } else {
-                    group.pass();
-                }
-                for (name, dependency) in value["dependencies"].as_object().into_iter().flatten() {
-                    if dependency["kind"] == "endpoint" && dependency.get("lane").is_none() {
-                        group.fail(format!("{path}: endpoint dependency {name} lacks lane"));
-                    } else if dependency["kind"] == "service"
-                        && dependency.get("namespace").is_none()
-                    {
-                        group.fail(format!("{path}: service dependency {name} lacks namespace"));
-                    } else {
-                        group.pass();
-                    }
-                }
-            }
-            Err(error) => group.fail(format!("{path}: {error}")),
-        }
-    }
-
-    let vector = match read_json(root.join("vectors/component-dependencies.v1.json")) {
-        Ok(value) => value,
-        Err(error) => {
-            group.fail(error.to_string());
-            return group;
-        }
-    };
-    for case in cases(&vector) {
-        let conditions = match component_conditions(case) {
-            Ok(conditions) => conditions,
-            Err(error) => {
-                group.fail(format!("{}: {error}", case["id"]));
-                continue;
-            }
-        };
-        let (readiness, reasons, diagnostics) = dependency_effective_readiness(&conditions);
-        if readiness.as_str() != case["readiness"].as_str().unwrap_or_default() {
-            group.fail(format!("{}: readiness {}", case["id"], readiness.as_str()));
-        } else if reasons != string_array(&case["reasons"]) {
-            group.fail(format!("{}: reasons mismatch", case["id"]));
-        } else if diagnostics != case["diagnostics"] {
-            group.fail(format!("{}: diagnostics mismatch", case["id"]));
-        } else {
-            group.pass();
-        }
-    }
-    group
-}
-
-fn component_conditions(
-    case: &Value,
-) -> Result<BTreeMap<String, DependencyCondition>, serde_json::Error> {
-    case["conditions"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .map(|(name, value)| {
-            serde_json::from_value::<DependencyCondition>(value.clone())
-                .map(|condition| (name.clone(), condition))
-        })
-        .collect()
-}
-
 fn artifacts(manifest: &Value) -> impl Iterator<Item = &Value> {
     manifest["artifacts"].as_array().into_iter().flatten()
 }
@@ -736,16 +656,6 @@ fn cases(vector: &Value) -> impl Iterator<Item = &Value> {
 
 fn string_at(value: &Value, field: &str) -> Option<String> {
     value.get(field).and_then(Value::as_str).map(str::to_string)
-}
-
-fn string_array(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect()
 }
 
 fn planned_groups() -> Vec<&'static str> {

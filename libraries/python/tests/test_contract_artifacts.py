@@ -20,6 +20,11 @@ from deckr.contracts.artifacts import (
     read_contract_artifact,
 )
 from deckr.contracts.messages import DeckrMessage
+from deckr.contracts.nats import (
+    lane_message_headers,
+    lane_message_payload,
+    lane_message_subject,
+)
 from deckr.services.state import (
     parse_service_catalog_key,
     parse_service_status_key,
@@ -38,7 +43,6 @@ from deckr.state import (
     parse_presence_endpoint_key,
     presence_endpoint_key,
 )
-from deckr.substrates.nats import _headers_for, _payload_for, _subject_for
 
 
 def _bundle_root() -> Path:
@@ -244,6 +248,6 @@ def test_nats_lane_vectors_match_python_helpers() -> None:
     for case in vector["cases"]:
         message = DeckrMessage.from_dict(_json(_bundle_root() / case["fixture"]))
 
-        assert _subject_for(message) == case["subject"]
-        assert dict(_headers_for(message)) == case["headers"]
-        assert json.loads(_payload_for(message)) == json.loads(case["payloadUtf8"])
+        assert lane_message_subject(message) == case["subject"]
+        assert dict(lane_message_headers(message)) == case["headers"]
+        assert json.loads(lane_message_payload(message)) == json.loads(case["payloadUtf8"])

@@ -2,17 +2,21 @@
 
 `deckr` is the shared spec/core repository for the Deckr ecosystem.
 
-It owns the reusable runtime model, lane contracts, message contracts,
-wire-safe schemas, and first-party language core libraries that other Deckr
-components build on without pulling in controller-specific policy.
+It owns the lane contracts, message contracts, wire-safe schemas, and
+first-party language core libraries that other Deckr components build on
+without pulling in controller-specific policy or a privileged Python runtime.
 That includes:
 
-- the `Component` runtime abstraction
 - named event lanes such as `actions` and `hardware_messages`
 - core Deckr message specifications and identity rules
-- shared runtime utilities such as component lifecycle support and lane/substrate
-  helpers
+- deterministic lane, current-state, and NATS binding helpers
 - hardware-facing and action-provider-facing shared models
+
+The Python implementation is split into two packages:
+
+- `deckr`: core contract/data surfaces only
+- `deckr-python-runtime`: Python-specific runtime support, component hosting,
+  config loading, AnyIO orchestration, CLI, and concrete NATS substrates
 
 The normative architecture reference now lives in:
 
@@ -56,6 +60,10 @@ libraries/
     pyproject.toml
     src/deckr/
     tests/
+  python-runtime/
+    pyproject.toml
+    src/deckr_python_runtime/
+    tests/
   rust/
     Cargo.toml
     src/
@@ -81,18 +89,21 @@ uv run --project libraries/python python scripts/generate_contract_artifacts.py
 
 ## Quick Start
 
-Install the project and development tooling:
+Install the Python core and runtime development tooling:
 
 ```bash
 uv sync --project libraries/python
+uv sync --project libraries/python-runtime
 ```
 
 Run the default validation suite:
 
 ```bash
 uv run --project libraries/python ruff check libraries/python scripts interop
+uv run --project libraries/python-runtime ruff check libraries/python-runtime
 uv run --project libraries/python lint-imports --config libraries/python/.importlinter
-uv run --project libraries/python pytest
+uv run --project libraries/python pytest libraries/python/tests --rootdir libraries/python
+uv run --project libraries/python-runtime pytest libraries/python-runtime/tests --rootdir libraries/python-runtime
 uv run --project libraries/python python interop/runners/python/static_conformance.py
 cargo test --manifest-path libraries/rust/Cargo.toml
 cargo run --manifest-path libraries/rust/Cargo.toml --bin deckr-rust-static-conformance -- --output /tmp/deckr-rust-report.json
@@ -102,6 +113,7 @@ Build distributables:
 
 ```bash
 uv build --project libraries/python
+uv build --project libraries/python-runtime
 cargo build --manifest-path libraries/rust/Cargo.toml
 ```
 
@@ -113,8 +125,6 @@ layout.
 
 Deckr’s target architecture is:
 
-- one runtime abstraction: `Component`
-- one discovery model
 - named event lanes as the only generic wiring primitive
 - shared lane infrastructure for application-facing send/subscribe/fan-out
 - NATS as the distributed lane substrate rather than Deckr-specific
@@ -126,7 +136,12 @@ Deckr’s target architecture is:
   component runtime ids, transport ids, sessions, topics, and paths
 
 Controllers, hardware managers, action provider runtimes, and protocol adapters
-are semantic roles, not different architectural kinds.
+are protocol roles, not separate core contract families.
+
+The Python runtime package exposes a local `Component` hosting model, discovery
+model, manifests, readiness, and dependency evaluation. Those are Python
+runtime concepts, not parity surfaces that Rust or TypeScript core libraries
+must implement to speak Deckr lanes.
 
 If you are looking for the design rules around discovery, lane ownership,
 lane substrate configuration, wire-safe schemas, component planning, and alpha
@@ -144,48 +159,50 @@ route metadata, and remote-endpoint hint architecture are removal targets. This
 does not apply to adapter-private protocols such as external runtime attach,
 third-party plugin protocol adaptation, or concrete device protocols.
 
-The NATS substrate surface is available behind the optional `deckr[nats]` extra.
-Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages
-and `Deckr.state(...)` for current-state declarations. The optional
-`deckr[supervised-nats]` extra also installs the first-party
-`deckr-nats-server-bin` binary package so embedded hosts and the `deckr`
-launcher can supervise a private local `nats-server` process. This is still the
-same NATS/KV runtime contract, not an in-memory or no-NATS product mode.
+The Python NATS substrate surface lives in `deckr-python-runtime` behind the
+optional `deckr-python-runtime[nats]` extra. Use
+`deckr_python_runtime.runtime.Deckr.lane(...).register_endpoint(...)` for
+endpoint-session lane messages and `Deckr.state(...)` for current-state
+declarations. The optional `deckr-python-runtime[supervised-nats]` extra also
+installs the first-party `deckr-nats-server-bin` binary package so embedded
+hosts and the `deckr-python-runtime` launcher can supervise a private local
+`nats-server` process. This is still the same NATS/KV runtime contract, not an
+in-memory or no-NATS product mode.
 
 A real-NATS smoke harness is available at
-`libraries/python/scripts/nats_smoke.py`, and
-`libraries/python/scripts/nats_state_report.py` summarizes the broker's current
-Deckr communication state.
+`libraries/python-runtime/scripts/nats_smoke.py`, and
+`libraries/python-runtime/scripts/nats_state_report.py` summarizes the broker's
+current Deckr communication state.
 
 Run the smoke harness against the included JetStream-enabled NATS compose service:
 
 ```bash
 docker compose -f docker/compose.nats-smoke.yaml up -d nats
-uv run --project libraries/python --extra nats python libraries/python/scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
-uv run --project libraries/python --extra nats python libraries/python/scripts/nats_state_report.py --url nats://127.0.0.1:4222
+uv run --project libraries/python-runtime --extra nats python libraries/python-runtime/scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
+uv run --project libraries/python-runtime --extra nats python libraries/python-runtime/scripts/nats_state_report.py --url nats://127.0.0.1:4222
 docker compose -f docker/compose.nats-smoke.yaml down -v
 ```
 
 Run the same smoke harness with a supervised local NATS server:
 
 ```bash
-uv run --project libraries/python --extra supervised-nats python libraries/python/scripts/nats_smoke.py --supervised --check-ttl
+uv run --project libraries/python-runtime --extra supervised-nats python libraries/python-runtime/scripts/nats_smoke.py --supervised --check-ttl
 ```
 
 ## Package Boundaries
 
-The core architectural rule is that `deckr` stays reusable and controller-free.
-If code is specific to orchestration, rendering policy, device lifecycle
-management, controller configuration, or controller-owned state, it belongs in
-`deckr-controller`, not here.
+The core architectural rule is that `deckr` stays reusable, controller-free, and
+runtime-neutral. Python runtime support belongs in `deckr-python-runtime`; if
+code is specific to component hosting, orchestration, rendering policy, device
+lifecycle management, controller configuration, or controller-owned state, it
+belongs outside the core package.
 
 Internal boundaries are enforced with `libraries/python/.importlinter`:
 
-- `deckr.core` must not import `deckr.hardware`
-- `deckr.core` must not import `deckr.actions`
 - `deckr.contracts` must not import `deckr.actions` or `deckr.hardware`
 - `deckr.state` must not import `deckr.actions`
 - `deckr.hardware` must not import `deckr.actions`
+- `deckr` must not import `anyio`, `click`, `nats`, or `deckr_python_runtime`
 
 Run the contract checks with:
 
@@ -239,10 +256,12 @@ Import `deckr.hardware` directly in all code and docs.
 
 ## Releases
 
-This repository currently releases the Python core distribution: `deckr`.
+This repository currently releases two Python distributions: `deckr` for core
+contracts/data and `deckr-python-runtime` for Python runtime support.
 
-- The source of truth for the Python published version is
-  `libraries/python/pyproject.toml`.
+- The source of truth for the Python core published version is
+  `libraries/python/pyproject.toml`; the runtime version lives in
+  `libraries/python-runtime/pyproject.toml`.
 - Use package tags in the form `deckr-vX.Y.Z`.
 - Stable releases use normal PEP 440 versions such as `0.3.0`.
 - After each stable release, bump immediately to the next development line,
@@ -250,14 +269,17 @@ This repository currently releases the Python core distribution: `deckr`.
 
 ### Release Flow
 
-1. Update `version` in `libraries/python/pyproject.toml` to the stable release
-   number.
+1. Update `version` in `libraries/python/pyproject.toml` and
+   `libraries/python-runtime/pyproject.toml` to the stable release number when
+   releasing both Python packages.
 2. Run the validation suite:
 
    ```bash
    uv run --project libraries/python ruff check libraries/python scripts interop
+   uv run --project libraries/python-runtime ruff check libraries/python-runtime
    uv run --project libraries/python lint-imports --config libraries/python/.importlinter
-   uv run --project libraries/python pytest
+   uv run --project libraries/python pytest libraries/python/tests --rootdir libraries/python
+   uv run --project libraries/python-runtime pytest libraries/python-runtime/tests --rootdir libraries/python-runtime
    uv run --project libraries/python python interop/runners/python/static_conformance.py
    cargo test --manifest-path libraries/rust/Cargo.toml
    cargo run --manifest-path libraries/rust/Cargo.toml --bin deckr-rust-static-conformance -- --output /tmp/deckr-rust-report.json
@@ -267,6 +289,7 @@ This repository currently releases the Python core distribution: `deckr`.
 
    ```bash
    uv lock --project libraries/python --refresh
+   uv lock --project libraries/python-runtime --refresh
    ```
 
 4. Commit the release, for example:
@@ -286,15 +309,17 @@ This repository currently releases the Python core distribution: `deckr`.
    ```bash
    git checkout deckr-v0.3.0
    uv build --project libraries/python
+   uv build --project libraries/python-runtime
    git checkout -
    ```
 
 7. Publish the wheel and sdist using your usual PyPI workflow.
-8. Immediately bump `libraries/python/pyproject.toml` to the next development
-   version, refresh the lockfile, and commit that separately:
+8. Immediately bump changed package versions to the next development version,
+   refresh lockfiles, and commit that separately:
 
    ```bash
    uv lock --project libraries/python --refresh
+   uv lock --project libraries/python-runtime --refresh
    git commit -am "chore(deckr): bump to development release 0.4.0.dev0"
    ```
 

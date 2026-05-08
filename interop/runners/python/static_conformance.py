@@ -21,14 +21,6 @@ from deckr.actions.state import (
     action_provider_catalog_key,
     parse_action_provider_catalog_key,
 )
-from deckr.components._defs import ReadinessState
-from deckr.components.dependencies import (
-    DependencyCondition,
-    DependencyConditionState,
-    DependencyKind,
-    DependencyMode,
-    dependency_effective_readiness,
-)
 from deckr.contracts.artifacts import contract_bundle_path, contract_manifest
 from deckr.contracts.lanes import CORE_LANE_CONTRACTS
 from deckr.contracts.messages import (
@@ -39,6 +31,11 @@ from deckr.contracts.messages import (
     message_is_expired,
     message_targets_endpoint,
     parse_endpoint_address,
+)
+from deckr.contracts.nats import (
+    lane_message_headers,
+    lane_message_payload,
+    lane_message_subject,
 )
 from deckr.hardware.descriptors import CapabilityRef, DeviceRef
 from deckr.hardware.messages import (
@@ -65,7 +62,6 @@ from deckr.state import (
     parse_presence_endpoint_key,
     presence_endpoint_key,
 )
-from deckr.substrates.nats import _headers_for, _payload_for, _subject_for
 
 
 REQUIRED_GROUP_IDS = (
@@ -78,7 +74,6 @@ REQUIRED_GROUP_IDS = (
     "messages.services",
     "runtime.lane",
     "substrate.nats",
-    "components.manifest",
 )
 
 
@@ -175,7 +170,6 @@ def run_conformance(contract_root: Path) -> dict[str, Any]:
         ),
         _check_lane_runtime_vectors(root),
         _check_nats_lane_vectors(root),
-        _check_component_vectors(root, manifest),
     ]
     summary = {
         "passed": sum(group.passed for group in groups),
@@ -460,9 +454,9 @@ def _check_nats_lane_vectors(root: Path) -> GroupResult:
     for case in vector["cases"]:
         try:
             message = DeckrMessage.from_dict(_json(root / case["fixture"]))
-            subject = _subject_for(message)
-            headers = dict(_headers_for(message))
-            payload = _payload_for(message).decode("utf-8")
+            subject = lane_message_subject(message)
+            headers = dict(lane_message_headers(message))
+            payload = lane_message_payload(message).decode("utf-8")
         except Exception as exc:
             group.fail_check(f"{case['id']}: helper failed: {exc}")
             continue
@@ -475,66 +469,6 @@ def _check_nats_lane_vectors(root: Path) -> GroupResult:
         else:
             group.pass_check()
     return group
-
-
-def _check_component_vectors(root: Path, manifest: dict[str, Any]) -> GroupResult:
-    group = GroupResult("components.manifest")
-    schema_path = "schemas/components/component-manifest.v1.schema.json"
-    for artifact in manifest["artifacts"]:
-        if (
-            artifact["kind"] == "fixture"
-            and artifact["schemaPath"] == schema_path
-            and artifact["valid"]
-        ):
-            payload = _json(root / artifact["path"])
-            dependencies = payload.get("dependencies", {})
-            for name, source in dependencies.items():
-                if source["kind"] == "endpoint" and "lane" not in source:
-                    group.fail_check(f"{artifact['path']}: endpoint dependency lacks lane")
-                elif source["kind"] == "service" and "namespace" not in source:
-                    group.fail_check(
-                        f"{artifact['path']}: service dependency lacks namespace"
-                    )
-                else:
-                    group.pass_check()
-
-    vector = _json(root / "vectors" / "component-dependencies.v1.json")
-    for case in vector["cases"]:
-        try:
-            conditions = _component_conditions(case)
-            readiness, reasons, diagnostics = dependency_effective_readiness(
-                conditions
-            )
-        except Exception as exc:
-            group.fail_check(f"{case['id']}: helper failed: {exc}")
-            continue
-        if readiness.value != case["readiness"]:
-            group.fail_check(f"{case['id']}: readiness {readiness.value!r}")
-        elif list(reasons) != case["reasons"]:
-            group.fail_check(f"{case['id']}: reasons {list(reasons)!r}")
-        elif diagnostics != case["diagnostics"]:
-            group.fail_check(f"{case['id']}: diagnostics {diagnostics!r}")
-        else:
-            group.pass_check()
-    if ReadinessState.READY.value == "ready":
-        group.pass_check()
-    else:
-        group.fail_check("Unexpected readiness enum shape")
-    return group
-
-
-def _component_conditions(case: dict[str, Any]) -> dict[str, DependencyCondition]:
-    return {
-        name: DependencyCondition(
-            name=condition["name"],
-            kind=DependencyKind(condition["kind"]),
-            mode=DependencyMode(condition["mode"]),
-            state=DependencyConditionState(condition["state"]),
-            reason=condition.get("reason"),
-            diagnostics=condition.get("diagnostics", {}),
-        )
-        for name, condition in case["conditions"].items()
-    }
 
 
 def _planned_groups() -> list[dict[str, str]]:

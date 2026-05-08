@@ -7,6 +7,7 @@ from deckr.contracts.artifacts import (
     contract_manifest,
     read_contract_artifact,
 )
+from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     DEFAULT_LANE_CONTRACT_REGISTRY,
@@ -69,6 +70,16 @@ from deckr.contracts.models import (
     thaw_json,
     to_camel,
 )
+from deckr.contracts.nats import (
+    LANE_SUBJECT_PREFIX,
+    lane_message_headers,
+    lane_message_payload,
+    lane_message_subject,
+    lane_recipient_header,
+    state_payload,
+    validate_lane_headers,
+    validate_lane_subject_hint,
+)
 
 __all__ = [
     "ACTIONS_LANE",
@@ -99,6 +110,7 @@ __all__ = [
     "JsonObject",
     "LaneContract",
     "LaneContractRegistry",
+    "LANE_SUBJECT_PREFIX",
     "MalformedMessageHandling",
     "MessageTarget",
     "MessageFamily",
@@ -109,16 +121,22 @@ __all__ = [
     "broadcast_target",
     "controller_address",
     "controllers_broadcast",
+    "decode_key_token",
     "contract_bundle_path",
     "contract_bundle_root",
     "contract_manifest",
     "endpoint_address",
     "endpoint_target",
+    "encode_key_token",
     "entity_subject",
     "freeze_json",
     "hardware_manager_address",
     "hardware_managers_broadcast",
     "is_direct_message",
+    "lane_message_headers",
+    "lane_message_payload",
+    "lane_message_subject",
+    "lane_recipient_header",
     "message_expires_at",
     "message_is_expired",
     "message_schema_id_for_lane",
@@ -129,7 +147,10 @@ __all__ = [
     "parse_service_address",
     "read_contract_artifact",
     "service_address",
+    "state_payload",
     "thaw_json",
     "to_camel",
     "unsupported_delivery_reason",
+    "validate_lane_headers",
+    "validate_lane_subject_hint",
 ]

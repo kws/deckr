@@ -16,19 +16,6 @@ wheels = [
 ]
 
 [[package]]
-name = "anyio"
-version = "4.13.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "idna" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/19/14/2c5dd9f512b66549ae92767a9c7b330ae88e1932ca57876909410251fe13/anyio-4.13.0.tar.gz", hash = "sha256:334b70e641fd2221c1505b3890c69882fe4a2df910cba14d97019b90b24439dc", size = 231622, upload-time = "2026-03-24T12:59:09.671Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/42/e921fccf5015463e32a3cf6ee7f980a6ed0f395ceeaa45060b61d86486c2/anyio-4.13.0-py3-none-any.whl", hash = "sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708", size = 114353, upload-time = "2026-03-24T12:59:08.246Z" },
-]
-
-[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -167,74 +154,28 @@ name = "deckr"
 version = "0.3.0.dev0"
 source = { editable = "." }
 dependencies = [
-    { name = "anyio" },
     { name = "pydantic" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "click" },
-    { name = "deckr-nats-server-bin" },
-    { name = "nats-py" },
-]
-cli = [
-    { name = "click" },
-]
-nats = [
-    { name = "nats-py" },
-]
-supervised-nats = [
-    { name = "deckr-nats-server-bin" },
-    { name = "nats-py" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "click" },
     { name = "import-linter" },
     { name = "jsonschema" },
-    { name = "nats-py" },
     { name = "pytest" },
-    { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "anyio", specifier = ">=4.12.1,<5.0.0" },
-    { name = "click", marker = "extra == 'cli'", specifier = ">=8.3.1,<9.0.0" },
-    { name = "deckr", extras = ["cli", "nats", "supervised-nats"], marker = "extra == 'all'" },
-    { name = "deckr-nats-server-bin", marker = "extra == 'supervised-nats'", specifier = ">=2.14.0,<2.15.0" },
-    { name = "nats-py", marker = "extra == 'nats'", specifier = ">=2.14.0,<3.0.0" },
-    { name = "nats-py", marker = "extra == 'supervised-nats'", specifier = ">=2.14.0,<3.0.0" },
-    { name = "pydantic", specifier = ">=2.12.5,<3.0.0" },
-]
-provides-extras = ["cli", "nats", "supervised-nats", "all"]
+requires-dist = [{ name = "pydantic", specifier = ">=2.12.5,<3.0.0" }]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "click", specifier = ">=8.3.1,<9.0.0" },
     { name = "import-linter", specifier = ">=2.11,<3.0.0" },
     { name = "jsonschema", specifier = ">=4.26.0,<5.0.0" },
-    { name = "nats-py", specifier = ">=2.14.0,<3.0.0" },
     { name = "pytest", specifier = ">=9.0.2,<10.0.0" },
-    { name = "pytest-asyncio", specifier = ">=1.3.0,<2.0.0" },
     { name = "pytest-cov", specifier = ">=6.0.0,<7.0.0" },
     { name = "ruff", specifier = ">=0.14.14,<0.15.0" },
-]
-
-[[package]]
-name = "deckr-nats-server-bin"
-version = "2.14.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/64/3410747dedf4356746612531a10740ce17c1b7a19629bf9069165101d550/deckr_nats_server_bin-2.14.0-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:e9d7fdbef007bb8c50e38c954ebd592ba86d1bb56db2b708b73925c601c8f863", size = 6791625, upload-time = "2026-05-03T13:36:49.692Z" },
-    { url = "https://files.pythonhosted.org/packages/80/ce/4c2470644ecd329f78634084d2cb2edb439bd07f8b07986665994012e00c/deckr_nats_server_bin-2.14.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:0e3dc1ffdc30b7c11fff9213670ba899f5bfcfb289863df37d613b91fbdd5d4a", size = 6242013, upload-time = "2026-05-03T13:36:51.857Z" },
-    { url = "https://files.pythonhosted.org/packages/90/71/85b1a0b0d08f4f75e4ac2be5774404329bd90e505277024d7c8ee39ad9b9/deckr_nats_server_bin-2.14.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2ece918643c7e3e03cb6bcd277982df72ca736e5332b8526920e3ea01350fd75", size = 6058260, upload-time = "2026-05-03T13:36:53.921Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/4f/19fcd8cd0b1fe7587894dc4f904d7c43b00755e8fcd61badd9dd6b690bdb/deckr_nats_server_bin-2.14.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3b0d9e19a53ca9583caa947a0c608b1c27f677d34d96da2c70c8d77babd72da1", size = 6741998, upload-time = "2026-05-03T13:36:55.692Z" },
-    { url = "https://files.pythonhosted.org/packages/10/17/23dde829d01fb935201d0a49f2c42254b2c1a67801a23b3b7ebfff8e43cd/deckr_nats_server_bin-2.14.0-py3-none-win_amd64.whl", hash = "sha256:f3c3c556ce974830c8b9eac9933b8a031e1ae50133eb616efe9229f38f870fab", size = 6904701, upload-time = "2026-05-03T13:36:57.702Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/83/3aca8048feef733fc090dd6f1932591e81c1cf678f3199cf4721a947138a/deckr_nats_server_bin-2.14.0-py3-none-win_arm64.whl", hash = "sha256:b7c78779767a7633b4707f3ba5432168d7e747de4d86485a78a93621e0c987f4", size = 6141877, upload-time = "2026-05-03T13:36:59.691Z" },
 ]
 
 [[package]]
@@ -331,15 +272,6 @@ wheels = [
 ]
 
 [[package]]
-name = "idna"
-version = "3.11"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6f/6d/0703ccc57f3a7233505399edb88de3cbd678da106337b9fcde432b65ed60/idna-3.11.tar.gz", hash = "sha256:795dafcc9c04ed0c1fb032c2aa73654d8e8c5023a7df64a53f39190ada629902", size = 194582, upload-time = "2025-10-12T14:55:20.501Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/61/66938bbb5fc52dbdf84594873d5b51fb1f7c7794e9c0f5bd885f30bc507b/idna-3.11-py3-none-any.whl", hash = "sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea", size = 71008, upload-time = "2025-10-12T14:55:18.883Z" },
-]
-
-[[package]]
 name = "import-linter"
 version = "2.11"
 source = { registry = "https://pypi.org/simple" }
@@ -409,15 +341,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
-]
-
-[[package]]
-name = "nats-py"
-version = "2.14.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c3/f8/b956c4621ba88748ed707c52e69f95b7a50c8914e750edca59a5bef84a76/nats_py-2.14.0.tar.gz", hash = "sha256:4ed02cb8e3b55c68074a063aa2687087115d805d1513297da90cb2068fb07bed", size = 120751, upload-time = "2026-02-23T22:44:58.988Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/39/0e87753df1072254bac190b33ed34b264f28f6aa9bea0f01b7e818071756/nats_py-2.14.0-py3-none-any.whl", hash = "sha256:4116f5d2233ce16e63c3d5538fa40a5e207f75fcf42a741773929ddf1e29d19d", size = 82259, upload-time = "2026-02-23T22:45:00.152Z" },
 ]
 
 [[package]]
@@ -578,19 +501,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/549bd94f1a0a402dc8cf64563a117c0f3765662e2e668477624baeec44d5/pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c", size = 1572165, upload-time = "2026-04-07T17:16:18.027Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9", size = 375249, upload-time = "2026-04-07T17:16:16.13Z" },
-]
-
-[[package]]
-name = "pytest-asyncio"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pytest" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/90/2c/8af215c0f776415f3590cac4f9086ccefd6fd463befeae41cd4d3f193e5a/pytest_asyncio-1.3.0.tar.gz", hash = "sha256:d7f52f36d231b80ee124cd216ffb19369aa168fc10095013c6b014a34d3ee9e5", size = 50087, upload-time = "2025-11-10T16:07:47.256Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/35/f8b19922b6a25bc0880171a2f1a003eaeb93657475193ab516fd87cac9da/pytest_asyncio-1.3.0-py3-none-any.whl", hash = "sha256:611e26147c7f77640e6d0a92a38ed17c3e9848063698d5c93d5aa7aa11cebff5", size = 15075, upload-time = "2025-11-10T16:07:45.537Z" },
 ]
 
 [[package]]

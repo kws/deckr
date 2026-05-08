@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from memory_lane_substrate import MemoryStateStore
 from pydantic import ValidationError
 
 from deckr.contracts.lanes import CORE_LANE_CONTRACTS
@@ -29,10 +28,8 @@ from deckr.services.messages import (
 )
 from deckr.services.state import (
     ServiceCatalog,
-    ServiceLiveState,
     ServiceStatus,
     ServiceStatusValue,
-    live_service_check,
     parse_service_catalog_key,
     parse_service_status_key,
     parse_service_view_key,
@@ -40,7 +37,6 @@ from deckr.services.state import (
     service_status_key,
     service_view_key,
 )
-from deckr.state import EndpointPresence, presence_endpoint_key
 
 
 def _now() -> datetime:
@@ -221,74 +217,3 @@ def test_service_catalog_and_status_validate_endpoint_identity() -> None:
             status=ServiceStatusValue.AVAILABLE,
             timestamp=_now(),
         )
-
-
-@pytest.mark.asyncio
-async def test_live_service_check_requires_presence_catalog_status_and_session() -> None:
-    lease = MemoryStateStore(name="lease")
-    discovery = MemoryStateStore(name="discovery")
-    endpoint = service_address("sonos-home")
-    await lease.put(
-        presence_endpoint_key(lane=SERVICES_LANE, endpoint=endpoint),
-        EndpointPresence(
-            endpoint=endpoint,
-            lane=SERVICES_LANE,
-            sessionId="service-session",
-            timestamp=_now(),
-            ttlSeconds=30,
-        ),
-    )
-    await discovery.put(
-        service_catalog_key("sonos-home"),
-        ServiceCatalog(
-            serviceId="sonos-home",
-            serviceEndpoint=endpoint,
-            serviceNamespace="dev.deckr.sonos.service",
-            sessionId="service-session",
-            supportedOperations=("play", "pause"),
-            viewPrefixes=("view.services.sonos-home",),
-            timestamp=_now(),
-        ),
-    )
-    await discovery.put(
-        service_status_key("sonos-home"),
-        ServiceStatus(
-            serviceId="sonos-home",
-            serviceEndpoint=endpoint,
-            serviceNamespace="dev.deckr.sonos.service",
-            sessionId="service-session",
-            status=ServiceStatusValue.AVAILABLE,
-            timestamp=_now(),
-        ),
-    )
-
-    check = await live_service_check(
-        lease,
-        discovery,
-        service_id="sonos-home",
-        service_namespace="dev.deckr.sonos.service",
-    )
-
-    assert check.state == ServiceLiveState.AVAILABLE
-    assert check.session_id == "service-session"
-
-    await discovery.put(
-        service_status_key("sonos-home"),
-        ServiceStatus(
-            serviceId="sonos-home",
-            serviceEndpoint=endpoint,
-            serviceNamespace="dev.deckr.sonos.service",
-            sessionId="old-session",
-            status=ServiceStatusValue.AVAILABLE,
-            timestamp=_now(),
-        ),
-    )
-
-    stale = await live_service_check(
-        lease,
-        discovery,
-        service_id="sonos-home",
-        service_namespace="dev.deckr.sonos.service",
-    )
-    assert stale.state == ServiceLiveState.INVALID
-    assert stale.reason == "session_mismatch"
