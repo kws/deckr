@@ -49,7 +49,7 @@ identifiers. Third-party packages, deployment-specific packages, and personal
 plugins must not squat under `dev.deckr.*`.
 
 Kaj-owned examples in this workspace use `com.k-si.deckr.*`, such as
-`com.k-si.deckr.kaj` and `com.k-si.deckr.kaj.action.pager`. Those are not
+`com.k-si.deckr.kaj` and `com.k-si.deckr.kaj.action.album_browser`. Those are not
 Deckr-owned identifiers; they are examples of a package owner using its own
 namespace.
 
