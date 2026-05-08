@@ -279,7 +279,7 @@
   "$id": "dev.deckr.hardware.capability_descriptor.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Descriptor for one input, output, state, or command capability.",
+  "description": "Contract shape for one hardware capability exposed by a control or device. Capability identifiers, family/type/direction, access modes, value schemas, command schemas, and constraints are consumed across language runtimes.",
   "properties": {
     "access": {
       "items": {
@@ -296,6 +296,11 @@
       "type": "array"
     },
     "capabilityId": {
+      "description": "Stable capability identifier scoped to the containing control or device.",
+      "examples": [
+        "button.press",
+        "raster.bitmap"
+      ],
       "title": "Capabilityid",
       "type": "string"
     },
@@ -357,7 +362,11 @@
           "type": "string"
         }
       ],
-      "description": "Deckr-owned families must be one of the v1 core families; extension families must be globally namespaced and must not use the dev.deckr. namespace.",
+      "description": "Namespaced capability family. Enum and family values are case-sensitive contract values.",
+      "examples": [
+        "dev.deckr.input.button",
+        "dev.deckr.output.raster"
+      ],
       "title": "Family"
     },
     "projection": {
@@ -411,5 +420,9 @@
   ],
   "title": "Deckr CapabilityDescriptor",
   "type": "object",
-  "x-deckr-schema-version": "1"
+  "x-deckr-example-fixtures": [
+    "fixtures/valid/hardware/capability-descriptor.v1.json"
+  ],
+  "x-deckr-schema-version": "1",
+  "x-deckr-surface": "messages.hardware"
 }

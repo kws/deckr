@@ -164,6 +164,56 @@ LANE_SCHEMA_PATHS = {
     SERVICES_LANE: "schemas/services/services.v1.schema.json",
 }
 
+SCHEMA_METADATA_SCHEMA_ID = "dev.deckr.contract.schema_metadata.v1"
+SCHEMA_METADATA_ALLOWED_KEYS = frozenset(
+    {
+        "$comment",
+        "description",
+        "examples",
+        "title",
+    }
+)
+SCHEMA_METADATA_VALIDATION_KEYS = frozenset(
+    {
+        "$ref",
+        "additionalProperties",
+        "allOf",
+        "anyOf",
+        "const",
+        "contains",
+        "dependentRequired",
+        "dependentSchemas",
+        "else",
+        "enum",
+        "exclusiveMaximum",
+        "exclusiveMinimum",
+        "format",
+        "if",
+        "items",
+        "maxItems",
+        "maxLength",
+        "maxProperties",
+        "maximum",
+        "minItems",
+        "minLength",
+        "minProperties",
+        "minimum",
+        "multipleOf",
+        "not",
+        "oneOf",
+        "pattern",
+        "patternProperties",
+        "prefixItems",
+        "properties",
+        "propertyNames",
+        "required",
+        "then",
+        "type",
+        "unevaluatedProperties",
+        "uniqueItems",
+    }
+)
+
 LANE_ASYNCAPI_COMPONENTS = {
     ACTIONS_LANE: {
         "channel": "actionsLane",
@@ -198,6 +248,7 @@ LANE_ASYNCAPI_COMPONENTS = {
 def generate_contract_artifacts(output_root: Path | None = None) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     bundle_root = output_root or repo_root / "contract" / CONTRACT_VERSION
+    schema_metadata = _load_schema_metadata(repo_root)
     if bundle_root.exists():
         shutil.rmtree(bundle_root)
     bundle_root.mkdir(parents=True)
@@ -216,15 +267,21 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
         payload: Mapping[str, Any] | list[Any],
         **metadata: Any,
     ) -> None:
-        _write_json(bundle_root / path, payload)
+        artifact_payload = payload
         if kind == "schema":
             if not isinstance(payload, Mapping):
                 raise TypeError(f"Schema artifact {path!r} must be a mapping")
-            schema_payloads[path] = payload
+            artifact_payload = _apply_schema_metadata_overlay(
+                path,
+                payload,
+                schema_metadata,
+            )
+            schema_payloads[path] = artifact_payload
         if kind == "fixture" and metadata.get("valid") is True:
             if not isinstance(payload, Mapping):
                 raise TypeError(f"Fixture artifact {path!r} must be a mapping")
             valid_fixture_payloads[path] = payload
+        _write_json(bundle_root / path, artifact_payload)
         artifacts.append(
             {
                 "kind": kind,
@@ -237,6 +294,7 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
         )
 
     _add_schemas(add_artifact)
+    _assert_all_schema_metadata_applied(schema_metadata, schema_payloads.keys())
     fixtures = _fixtures()
     for fixture in fixtures:
         add_artifact(**fixture)
@@ -271,6 +329,107 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
     }
     _write_json(bundle_root / "manifest.json", manifest)
     _write_text(bundle_root / "index.html", _render_index(manifest, asyncapi_document))
+
+
+def _load_schema_metadata(repo_root: Path) -> Mapping[str, Mapping[str, Mapping[str, Any]]]:
+    path = repo_root / "contract" / "authoring" / CONTRACT_VERSION / "schema-metadata.json"
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"{path}: schema metadata must be an object")
+    if payload.get("schema") != SCHEMA_METADATA_SCHEMA_ID:
+        raise ValueError(f"{path}: unexpected schema metadata id")
+    schemas = payload.get("schemas")
+    if not isinstance(schemas, Mapping):
+        raise ValueError(f"{path}: schemas must be an object")
+    return schemas
+
+
+def _apply_schema_metadata_overlay(
+    schema_path: str,
+    schema_payload: Mapping[str, Any],
+    schema_metadata: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> dict[str, Any]:
+    enriched = deepcopy(dict(schema_payload))
+    overlays = schema_metadata.get(schema_path)
+    if overlays is None:
+        return enriched
+    if not isinstance(overlays, Mapping):
+        raise ValueError(f"{schema_path}: schema metadata entry must be an object")
+    for pointer, overlay in sorted(overlays.items()):
+        if not isinstance(pointer, str):
+            raise ValueError(f"{schema_path}: metadata pointer must be a string")
+        if not isinstance(overlay, Mapping):
+            raise ValueError(f"{schema_path} {pointer}: metadata overlay must be an object")
+        _validate_schema_metadata_overlay(schema_path, pointer, overlay)
+        target = _resolve_json_pointer(enriched, pointer)
+        if not isinstance(target, dict):
+            raise ValueError(
+                f"{schema_path} {pointer}: metadata target must be a JSON object"
+            )
+        target.update(deepcopy(dict(overlay)))
+    return enriched
+
+
+def _validate_schema_metadata_overlay(
+    schema_path: str,
+    pointer: str,
+    overlay: Mapping[str, Any],
+) -> None:
+    for key in overlay:
+        if key in SCHEMA_METADATA_VALIDATION_KEYS:
+            raise ValueError(
+                f"{schema_path} {pointer}: {key!r} changes validation semantics"
+            )
+        if key in SCHEMA_METADATA_ALLOWED_KEYS or key.startswith("x-deckr-"):
+            continue
+        raise ValueError(f"{schema_path} {pointer}: unsupported metadata key {key!r}")
+
+
+def _resolve_json_pointer(document: Any, pointer: str) -> Any:
+    if pointer == "":
+        return document
+    if not pointer.startswith("/"):
+        raise ValueError(f"JSON pointer must be empty or start with '/': {pointer!r}")
+    current = document
+    for raw_token in pointer[1:].split("/"):
+        token = _json_pointer_unescape(raw_token)
+        if isinstance(current, dict):
+            if token not in current:
+                raise ValueError(f"JSON pointer does not resolve: {pointer!r}")
+            current = current[token]
+            continue
+        if isinstance(current, list):
+            try:
+                index = int(token)
+            except ValueError as exc:
+                raise ValueError(f"JSON pointer does not resolve: {pointer!r}") from exc
+            try:
+                current = current[index]
+            except IndexError as exc:
+                raise ValueError(f"JSON pointer does not resolve: {pointer!r}") from exc
+            continue
+        raise ValueError(f"JSON pointer does not resolve: {pointer!r}")
+    return current
+
+
+def _json_pointer_unescape(token: str) -> str:
+    if "~" in token:
+        remainder = token.replace("~1", "").replace("~0", "")
+        if "~" in remainder:
+            raise ValueError(f"Invalid JSON pointer escape in token {token!r}")
+    return token.replace("~1", "/").replace("~0", "~")
+
+
+def _assert_all_schema_metadata_applied(
+    schema_metadata: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    schema_paths: Any,
+) -> None:
+    missing = sorted(set(schema_metadata) - set(schema_paths))
+    if missing:
+        names = ", ".join(missing)
+        raise RuntimeError(f"Schema metadata references unknown schema(s): {names}")
 
 
 def _add_schemas(add_artifact) -> None:
@@ -864,6 +1023,22 @@ def _fixtures() -> list[dict[str, Any]]:
             valid=False,
         ),
         _fixture(
+            artifact_id="dev.deckr.fixture.actions.settings_request.invalid_unknown_field.v1",
+            path="fixtures/invalid/actions/settings-request-unknown-field.v1.json",
+            title="Invalid settingsRequest with unknown top-level field",
+            schema_path="schemas/actions/actions.v1.schema.json",
+            payload={**settings_request, "unexpectedField": True},
+            valid=False,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.actions.settings_request.invalid_lane_case.v1",
+            path="fixtures/invalid/actions/settings-request-invalid-lane-case.v1.json",
+            title="Invalid settingsRequest with incorrectly cased lane",
+            schema_path="schemas/actions/actions.v1.schema.json",
+            payload={**settings_request, "lane": "Actions"},
+            valid=False,
+        ),
+        _fixture(
             artifact_id="dev.deckr.fixture.hardware.capability_descriptor.invalid_missing_family.v1",
             path="fixtures/invalid/hardware/capability-descriptor-missing-family.v1.json",
             title="Invalid capability descriptor missing family",
@@ -882,6 +1057,14 @@ def _fixtures() -> list[dict[str, Any]]:
             valid=False,
         ),
         _fixture(
+            artifact_id="dev.deckr.fixture.hardware.control_command.invalid_null_sender.v1",
+            path="fixtures/invalid/hardware/control-command-null-sender.v1.json",
+            title="Invalid controlCommand with null sender",
+            schema_path="schemas/hardware/hardware-messages.v1.schema.json",
+            payload={**hardware_command, "sender": None},
+            valid=False,
+        ),
+        _fixture(
             artifact_id="dev.deckr.fixture.services.service_command.invalid_missing_namespace.v1",
             path="fixtures/invalid/services/service-command-missing-namespace.v1.json",
             title="Invalid serviceCommand missing serviceNamespace",
@@ -893,6 +1076,14 @@ def _fixtures() -> list[dict[str, Any]]:
             valid=False,
         ),
         _fixture(
+            artifact_id="dev.deckr.fixture.services.service_command.invalid_timestamp.v1",
+            path="fixtures/invalid/services/service-command-invalid-timestamp.v1.json",
+            title="Invalid serviceCommand with malformed createdAt timestamp",
+            schema_path="schemas/services/services.v1.schema.json",
+            payload={**service_command, "createdAt": "not-a-date-time"},
+            valid=False,
+        ),
+        _fixture(
             artifact_id="dev.deckr.fixture.state.endpoint_presence.invalid_missing_session.v1",
             path="fixtures/invalid/state/endpoint-presence-missing-session.v1.json",
             title="Invalid endpoint presence missing sessionId",
@@ -900,6 +1091,20 @@ def _fixtures() -> list[dict[str, Any]]:
             payload={
                 "endpoint": "action_provider:clock-main",
                 "lane": "actions",
+                "timestamp": "2026-04-29T10:00:00Z",
+                "ttlSeconds": 30,
+            },
+            valid=False,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.state.endpoint_presence.invalid_endpoint.v1",
+            path="fixtures/invalid/state/endpoint-presence-malformed-endpoint.v1.json",
+            title="Invalid endpoint presence with malformed endpoint address",
+            schema_path="schemas/state/endpoint-presence.v1.schema.json",
+            payload={
+                "endpoint": "action_provider",
+                "lane": "actions",
+                "sessionId": "provider-session",
                 "timestamp": "2026-04-29T10:00:00Z",
                 "ttlSeconds": 30,
             },
@@ -942,6 +1147,12 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
                 _key_token_case("deck:one"),
                 _key_token_case("provider with spaces"),
                 _key_token_case("elgato.com.example.plugin"),
+                {
+                    "id": "decode.invalid-utf8",
+                    "operation": "decode_key_token",
+                    "encoded": "b64_abc",
+                    "valid": False,
+                },
             ],
         },
     )
@@ -1036,6 +1247,21 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
                         ).to_dict()
                     },
                 },
+                {
+                    "id": "presence.invalid.endpoint-empty-id",
+                    "helper": "parse_presence_endpoint_key",
+                    "key": "presence.endpoint.actions.controller.b64_",
+                    "valid": False,
+                },
+                {
+                    "id": "settings.target.invalid-scope-shape",
+                    "helper": "parse_settings_target_key",
+                    "key": (
+                        "settings.target.unknown.controller-main.office-panel."
+                        "clock-main.dev.deckr.clock"
+                    ),
+                    "valid": False,
+                },
             ],
         },
     )
@@ -1084,6 +1310,16 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
                 {
                     "id": "endpoint.unknown-family",
                     "input": "driver:mirabox-main",
+                    "valid": False,
+                },
+                {
+                    "id": "endpoint.missing-separator",
+                    "input": "controller-main",
+                    "valid": False,
+                },
+                {
+                    "id": "endpoint.case-sensitive-family",
+                    "input": "Controller:controller-main",
                     "valid": False,
                 },
             ],

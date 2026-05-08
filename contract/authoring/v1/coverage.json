@@ -1,0 +1,242 @@
+{
+  "schema": "dev.deckr.contract.coverage.v1",
+  "surfaces": [
+    {
+      "conformanceGroups": [
+        "artifacts.manifest"
+      ],
+      "id": "artifacts.manifest",
+      "invalidFixtures": [],
+      "schemas": [],
+      "validFixtures": [],
+      "vectors": []
+    },
+    {
+      "conformanceGroups": [
+        "schemas.fixtures"
+      ],
+      "id": "schemas.fixtures",
+      "invalidFixtures": [
+        "fixtures/invalid/actions/settings-request-invalid-lane-case.v1.json",
+        "fixtures/invalid/actions/settings-request-missing-target.v1.json",
+        "fixtures/invalid/actions/settings-request-unknown-field.v1.json",
+        "fixtures/invalid/hardware/capability-descriptor-missing-family.v1.json",
+        "fixtures/invalid/hardware/control-command-null-sender.v1.json",
+        "fixtures/invalid/hardware/control-input-missing-device-ref.v1.json",
+        "fixtures/invalid/services/service-command-invalid-timestamp.v1.json",
+        "fixtures/invalid/services/service-command-missing-namespace.v1.json",
+        "fixtures/invalid/state/endpoint-presence-malformed-endpoint.v1.json",
+        "fixtures/invalid/state/endpoint-presence-missing-session.v1.json"
+      ],
+      "schemas": [
+        "schemas/actions/actions.v1.schema.json",
+        "schemas/hardware/capability-descriptor.v1.schema.json",
+        "schemas/hardware/control-descriptor.v1.schema.json",
+        "schemas/hardware/device-descriptor.v1.schema.json",
+        "schemas/hardware/hardware-messages.v1.schema.json",
+        "schemas/services/services.v1.schema.json",
+        "schemas/state/action-provider-catalog.v1.schema.json",
+        "schemas/state/device-claim.v1.schema.json",
+        "schemas/state/endpoint-presence.v1.schema.json",
+        "schemas/state/hardware-inventory.v1.schema.json",
+        "schemas/state/service-catalog.v1.schema.json",
+        "schemas/state/service-status.v1.schema.json"
+      ],
+      "validFixtures": [
+        "fixtures/valid/actions/action-instance-created.v1.json",
+        "fixtures/valid/actions/binding-output.v1.json",
+        "fixtures/valid/actions/open-page.v1.json",
+        "fixtures/valid/actions/settings-request.v1.json",
+        "fixtures/valid/hardware/capability-descriptor.v1.json",
+        "fixtures/valid/hardware/capability-state-changed.v1.json",
+        "fixtures/valid/hardware/capability-state-request.v1.json",
+        "fixtures/valid/hardware/command-rejected.v1.json",
+        "fixtures/valid/hardware/control-command.v1.json",
+        "fixtures/valid/hardware/control-descriptor.v1.json",
+        "fixtures/valid/hardware/control-input.v1.json",
+        "fixtures/valid/hardware/device-available.v1.json",
+        "fixtures/valid/hardware/device-descriptor.v1.json",
+        "fixtures/valid/services/service-command-reply.v1.json",
+        "fixtures/valid/services/service-command.v1.json",
+        "fixtures/valid/state/action-provider-catalog.v1.json",
+        "fixtures/valid/state/device-claim.v1.json",
+        "fixtures/valid/state/endpoint-presence.v1.json",
+        "fixtures/valid/state/hardware-inventory.v1.json",
+        "fixtures/valid/state/service-catalog.v1.json",
+        "fixtures/valid/state/service-status.v1.json"
+      ],
+      "vectors": []
+    },
+    {
+      "conformanceGroups": [
+        "vectors.keys"
+      ],
+      "id": "vectors.keys",
+      "invalidFixtures": [],
+      "schemas": [],
+      "validFixtures": [],
+      "vectors": [
+        "vectors/key-tokens.v1.json",
+        "vectors/state-keys.v1.json"
+      ]
+    },
+    {
+      "conformanceGroups": [
+        "vectors.identity"
+      ],
+      "id": "vectors.identity",
+      "invalidFixtures": [],
+      "schemas": [],
+      "validFixtures": [],
+      "vectors": [
+        "vectors/identity.v1.json"
+      ]
+    },
+    {
+      "conformanceGroups": [
+        "messages.actions"
+      ],
+      "id": "messages.actions",
+      "invalidFixtures": [
+        "fixtures/invalid/actions/settings-request-invalid-lane-case.v1.json",
+        "fixtures/invalid/actions/settings-request-missing-target.v1.json",
+        "fixtures/invalid/actions/settings-request-unknown-field.v1.json"
+      ],
+      "schemas": [
+        "schemas/actions/actions.v1.schema.json"
+      ],
+      "validFixtures": [
+        "fixtures/valid/actions/action-instance-created.v1.json",
+        "fixtures/valid/actions/binding-output.v1.json",
+        "fixtures/valid/actions/open-page.v1.json",
+        "fixtures/valid/actions/settings-request.v1.json"
+      ],
+      "vectors": []
+    },
+    {
+      "conformanceGroups": [
+        "messages.hardware"
+      ],
+      "id": "messages.hardware",
+      "invalidFixtures": [
+        "fixtures/invalid/hardware/capability-descriptor-missing-family.v1.json",
+        "fixtures/invalid/hardware/control-command-null-sender.v1.json",
+        "fixtures/invalid/hardware/control-input-missing-device-ref.v1.json"
+      ],
+      "schemas": [
+        "schemas/hardware/capability-descriptor.v1.schema.json",
+        "schemas/hardware/control-descriptor.v1.schema.json",
+        "schemas/hardware/device-descriptor.v1.schema.json",
+        "schemas/hardware/hardware-messages.v1.schema.json"
+      ],
+      "validFixtures": [
+        "fixtures/valid/hardware/capability-descriptor.v1.json",
+        "fixtures/valid/hardware/capability-state-changed.v1.json",
+        "fixtures/valid/hardware/capability-state-request.v1.json",
+        "fixtures/valid/hardware/command-rejected.v1.json",
+        "fixtures/valid/hardware/control-command.v1.json",
+        "fixtures/valid/hardware/control-descriptor.v1.json",
+        "fixtures/valid/hardware/control-input.v1.json",
+        "fixtures/valid/hardware/device-available.v1.json",
+        "fixtures/valid/hardware/device-descriptor.v1.json"
+      ],
+      "vectors": []
+    },
+    {
+      "conformanceGroups": [
+        "messages.services"
+      ],
+      "id": "messages.services",
+      "invalidFixtures": [
+        "fixtures/invalid/services/service-command-invalid-timestamp.v1.json",
+        "fixtures/invalid/services/service-command-missing-namespace.v1.json"
+      ],
+      "schemas": [
+        "schemas/services/services.v1.schema.json"
+      ],
+      "validFixtures": [
+        "fixtures/valid/services/service-command-reply.v1.json",
+        "fixtures/valid/services/service-command.v1.json"
+      ],
+      "vectors": []
+    },
+    {
+      "conformanceGroups": [
+        "schemas.fixtures",
+        "vectors.keys"
+      ],
+      "id": "state.kv",
+      "invalidFixtures": [
+        "fixtures/invalid/state/endpoint-presence-malformed-endpoint.v1.json",
+        "fixtures/invalid/state/endpoint-presence-missing-session.v1.json"
+      ],
+      "schemas": [
+        "schemas/state/action-provider-catalog.v1.schema.json",
+        "schemas/state/device-claim.v1.schema.json",
+        "schemas/state/endpoint-presence.v1.schema.json",
+        "schemas/state/hardware-inventory.v1.schema.json",
+        "schemas/state/service-catalog.v1.schema.json",
+        "schemas/state/service-status.v1.schema.json"
+      ],
+      "validFixtures": [
+        "fixtures/valid/state/action-provider-catalog.v1.json",
+        "fixtures/valid/state/device-claim.v1.json",
+        "fixtures/valid/state/endpoint-presence.v1.json",
+        "fixtures/valid/state/hardware-inventory.v1.json",
+        "fixtures/valid/state/service-catalog.v1.json",
+        "fixtures/valid/state/service-status.v1.json"
+      ],
+      "vectors": [
+        "vectors/key-tokens.v1.json",
+        "vectors/state-keys.v1.json"
+      ]
+    },
+    {
+      "conformanceGroups": [
+        "runtime.lane"
+      ],
+      "id": "runtime.lane",
+      "invalidFixtures": [],
+      "schemas": [
+        "schemas/actions/actions.v1.schema.json",
+        "schemas/hardware/hardware-messages.v1.schema.json",
+        "schemas/services/services.v1.schema.json"
+      ],
+      "validFixtures": [
+        "fixtures/valid/actions/settings-request.v1.json"
+      ],
+      "vectors": [
+        "vectors/lane-runtime.v1.json"
+      ]
+    },
+    {
+      "conformanceGroups": [
+        "substrate.nats"
+      ],
+      "id": "substrate.nats",
+      "invalidFixtures": [],
+      "schemas": [
+        "schemas/actions/actions.v1.schema.json",
+        "schemas/hardware/hardware-messages.v1.schema.json",
+        "schemas/services/services.v1.schema.json"
+      ],
+      "validFixtures": [
+        "fixtures/valid/actions/action-instance-created.v1.json",
+        "fixtures/valid/actions/binding-output.v1.json",
+        "fixtures/valid/actions/open-page.v1.json",
+        "fixtures/valid/actions/settings-request.v1.json",
+        "fixtures/valid/hardware/capability-state-changed.v1.json",
+        "fixtures/valid/hardware/capability-state-request.v1.json",
+        "fixtures/valid/hardware/command-rejected.v1.json",
+        "fixtures/valid/hardware/control-command.v1.json",
+        "fixtures/valid/hardware/control-input.v1.json",
+        "fixtures/valid/hardware/device-available.v1.json",
+        "fixtures/valid/services/service-command-reply.v1.json",
+        "fixtures/valid/services/service-command.v1.json"
+      ],
+      "vectors": [
+        "vectors/nats-lane.v1.json"
+      ]
+    }
+  ]
+}

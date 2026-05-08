@@ -1372,12 +1372,13 @@
             },
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             },
             "JsonValue": {}
           },
-          "description": "Current action catalog advertised by one action provider endpoint.",
+          "description": "Current-state payload advertising the actions available from one configured action provider endpoint and session.",
           "properties": {
             "actions": {
               "additionalProperties": {
@@ -1408,6 +1409,10 @@
               "type": "string"
             },
             "providerInstanceId": {
+              "description": "Configured action provider endpoint id that owns this catalog.",
+              "examples": [
+                "clock-main"
+              ],
               "title": "Providerinstanceid",
               "type": "string"
             },
@@ -1431,7 +1436,11 @@
           "title": "Action provider catalog state",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/state/action-provider-catalog.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "state.kv"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.state.action_provider_catalog.v1",
@@ -2246,6 +2255,7 @@
             },
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             },
@@ -2846,6 +2856,7 @@
               "type": "object"
             }
           },
+          "description": "Envelope schema for all messages carried on the Deckr actions lane. The messageType value selects the body shape; endpoint addresses, subjects, timestamps, and recipient targeting remain part of the shared message envelope contract.",
           "oneOf": [
             {
               "allOf": [
@@ -3318,7 +3329,14 @@
           ],
           "title": "Deckr actions Lane Message",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/actions/settings-request.v1.json",
+            "fixtures/valid/actions/action-instance-created.v1.json",
+            "fixtures/valid/actions/binding-output.v1.json",
+            "fixtures/valid/actions/open-page.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "messages.actions"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.message.actions.v1",
@@ -3606,7 +3624,7 @@
             },
             "JsonValue": {}
           },
-          "description": "Descriptor for one input, output, state, or command capability.",
+          "description": "Contract shape for one hardware capability exposed by a control or device. Capability identifiers, family/type/direction, access modes, value schemas, command schemas, and constraints are consumed across language runtimes.",
           "properties": {
             "access": {
               "items": {
@@ -3623,6 +3641,11 @@
               "type": "array"
             },
             "capabilityId": {
+              "description": "Stable capability identifier scoped to the containing control or device.",
+              "examples": [
+                "button.press",
+                "raster.bitmap"
+              ],
               "title": "Capabilityid",
               "type": "string"
             },
@@ -3684,7 +3707,11 @@
                   "type": "string"
                 }
               ],
-              "description": "Deckr-owned families must be one of the v1 core families; extension families must be globally namespaced and must not use the dev.deckr. namespace.",
+              "description": "Namespaced capability family. Enum and family values are case-sensitive contract values.",
+              "examples": [
+                "dev.deckr.input.button",
+                "dev.deckr.output.raster"
+              ],
               "title": "Family"
             },
             "projection": {
@@ -3739,7 +3766,11 @@
           "title": "Deckr CapabilityDescriptor",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/hardware/capability-descriptor.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "messages.hardware"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.hardware.capability_descriptor.v1",
@@ -4239,7 +4270,7 @@
             },
             "JsonValue": {}
           },
-          "description": "Descriptor for one addressable user-facing control or region.",
+          "description": "Contract shape for a physical or logical control on a hardware device, including geometry and the input/output/state/config capabilities available through that control.",
           "properties": {
             "configCapabilities": {
               "items": {
@@ -4249,6 +4280,10 @@
               "type": "array"
             },
             "controlId": {
+              "description": "Stable control identifier scoped to the containing device.",
+              "examples": [
+                "key.0.0"
+              ],
               "title": "Controlid",
               "type": "string"
             },
@@ -4365,7 +4400,11 @@
           "title": "Deckr ControlDescriptor",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/hardware/control-descriptor.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "messages.hardware"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.hardware.control_descriptor.v1",
@@ -4379,13 +4418,19 @@
           "definitions": {
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             }
           },
+          "description": "Current-state payload representing a controller claim on a device. The claim uses endpoint and session identity rather than process-local runtime ids.",
           "properties": {
             "claimedByEndpoint": {
-              "$ref": "#/components/schemas/DeviceClaimState/schema/definitions/EndpointAddress"
+              "$ref": "#/components/schemas/DeviceClaimState/schema/definitions/EndpointAddress",
+              "description": "Controller endpoint address that currently owns the claim.",
+              "examples": [
+                "controller:controller-main"
+              ]
             },
             "claimedBySessionId": {
               "title": "Claimedbysessionid",
@@ -4410,7 +4455,11 @@
           "title": "Device claim state",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/state/device-claim.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "state.kv"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.state.device_claim.v1",
@@ -5176,7 +5225,7 @@
             },
             "JsonValue": {}
           },
-          "description": "Descriptor for one controller-visible device or sub-surface.",
+          "description": "Contract shape for a hardware device descriptor. Hardware managers publish these descriptors so controllers and action runtimes can reason about controls, capabilities, sources, and connections without depending on a device-specific implementation.",
           "properties": {
             "capabilities": {
               "items": {
@@ -5211,6 +5260,10 @@
               "default": null
             },
             "deviceId": {
+              "description": "Stable device identifier scoped to the publishing hardware manager.",
+              "examples": [
+                "deck-1"
+              ],
               "title": "Deviceid",
               "type": "string"
             },
@@ -5219,6 +5272,10 @@
               "type": "string"
             },
             "fingerprint": {
+              "description": "Optional durable hardware fingerprint used to distinguish a physical device from a reused device id.",
+              "examples": [
+                "fingerprint:deck-1"
+              ],
               "title": "Fingerprint",
               "type": "string"
             },
@@ -5328,7 +5385,11 @@
           "title": "Deckr DeviceDescriptor",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/hardware/device-descriptor.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "messages.hardware"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.hardware.device_descriptor.v1",
@@ -5342,15 +5403,28 @@
           "definitions": {
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             }
           },
+          "description": "Current-state payload advertising that an endpoint session is present on a lane. Presence uses contract endpoint addresses and lane names, not Python runtime component names.",
           "properties": {
             "endpoint": {
-              "$ref": "#/components/schemas/EndpointPresenceState/schema/definitions/EndpointAddress"
+              "$ref": "#/components/schemas/EndpointPresenceState/schema/definitions/EndpointAddress",
+              "description": "Deckr endpoint address with shape '<family>:<endpoint-id>'. Endpoint families and ids are case-sensitive.",
+              "examples": [
+                "action_provider:clock-main",
+                "controller:controller-main"
+              ]
             },
             "lane": {
+              "description": "Deckr lane name that this endpoint session is present on.",
+              "examples": [
+                "actions",
+                "hardware_messages",
+                "services"
+              ],
               "title": "Lane",
               "type": "string"
             },
@@ -5385,7 +5459,11 @@
           "title": "Endpoint presence state",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/state/endpoint-presence.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "state.kv"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.state.endpoint_presence.v1",
@@ -6289,6 +6367,7 @@
             },
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             },
@@ -6311,6 +6390,7 @@
             },
             "JsonValue": {}
           },
+          "description": "Current-state payload publishing the devices and descriptors currently owned by one hardware manager endpoint.",
           "properties": {
             "devices": {
               "additionalProperties": {
@@ -6330,6 +6410,10 @@
               "$ref": "#/components/schemas/HardwareInventoryState/schema/definitions/EndpointAddress"
             },
             "managerId": {
+              "description": "Hardware manager endpoint id whose inventory is represented by this payload.",
+              "examples": [
+                "mirabox-main"
+              ],
               "title": "Managerid",
               "type": "string"
             },
@@ -6352,7 +6436,11 @@
           "title": "Hardware inventory state",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/state/hardware-inventory.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "state.kv"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.state.hardware_inventory.v1",
@@ -7953,6 +8041,7 @@
             },
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             },
@@ -8029,6 +8118,7 @@
               "type": "object"
             }
           },
+          "description": "Envelope schema for all messages carried on the Deckr hardware_messages lane. Hardware managers and controllers use this lane for device availability, control input, capability state, and capability-targeted commands.",
           "oneOf": [
             {
               "allOf": [
@@ -8319,7 +8409,13 @@
           ],
           "title": "Deckr hardware_messages Lane Message",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/hardware/device-available.v1.json",
+            "fixtures/valid/hardware/control-input.v1.json",
+            "fixtures/valid/hardware/control-command.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "messages.hardware"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.message.hardware_messages.v1",
@@ -8333,11 +8429,13 @@
           "definitions": {
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             },
             "JsonValue": {}
           },
+          "description": "Current-state payload advertising one service endpoint's namespace, supported operations, and view key prefixes.",
           "properties": {
             "annotations": {
               "additionalProperties": {
@@ -8364,6 +8462,10 @@
               "$ref": "#/components/schemas/ServiceCatalogState/schema/definitions/EndpointAddress"
             },
             "serviceId": {
+              "description": "Service endpoint id that owns this catalog.",
+              "examples": [
+                "media-home"
+              ],
               "title": "Serviceid",
               "type": "string"
             },
@@ -8405,7 +8507,11 @@
           "title": "Service catalog state",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/state/service-catalog.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "state.kv"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.state.service_catalog.v1",
@@ -8419,6 +8525,7 @@
           "definitions": {
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             },
@@ -8433,6 +8540,7 @@
               "type": "string"
             }
           },
+          "description": "Current-state payload publishing the current availability state and diagnostics for one service endpoint.",
           "properties": {
             "diagnostics": {
               "additionalProperties": {
@@ -8457,7 +8565,13 @@
               "type": "string"
             },
             "status": {
-              "$ref": "#/components/schemas/ServiceStatusState/schema/definitions/ServiceStatusValue"
+              "$ref": "#/components/schemas/ServiceStatusState/schema/definitions/ServiceStatusValue",
+              "description": "Case-sensitive service availability value.",
+              "examples": [
+                "available",
+                "degraded",
+                "unavailable"
+              ]
             },
             "timestamp": {
               "format": "date-time",
@@ -8476,7 +8590,11 @@
           "title": "Service status state",
           "type": "object",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/state/service-status.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "state.kv"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.state.service_status.v1",
@@ -8690,6 +8808,7 @@
             },
             "EndpointAddress": {
               "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+              "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
               "title": "EndpointAddress",
               "type": "string"
             },
@@ -8869,6 +8988,7 @@
               "type": "object"
             }
           },
+          "description": "Envelope schema for all messages carried on the Deckr services lane. Service endpoints use these messages for endpoint-addressed commands and replies without becoming injected Python objects.",
           "oneOf": [
             {
               "allOf": [
@@ -8925,7 +9045,12 @@
           ],
           "title": "Deckr services Lane Message",
           "x-deckr-canonical-schema-dialect": "https://json-schema.org/draft/2020-12/schema",
-          "x-deckr-schema-version": "1"
+          "x-deckr-example-fixtures": [
+            "fixtures/valid/services/service-command.v1.json",
+            "fixtures/valid/services/service-command-reply.v1.json"
+          ],
+          "x-deckr-schema-version": "1",
+          "x-deckr-surface": "messages.services"
         },
         "schemaFormat": "application/schema+json;version=draft-07",
         "x-deckr-schema-id": "dev.deckr.message.services.v1",

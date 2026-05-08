@@ -491,7 +491,7 @@
   "$id": "dev.deckr.hardware.control_descriptor.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Descriptor for one addressable user-facing control or region.",
+  "description": "Contract shape for a physical or logical control on a hardware device, including geometry and the input/output/state/config capabilities available through that control.",
   "properties": {
     "configCapabilities": {
       "items": {
@@ -501,6 +501,10 @@
       "type": "array"
     },
     "controlId": {
+      "description": "Stable control identifier scoped to the containing device.",
+      "examples": [
+        "key.0.0"
+      ],
       "title": "Controlid",
       "type": "string"
     },
@@ -616,5 +620,9 @@
   ],
   "title": "Deckr ControlDescriptor",
   "type": "object",
-  "x-deckr-schema-version": "1"
+  "x-deckr-example-fixtures": [
+    "fixtures/valid/hardware/control-descriptor.v1.json"
+  ],
+  "x-deckr-schema-version": "1",
+  "x-deckr-surface": "messages.hardware"
 }

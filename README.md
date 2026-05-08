@@ -24,6 +24,8 @@ The normative architecture reference now lives in:
 - [docs/runtime-modes.md](docs/runtime-modes.md)
 - [docs/nats-bus.md](docs/nats-bus.md)
 - [docs/core-surfaces.md](docs/core-surfaces.md)
+- [docs/contract-authoring.md](docs/contract-authoring.md)
+- [docs/contract-coverage.md](docs/contract-coverage.md)
 
 Those documents are the source of truth for the current architecture. They are
 explicitly normative, alpha-stage, and intentionally non-backward-compatible.
@@ -47,7 +49,12 @@ contract/v1/
   schemas/
   fixtures/
   vectors/
+contract/authoring/v1/
+  schema-metadata.json
+  coverage.json
 docs/
+  contract-authoring.md
+  contract-coverage.md
   core-surfaces.md
   nats-bus.md
   runtime-architecture.md
@@ -75,7 +82,12 @@ The generated `contract/v1/` bundle is the checked, language-neutral v1
 contract artifact set. Open `contract/v1/index.html` locally for the AsyncAPI
 browser, or use `contract/v1/asyncapi.json` directly with AsyncAPI-compatible
 tooling. The manifest, JSON schemas, fixtures, and vectors remain available as
-plain files. Regenerate the bundle with:
+plain files.
+
+Neutral authoring inputs for schema descriptions, examples, and coverage live
+under `contract/authoring/v1/`. Python/Pydantic is currently the compiler layer
+for many schema shapes, but exported contract behavior wins over Python
+convenience. Regenerate the bundle with:
 
 ```bash
 uv run --project libraries/python python scripts/generate_contract_artifacts.py

@@ -260,6 +260,7 @@
     },
     "EndpointAddress": {
       "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
       "title": "EndpointAddress",
       "type": "string"
     },
@@ -268,7 +269,7 @@
   "$id": "dev.deckr.state.action_provider_catalog.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Current action catalog advertised by one action provider endpoint.",
+  "description": "Current-state payload advertising the actions available from one configured action provider endpoint and session.",
   "properties": {
     "actions": {
       "additionalProperties": {
@@ -299,6 +300,10 @@
       "type": "string"
     },
     "providerInstanceId": {
+      "description": "Configured action provider endpoint id that owns this catalog.",
+      "examples": [
+        "clock-main"
+      ],
       "title": "Providerinstanceid",
       "type": "string"
     },
@@ -321,5 +326,9 @@
   ],
   "title": "Action provider catalog state",
   "type": "object",
-  "x-deckr-schema-version": "1"
+  "x-deckr-example-fixtures": [
+    "fixtures/valid/state/action-provider-catalog.v1.json"
+  ],
+  "x-deckr-schema-version": "1",
+  "x-deckr-surface": "state.kv"
 }

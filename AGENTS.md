@@ -26,6 +26,14 @@ policy belongs in the sibling `deckr-controller` repo.
 
 - `contract/v1`
   - Generated, checked language-neutral v1 contract artifact bundle.
+- `contract/authoring/v1`
+  - Neutral contract authoring inputs for schema metadata and coverage. These
+    files feed the generator; do not hand-edit generated `contract/v1` output.
+- `docs/contract-authoring.md`
+  - Rules for contract-first authoring, schema metadata overlays, and v1 data
+    shape policy.
+- `docs/contract-coverage.md`
+  - Human summary of the schema/fixture/vector/conformance coverage matrix.
 - `interop`
   - Language-neutral conformance harnesses and report schemas.
 - `libraries/python/src/deckr/core`
@@ -87,6 +95,10 @@ uv run --project libraries/python-runtime ruff check libraries/python-runtime
 uv run --project libraries/python lint-imports --config libraries/python/.importlinter
 uv run --project libraries/python pytest libraries/python/tests --rootdir libraries/python
 uv run --project libraries/python-runtime pytest libraries/python-runtime/tests --rootdir libraries/python-runtime
+uv run --project libraries/python python scripts/generate_contract_artifacts.py
+uv run --project libraries/python python interop/runners/python/static_conformance.py
+cargo test --manifest-path libraries/rust/Cargo.toml
+cargo run --manifest-path libraries/rust/Cargo.toml --bin deckr-rust-static-conformance -- --output /tmp/deckr-rust-report.json
 uv build --project libraries/python
 uv build --project libraries/python-runtime
 ```

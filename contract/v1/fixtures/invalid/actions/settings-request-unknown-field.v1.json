@@ -1,0 +1,36 @@
+{
+  "body": {
+    "target": {
+      "actionId": "dev.deckr.clock.time",
+      "actionInstanceId": "clock-instance-1",
+      "configId": "office-panel",
+      "controllerId": "controller-main",
+      "providerId": "dev.deckr.clock",
+      "providerInstanceId": "clock-main",
+      "scope": "action_instance",
+      "stableId": "clock"
+    }
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "actions",
+  "messageId": "fixture-action-settings-request",
+  "messageType": "settingsRequest",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "action_provider:clock-main",
+  "senderSessionId": "provider-session",
+  "subject": {
+    "identifiers": {
+      "actionInstanceId": "clock-instance-1",
+      "controllerId": "controller-main",
+      "providerInstanceId": "clock-main"
+    },
+    "kind": "settings"
+  },
+  "unexpectedField": true
+}

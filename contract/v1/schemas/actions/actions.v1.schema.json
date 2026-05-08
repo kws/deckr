@@ -804,6 +804,7 @@
     },
     "EndpointAddress": {
       "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
       "title": "EndpointAddress",
       "type": "string"
     },
@@ -1406,6 +1407,7 @@
   },
   "$id": "dev.deckr.message.actions.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Envelope schema for all messages carried on the Deckr actions lane. The messageType value selects the body shape; endpoint addresses, subjects, timestamps, and recipient targeting remain part of the shared message envelope contract.",
   "oneOf": [
     {
       "allOf": [
@@ -1877,5 +1879,12 @@
     }
   ],
   "title": "Deckr actions Lane Message",
-  "x-deckr-schema-version": "1"
+  "x-deckr-example-fixtures": [
+    "fixtures/valid/actions/settings-request.v1.json",
+    "fixtures/valid/actions/action-instance-created.v1.json",
+    "fixtures/valid/actions/binding-output.v1.json",
+    "fixtures/valid/actions/open-page.v1.json"
+  ],
+  "x-deckr-schema-version": "1",
+  "x-deckr-surface": "messages.actions"
 }

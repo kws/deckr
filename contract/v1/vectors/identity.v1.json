@@ -37,6 +37,16 @@
       "id": "endpoint.unknown-family",
       "input": "driver:mirabox-main",
       "valid": false
+    },
+    {
+      "id": "endpoint.missing-separator",
+      "input": "controller-main",
+      "valid": false
+    },
+    {
+      "id": "endpoint.case-sensitive-family",
+      "input": "Controller:controller-main",
+      "valid": false
     }
   ],
   "schema": "dev.deckr.vector.identity.v1",

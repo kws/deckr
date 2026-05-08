@@ -15,6 +15,11 @@ object model. Python, Rust, and TypeScript should expose language-native APIs
 that support the same use cases, validate the same contracts, produce the same
 wire/state artifacts, and pass the same conformance groups.
 
+The authoring rules for those contract artifacts live in
+[contract-authoring.md](contract-authoring.md). The current schema, fixture,
+vector, and conformance coverage matrix is summarized in
+[contract-coverage.md](contract-coverage.md).
+
 ## Parity Rule
 
 Parity means:

@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 
 import pytest
+from contract_authoring import schema_with_authoring_metadata
 from pydantic import ValidationError
 from repo_paths import contract_bundle_root
 
@@ -726,4 +727,9 @@ def test_action_schema_artifact_matches_checked_in_file() -> None:
         / "actions.v1.schema.json"
     )
 
-    assert json.loads(schema_path.read_text(encoding="utf-8")) == action_message_schema()
+    expected = schema_with_authoring_metadata(
+        "schemas/actions/actions.v1.schema.json",
+        action_message_schema(),
+    )
+
+    assert json.loads(schema_path.read_text(encoding="utf-8")) == expected

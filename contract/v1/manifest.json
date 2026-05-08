@@ -2,11 +2,29 @@
   "artifacts": [
     {
       "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.actions.settings_request.invalid_lane_case.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/actions/settings-request-invalid-lane-case.v1.json",
+      "schemaPath": "schemas/actions/actions.v1.schema.json",
+      "title": "Invalid settingsRequest with incorrectly cased lane",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
       "id": "dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1",
       "kind": "fixture",
       "path": "fixtures/invalid/actions/settings-request-missing-target.v1.json",
       "schemaPath": "schemas/actions/actions.v1.schema.json",
       "title": "Invalid settingsRequest missing target",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.actions.settings_request.invalid_unknown_field.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/actions/settings-request-unknown-field.v1.json",
+      "schemaPath": "schemas/actions/actions.v1.schema.json",
+      "title": "Invalid settingsRequest with unknown top-level field",
       "valid": false
     },
     {
@@ -20,6 +38,15 @@
     },
     {
       "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.hardware.control_command.invalid_null_sender.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/hardware/control-command-null-sender.v1.json",
+      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
+      "title": "Invalid controlCommand with null sender",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
       "id": "dev.deckr.fixture.hardware.control_input.invalid_missing_device_ref.v1",
       "kind": "fixture",
       "path": "fixtures/invalid/hardware/control-input-missing-device-ref.v1.json",
@@ -29,11 +56,29 @@
     },
     {
       "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.services.service_command.invalid_timestamp.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/services/service-command-invalid-timestamp.v1.json",
+      "schemaPath": "schemas/services/services.v1.schema.json",
+      "title": "Invalid serviceCommand with malformed createdAt timestamp",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
       "id": "dev.deckr.fixture.services.service_command.invalid_missing_namespace.v1",
       "kind": "fixture",
       "path": "fixtures/invalid/services/service-command-missing-namespace.v1.json",
       "schemaPath": "schemas/services/services.v1.schema.json",
       "title": "Invalid serviceCommand missing serviceNamespace",
+      "valid": false
+    },
+    {
+      "description": "Invalid fixture that must be rejected by schema validation.",
+      "id": "dev.deckr.fixture.state.endpoint_presence.invalid_endpoint.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/state/endpoint-presence-malformed-endpoint.v1.json",
+      "schemaPath": "schemas/state/endpoint-presence.v1.schema.json",
+      "title": "Invalid endpoint presence with malformed endpoint address",
       "valid": false
     },
     {

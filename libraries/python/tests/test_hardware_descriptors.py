@@ -4,6 +4,7 @@ import copy
 import json
 
 import pytest
+from contract_authoring import schema_with_authoring_metadata
 from descriptor_fixtures import descriptor_payloads
 from pydantic import ValidationError
 from repo_paths import contract_bundle_root
@@ -321,7 +322,11 @@ def test_descriptor_schema_artifacts_match_checked_in_files() -> None:
     assert set(artifacts) == set(expected_files)
     for schema_id, filename in expected_files.items():
         checked_in = json.loads((schema_dir / filename).read_text(encoding="utf-8"))
-        assert checked_in == artifacts[schema_id]
+        schema_path = f"schemas/hardware/{filename}"
+        assert checked_in == schema_with_authoring_metadata(
+            schema_path,
+            artifacts[schema_id],
+        )
 
 
 def test_device_descriptor_schema_shape_is_interoperable() -> None:

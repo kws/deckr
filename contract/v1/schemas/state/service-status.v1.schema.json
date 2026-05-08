@@ -2,6 +2,7 @@
   "$defs": {
     "EndpointAddress": {
       "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
       "title": "EndpointAddress",
       "type": "string"
     },
@@ -19,6 +20,7 @@
   "$id": "dev.deckr.state.service_status.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Current-state payload publishing the current availability state and diagnostics for one service endpoint.",
   "properties": {
     "diagnostics": {
       "additionalProperties": {
@@ -43,7 +45,13 @@
       "type": "string"
     },
     "status": {
-      "$ref": "#/$defs/ServiceStatusValue"
+      "$ref": "#/$defs/ServiceStatusValue",
+      "description": "Case-sensitive service availability value.",
+      "examples": [
+        "available",
+        "degraded",
+        "unavailable"
+      ]
     },
     "timestamp": {
       "format": "date-time",
@@ -61,5 +69,9 @@
   ],
   "title": "Service status state",
   "type": "object",
-  "x-deckr-schema-version": "1"
+  "x-deckr-example-fixtures": [
+    "fixtures/valid/state/service-status.v1.json"
+  ],
+  "x-deckr-schema-version": "1",
+  "x-deckr-surface": "state.kv"
 }

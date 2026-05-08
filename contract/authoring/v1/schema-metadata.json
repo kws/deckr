@@ -1,0 +1,198 @@
+{
+  "schema": "dev.deckr.contract.schema_metadata.v1",
+  "schemas": {
+    "schemas/actions/actions.v1.schema.json": {
+      "": {
+        "description": "Envelope schema for all messages carried on the Deckr actions lane. The messageType value selects the body shape; endpoint addresses, subjects, timestamps, and recipient targeting remain part of the shared message envelope contract.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/actions/settings-request.v1.json",
+          "fixtures/valid/actions/action-instance-created.v1.json",
+          "fixtures/valid/actions/binding-output.v1.json",
+          "fixtures/valid/actions/open-page.v1.json"
+        ],
+        "x-deckr-surface": "messages.actions"
+      }
+    },
+    "schemas/hardware/capability-descriptor.v1.schema.json": {
+      "": {
+        "description": "Contract shape for one hardware capability exposed by a control or device. Capability identifiers, family/type/direction, access modes, value schemas, command schemas, and constraints are consumed across language runtimes.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/hardware/capability-descriptor.v1.json"
+        ],
+        "x-deckr-surface": "messages.hardware"
+      },
+      "/properties/capabilityId": {
+        "description": "Stable capability identifier scoped to the containing control or device.",
+        "examples": [
+          "button.press",
+          "raster.bitmap"
+        ]
+      },
+      "/properties/family": {
+        "description": "Namespaced capability family. Enum and family values are case-sensitive contract values.",
+        "examples": [
+          "dev.deckr.input.button",
+          "dev.deckr.output.raster"
+        ]
+      }
+    },
+    "schemas/hardware/control-descriptor.v1.schema.json": {
+      "": {
+        "description": "Contract shape for a physical or logical control on a hardware device, including geometry and the input/output/state/config capabilities available through that control.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/hardware/control-descriptor.v1.json"
+        ],
+        "x-deckr-surface": "messages.hardware"
+      },
+      "/properties/controlId": {
+        "description": "Stable control identifier scoped to the containing device.",
+        "examples": [
+          "key.0.0"
+        ]
+      }
+    },
+    "schemas/hardware/device-descriptor.v1.schema.json": {
+      "": {
+        "description": "Contract shape for a hardware device descriptor. Hardware managers publish these descriptors so controllers and action runtimes can reason about controls, capabilities, sources, and connections without depending on a device-specific implementation.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/hardware/device-descriptor.v1.json"
+        ],
+        "x-deckr-surface": "messages.hardware"
+      },
+      "/properties/deviceId": {
+        "description": "Stable device identifier scoped to the publishing hardware manager.",
+        "examples": [
+          "deck-1"
+        ]
+      },
+      "/properties/fingerprint": {
+        "description": "Optional durable hardware fingerprint used to distinguish a physical device from a reused device id.",
+        "examples": [
+          "fingerprint:deck-1"
+        ]
+      }
+    },
+    "schemas/hardware/hardware-messages.v1.schema.json": {
+      "": {
+        "description": "Envelope schema for all messages carried on the Deckr hardware_messages lane. Hardware managers and controllers use this lane for device availability, control input, capability state, and capability-targeted commands.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/hardware/device-available.v1.json",
+          "fixtures/valid/hardware/control-input.v1.json",
+          "fixtures/valid/hardware/control-command.v1.json"
+        ],
+        "x-deckr-surface": "messages.hardware"
+      }
+    },
+    "schemas/services/services.v1.schema.json": {
+      "": {
+        "description": "Envelope schema for all messages carried on the Deckr services lane. Service endpoints use these messages for endpoint-addressed commands and replies without becoming injected Python objects.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/services/service-command.v1.json",
+          "fixtures/valid/services/service-command-reply.v1.json"
+        ],
+        "x-deckr-surface": "messages.services"
+      }
+    },
+    "schemas/state/action-provider-catalog.v1.schema.json": {
+      "": {
+        "description": "Current-state payload advertising the actions available from one configured action provider endpoint and session.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/state/action-provider-catalog.v1.json"
+        ],
+        "x-deckr-surface": "state.kv"
+      },
+      "/properties/providerInstanceId": {
+        "description": "Configured action provider endpoint id that owns this catalog.",
+        "examples": [
+          "clock-main"
+        ]
+      }
+    },
+    "schemas/state/device-claim.v1.schema.json": {
+      "": {
+        "description": "Current-state payload representing a controller claim on a device. The claim uses endpoint and session identity rather than process-local runtime ids.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/state/device-claim.v1.json"
+        ],
+        "x-deckr-surface": "state.kv"
+      },
+      "/properties/claimedByEndpoint": {
+        "description": "Controller endpoint address that currently owns the claim.",
+        "examples": [
+          "controller:controller-main"
+        ]
+      }
+    },
+    "schemas/state/endpoint-presence.v1.schema.json": {
+      "": {
+        "description": "Current-state payload advertising that an endpoint session is present on a lane. Presence uses contract endpoint addresses and lane names, not Python runtime component names.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/state/endpoint-presence.v1.json"
+        ],
+        "x-deckr-surface": "state.kv"
+      },
+      "/properties/endpoint": {
+        "description": "Deckr endpoint address with shape '<family>:<endpoint-id>'. Endpoint families and ids are case-sensitive.",
+        "examples": [
+          "action_provider:clock-main",
+          "controller:controller-main"
+        ]
+      },
+      "/properties/lane": {
+        "description": "Deckr lane name that this endpoint session is present on.",
+        "examples": [
+          "actions",
+          "hardware_messages",
+          "services"
+        ]
+      }
+    },
+    "schemas/state/hardware-inventory.v1.schema.json": {
+      "": {
+        "description": "Current-state payload publishing the devices and descriptors currently owned by one hardware manager endpoint.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/state/hardware-inventory.v1.json"
+        ],
+        "x-deckr-surface": "state.kv"
+      },
+      "/properties/managerId": {
+        "description": "Hardware manager endpoint id whose inventory is represented by this payload.",
+        "examples": [
+          "mirabox-main"
+        ]
+      }
+    },
+    "schemas/state/service-catalog.v1.schema.json": {
+      "": {
+        "description": "Current-state payload advertising one service endpoint's namespace, supported operations, and view key prefixes.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/state/service-catalog.v1.json"
+        ],
+        "x-deckr-surface": "state.kv"
+      },
+      "/properties/serviceId": {
+        "description": "Service endpoint id that owns this catalog.",
+        "examples": [
+          "media-home"
+        ]
+      }
+    },
+    "schemas/state/service-status.v1.schema.json": {
+      "": {
+        "description": "Current-state payload publishing the current availability state and diagnostics for one service endpoint.",
+        "x-deckr-example-fixtures": [
+          "fixtures/valid/state/service-status.v1.json"
+        ],
+        "x-deckr-surface": "state.kv"
+      },
+      "/properties/status": {
+        "description": "Case-sensitive service availability value.",
+        "examples": [
+          "available",
+          "degraded",
+          "unavailable"
+        ]
+      }
+    }
+  }
+}

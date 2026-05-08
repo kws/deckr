@@ -273,6 +273,7 @@ fn check_fixtures(root: &Path, manifest: &Value) -> GroupResult {
         };
         let compiled = match JSONSchema::options()
             .with_draft(Draft::Draft202012)
+            .should_validate_formats(true)
             .compile(&schema)
         {
             Ok(compiled) => compiled,
@@ -307,6 +308,10 @@ fn check_key_vectors(root: &Path) -> GroupResult {
         }
     };
     for case in cases(&key_vectors) {
+        if !case_is_valid(case) {
+            check_invalid_key_token_case(&mut group, case);
+            continue;
+        }
         let raw = case["raw"].as_str().unwrap_or_default();
         let encoded = encode_key_token(raw);
         let decoded = decode_key_token(case["encoded"].as_str().unwrap_or_default());
@@ -327,6 +332,10 @@ fn check_key_vectors(root: &Path) -> GroupResult {
         }
     };
     for case in cases(&state_vectors) {
+        if !case_is_valid(case) {
+            check_invalid_state_key_case(&mut group, case);
+            continue;
+        }
         match state_key_case(case) {
             Ok((key, parsed)) if key == case["key"] && parsed == case["parsed"] => group.pass(),
             Ok((key, parsed)) => group.fail(format!(
@@ -337,6 +346,66 @@ fn check_key_vectors(root: &Path) -> GroupResult {
         }
     }
     group
+}
+
+fn case_is_valid(case: &Value) -> bool {
+    case.get("valid").and_then(Value::as_bool).unwrap_or(true)
+}
+
+fn check_invalid_key_token_case(group: &mut GroupResult, case: &Value) {
+    match case["operation"].as_str().unwrap_or_default() {
+        "decode_key_token" => {
+            match decode_key_token(case["encoded"].as_str().unwrap_or_default()) {
+                Ok(_) => group.fail(format!("{}: invalid key-token accepted", case["id"])),
+                Err(_) => group.pass(),
+            }
+        }
+        operation => group.fail(format!(
+            "{}: unknown invalid key-token operation {operation}",
+            case["id"]
+        )),
+    }
+}
+
+fn check_invalid_state_key_case(group: &mut GroupResult, case: &Value) {
+    match invalid_state_key_case(case) {
+        Ok(None) | Err(_) => group.pass(),
+        Ok(Some(parsed)) => group.fail(format!(
+            "{}: invalid state-key parsed as {parsed}",
+            case["id"]
+        )),
+    }
+}
+
+fn invalid_state_key_case(case: &Value) -> Result<Option<Value>, Box<dyn std::error::Error>> {
+    let key = case["key"].as_str().unwrap_or_default();
+    match case["helper"].as_str().unwrap_or_default() {
+        "parse_presence_endpoint_key" => {
+            Ok(parse_presence_endpoint_key(key)?.map(|parsed| {
+                json!({"lane": parsed.0, "endpoint": parsed.1.to_string()})
+            }))
+        }
+        "parse_hardware_inventory_key" => {
+            Ok(parse_hardware_inventory_key(key)?.map(|manager_id| {
+                json!({"managerId": manager_id})
+            }))
+        }
+        "parse_device_claim_key" => Ok(parse_device_claim_key(key)?
+            .map(|parsed| json!({"managerId": parsed.0, "deviceId": parsed.1}))),
+        "parse_action_provider_catalog_key" => Ok(parse_action_provider_catalog_key(key)?
+            .map(|provider_instance_id| json!({"providerInstanceId": provider_instance_id}))),
+        "parse_service_catalog_key" => {
+            Ok(parse_service_catalog_key(key)?.map(|service_id| json!({"serviceId": service_id})))
+        }
+        "parse_service_status_key" => {
+            Ok(parse_service_status_key(key)?.map(|service_id| json!({"serviceId": service_id})))
+        }
+        "parse_service_view_key" => Ok(parse_service_view_key(key)?.map(|parsed| {
+            json!({"serviceId": parsed.0, "serviceNamespace": parsed.1, "tokens": parsed.2})
+        })),
+        "parse_settings_target_key" => Ok(parse_settings_target_key(key)?),
+        helper => Err(format!("unknown invalid state-key helper {helper}").into()),
+    }
 }
 
 fn state_key_case(case: &Value) -> Result<(String, Value), Box<dyn std::error::Error>> {

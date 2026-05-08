@@ -24,6 +24,12 @@
       "decoded": "elgato.com.example.plugin",
       "encoded": "b64_ZWxnYXRvLmNvbS5leGFtcGxlLnBsdWdpbg",
       "raw": "elgato.com.example.plugin"
+    },
+    {
+      "encoded": "b64_abc",
+      "id": "decode.invalid-utf8",
+      "operation": "decode_key_token",
+      "valid": false
     }
   ],
   "schema": "dev.deckr.vector.key_tokens.v1"

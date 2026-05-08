@@ -892,6 +892,7 @@
     },
     "EndpointAddress": {
       "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "pattern": "^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|(?:controller|hardware_manager|service):[^:\\s](?:[^:]*[^:\\s])?)$",
       "title": "EndpointAddress",
       "type": "string"
     },
@@ -917,6 +918,7 @@
   "$id": "dev.deckr.state.hardware_inventory.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Current-state payload publishing the devices and descriptors currently owned by one hardware manager endpoint.",
   "properties": {
     "devices": {
       "additionalProperties": {
@@ -936,6 +938,10 @@
       "$ref": "#/$defs/EndpointAddress"
     },
     "managerId": {
+      "description": "Hardware manager endpoint id whose inventory is represented by this payload.",
+      "examples": [
+        "mirabox-main"
+      ],
       "title": "Managerid",
       "type": "string"
     },
@@ -957,5 +963,9 @@
   ],
   "title": "Hardware inventory state",
   "type": "object",
-  "x-deckr-schema-version": "1"
+  "x-deckr-example-fixtures": [
+    "fixtures/valid/state/hardware-inventory.v1.json"
+  ],
+  "x-deckr-schema-version": "1",
+  "x-deckr-surface": "state.kv"
 }

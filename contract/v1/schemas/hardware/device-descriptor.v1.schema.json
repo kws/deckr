@@ -757,7 +757,7 @@
   "$id": "dev.deckr.hardware.device_descriptor.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Descriptor for one controller-visible device or sub-surface.",
+  "description": "Contract shape for a hardware device descriptor. Hardware managers publish these descriptors so controllers and action runtimes can reason about controls, capabilities, sources, and connections without depending on a device-specific implementation.",
   "properties": {
     "capabilities": {
       "items": {
@@ -792,6 +792,10 @@
       "default": null
     },
     "deviceId": {
+      "description": "Stable device identifier scoped to the publishing hardware manager.",
+      "examples": [
+        "deck-1"
+      ],
       "title": "Deviceid",
       "type": "string"
     },
@@ -800,6 +804,10 @@
       "type": "string"
     },
     "fingerprint": {
+      "description": "Optional durable hardware fingerprint used to distinguish a physical device from a reused device id.",
+      "examples": [
+        "fingerprint:deck-1"
+      ],
       "title": "Fingerprint",
       "type": "string"
     },
@@ -908,5 +916,9 @@
   ],
   "title": "Deckr DeviceDescriptor",
   "type": "object",
-  "x-deckr-schema-version": "1"
+  "x-deckr-example-fixtures": [
+    "fixtures/valid/hardware/device-descriptor.v1.json"
+  ],
+  "x-deckr-schema-version": "1",
+  "x-deckr-surface": "messages.hardware"
 }

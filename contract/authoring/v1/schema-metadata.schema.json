@@ -1,0 +1,50 @@
+{
+  "$id": "dev.deckr.contract.schema_metadata.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "dev.deckr.contract.schema_metadata.v1"
+    },
+    "schemas": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "$ref": "#/$defs/metadataOverlay"
+        },
+        "propertyNames": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "schemas"
+  ],
+  "type": "object",
+  "$defs": {
+    "metadataOverlay": {
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-deckr-": {}
+      },
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "examples": {
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  }
+}

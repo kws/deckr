@@ -119,6 +119,18 @@
           "stableId": "clock"
         }
       }
+    },
+    {
+      "helper": "parse_presence_endpoint_key",
+      "id": "presence.invalid.endpoint-empty-id",
+      "key": "presence.endpoint.actions.controller.b64_",
+      "valid": false
+    },
+    {
+      "helper": "parse_settings_target_key",
+      "id": "settings.target.invalid-scope-shape",
+      "key": "settings.target.unknown.controller-main.office-panel.clock-main.dev.deckr.clock",
+      "valid": false
     }
   ],
   "schema": "dev.deckr.vector.state_keys.v1"

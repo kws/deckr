@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -9,7 +10,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 
 from deckr.actions.messages import (
     action_body,
@@ -75,6 +76,25 @@ REQUIRED_GROUP_IDS = (
     "runtime.lane",
     "substrate.nats",
 )
+
+_RFC3339_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+_FORMAT_CHECKER = FormatChecker()
+
+
+@_FORMAT_CHECKER.checks("date-time")
+def _is_rfc3339_datetime(value: object) -> bool:
+    if not isinstance(value, str):
+        return True
+    if not _RFC3339_TIMESTAMP_RE.fullmatch(value):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
 
 
 @dataclass
@@ -237,7 +257,10 @@ def _check_fixtures(root: Path, manifest: dict[str, Any]) -> GroupResult:
         valid = bool(artifact["valid"])
         try:
             Draft202012Validator.check_schema(schema)
-            validator = Draft202012Validator(schema)
+            validator = Draft202012Validator(
+                schema,
+                format_checker=_FORMAT_CHECKER,
+            )
             errors = sorted(validator.iter_errors(fixture), key=str)
         except Exception as exc:
             group.fail_check(f"{artifact['path']}: validation failed: {exc}")
@@ -255,6 +278,9 @@ def _check_key_vectors(root: Path) -> GroupResult:
     group = GroupResult("vectors.keys")
     vector = _json(root / "vectors" / "key-tokens.v1.json")
     for case in vector["cases"]:
+        if not case.get("valid", True):
+            _check_invalid_key_token_case(group, case)
+            continue
         encoded = encode_key_token(case["raw"])
         decoded = decode_key_token(case["encoded"])
         if encoded != case["encoded"]:
@@ -266,6 +292,9 @@ def _check_key_vectors(root: Path) -> GroupResult:
 
     vector = _json(root / "vectors" / "state-keys.v1.json")
     for case in vector["cases"]:
+        if not case.get("valid", True):
+            _check_invalid_state_key_case(group, case)
+            continue
         try:
             key, parsed = _state_key_case(case)
         except Exception as exc:
@@ -278,6 +307,53 @@ def _check_key_vectors(root: Path) -> GroupResult:
         else:
             group.pass_check()
     return group
+
+
+def _check_invalid_key_token_case(group: GroupResult, case: dict[str, Any]) -> None:
+    operation = case.get("operation")
+    try:
+        if operation == "decode_key_token":
+            decode_key_token(case["encoded"])
+        else:
+            raise ValueError(f"Unknown invalid key-token operation {operation!r}")
+    except Exception:
+        group.pass_check()
+    else:
+        group.fail_check(f"{case['id']}: invalid key-token case accepted")
+
+
+def _check_invalid_state_key_case(group: GroupResult, case: dict[str, Any]) -> None:
+    try:
+        parsed = _invalid_state_key_case(case)
+    except Exception:
+        group.pass_check()
+        return
+    if parsed is None:
+        group.pass_check()
+    else:
+        group.fail_check(f"{case['id']}: invalid state-key case parsed as {parsed!r}")
+
+
+def _invalid_state_key_case(case: dict[str, Any]) -> Any:
+    helper = case["helper"]
+    key = case["key"]
+    if helper == "parse_presence_endpoint_key":
+        return parse_presence_endpoint_key(key)
+    if helper == "parse_hardware_inventory_key":
+        return parse_hardware_inventory_key(key)
+    if helper == "parse_device_claim_key":
+        return parse_device_claim_key(key)
+    if helper == "parse_action_provider_catalog_key":
+        return parse_action_provider_catalog_key(key)
+    if helper == "parse_service_catalog_key":
+        return parse_service_catalog_key(key)
+    if helper == "parse_service_status_key":
+        return parse_service_status_key(key)
+    if helper == "parse_service_view_key":
+        return parse_service_view_key(key)
+    if helper == "parse_settings_target_key":
+        return parse_settings_target_key(key)
+    raise ValueError(f"Unknown invalid state-key helper {helper!r}")
 
 
 def _state_key_case(case: dict[str, Any]) -> tuple[str, dict[str, Any]]:

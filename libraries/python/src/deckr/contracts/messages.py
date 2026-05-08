@@ -40,6 +40,10 @@ CORE_ENDPOINT_FAMILIES = frozenset(
         "service",
     }
 )
+ENDPOINT_ADDRESS_JSON_SCHEMA_PATTERN = (
+    r"^(?:action_provider:[A-Za-z0-9][A-Za-z0-9._-]*|"
+    r"(?:controller|hardware_manager|service):[^:\s](?:[^:]*[^:\s])?)$"
+)
 
 _PROVIDER_INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _RESERVED_ACTION_PROVIDER_INSTANCE_IDS = frozenset(
@@ -104,7 +108,10 @@ def _now_utc() -> datetime:
 class EndpointAddress(RootModel[str]):
     """A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(
+        frozen=True,
+        json_schema_extra={"pattern": ENDPOINT_ADDRESS_JSON_SCHEMA_PATTERN},
+    )
 
     @field_validator("root")
     @classmethod
