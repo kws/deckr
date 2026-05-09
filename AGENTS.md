@@ -59,6 +59,12 @@ policy belongs in the sibling `deckr-controller` repo.
     Python entry-point discovery.
 - `libraries/python-runtime/tests`
   - Tests for the Python runtime package only.
+- `libraries/rust`
+  - Rust `deckr-core` implementation and static conformance runner.
+- `libraries/typescript`
+  - TypeScript `@deckr/core` implementation and static conformance runner.
+  - Uses npm, ESM, Node 20, handwritten helpers, and Ajv validation against
+    `contract/v1`.
 
 ## Placement Rules
 
@@ -101,6 +107,11 @@ uv run --project libraries/python python scripts/generate_contract_artifacts.py
 uv run --project libraries/python python interop/runners/python/static_conformance.py
 cargo test --manifest-path libraries/rust/Cargo.toml
 cargo run --manifest-path libraries/rust/Cargo.toml --bin deckr-rust-static-conformance -- --output /tmp/deckr-rust-report.json
+npm install --prefix libraries/typescript
+npm run --prefix libraries/typescript typecheck
+npm run --prefix libraries/typescript test
+npm run --prefix libraries/typescript build
+npm run --prefix libraries/typescript conformance -- --output /tmp/deckr-ts-report.json
 uv build --project libraries/python
 uv build --project libraries/python-runtime
 ```
@@ -115,6 +126,7 @@ Short version:
 - `libraries/python/pyproject.toml` owns the published Python `deckr` version
 - `libraries/python-runtime/pyproject.toml` owns the published Python
   `deckr-python-runtime` version
+- `libraries/typescript/package.json` owns the npm `@deckr/core` version
 - tag stable releases as `deckr-vX.Y.Z`
 - after a stable release, bump immediately to the next `X.(Y+1).0.dev0`
 - refresh `uv.lock` after every version change

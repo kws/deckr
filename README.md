@@ -77,6 +77,10 @@ libraries/
   rust/
     Cargo.toml
     src/
+  typescript/
+    package.json
+    src/
+    tests/
 scripts/
   generate_contract_artifacts.py
 ```
@@ -101,14 +105,16 @@ uv run --project libraries/python python scripts/generate_contract_artifacts.py
 - Python 3.11+
 - `uv`
 - Rust toolchain with `cargo`
+- Node.js 20+ with `npm`
 
 ## Quick Start
 
-Install the Python core and runtime development tooling:
+Install the Python and TypeScript development tooling:
 
 ```bash
 uv sync --project libraries/python
 uv sync --project libraries/python-runtime
+npm install --prefix libraries/typescript
 ```
 
 Run the default validation suite:
@@ -122,6 +128,10 @@ uv run --project libraries/python-runtime pytest libraries/python-runtime/tests 
 uv run --project libraries/python python interop/runners/python/static_conformance.py
 cargo test --manifest-path libraries/rust/Cargo.toml
 cargo run --manifest-path libraries/rust/Cargo.toml --bin deckr-rust-static-conformance -- --output /tmp/deckr-rust-report.json
+npm run --prefix libraries/typescript typecheck
+npm run --prefix libraries/typescript test
+npm run --prefix libraries/typescript build
+npm run --prefix libraries/typescript conformance -- --output /tmp/deckr-ts-report.json
 ```
 
 Build distributables:
@@ -130,11 +140,12 @@ Build distributables:
 uv build --project libraries/python
 uv build --project libraries/python-runtime
 cargo build --manifest-path libraries/rust/Cargo.toml
+npm run --prefix libraries/typescript build
 ```
 
-The Python and Rust libraries are peers. Parity means the same observable
-contract behavior against `contract/v1`, not identical module names or API
-layout.
+The Python, Rust, and TypeScript libraries are peers. Parity means the same
+observable contract behavior against `contract/v1`, not identical module names
+or API layout.
 
 ## Architecture
 
@@ -300,6 +311,10 @@ contracts/data and `deckr-python-runtime` for Python runtime support.
    uv run --project libraries/python python interop/runners/python/static_conformance.py
    cargo test --manifest-path libraries/rust/Cargo.toml
    cargo run --manifest-path libraries/rust/Cargo.toml --bin deckr-rust-static-conformance -- --output /tmp/deckr-rust-report.json
+   npm run --prefix libraries/typescript typecheck
+   npm run --prefix libraries/typescript test
+   npm run --prefix libraries/typescript build
+   npm run --prefix libraries/typescript conformance -- --output /tmp/deckr-ts-report.json
    ```
 
 3. Refresh the lockfile:
@@ -327,6 +342,7 @@ contracts/data and `deckr-python-runtime` for Python runtime support.
    git checkout deckr-v0.3.0
    uv build --project libraries/python
    uv build --project libraries/python-runtime
+   npm run --prefix libraries/typescript build
    git checkout -
    ```
 

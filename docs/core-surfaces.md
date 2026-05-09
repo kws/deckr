@@ -38,10 +38,10 @@ Parity does not mean:
 - identical discovery or build tooling
 - generated code in every language
 
-For example, Python may expose Pydantic models, TypeScript may expose generated
-types plus Zod/AJV validators, and Rust may expose Serde structs plus typed
-constructors. Those can all be equivalent if their observable Deckr behavior is
-the same.
+For example, Python may expose Pydantic models, TypeScript may expose
+handwritten interfaces plus Ajv validation against the exported JSON Schemas,
+and Rust may expose Serde structs plus typed constructors. Those can all be
+equivalent if their observable Deckr behavior is the same.
 
 ## Required Core Surfaces
 
