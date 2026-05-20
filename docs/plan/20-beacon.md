@@ -430,6 +430,36 @@ A richer advertisement record:
 
 `createdAt` and `updatedAt` are diagnostic timestamps unless supplied by the backend profile.
 
+An extension service can advertise a package-owned feature with a
+package-owned payload profile:
+
+```json
+{
+  "schema": "dev.deckr.beacon.advertisement.v1",
+  "advertisementId": "0e59d56a-bd75-4d2e-818e-227a90f4a6ad",
+  "featureId": "org.example.sonos.service",
+  "advertiser": "service:sonos-home",
+  "endpoint": "service:sonos-home",
+  "sessionId": "service-session",
+  "refreshSeq": 12,
+  "ttlSeconds": 30,
+  "payload": {
+    "profile": "org.example.sonos.beacon.v1",
+    "serviceId": "sonos-home",
+    "serviceNamespace": "org.example.sonos.service",
+    "operations": [
+      "play",
+      "pause",
+      "set_volume"
+    ]
+  }
+}
+```
+
+The `payload` field is opaque to Beacon. Beacon validates the advertisement
+envelope; the service package that owns `org.example.sonos.beacon.v1` validates
+the Sonos-specific payload.
+
 Required fields:
 
 ```text
@@ -450,6 +480,7 @@ protocol
 operations
 labels
 hints
+payload
 createdAt diagnostic
 updatedAt diagnostic
 ```

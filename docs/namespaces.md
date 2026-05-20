@@ -39,8 +39,6 @@ example:
 - `dev.deckr.action_provider_runtime.python.installed_providers`
 - `dev.deckr.clock`
 - `dev.deckr.clock.action.digital`
-- `dev.deckr.sonos.service`
-- `dev.deckr.openhab.service`
 - `dev.deckr.input.button`
 - `dev.deckr.output.raster`
 
@@ -51,7 +49,9 @@ plugins must not squat under `dev.deckr.*`.
 Kaj-owned examples in this workspace use `com.k-si.deckr.*`, such as
 `com.k-si.deckr.kaj` and `com.k-si.deckr.kaj.action.album_browser`. Those are not
 Deckr-owned identifiers; they are examples of a package owner using its own
-namespace.
+namespace. Sonos, OpenHAB, and similar integrations likewise own their service
+feature ids, Beacon payload profiles, Concord term profiles, operation names,
+and schemas outside Deckr core.
 
 ## Owner Names
 
@@ -116,14 +116,22 @@ namespaces, action ids, capability families, or schema ids.
 ## Service Namespaces And Service Ids
 
 A service namespace is the globally named API and state contract owned by the
-service package. For official Deckr services this uses `dev.deckr.*`, such as
-`dev.deckr.sonos.service` and `dev.deckr.openhab.service`.
+service package. A Sonos or OpenHAB integration should use the namespace owned
+by that integration package, for example `org.example.sonos.service` or
+`org.example.openhab.service`. These names are not Deckr core contracts unless
+Deckr itself owns and publishes that service package.
 
 A service id is a deployment-local endpoint id, such as `sonos-home` or
 `media-home`. A service id is not a package name, component id, namespace,
 runtime name, external host name, or provider id.
 
-Service-owned views use the generic discovery key shape:
+Under Beacon/Concord, service packages advertise those namespaces with generic
+Beacon advertisements and, when needed, bind live service-specific agreements
+with generic Concord contracts. Deckr core validates the Beacon/Concord
+envelopes; the service package validates its payloads, terms, operations, and
+result/view schemas.
+
+Legacy service-owned views used the generic discovery key shape:
 
 ```text
 view.services.<service-id>.<service-namespace>.<tokens...>

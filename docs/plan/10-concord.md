@@ -927,6 +927,58 @@ Concord must not derive validity from it.
 
 Application-specific details should live in application state.
 
+Profile terms are the protocol extension point for application-specific
+agreements. Concord validates the contract envelope, participant tokens,
+generation, sessions, and term hash. The package that owns the profile validates
+the term payload.
+
+Example service-owned terms:
+
+```json
+{
+  "profile": "org.example.sonos.profile.zone_binding.v1",
+  "bindingId": "91db6e42-5f42-4fa5-94f5-7e698f88dc96",
+  "clientEndpoint": "controller:main",
+  "serviceEndpoint": "service:sonos-home",
+  "zoneId": "kitchen",
+  "permissions": [
+    "playback",
+    "volume"
+  ],
+  "mode": "exclusive"
+}
+```
+
+The generic Concord record may carry those terms, but Concord does not know what
+a Sonos zone, permission, or mode means:
+
+```json
+{
+  "schema": "dev.deckr.concord.contract.v1",
+  "contractId": "c1cf4ce8-9f6f-49e2-a17b-88f407f19c90",
+  "generation": 1,
+  "profile": "org.example.sonos.profile.zone_binding.v1",
+  "participants": [
+    "controller:main",
+    "service:sonos-home"
+  ],
+  "state": "open",
+  "termsHash": "sha256:...",
+  "terms": {
+    "profile": "org.example.sonos.profile.zone_binding.v1",
+    "bindingId": "91db6e42-5f42-4fa5-94f5-7e698f88dc96",
+    "clientEndpoint": "controller:main",
+    "serviceEndpoint": "service:sonos-home",
+    "zoneId": "kitchen",
+    "permissions": [
+      "playback",
+      "volume"
+    ],
+    "mode": "exclusive"
+  }
+}
+```
+
 ---
 
 ## 21. Duplicate contracts

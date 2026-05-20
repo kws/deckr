@@ -90,9 +90,15 @@ Messaging and RPC remain outside this profile layer, except where they conflict
 with live agreement authority. A message can notify, command, or carry data, but
 it must not by itself prove that a hardware claim or action binding is live.
 
-Services are not defined as a generic Deckr profile here. Existing service
-catalog/status/view contracts are a separate service-lane concern unless Deckr
-promotes a specific service flow into the same discovery/agreement model.
+Services and extension APIs are not Deckr core profiles here. Legacy service
+catalog/status/view records are replaced by generic Beacon advertisements whose
+`featureId`, payload profile, operation names, and schemas are owned by the
+service package. If a service needs a maintained runtime agreement, it uses
+generic Concord with service-owned terms.
+
+For example, Sonos and OpenHAB integrations should advertise and bind through
+Beacon/Concord using their own public namespaces. Deckr core must not declare
+what a Sonos zone, OpenHAB item, media group, or service-specific view means.
 
 Component ids are package/runtime identities. They may appear as metadata, but
 they are not Beacon participant identities and they are not Concord claim or
