@@ -235,6 +235,42 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
 
 
 @pytest.mark.asyncio
+async def test_concord_find_and_watch_contracts() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    concord = ConcordCoordinator(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    terms = _hardware_claim_terms()
+
+    contract = await concord.create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=terms,
+        created_by=controller,
+    )
+    other = await concord.create_contract(
+        (manager, controller),
+        contract_id="other-contract-1",
+        profile="dev.deckr.profile.other.v1",
+        created_by=controller,
+    )
+    await contract_state.put(
+        "contracts.not-a-contract",
+        {"schema": "dev.deckr.concord.contract.v1"},
+    )
+
+    assert await concord.find_contracts() == (contract, other)
+    assert await concord.find_contracts(HARDWARE_CLAIM_PROFILE_ID) == (contract,)
+
+    async with concord.watch_contracts() as changes:
+        await concord.cancel(contract, controller, reason="done")
+        change = await _receive(changes)
+    assert change.key == contract.key
+
+
+@pytest.mark.asyncio
 async def test_concord_duplicate_contract_and_generation_mismatch_are_rejected() -> None:
     contract_state = MemoryStateStore(name="contracts")
     token_state = MemoryStateStore(name="tokens")

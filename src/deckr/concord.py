@@ -132,6 +132,10 @@ def concord_contract_prefix(*, contract_id: str, generation: int) -> str:
     return ".".join(("contracts", encode_key_token(contract_id), str(generation), ""))
 
 
+def concord_contracts_prefix() -> str:
+    return "contracts."
+
+
 def canonical_json_bytes(value: Mapping[str, Any] | DeckrModel) -> bytes:
     if isinstance(value, DeckrModel):
         payload = value.model_dump(by_alias=True, exclude_none=True, mode="json")
@@ -465,6 +469,29 @@ class ConcordCoordinator:
             return None
         return _contract_handle(key, record, entry.revision)
 
+    async def find_contracts(self, profile: str | None = None) -> tuple[ContractHandle, ...]:
+        contracts: list[ContractHandle] = []
+        for entry in await self._contract_state.items(concord_contracts_prefix()):
+            parsed = parse_concord_contract_key(entry.key)
+            if parsed is None:
+                continue
+            try:
+                record = ContractRecord.model_validate(entry.value)
+            except ValueError:
+                continue
+            if profile is not None and record.profile != profile:
+                continue
+            contract_id, generation = parsed
+            if record.contract_id != contract_id or record.generation != generation:
+                continue
+            contracts.append(_contract_handle(entry.key, record, entry.revision))
+        return tuple(sorted(contracts, key=lambda contract: contract.key))
+
+    def watch_contracts(
+        self,
+    ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[StateChange]]:
+        return self._contract_state.watch(concord_contracts_prefix())
+
     async def attach(
         self,
         contract: ContractHandle,
@@ -734,6 +761,7 @@ __all__ = [
     "canonical_json_hash",
     "concord_contract_key",
     "concord_contract_prefix",
+    "concord_contracts_prefix",
     "concord_participant_token_key",
     "parse_concord_contract_key",
     "parse_concord_participant_token_key",
