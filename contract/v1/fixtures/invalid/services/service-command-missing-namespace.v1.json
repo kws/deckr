@@ -20,7 +20,7 @@
   "senderSessionId": "controller-session",
   "subject": {
     "identifiers": {
-      "namespace": "dev.deckr.media.service",
+      "namespace": "org.example.media.service",
       "operation": "play",
       "serviceId": "media-home"
     },

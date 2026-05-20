@@ -1,0 +1,12 @@
+{
+  "contractId": "hardware-contract-1",
+  "generation": 1,
+  "observed": {},
+  "participant": "controller:controller-main",
+  "refreshSeq": 1,
+  "schema": "dev.deckr.concord.participant-token.v1",
+  "sessionId": "controller-session",
+  "termsHash": "sha256:2a0f7e680916b7f4fd1ddae4dbeadd47461efafe36b15c6bb7a71b3a6549a75a",
+  "tokenId": "controller-token-1",
+  "ttlSeconds": 30
+}

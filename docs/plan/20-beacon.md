@@ -165,7 +165,7 @@ resource exhausted
 application failure
 ```
 
-are downstream outcomes, not discovery states.
+are downstream outcomes, not Beacon advertisement states.
 
 ---
 
@@ -286,9 +286,11 @@ The advertiser should usually be the same endpoint that will receive requests, b
 
 An **endpoint** is the Deckr address returned to consumers as the target to try.
 
-Beacon does not prove endpoint liveness. Endpoint presence is a separate concern.
+Beacon does not prove endpoint liveness.
 
-If Deckr endpoint/session presence is available, Beacon may use it as an optional filter or annotation, but Beacon validity must not be confused with endpoint liveness authority.
+For Deckr, no separate endpoint-liveness records exist. Beacon advertisements
+carry the advertising session id, but that field is discovery evidence only; it
+is not a separate liveness authority.
 
 ### 8.5 Session
 
@@ -380,7 +382,7 @@ A minimal advertisement record:
 
 ```json
 {
-  "schema": "deckr.beacon.advertisement.v1",
+  "schema": "dev.deckr.beacon.advertisement.v1",
   "advertisementId": "beacon-01J...",
   "featureId": "dev.deckr.concord",
   "advertiser": "endpoint:concord-a",
@@ -395,7 +397,7 @@ A richer advertisement record:
 
 ```json
 {
-  "schema": "deckr.beacon.advertisement.v1",
+  "schema": "dev.deckr.beacon.advertisement.v1",
   "advertisementId": "beacon-01J...",
   "featureId": "dev.deckr.concord",
   "advertiser": "endpoint:concord-a",
@@ -492,7 +494,7 @@ A discovery API may return a candidate result that separates service-authored fi
 ```json
 {
   "advertisement": {
-    "schema": "deckr.beacon.advertisement.v1",
+    "schema": "dev.deckr.beacon.advertisement.v1",
     "advertisementId": "beacon-01J...",
     "featureId": "dev.deckr.concord",
     "advertiser": "endpoint:concord-a",
@@ -555,7 +557,7 @@ def is_candidate(advertisement, query, backend_meta=None, current_sessions=None)
     if advertisement is None:
         return False
 
-    if advertisement.schema != "deckr.beacon.advertisement.v1":
+    if advertisement.schema != "dev.deckr.beacon.advertisement.v1":
         return False
 
     if advertisement.featureId != query.featureId:
@@ -581,9 +583,8 @@ def is_candidate(advertisement, query, backend_meta=None, current_sessions=None)
     return True
 ```
 
-The `current_sessions` check depends on Deckr’s endpoint/session model.
-
-If endpoint presence is not available, Beacon should not pretend to know liveness. The candidate may still be returned, possibly annotated as `presence_unknown`.
+The optional `current_sessions` check is an application-provided repair/diagnostic
+filter. Base Beacon does not derive liveness from any separate endpoint state.
 
 ---
 
@@ -687,7 +688,7 @@ Flow:
 2. Read advertisement records under the feature prefix.
 3. Validate each record against the queried featureId.
 4. Filter expired or malformed records.
-5. Optionally check endpoint/session presence.
+5. Optionally apply application-provided session diagnostics.
 6. Apply local selector.
 7. Order candidates by local selection policy.
 8. Return zero or more candidates.
@@ -735,7 +736,7 @@ A selected candidate should normally be tried by the next layer:
 request/reply
 application protocol
 Concord contract creation
-endpoint presence validation
+application-specific validation
 ```
 
 If the selected candidate fails, the consumer may retry another candidate.
@@ -994,7 +995,7 @@ deckr_beacon_event_v1
 Reason:
 
 ```text
-advertisements are temporary discovery state
+advertisements are temporary candidate state
 stale advertisements should disappear automatically
 watchers should be able to wake up on create/update/delete where possible
 ```
@@ -1385,7 +1386,6 @@ expired
 schema_invalid
 feature_mismatch
 session_mismatch
-presence_unknown
 unavailable
 ```
 
@@ -1496,7 +1496,7 @@ watch: notification only
 exact/prefix reads: repair path
 client timestamps: diagnostic only
 NATS Core: notification only
-JetStream KV: discovery state substrate
+JetStream KV: Beacon state substrate
 ```
 
 The protocol should be deliberately small enough that it can later be implemented on:

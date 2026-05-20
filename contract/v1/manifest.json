@@ -1,7 +1,7 @@
 {
   "artifacts": [
     {
-      "description": "Invalid fixture that must be rejected by schema validation.",
+      "description": "Invalid settingsRequest missing target",
       "id": "dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1",
       "kind": "fixture",
       "path": "fixtures/invalid/actions/settings-request-missing-target.v1.json",
@@ -10,7 +10,25 @@
       "valid": false
     },
     {
-      "description": "Invalid fixture that must be rejected by schema validation.",
+      "description": "Invalid Beacon advertisement missing sessionId",
+      "id": "dev.deckr.fixture.beacon.invalid_missing_session.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/beacon/advertisement-missing-session.v1.json",
+      "schemaPath": "schemas/beacon/advertisement.v1.schema.json",
+      "title": "Invalid Beacon advertisement missing sessionId",
+      "valid": false
+    },
+    {
+      "description": "Invalid Concord participant token missing participant",
+      "id": "dev.deckr.fixture.concord.invalid_token_missing_participant.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/concord/token-missing-participant.v1.json",
+      "schemaPath": "schemas/concord/participant-token.v1.schema.json",
+      "title": "Invalid Concord participant token missing participant",
+      "valid": false
+    },
+    {
+      "description": "Invalid controlInput missing deviceRef",
       "id": "dev.deckr.fixture.hardware.control_input.invalid_missing_device_ref.v1",
       "kind": "fixture",
       "path": "fixtures/invalid/hardware/control-input-missing-device-ref.v1.json",
@@ -19,7 +37,25 @@
       "valid": false
     },
     {
-      "description": "Invalid fixture that must be rejected by schema validation.",
+      "description": "Invalid action binding terms missing bindingId",
+      "id": "dev.deckr.fixture.profile.action_binding.invalid_missing_binding.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/profiles/action-binding-missing-binding.v1.json",
+      "schemaPath": "schemas/profiles/action-binding.v1.schema.json",
+      "title": "Invalid action binding terms missing bindingId",
+      "valid": false
+    },
+    {
+      "description": "Invalid hardware profile payload missing managerId",
+      "id": "dev.deckr.fixture.profile.hardware.invalid_missing_manager.v1",
+      "kind": "fixture",
+      "path": "fixtures/invalid/profiles/hardware-missing-manager.v1.json",
+      "schemaPath": "schemas/profiles/hardware.v1.schema.json",
+      "title": "Invalid hardware profile payload missing managerId",
+      "valid": false
+    },
+    {
+      "description": "Invalid serviceCommand missing serviceNamespace",
       "id": "dev.deckr.fixture.services.service_command.invalid_missing_namespace.v1",
       "kind": "fixture",
       "path": "fixtures/invalid/services/service-command-missing-namespace.v1.json",
@@ -28,16 +64,7 @@
       "valid": false
     },
     {
-      "description": "Invalid fixture that must be rejected by schema validation.",
-      "id": "dev.deckr.fixture.state.endpoint_presence.invalid_missing_session.v1",
-      "kind": "fixture",
-      "path": "fixtures/invalid/state/endpoint-presence-missing-session.v1.json",
-      "schemaPath": "schemas/state/endpoint-presence.v1.schema.json",
-      "title": "Invalid endpoint presence missing sessionId",
-      "valid": false
-    },
-    {
-      "description": "Valid fixture for schema validation.",
+      "description": "Valid settingsRequest action message",
       "id": "dev.deckr.fixture.actions.settings_request.valid.v1",
       "kind": "fixture",
       "path": "fixtures/valid/actions/settings-request.v1.json",
@@ -46,7 +73,43 @@
       "valid": true
     },
     {
-      "description": "Valid fixture for schema validation.",
+      "description": "Valid Beacon actions advertisement",
+      "id": "dev.deckr.fixture.beacon.actions.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/beacon/actions-advertisement.v1.json",
+      "schemaPath": "schemas/beacon/advertisement.v1.schema.json",
+      "title": "Valid Beacon actions advertisement",
+      "valid": true
+    },
+    {
+      "description": "Valid Beacon hardware advertisement",
+      "id": "dev.deckr.fixture.beacon.hardware.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/beacon/hardware-advertisement.v1.json",
+      "schemaPath": "schemas/beacon/advertisement.v1.schema.json",
+      "title": "Valid Beacon hardware advertisement",
+      "valid": true
+    },
+    {
+      "description": "Valid Concord hardware claim contract",
+      "id": "dev.deckr.fixture.concord.hardware_claim_contract.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/concord/hardware-claim-contract.v1.json",
+      "schemaPath": "schemas/concord/contract.v1.schema.json",
+      "title": "Valid Concord hardware claim contract",
+      "valid": true
+    },
+    {
+      "description": "Valid Concord hardware claim participant token",
+      "id": "dev.deckr.fixture.concord.hardware_claim_token.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/concord/hardware-claim-token.v1.json",
+      "schemaPath": "schemas/concord/participant-token.v1.schema.json",
+      "title": "Valid Concord hardware claim participant token",
+      "valid": true
+    },
+    {
+      "description": "Valid controlInput hardware message",
       "id": "dev.deckr.fixture.hardware.control_input.valid.v1",
       "kind": "fixture",
       "path": "fixtures/valid/hardware/control-input.v1.json",
@@ -55,7 +118,7 @@
       "valid": true
     },
     {
-      "description": "Valid fixture for schema validation.",
+      "description": "Valid deviceAvailable hardware message",
       "id": "dev.deckr.fixture.hardware.device_available.valid.v1",
       "kind": "fixture",
       "path": "fixtures/valid/hardware/device-available.v1.json",
@@ -64,66 +127,48 @@
       "valid": true
     },
     {
-      "description": "Valid fixture for schema validation.",
+      "description": "Valid Deckr action binding Concord terms",
+      "id": "dev.deckr.fixture.profile.action_binding.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/profiles/action-binding.v1.json",
+      "schemaPath": "schemas/profiles/action-binding.v1.schema.json",
+      "title": "Valid Deckr action binding Concord terms",
+      "valid": true
+    },
+    {
+      "description": "Valid Deckr actions Beacon profile payload",
+      "id": "dev.deckr.fixture.profile.actions.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/profiles/actions.v1.json",
+      "schemaPath": "schemas/profiles/actions.v1.schema.json",
+      "title": "Valid Deckr actions Beacon profile payload",
+      "valid": true
+    },
+    {
+      "description": "Valid Deckr hardware claim Concord terms",
+      "id": "dev.deckr.fixture.profile.hardware_claim.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/profiles/hardware-claim.v1.json",
+      "schemaPath": "schemas/profiles/hardware-claim.v1.schema.json",
+      "title": "Valid Deckr hardware claim Concord terms",
+      "valid": true
+    },
+    {
+      "description": "Valid Deckr hardware Beacon profile payload",
+      "id": "dev.deckr.fixture.profile.hardware.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/profiles/hardware.v1.json",
+      "schemaPath": "schemas/profiles/hardware.v1.schema.json",
+      "title": "Valid Deckr hardware Beacon profile payload",
+      "valid": true
+    },
+    {
+      "description": "Valid serviceCommand service message",
       "id": "dev.deckr.fixture.services.service_command.valid.v1",
       "kind": "fixture",
       "path": "fixtures/valid/services/service-command.v1.json",
       "schemaPath": "schemas/services/services.v1.schema.json",
       "title": "Valid serviceCommand service message",
-      "valid": true
-    },
-    {
-      "description": "Valid fixture for schema validation.",
-      "id": "dev.deckr.fixture.state.action_provider_catalog.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/state/action-provider-catalog.v1.json",
-      "schemaPath": "schemas/state/action-provider-catalog.v1.schema.json",
-      "title": "Valid action provider catalog state",
-      "valid": true
-    },
-    {
-      "description": "Valid fixture for schema validation.",
-      "id": "dev.deckr.fixture.state.device_claim.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/state/device-claim.v1.json",
-      "schemaPath": "schemas/state/device-claim.v1.schema.json",
-      "title": "Valid device claim state",
-      "valid": true
-    },
-    {
-      "description": "Valid fixture for schema validation.",
-      "id": "dev.deckr.fixture.state.endpoint_presence.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/state/endpoint-presence.v1.json",
-      "schemaPath": "schemas/state/endpoint-presence.v1.schema.json",
-      "title": "Valid endpoint presence state",
-      "valid": true
-    },
-    {
-      "description": "Valid fixture for schema validation.",
-      "id": "dev.deckr.fixture.state.hardware_inventory.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/state/hardware-inventory.v1.json",
-      "schemaPath": "schemas/state/hardware-inventory.v1.schema.json",
-      "title": "Valid hardware inventory state",
-      "valid": true
-    },
-    {
-      "description": "Valid fixture for schema validation.",
-      "id": "dev.deckr.fixture.state.service_catalog.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/state/service-catalog.v1.json",
-      "schemaPath": "schemas/state/service-catalog.v1.schema.json",
-      "title": "Valid service catalog state",
-      "valid": true
-    },
-    {
-      "description": "Valid fixture for schema validation.",
-      "id": "dev.deckr.fixture.state.service_status.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/state/service-status.v1.json",
-      "schemaPath": "schemas/state/service-status.v1.schema.json",
-      "title": "Valid service status state",
       "valid": true
     },
     {
@@ -133,6 +178,30 @@
       "path": "schemas/actions/actions.v1.schema.json",
       "schemaId": "dev.deckr.message.actions.v1",
       "title": "Actions lane messages"
+    },
+    {
+      "description": "Canonical JSON Schema for Beacon advertisement.",
+      "id": "dev.deckr.beacon.advertisement.v1",
+      "kind": "schema",
+      "path": "schemas/beacon/advertisement.v1.schema.json",
+      "schemaId": "dev.deckr.beacon.advertisement.v1",
+      "title": "Beacon advertisement"
+    },
+    {
+      "description": "Canonical JSON Schema for Concord contract.",
+      "id": "dev.deckr.concord.contract.v1",
+      "kind": "schema",
+      "path": "schemas/concord/contract.v1.schema.json",
+      "schemaId": "dev.deckr.concord.contract.v1",
+      "title": "Concord contract"
+    },
+    {
+      "description": "Canonical JSON Schema for Concord participant token.",
+      "id": "dev.deckr.concord.participant-token.v1",
+      "kind": "schema",
+      "path": "schemas/concord/participant-token.v1.schema.json",
+      "schemaId": "dev.deckr.concord.participant-token.v1",
+      "title": "Concord participant token"
     },
     {
       "description": "Canonical JSON Schema for Deckr CapabilityDescriptor.",
@@ -167,6 +236,38 @@
       "title": "Hardware messages lane messages"
     },
     {
+      "description": "Canonical JSON Schema for Deckr Concord action binding terms.",
+      "id": "dev.deckr.profile.action_binding.v1",
+      "kind": "schema",
+      "path": "schemas/profiles/action-binding.v1.schema.json",
+      "schemaId": "dev.deckr.profile.action_binding.v1",
+      "title": "Deckr Concord action binding terms"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr Beacon actions profile payload.",
+      "id": "dev.deckr.profile.actions.v1",
+      "kind": "schema",
+      "path": "schemas/profiles/actions.v1.schema.json",
+      "schemaId": "dev.deckr.profile.actions.v1",
+      "title": "Deckr Beacon actions profile payload"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr Concord hardware claim terms.",
+      "id": "dev.deckr.profile.hardware_claim.v1",
+      "kind": "schema",
+      "path": "schemas/profiles/hardware-claim.v1.schema.json",
+      "schemaId": "dev.deckr.profile.hardware_claim.v1",
+      "title": "Deckr Concord hardware claim terms"
+    },
+    {
+      "description": "Canonical JSON Schema for Deckr Beacon hardware profile payload.",
+      "id": "dev.deckr.profile.hardware.v1",
+      "kind": "schema",
+      "path": "schemas/profiles/hardware.v1.schema.json",
+      "schemaId": "dev.deckr.profile.hardware.v1",
+      "title": "Deckr Beacon hardware profile payload"
+    },
+    {
       "description": "Canonical JSON Schema for Deckr services lane envelopes and bodies.",
       "id": "dev.deckr.message.services.v1",
       "kind": "schema",
@@ -175,52 +276,18 @@
       "title": "Services lane messages"
     },
     {
-      "description": "Canonical JSON Schema for Action provider catalog state.",
-      "id": "dev.deckr.state.action_provider_catalog.v1",
-      "kind": "schema",
-      "path": "schemas/state/action-provider-catalog.v1.schema.json",
-      "schemaId": "dev.deckr.state.action_provider_catalog.v1",
-      "title": "Action provider catalog state"
+      "description": "Acceptance vectors for Beacon and Concord state key helpers.",
+      "id": "dev.deckr.vector.beacon_concord_keys.v1",
+      "kind": "vector",
+      "path": "vectors/beacon-concord-keys.v1.json",
+      "title": "Beacon and Concord key vectors"
     },
     {
-      "description": "Canonical JSON Schema for Device claim state.",
-      "id": "dev.deckr.state.device_claim.v1",
-      "kind": "schema",
-      "path": "schemas/state/device-claim.v1.schema.json",
-      "schemaId": "dev.deckr.state.device_claim.v1",
-      "title": "Device claim state"
-    },
-    {
-      "description": "Canonical JSON Schema for Endpoint presence state.",
-      "id": "dev.deckr.state.endpoint_presence.v1",
-      "kind": "schema",
-      "path": "schemas/state/endpoint-presence.v1.schema.json",
-      "schemaId": "dev.deckr.state.endpoint_presence.v1",
-      "title": "Endpoint presence state"
-    },
-    {
-      "description": "Canonical JSON Schema for Hardware inventory state.",
-      "id": "dev.deckr.state.hardware_inventory.v1",
-      "kind": "schema",
-      "path": "schemas/state/hardware-inventory.v1.schema.json",
-      "schemaId": "dev.deckr.state.hardware_inventory.v1",
-      "title": "Hardware inventory state"
-    },
-    {
-      "description": "Canonical JSON Schema for Service catalog state.",
-      "id": "dev.deckr.state.service_catalog.v1",
-      "kind": "schema",
-      "path": "schemas/state/service-catalog.v1.schema.json",
-      "schemaId": "dev.deckr.state.service_catalog.v1",
-      "title": "Service catalog state"
-    },
-    {
-      "description": "Canonical JSON Schema for Service status state.",
-      "id": "dev.deckr.state.service_status.v1",
-      "kind": "schema",
-      "path": "schemas/state/service-status.v1.schema.json",
-      "schemaId": "dev.deckr.state.service_status.v1",
-      "title": "Service status state"
+      "description": "Acceptance vectors for canonical Concord term hashing.",
+      "id": "dev.deckr.vector.concord_terms_hash.v1",
+      "kind": "vector",
+      "path": "vectors/concord-terms-hash.v1.json",
+      "title": "Concord canonical terms hash vectors"
     },
     {
       "description": "Acceptance vectors for Deckr NATS-safe key token encoding.",
@@ -235,13 +302,6 @@
       "kind": "vector",
       "path": "vectors/nats-lane.v1.json",
       "title": "NATS lane subject and header vectors"
-    },
-    {
-      "description": "Acceptance vectors for Deckr current-state key helpers and parsers.",
-      "id": "dev.deckr.vector.state_keys.v1",
-      "kind": "vector",
-      "path": "vectors/state-keys.v1.json",
-      "title": "Current-state key vectors"
     }
   ],
   "bundle": "deckr-contract-v1",

@@ -12,8 +12,7 @@ from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
 
 
 class DependencyKind(StrEnum):
-    ENDPOINT = "endpoint"
-    SERVICE = "service"
+    FEATURE = "feature"
 
 
 class DependencyMode(StrEnum):
@@ -35,9 +34,8 @@ class ComponentDependency:
     name: str
     kind: DependencyKind
     mode: DependencyMode
-    endpoint: EndpointAddress
-    lane: str
-    namespace: str | None = None
+    feature_id: str
+    endpoint: EndpointAddress | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +95,7 @@ def dependency_from_mapping(
     *,
     field_name: str,
 ) -> ComponentDependency:
-    unknown = sorted(set(source) - {"kind", "mode", "lane", "endpoint", "namespace"})
+    unknown = sorted(set(source) - {"kind", "mode", "feature_id", "endpoint"})
     if unknown:
         names = ", ".join(unknown)
         raise ValueError(f"Unknown dependency field(s) in {field_name}: {names}")
@@ -111,39 +109,23 @@ def dependency_from_mapping(
         source.get("mode"),
         field_name=f"{field_name}.mode",
     )
+    if kind != DependencyKind.FEATURE:
+        raise ValueError(f"{field_name}.kind must be 'feature'")
+    feature_id = source.get("feature_id")
+    if not isinstance(feature_id, str) or not feature_id.strip():
+        raise ValueError(f"{field_name}.feature_id must be a non-empty string")
     endpoint_source = source.get("endpoint")
-    if not isinstance(endpoint_source, str) or not endpoint_source.strip():
-        raise ValueError(f"{field_name}.endpoint must be a non-empty string")
-    endpoint = parse_endpoint_address(endpoint_source.strip())
-
-    if kind == DependencyKind.ENDPOINT:
-        lane = source.get("lane")
-        if not isinstance(lane, str) or not lane.strip():
-            raise ValueError(f"{field_name}.lane must be a non-empty string")
-        if source.get("namespace") is not None:
-            raise ValueError(f"{field_name}.namespace is only valid for service")
-        return ComponentDependency(
-            name=name,
-            kind=kind,
-            mode=mode,
-            endpoint=endpoint,
-            lane=lane.strip(),
-        )
-
-    namespace = source.get("namespace")
-    if endpoint.family != "service":
-        raise ValueError(f"{field_name}.endpoint must use service:<service-id>")
-    if not isinstance(namespace, str) or not namespace.strip():
-        raise ValueError(f"{field_name}.namespace must be a non-empty string")
-    if source.get("lane") is not None:
-        raise ValueError(f"{field_name}.lane is implied for service dependencies")
+    endpoint = None
+    if endpoint_source is not None:
+        if not isinstance(endpoint_source, str) or not endpoint_source.strip():
+            raise ValueError(f"{field_name}.endpoint must be a non-empty string")
+        endpoint = parse_endpoint_address(endpoint_source.strip())
     return ComponentDependency(
         name=name,
         kind=kind,
         mode=mode,
+        feature_id=feature_id.strip(),
         endpoint=endpoint,
-        lane="services",
-        namespace=namespace.strip(),
     )
 
 

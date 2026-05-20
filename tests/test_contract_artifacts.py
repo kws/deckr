@@ -8,34 +8,25 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from deckr.actions.state import (
-    action_provider_catalog_key,
-    parse_action_provider_catalog_key,
+from deckr.beacon import (
+    beacon_advertisement_key,
+    parse_beacon_advertisement_key,
+)
+from deckr.concord import (
+    canonical_json_bytes,
+    canonical_json_hash,
+    concord_contract_key,
+    concord_participant_token_key,
+    parse_concord_contract_key,
+    parse_concord_participant_token_key,
 )
 from deckr.contracts.artifacts import (
     contract_bundle_path,
     contract_manifest,
     read_contract_artifact,
 )
+from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import DeckrMessage
-from deckr.services.state import (
-    parse_service_catalog_key,
-    parse_service_status_key,
-    parse_service_view_key,
-    service_catalog_key,
-    service_status_key,
-    service_view_key,
-)
-from deckr.state import (
-    decode_key_token,
-    device_claim_key,
-    encode_key_token,
-    hardware_inventory_key,
-    parse_device_claim_key,
-    parse_hardware_inventory_key,
-    parse_presence_endpoint_key,
-    presence_endpoint_key,
-)
 from deckr.substrates.nats import _headers_for, _subject_for
 
 
@@ -112,64 +103,62 @@ def test_key_token_vectors_match_python_helpers() -> None:
     vector = _json(_bundle_root() / "vectors" / "key-tokens.v1.json")
 
     for case in vector["cases"]:
-        assert encode_key_token(case["raw"]) == case["encoded"]
-        assert decode_key_token(case["encoded"]) == case["decoded"]
+        assert encode_key_token(case["raw"]) == case["token"]
+        assert decode_key_token(case["token"]) == case["raw"]
 
 
-def test_state_key_vectors_match_python_helpers_and_parsers() -> None:
-    vector = _json(_bundle_root() / "vectors" / "state-keys.v1.json")
+def test_beacon_concord_key_vectors_match_python_helpers_and_parsers() -> None:
+    vector = _json(_bundle_root() / "vectors" / "beacon-concord-keys.v1.json")
 
     for case in vector["cases"]:
         helper = case["helper"]
         inputs = case["input"]
-        if helper == "presence_endpoint_key":
-            key = presence_endpoint_key(
-                lane=inputs["lane"],
-                endpoint=inputs["endpoint"],
+        if helper == "beacon_advertisement_key":
+            key = beacon_advertisement_key(
+                feature_id=inputs["featureId"],
+                advertisement_id=inputs["advertisementId"],
             )
-            parsed = parse_presence_endpoint_key(key)
+            parsed = parse_beacon_advertisement_key(key)
+            assert parsed is not None
             parsed_value = {
-                "lane": parsed[0],
-                "endpoint": str(parsed[1]),
+                "featureId": parsed[0],
+                "advertisementId": parsed[1],
             }
-        elif helper == "hardware_inventory_key":
-            key = hardware_inventory_key(inputs["managerId"])
-            parsed_value = {"managerId": parse_hardware_inventory_key(key)}
-        elif helper == "device_claim_key":
-            key = device_claim_key(
-                manager_id=inputs["managerId"],
-                device_id=inputs["deviceId"],
+        elif helper == "concord_contract_key":
+            key = concord_contract_key(
+                contract_id=inputs["contractId"],
+                generation=inputs["generation"],
             )
-            parsed = parse_device_claim_key(key)
-            parsed_value = {"managerId": parsed[0], "deviceId": parsed[1]}
-        elif helper == "action_provider_catalog_key":
-            key = action_provider_catalog_key(inputs["providerInstanceId"])
-            parsed_value = {
-                "providerInstanceId": parse_action_provider_catalog_key(key)
-            }
-        elif helper == "service_catalog_key":
-            key = service_catalog_key(inputs["serviceId"])
-            parsed_value = {"serviceId": parse_service_catalog_key(key)}
-        elif helper == "service_status_key":
-            key = service_status_key(inputs["serviceId"])
-            parsed_value = {"serviceId": parse_service_status_key(key)}
-        elif helper == "service_view_key":
-            key = service_view_key(
-                inputs["serviceId"],
-                inputs["serviceNamespace"],
-                *inputs["tokens"],
+            parsed = parse_concord_contract_key(key)
+            assert parsed is not None
+            parsed_value = {"contractId": parsed[0], "generation": parsed[1]}
+        elif helper == "concord_participant_token_key":
+            key = concord_participant_token_key(
+                contract_id=inputs["contractId"],
+                generation=inputs["generation"],
+                participant=inputs["participant"],
             )
-            parsed = parse_service_view_key(key)
+            parsed = parse_concord_participant_token_key(key)
+            assert parsed is not None
             parsed_value = {
-                "serviceId": parsed[0],
-                "serviceNamespace": parsed[1],
-                "tokens": list(parsed[2]),
+                "contractId": parsed[0],
+                "generation": parsed[1],
+                "participant": str(parsed[2]),
             }
         else:
-            raise AssertionError(f"Unknown state-key helper {helper!r}")
+            raise AssertionError(f"Unknown Beacon/Concord key helper {helper!r}")
 
         assert key == case["key"]
-        assert parsed_value == case["parsed"]
+        assert parsed_value == inputs
+
+
+def test_concord_terms_hash_vectors_match_python_helpers() -> None:
+    vector = _json(_bundle_root() / "vectors" / "concord-terms-hash.v1.json")
+
+    for case in vector["cases"]:
+        value = json.loads(case["canonicalJson"])
+        assert canonical_json_bytes(value).decode("utf-8") == case["canonicalJson"]
+        assert canonical_json_hash(value) == case["hash"]
 
 
 def test_nats_lane_vectors_match_python_helpers() -> None:

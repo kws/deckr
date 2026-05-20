@@ -5,13 +5,32 @@ import asyncio
 import base64
 import sys
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import anyio
 
+from deckr.beacon import (
+    BEACON_ADVERTISEMENT_STORE_POLICY,
+    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+    BeaconDiscovery,
+    beacon_advertisement_key,
+)
+from deckr.concord import (
+    CONCORD_CONTRACT_STORE_POLICY,
+    CONCORD_TOKEN_STORE_POLICY,
+    DEFAULT_CONCORD_CONTRACT_STORE_NAME,
+    DEFAULT_CONCORD_TOKEN_STORE_NAME,
+    ConcordCoordinator,
+    ContractHandle,
+    ContractRecord,
+    ContractState,
+    ContractValidityStatus,
+    concord_participant_token_key,
+    parse_concord_contract_key,
+)
 from deckr.contracts.lanes import CORE_LANE_CONTRACTS, LaneContractRegistry
 from deckr.contracts.messages import (
+    EndpointAddress,
     controller_address,
     hardware_manager_address,
 )
@@ -26,17 +45,18 @@ from deckr.hardware.descriptors import (
     DeviceDescriptor,
     DeviceRef,
 )
-from deckr.runtime import Deckr
-from deckr.state import (
-    DEFAULT_DISCOVERY_STATE_STORE_NAME,
-    DEFAULT_LEASE_STATE_STORE_NAME,
-    DeviceClaim,
-    HardwareInventory,
-    HardwareInventoryDevice,
-    device_claim_key,
-    hardware_inventory_key,
-    presence_endpoint_key,
+from deckr.profiles import (
+    HARDWARE_CLAIM_PROFILE_ID,
+    HARDWARE_FEATURE_ID,
+    HardwareAdvertisementDevice,
+    HardwareBeaconPayload,
+    HardwareClaimDevice,
+    HardwareClaimTerms,
+    ProfileCapacity,
+    hardware_payload_from_advertisement,
 )
+from deckr.runtime import Deckr
+from deckr.state import StateConflict, StateStore
 from deckr.substrates.nats import NatsSubstrate
 from deckr.substrates.supervised_nats import NatsServerSupervisor
 
@@ -76,10 +96,12 @@ async def _run_orchestrator(args: argparse.Namespace) -> int:
         str(script),
         "--url",
         args.url,
-        "--lease-bucket",
-        args.lease_bucket,
-        "--discovery-bucket",
-        args.discovery_bucket,
+        "--beacon-bucket",
+        args.beacon_bucket,
+        "--contract-bucket",
+        args.contract_bucket,
+        "--token-bucket",
+        args.token_bucket,
         "--run-id",
         run_id,
     ]
@@ -107,7 +129,7 @@ async def _run_orchestrator(args: argparse.Namespace) -> int:
         return 1
     if args.check_ttl:
         await _wait_for_ttl_cleanup(args, run_id=run_id)
-    print(f"NATS smoke passed run_id={run_id}")
+    print(f"NATS Beacon/Concord smoke passed run_id={run_id}")
     return 0
 
 
@@ -116,61 +138,61 @@ async def _run_manager(args: argparse.Namespace) -> None:
     device_id = f"deck_{args.run_id}"
     endpoint = hardware_manager_address(manager_id)
     descriptor = _device_descriptor(device_id, fingerprint=f"smoke:{args.run_id}")
-    async with _deckr(
-        args.url,
-        auth_token=args.auth_token,
-        lease_state_name=args.lease_bucket,
-        discovery_state_name=args.discovery_bucket,
-    ) as deckr:
-        discovery_state = deckr.state(args.discovery_bucket)
+    async with _deckr(args.url, auth_token=args.auth_token) as deckr:
+        beacon_state, contract_state, token_state = _protocol_states(deckr, args)
+        beacon = BeaconDiscovery(beacon_state)
+        concord = ConcordCoordinator(contract_state, token_state)
         async with (
             deckr.lane("hardware_messages").register_endpoint(
                 endpoint,
                 metadata={"runtime": "deckr-nats-smoke"},
             ) as lane,
             lane.subscribe() as messages,
+            anyio.create_task_group() as tg,
         ):
-            inventory_entry = await discovery_state.put(
-                hardware_inventory_key(manager_id),
-                HardwareInventory(
-                    managerId=manager_id,
-                    managerEndpoint=endpoint,
-                    sessionId=lane.session_id,
-                    timestamp=datetime.now(UTC),
-                    devices={
-                        device_id: HardwareInventoryDevice(
-                            deviceRef=DeviceRef(
-                                managerId=manager_id,
-                                deviceId=device_id,
-                                fingerprint=descriptor.fingerprint,
-                            ),
-                            descriptor=descriptor,
+            payload = _hardware_payload(
+                manager_id=manager_id,
+                endpoint=endpoint,
+                session_id=lane.session_id,
+                device_id=device_id,
+                descriptor=descriptor,
+            )
+            advertisement = await beacon.advertise(
+                HARDWARE_FEATURE_ID,
+                endpoint,
+                lane.session_id,
+                advertisement_id=manager_id,
+                payload=payload.to_dict(),
+            )
+            tg.start_soon(
+                _attach_manager_token,
+                concord,
+                contract_state,
+                endpoint,
+                lane.session_id,
+            )
+            try:
+                with anyio.fail_after(15):
+                    request = await messages.receive()
+                if request.recipient.endpoint != endpoint:
+                    raise RuntimeError("manager received a message for the wrong endpoint")
+                device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
+                await lane.reply_to(
+                    request,
+                    message_type=hw_messages.COMMAND_REPLY,
+                    body=hw_messages.hardware_body_to_dict(
+                        hw_messages.CommandReplyMessage(
+                            deviceRef=device_ref,
+                            controlId="0,0",
+                            capabilityId="raster.bitmap",
+                            commandType="set_frame",
+                            result={"ok": True, "runId": args.run_id},
                         )
-                    },
-                ),
-            )
-            with anyio.fail_after(15):
-                request = await messages.receive()
-            if request.recipient.endpoint != endpoint:
-                raise RuntimeError("manager received a message for the wrong endpoint")
-            device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
-            await lane.reply_to(
-                request,
-                message_type=hw_messages.COMMAND_REPLY,
-                body=hw_messages.hardware_body_to_dict(
-                    hw_messages.CommandReplyMessage(
-                        deviceRef=device_ref,
-                        controlId="0,0",
-                        capabilityId="raster.bitmap",
-                        commandType="set_frame",
-                        result={"ok": True, "runId": args.run_id},
-                    )
-                ),
-            )
-            await discovery_state.delete(
-                hardware_inventory_key(manager_id),
-                revision=inventory_entry.revision,
-            )
+                    ),
+                )
+            finally:
+                await beacon.withdraw(advertisement)
+                tg.cancel_scope.cancel()
 
 
 async def _run_controller(args: argparse.Namespace) -> None:
@@ -178,33 +200,42 @@ async def _run_controller(args: argparse.Namespace) -> None:
     device_id = f"deck_{args.run_id}"
     controller = controller_address(f"smoke_controller_{args.run_id}")
     manager = hardware_manager_address(manager_id)
-    async with _deckr(
-        args.url,
-        auth_token=args.auth_token,
-        lease_state_name=args.lease_bucket,
-        discovery_state_name=args.discovery_bucket,
-    ) as deckr:
-        lease_state = deckr.state(args.lease_bucket)
-        discovery_state = deckr.state(args.discovery_bucket)
-        async with (
-            deckr.lane("hardware_messages").register_endpoint(controller) as lane,
-            discovery_state.watch(hardware_inventory_key(manager_id)) as changes,
-        ):
-            with anyio.fail_after(15):
-                change = await changes.receive()
-            if change.entry is None:
-                raise RuntimeError("inventory watch did not yield current state")
-            await lease_state.create(
-                device_claim_key(manager_id=manager_id, device_id=device_id),
-                DeviceClaim(
-                    claimedByEndpoint=controller,
-                    claimedBySessionId=lane.session_id,
-                    timestamp=datetime.now(UTC),
-                    ttlSeconds=30,
-                ),
+    async with _deckr(args.url, auth_token=args.auth_token) as deckr:
+        beacon_state, contract_state, token_state = _protocol_states(deckr, args)
+        beacon = BeaconDiscovery(beacon_state)
+        concord = ConcordCoordinator(contract_state, token_state)
+        async with deckr.lane("hardware_messages").register_endpoint(controller) as lane:
+            candidate = await _wait_for_hardware_advertisement(beacon, manager)
+            payload = hardware_payload_from_advertisement(candidate.advertisement)
+            if device_id not in payload.devices:
+                raise RuntimeError("hardware advertisement did not include smoke device")
+            device_ref = DeviceRef(
+                managerId=manager_id,
+                deviceId=device_id,
+                fingerprint=payload.devices[device_id].descriptor.fingerprint,
             )
+            terms = HardwareClaimTerms(
+                claimId=f"smoke-claim-{args.run_id}",
+                controllerEndpoint=controller,
+                managerEndpoint=manager,
+                managerAdvertisementId=candidate.advertisement.advertisement_id,
+                devices=(HardwareClaimDevice(deviceRef=device_ref, instanceCount=1),),
+            )
+            contract = await concord.create_contract(
+                (controller, manager),
+                contract_id=f"smoke-hardware-{args.run_id}",
+                profile=HARDWARE_CLAIM_PROFILE_ID,
+                terms=terms,
+                created_by=controller,
+            )
+            await concord.attach(
+                contract,
+                controller,
+                lane.session_id,
+                token_id=f"controller-token-{args.run_id}",
+            )
+            await _wait_for_valid_contract(concord, contract)
             async with lane.subscribe() as controller_messages:
-                device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
                 capability_ref = CapabilityRef(
                     deviceRef=device_ref,
                     controlId="0,0",
@@ -238,39 +269,119 @@ async def _run_controller(args: argparse.Namespace) -> None:
                 raise RuntimeError("controller received a message not addressed to it")
 
 
+async def _attach_manager_token(
+    concord: ConcordCoordinator,
+    contract_state: StateStore,
+    endpoint: EndpointAddress,
+    session_id: str,
+) -> None:
+    while True:
+        for entry in await contract_state.items("contracts."):
+            parsed = parse_concord_contract_key(entry.key)
+            if parsed is None:
+                continue
+            try:
+                record = ContractRecord.model_validate(entry.value)
+            except ValueError:
+                continue
+            if (
+                record.profile != HARDWARE_CLAIM_PROFILE_ID
+                or record.state != ContractState.OPEN
+                or endpoint not in record.participants
+            ):
+                continue
+            handle = ContractHandle(
+                key=entry.key,
+                contract_id=record.contract_id,
+                generation=record.generation,
+                participants=record.participants,
+                revision=entry.revision,
+                state=record.state,
+                profile=record.profile,
+                terms_hash=record.terms_hash,
+            )
+            try:
+                await concord.attach(handle, endpoint, session_id)
+            except StateConflict:
+                pass
+            return
+        await anyio.sleep(0.1)
+
+
+async def _wait_for_hardware_advertisement(
+    beacon: BeaconDiscovery,
+    manager: EndpointAddress,
+):
+    with anyio.fail_after(15):
+        while True:
+            candidates = await beacon.find(
+                HARDWARE_FEATURE_ID,
+                selector=lambda advertisement: advertisement.endpoint == manager,
+            )
+            if candidates:
+                return candidates[0]
+            await anyio.sleep(0.1)
+
+
+async def _wait_for_valid_contract(
+    concord: ConcordCoordinator,
+    contract: ContractHandle,
+) -> None:
+    with anyio.fail_after(15):
+        while True:
+            validity = await concord.validate(contract)
+            if validity.status == ContractValidityStatus.VALID:
+                return
+            await anyio.sleep(0.1)
+
+
 async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> None:
     manager_id = f"smoke_manager_{run_id}"
-    device_id = f"deck_{run_id}"
+    controller = controller_address(f"smoke_controller_{run_id}")
     manager = hardware_manager_address(manager_id)
-    presence_key = presence_endpoint_key(lane="hardware_messages", endpoint=manager)
-    inventory_key = hardware_inventory_key(manager_id)
-    claim_key = device_claim_key(manager_id=manager_id, device_id=device_id)
-    async with _deckr(
-        args.url,
-        auth_token=args.auth_token,
-        lease_state_name=args.lease_bucket,
-        discovery_state_name=args.discovery_bucket,
-    ) as deckr:
-        lease_state = deckr.state(args.lease_bucket)
-        discovery_state = deckr.state(args.discovery_bucket)
+    advertisement_key = beacon_advertisement_key(
+        feature_id=HARDWARE_FEATURE_ID,
+        advertisement_id=manager_id,
+    )
+    controller_token_key = concord_participant_token_key(
+        contract_id=f"smoke-hardware-{run_id}",
+        generation=1,
+        participant=controller,
+    )
+    manager_token_key = concord_participant_token_key(
+        contract_id=f"smoke-hardware-{run_id}",
+        generation=1,
+        participant=manager,
+    )
+    async with _deckr(args.url, auth_token=args.auth_token) as deckr:
+        beacon_state, _contract_state, token_state = _protocol_states(deckr, args)
         with anyio.fail_after(args.ttl_wait):
             while True:
                 entries = [
-                    await lease_state.get(presence_key),
-                    await discovery_state.get(inventory_key),
-                    await lease_state.get(claim_key),
+                    await beacon_state.get(advertisement_key),
+                    await token_state.get(controller_token_key),
+                    await token_state.get(manager_token_key),
                 ]
                 if all(entry is None for entry in entries):
                     return
                 await anyio.sleep(0.5)
 
 
+def _protocol_states(
+    deckr: Deckr,
+    args: argparse.Namespace,
+) -> tuple[StateStore, StateStore, StateStore]:
+    return (
+        deckr.state(args.beacon_bucket, policy=BEACON_ADVERTISEMENT_STORE_POLICY),
+        deckr.state(args.contract_bucket, policy=CONCORD_CONTRACT_STORE_POLICY),
+        deckr.state(args.token_bucket, policy=CONCORD_TOKEN_STORE_POLICY),
+    )
+
+
 def _deckr(
     url: str,
     *,
     auth_token: str | None,
-    lease_state_name: str,
-    discovery_state_name: str,
 ) -> Deckr:
     registry = LaneContractRegistry(CORE_LANE_CONTRACTS.values())
     return Deckr(
@@ -279,9 +390,37 @@ def _deckr(
             url=url,
             auth_token=auth_token,
             lane_contracts=registry,
-            default_state_name=lease_state_name,
-            discovery_state_name=discovery_state_name,
         ),
+    )
+
+
+def _hardware_payload(
+    *,
+    manager_id: str,
+    endpoint: EndpointAddress,
+    session_id: str,
+    device_id: str,
+    descriptor: DeviceDescriptor,
+) -> HardwareBeaconPayload:
+    return HardwareBeaconPayload(
+        managerId=manager_id,
+        managerEndpoint=endpoint,
+        sessionId=session_id,
+        devices={
+            device_id: HardwareAdvertisementDevice(
+                capacity=ProfileCapacity(
+                    totalInstances=1,
+                    claimedInstances=0,
+                    availableInstances=1,
+                ),
+                deviceRef=DeviceRef(
+                    managerId=manager_id,
+                    deviceId=device_id,
+                    fingerprint=descriptor.fingerprint,
+                ),
+                descriptor=descriptor,
+            )
+        },
     )
 
 
@@ -352,19 +491,23 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--startup-timeout", type=float, default=10.0)
     parser.add_argument(
-        "--lease-bucket",
-        default=f"{DEFAULT_LEASE_STATE_STORE_NAME}_smoke",
+        "--beacon-bucket",
+        default=f"{DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME}_smoke",
     )
     parser.add_argument(
-        "--discovery-bucket",
-        default=f"{DEFAULT_DISCOVERY_STATE_STORE_NAME}_smoke",
+        "--contract-bucket",
+        default=f"{DEFAULT_CONCORD_CONTRACT_STORE_NAME}_smoke",
+    )
+    parser.add_argument(
+        "--token-bucket",
+        default=f"{DEFAULT_CONCORD_TOKEN_STORE_NAME}_smoke",
     )
     parser.add_argument("--run-id")
     parser.add_argument("--role", choices=("manager", "controller"))
     parser.add_argument(
         "--check-ttl",
         action="store_true",
-        help="Wait for smoke lease expiry and graceful discovery cleanup.",
+        help="Wait for Beacon advertisements and Concord tokens to expire or withdraw.",
     )
     parser.add_argument("--ttl-wait", type=float, default=45.0)
     return parser.parse_args()

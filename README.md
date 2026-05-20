@@ -39,12 +39,15 @@ src/deckr/
   components/  Public component model, lifecycle manager, and component host
   contracts/   Wire-safe lane, envelope, endpoint, and delivery contracts
   core/        Generic config, logging, and runtime utility helpers
-  actions/     Runtime-neutral actions lane body, endpoint, and catalog contracts
+  actions/     Runtime-neutral actions lane body and endpoint contracts
+  beacon.py    Generic feature advertisement discovery protocol
+  concord.py   Generic participant-token contract protocol
+  profiles/    Deckr hardware/action Beacon payloads and Concord terms
   hardware/    Hardware-facing shared contracts and wire models
   substrates/  Lane substrate implementations, currently NATS
   lanes.py     Endpoint-bound lane handles and lane validation
   runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
-  state.py     Current-state models, key helpers, and StateStore protocol
+  state.py     Generic StateStore protocol and CAS/watch primitives
 docs/
   nats-bus.md
   runtime-architecture.md
@@ -98,7 +101,8 @@ uv build
 Deckr’s target architecture is:
 
 - one runtime abstraction: `Component`
-- one discovery model
+- one Python-first discovery/agreement model: Beacon advertisements for weak
+  feature discovery and Concord contracts for live agreements
 - named event lanes as the only generic wiring primitive
 - shared lane infrastructure for application-facing send/subscribe/fan-out
 - NATS as the distributed lane substrate rather than Deckr-specific
@@ -120,8 +124,7 @@ Public contract identifier ownership and collision-avoidance rules live in
 
 The Deckr distributed lane substrate is NATS. Read
 [docs/nats-bus.md](docs/nats-bus.md) for endpoint-bound lane handles, recipient
-filtering, KV current state, device claims, action resolution, and broker
-diagnostics.
+filtering, Beacon/Concord KV stores, and broker diagnostics.
 
 The old home-grown WebSocket/MQTT lane transports, route table, route leases,
 route metadata, and remote-endpoint hint architecture are removal targets. This
@@ -130,7 +133,8 @@ third-party plugin protocol adaptation, or concrete device protocols.
 
 The NATS substrate surface is available behind the optional `deckr[nats]` extra.
 Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages
-and `Deckr.state(...)` for current-state declarations. The optional
+and `Deckr.state(...)` for explicit protocol stores such as Beacon
+advertisements and Concord contracts/tokens. The optional
 `deckr[supervised-nats]` extra also installs the first-party
 `deckr-nats-server-bin` binary package so embedded hosts and the `deckr`
 launcher can supervise a private local `nats-server` process. This is still the
@@ -138,7 +142,7 @@ same NATS/KV runtime contract, not an in-memory or no-NATS product mode.
 
 A real-NATS smoke harness is available at `scripts/nats_smoke.py`, and
 `scripts/nats_state_report.py` summarizes the broker's current Deckr
-communication state.
+Beacon/Concord communication state.
 
 Run the smoke harness against the included JetStream-enabled NATS compose service:
 
@@ -183,9 +187,9 @@ architectural endpoints such as controllers, action providers, and hardware
 managers. They are separate from transport protocols such as MQTT and WebSocket,
 and separate from adapter-private third-party protocols.
 
-The supported lane substrate and current-state model is defined in
+The supported lane substrate and protocol-store model is defined in
 [docs/nats-bus.md](docs/nats-bus.md). `deckr.actions.messages`,
-`deckr.actions.endpoints`, and `deckr.actions.state` contain the shared
+`deckr.actions.endpoints`, and `deckr.profiles` contain the shared
 `actions` lane contracts used by controllers, action provider runtimes, lane
 substrate adapters, and non-Python implementations. The v1 action contract is
 capability-native: action descriptors may declare capability requirements,

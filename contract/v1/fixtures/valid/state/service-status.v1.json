@@ -1,9 +1,0 @@
-{
-  "diagnostics": {},
-  "serviceEndpoint": "service:media-home",
-  "serviceId": "media-home",
-  "serviceNamespace": "dev.deckr.media.service",
-  "sessionId": "service-session",
-  "status": "available",
-  "timestamp": "2026-04-29T10:00:00Z"
-}

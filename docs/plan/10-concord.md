@@ -354,7 +354,7 @@ A minimal contract record:
 
 ```json
 {
-  "schema": "deckr.concord.contract.v1",
+  "schema": "dev.deckr.concord.contract.v1",
   "contractId": "concord-01J...",
   "generation": 1,
   "participants": [
@@ -371,7 +371,7 @@ After cancellation:
 
 ```json
 {
-  "schema": "deckr.concord.contract.v1",
+  "schema": "dev.deckr.concord.contract.v1",
   "contractId": "concord-01J...",
   "generation": 1,
   "participants": [
@@ -417,7 +417,7 @@ A minimal participant token:
 
 ```json
 {
-  "schema": "deckr.concord.participant-token.v1",
+  "schema": "dev.deckr.concord.participant-token.v1",
   "contractId": "concord-01J...",
   "generation": 1,
   "participant": "endpoint:a",
@@ -432,7 +432,7 @@ An enhanced participant token:
 
 ```json
 {
-  "schema": "deckr.concord.participant-token.v1",
+  "schema": "dev.deckr.concord.participant-token.v1",
   "contractId": "concord-01J...",
   "generation": 1,
   "participant": "endpoint:a",

@@ -9,26 +9,21 @@ from typing import Any
 import anyio
 from pydantic import ValidationError
 
+from deckr.contracts.keys import encode_key_token
 from deckr.contracts.lanes import LaneContractRegistry
 from deckr.contracts.messages import (
     DeckrMessage,
     EndpointAddress,
     EndpointTarget,
 )
-from deckr.contracts.models import thaw_json
+from deckr.contracts.models import DeckrModel, thaw_json
 from deckr.lanes import (
-    EndpointSessionLost,
     ReplyPredicate,
     message_is_deliverable,
-    message_sender_session_is_current,
     reply_is_accepted,
     validate_message_for_contract,
 )
 from deckr.state import (
-    DEFAULT_DISCOVERY_STATE_STORE_NAME,
-    DEFAULT_LEASE_STATE_STORE_NAME,
-    DEFAULT_STATE_LEASE_TTL_SECONDS,
-    LEASE_STATE_STORE_POLICY,
     PERSISTENT_STATE_STORE_POLICY,
     StateChange,
     StateConflict,
@@ -36,14 +31,12 @@ from deckr.state import (
     StateStore,
     StateStorePolicy,
     StateUnavailable,
-    encode_key_token,
     state_value,
 )
 
 logger = logging.getLogger(__name__)
 
 _LANE_PREFIX = "deckr.lane"
-_STATE_LEASE_TTL_SECONDS = float(DEFAULT_STATE_LEASE_TTL_SECONDS)
 _KV_OPERATION_HEADER = "KV-Operation"
 _KV_DELETE_OPERATION = "DEL"
 _KV_PURGE_OPERATION = "PURGE"
@@ -59,17 +52,11 @@ class NatsSubstrate:
         auth_token: str | None = None,
         lane_contracts: LaneContractRegistry,
         buffer_size: int = 100,
-        state_lease_ttl_seconds: float = _STATE_LEASE_TTL_SECONDS,
-        default_state_name: str = DEFAULT_LEASE_STATE_STORE_NAME,
-        discovery_state_name: str = DEFAULT_DISCOVERY_STATE_STORE_NAME,
     ) -> None:
         self.url = url
         self.auth_token = auth_token
-        self.default_state_name = default_state_name
-        self.discovery_state_name = discovery_state_name
         self._lane_contracts = lane_contracts
         self._buffer_size = buffer_size
-        self._state_lease_ttl_seconds = state_lease_ttl_seconds
         self._nc = None
         self._js = None
         self._reply_subjects: dict[str, str] = {}
@@ -96,14 +83,6 @@ class NatsSubstrate:
     async def publish(self, message: DeckrMessage) -> None:
         contract = self._lane_contracts.contract_for(message.lane)
         validate_message_for_contract(message, contract)
-        if not await message_sender_session_is_current(
-            message,
-            state=self.state(self.default_state_name),
-        ):
-            raise EndpointSessionLost(
-                f"Sender session {message.sender_session_id!r} for {message.sender} "
-                "is not current"
-            )
         await self._publish_payload(
             _subject_for(message),
             message,
@@ -133,14 +112,6 @@ class NatsSubstrate:
             raise RuntimeError("NATS substrate is not connected")
         contract = self._lane_contracts.contract_for(message.lane)
         validate_message_for_contract(message, contract)
-        if not await message_sender_session_is_current(
-            message,
-            state=self.state(self.default_state_name),
-        ):
-            raise EndpointSessionLost(
-                f"Sender session {message.sender_session_id!r} for {message.sender} "
-                "is not current"
-            )
         response = await self._nc.request(
             _subject_for(message),
             _payload_for(message),
@@ -155,11 +126,6 @@ class NatsSubstrate:
             contract=contract,
         ):
             raise TimeoutError("NATS request returned no deliverable Deckr reply")
-        if not await message_sender_session_is_current(
-            reply,
-            state=self.state(self.default_state_name),
-        ):
-            raise TimeoutError("NATS request returned a stale Deckr reply")
         if not await reply_is_accepted(reply, request=message, accept=accept):
             raise TimeoutError("NATS request returned no accepted Deckr reply")
         return reply
@@ -187,11 +153,6 @@ class NatsSubstrate:
                     endpoint=endpoint,
                     endpoint_session_id=endpoint_session_id,
                     contract=contract,
-                ):
-                    return
-                if not await message_sender_session_is_current(
-                    message,
-                    state=self.state(self.default_state_name),
                 ):
                     return
                 if msg.reply:
@@ -244,15 +205,8 @@ class NatsSubstrate:
     ) -> StateStorePolicy:
         if policy is not None:
             return policy
-        if name == self.discovery_state_name:
-            return PERSISTENT_STATE_STORE_POLICY
-        if self._state_lease_ttl_seconds == LEASE_STATE_STORE_POLICY.broker_ttl_seconds:
-            return LEASE_STATE_STORE_POLICY
-        return StateStorePolicy(
-            broker_ttl_seconds=float(self._state_lease_ttl_seconds),
-            allow_write_ttl=True,
-            description="lease current state",
-        )
+        del name
+        return PERSISTENT_STATE_STORE_POLICY
 
     async def _publish_payload(
         self,
@@ -285,7 +239,7 @@ class NatsStateStore:
         name: str,
         js,
         buffer_size: int,
-        lease_ttl_seconds: float | None = _STATE_LEASE_TTL_SECONDS,
+        state_ttl_seconds: float | None = None,
         policy: StateStorePolicy | None = None,
     ) -> None:
         self.name = name
@@ -293,13 +247,13 @@ class NatsStateStore:
         self._buffer_size = buffer_size
         self._policy = policy or StateStorePolicy(
             broker_ttl_seconds=(
-                None if lease_ttl_seconds is None else float(lease_ttl_seconds)
+                None if state_ttl_seconds is None else float(state_ttl_seconds)
             ),
-            allow_write_ttl=lease_ttl_seconds is not None,
+            allow_write_ttl=state_ttl_seconds is not None,
             description=(
                 "persistent current state"
-                if lease_ttl_seconds is None
-                else "lease current state"
+                if state_ttl_seconds is None
+                else "TTL current state"
             ),
         )
         self._kv = None
@@ -355,7 +309,7 @@ class NatsStateStore:
     async def put(
         self,
         key: str,
-        value: Mapping[str, Any],
+        value: Mapping[str, Any] | DeckrModel,
         *,
         ttl: float | None = None,
     ) -> StateEntry:
@@ -371,7 +325,7 @@ class NatsStateStore:
     async def create(
         self,
         key: str,
-        value: Mapping[str, Any],
+        value: Mapping[str, Any] | DeckrModel,
         *,
         ttl: float | None = None,
     ) -> StateEntry:
@@ -396,7 +350,7 @@ class NatsStateStore:
     async def update(
         self,
         key: str,
-        value: Mapping[str, Any],
+        value: Mapping[str, Any] | DeckrModel,
         *,
         revision: int,
         ttl: float | None = None,
@@ -641,7 +595,7 @@ class NatsStateStore:
         raise ValueError(
             "NATS current state uses the broker-owned bucket TTL "
             f"({broker_ttl:g}s); per-key TTL {ttl!r} is not supported "
-            "for lease state."
+            "for this state store."
         )
 
 

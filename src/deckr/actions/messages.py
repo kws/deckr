@@ -22,6 +22,7 @@ from deckr.actions.endpoints import (
     action_provider_address,
     require_provider_instance_id,
 )
+from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import (
     ACTION_MESSAGES_SCHEMA_ID,
     ACTIONS_LANE,
@@ -44,7 +45,6 @@ from deckr.hardware.descriptors import (
     ControlRef,
     DeviceRef,
 )
-from deckr.state import decode_key_token, encode_key_token
 
 _RESERVED_EXTENSION_DATA_FIELDS = frozenset(
     {
@@ -375,7 +375,7 @@ class MatchedCapability(DeckrModel):
 
 
 class BindingMetadata(DeckrModel):
-    """Action-provider-facing metadata for one active binding lease."""
+    """Action-provider-facing metadata for one active binding agreement."""
 
     provider_instance_id: str = Field(alias="providerInstanceId")
     provider_id: str = Field(alias="providerId")
@@ -1211,96 +1211,6 @@ class ActionDescriptor(DeckrModel):
     def to_dict(self) -> dict[str, Any]:
         """Serialize for action registration payloads."""
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
-
-
-class ActionProviderCatalog(DeckrModel):
-    """Current action catalog advertised by one action provider endpoint."""
-
-    provider_instance_id: str = Field(alias="providerInstanceId")
-    provider_endpoint: EndpointAddress = Field(alias="providerEndpoint")
-    provider_id: str = Field(alias="providerId")
-    session_id: str = Field(alias="sessionId")
-    timestamp: datetime
-    labels: Mapping[str, str] = Field(default_factory=dict)
-    annotations: JsonObject = Field(default_factory=dict)
-    actions: Mapping[str, ActionDescriptor] = Field(default_factory=dict)
-
-    @field_validator("session_id", "provider_id")
-    @classmethod
-    def _validate_ids(cls, value: str) -> str:
-        return _require_text(value, field_name="action provider catalog id")
-
-    @field_validator("provider_instance_id")
-    @classmethod
-    def _validate_provider_instance_id(cls, value: str) -> str:
-        return require_provider_instance_id(value, field_name="providerInstanceId")
-
-    @field_serializer("timestamp")
-    def _serialize_timestamp(self, value: datetime) -> str:
-        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-    @field_validator("actions", mode="after")
-    @classmethod
-    def _freeze_actions(
-        cls, value: Mapping[str, ActionDescriptor]
-    ) -> Mapping[str, ActionDescriptor]:
-        return freeze_json(value)
-
-    @field_validator("labels", mode="after")
-    @classmethod
-    def _freeze_labels(cls, value: Mapping[str, str]) -> Mapping[str, str]:
-        return freeze_json(
-            {
-                _require_text(key, field_name="action provider label key"): (
-                    _require_text(item, field_name="action provider label value")
-                )
-                for key, item in value.items()
-            }
-        )
-
-    @field_serializer("labels")
-    def _serialize_labels(self, value: Mapping[str, str]) -> dict[str, str]:
-        return thaw_json(value)
-
-    @field_validator("annotations", mode="before")
-    @classmethod
-    def _thaw_annotations(cls, value: Any) -> Any:
-        return thaw_json(value)
-
-    @field_validator("annotations", mode="after")
-    @classmethod
-    def _freeze_annotations(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return freeze_json(value)
-
-    @field_serializer("annotations")
-    def _serialize_annotations(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return thaw_json(value)
-
-    @model_validator(mode="after")
-    def _validate_identity(self) -> ActionProviderCatalog:
-        expected_endpoint = action_provider_address(self.provider_instance_id)
-        if self.provider_endpoint != expected_endpoint:
-            raise ValueError("action provider catalog providerEndpoint must match providerInstanceId")
-        for key, descriptor in self.actions.items():
-            action_id = _require_text(key, field_name="action catalog key")
-            if descriptor.action_id != action_id:
-                raise ValueError(
-                    "action provider catalog map keys must match descriptor actionId"
-                )
-            if descriptor.provider_id not in {None, self.provider_id}:
-                raise ValueError(
-                    "action descriptor providerId must match catalog providerId"
-                )
-        return self
-
-    @field_serializer("actions")
-    def _serialize_actions(
-        self, value: Mapping[str, ActionDescriptor]
-    ) -> dict[str, dict[str, Any]]:
-        return {
-            key: item.model_dump(by_alias=True, exclude_none=True, mode="json")
-            for key, item in value.items()
-        }
 
 
 class PageChildBindingTarget(DeckrModel):

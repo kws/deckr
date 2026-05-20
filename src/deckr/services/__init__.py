@@ -1,4 +1,4 @@
-"""Shared service endpoint, message, and current-state contracts."""
+"""Shared service endpoint and message contracts."""
 
 from deckr.services.messages import (
     SERVICE_COMMAND,
@@ -15,47 +15,19 @@ from deckr.services.messages import (
     service_message,
     service_message_schema,
 )
-from deckr.services.state import (
-    ServiceCatalog,
-    ServiceLiveCheck,
-    ServiceLiveState,
-    ServiceStatus,
-    ServiceStatusValue,
-    live_service_check,
-    parse_service_catalog_key,
-    parse_service_status_key,
-    parse_service_view_key,
-    service_catalog_key,
-    service_is_live,
-    service_status_key,
-    service_view_key,
-)
 
 __all__ = [
     "SERVICE_COMMAND",
     "SERVICE_COMMAND_REPLY",
-    "ServiceCatalog",
     "ServiceCommandBody",
     "ServiceCommandReplyBody",
     "ServiceCommandStatus",
     "ServiceError",
-    "ServiceLiveCheck",
-    "ServiceLiveState",
     "ServiceMessageBody",
-    "ServiceStatus",
-    "ServiceStatusValue",
-    "live_service_check",
-    "parse_service_catalog_key",
-    "parse_service_status_key",
-    "parse_service_view_key",
     "service_body",
     "service_body_for_type",
-    "service_catalog_key",
     "service_command_message",
     "service_command_reply_message",
-    "service_is_live",
     "service_message",
     "service_message_schema",
-    "service_status_key",
-    "service_view_key",
 ]

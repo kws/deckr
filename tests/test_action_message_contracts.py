@@ -17,7 +17,6 @@ from deckr.actions.messages import (
     SETTINGS_PATCH,
     ActionDescriptor,
     ActionExtensionBody,
-    ActionProviderCatalog,
     BindingMetadata,
     CapabilityInputBody,
     CapabilityInputEvent,
@@ -42,6 +41,7 @@ from deckr.actions.messages import (
     subject_config_id,
     subject_page_session_id,
 )
+from deckr.profiles import ActionsBeaconPayload
 
 
 def _settings_target() -> SettingsTargetRef:
@@ -115,48 +115,47 @@ def test_core_action_bodies_forbid_stale_routing_identity_fields() -> None:
         )
 
 
-def test_action_provider_catalog_serializes_actions_by_action_id() -> None:
-    catalog = ActionProviderCatalog(
+def test_actions_beacon_payload_serializes_actions_by_action_id() -> None:
+    payload = ActionsBeaconPayload(
         providerInstanceId="clock-office",
         providerEndpoint=action_provider_address("clock-office"),
         providerId="demo.provider",
         sessionId="session-1",
-        timestamp=datetime(2026, 4, 29, tzinfo=UTC),
         labels={"location": "office"},
         annotations={"runtime": "python"},
         actions={"demo.action": {"actionId": "demo.action", "name": "Demo"}},
     )
 
-    assert catalog.model_dump(by_alias=True, mode="json") == {
+    assert payload.model_dump(by_alias=True, mode="json") == {
+        "profile": "dev.deckr.profile.actions.v1",
         "providerInstanceId": "clock-office",
         "providerEndpoint": "action_provider:clock-office",
         "providerId": "demo.provider",
         "sessionId": "session-1",
-        "timestamp": "2026-04-29T00:00:00Z",
         "labels": {"location": "office"},
         "annotations": {"runtime": "python"},
-        "actions": {"demo.action": {"actionId": "demo.action", "name": "Demo"}},
+        "actions": {
+            "demo.action": {"actionId": "demo.action", "name": "Demo", "hints": {}}
+        },
     }
 
 
-def test_action_provider_catalog_validates_provider_and_action_identity() -> None:
+def test_actions_beacon_payload_validates_provider_and_action_identity() -> None:
     with pytest.raises(ValidationError, match="providerEndpoint"):
-        ActionProviderCatalog(
+        ActionsBeaconPayload(
             providerInstanceId="clock-office",
             providerEndpoint=action_provider_address("other"),
             providerId="demo.provider",
             sessionId="session-1",
-            timestamp=datetime(2026, 4, 29, tzinfo=UTC),
             actions={},
         )
 
     with pytest.raises(ValidationError, match="map keys"):
-        ActionProviderCatalog(
+        ActionsBeaconPayload(
             providerInstanceId="clock-office",
             providerEndpoint=action_provider_address("clock-office"),
             providerId="demo.provider",
             sessionId="session-1",
-            timestamp=datetime(2026, 4, 29, tzinfo=UTC),
             actions={"demo.other": {"actionId": "demo.action", "name": "Demo"}},
         )
 

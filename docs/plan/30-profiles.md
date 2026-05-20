@@ -50,16 +50,16 @@ controls, capabilities, plugins, or ownership policy.
 These profiles are clean replacements, not compatibility layers.
 
 When the Deckr Beacon/Concord profiles are enabled, implementations must not
-treat the old current-state contracts as parallel authorities:
+treat retired current-state authorities as parallel authorities:
 
-| Current contract | Replacement |
+| Retired authority | Replacement |
 | --- | --- |
-| `HardwareInventory` in `deckr_discovery_v1` | Beacon hardware profile |
-| `ActionProviderCatalog` in `deckr_discovery_v1` | Beacon action profile |
-| `DeviceClaim` in `deckr_lease_v1` | Concord hardware claim profile |
+| hardware availability aggregate | Beacon hardware profile |
+| action provider aggregate | Beacon action profile |
+| hardware ownership state | Concord hardware claim profile |
 | controller-local action binding attachment state | Concord action binding profile |
 
-Old records may exist during development or test migration, but they must not
+Retired records may exist during development or test migration, but they must not
 be used as a second source of truth for the same runtime decision.
 
 The source of truth becomes:
@@ -69,8 +69,8 @@ fresh Beacon advertisement -> candidate hardware/action provider
 valid Concord contract     -> live hardware claim or live action binding
 ```
 
-Endpoint presence records are not a separate authority for these profiles.
-Beacon advertisements and Concord participant tokens carry the endpoint session
+No separate endpoint-liveness records exist for these profiles. Beacon
+advertisements and Concord participant tokens carry the endpoint session
 identity needed to fence stale publishers and restarted participants.
 
 ---
@@ -183,7 +183,7 @@ Advertiser:
 hardware_manager:<manager-id>
 ```
 
-This profile replaces `HardwareInventory`.
+This profile is the hardware availability replacement.
 
 The profile payload describes the devices currently exposed by one hardware
 manager endpoint/session. It reuses the existing Deckr hardware descriptor
@@ -280,7 +280,7 @@ controller:<controller-id>
 hardware_manager:<manager-id>
 ```
 
-This profile replaces `DeviceClaim`.
+This profile is the hardware ownership replacement.
 
 A hardware claim is a two-sided agreement that a controller currently owns one
 or more devices from a hardware manager.
@@ -451,13 +451,13 @@ Advertiser:
 action_provider:<provider-instance-id>
 ```
 
-This profile replaces `ActionProviderCatalog`.
+This profile is the action provider availability replacement.
 
 The profile payload describes the action types currently advertised by one
 action provider endpoint/session. It reuses the existing action contract models:
 
 ```text
-ActionProviderCatalog identity fields
+Retired action catalog identity fields
 ActionDescriptor
 CapabilityRequirement
 CapabilityRequirementSelector

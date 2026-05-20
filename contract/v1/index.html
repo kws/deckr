@@ -2,258 +2,57 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Deckr Contract v1</title>
+  <title>Deckr Contract Bundle</title>
   <style>
-    :root {
-      color-scheme: light;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.45;
-    }
-    body {
-      margin: 0;
-      background: #f6f7f9;
-      color: #17202a;
-    }
-    main {
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 32px 24px 48px;
-    }
-    h1 {
-      margin: 0 0 8px;
-      font-size: 2rem;
-      letter-spacing: 0;
-    }
-    p {
-      margin: 0 0 20px;
-      max-width: 760px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: #fff;
-      border: 1px solid #d9dee7;
-    }
-    th, td {
-      padding: 10px 12px;
-      border-bottom: 1px solid #e5e9f0;
-      text-align: left;
-      vertical-align: top;
-      font-size: 0.92rem;
-    }
-    th {
-      background: #edf1f7;
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      color: #4c596a;
-    }
-    code {
-      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-      font-size: 0.88em;
-    }
-    a {
-      color: #0b63ce;
-      text-decoration: none;
-    }
-    a:hover {
-      text-decoration: underline;
-    }
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
+    th { background: #f6f6f6; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Deckr Contract v1</h1>
-    <p>
-      Generated contract artifact browser for Deckr package
-      <code>0.3.0.dev0</code>.
-      The authoritative manifest is <a href="manifest.json">manifest.json</a>.
-    </p>
-    <table>
-      <thead>
-        <tr>
-          <th>Kind</th>
-          <th>Artifact</th>
-          <th>Path</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Invalid settingsRequest missing target<br><code>dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1</code></td>
-          <td><a href="fixtures/invalid/actions/settings-request-missing-target.v1.json"><code>fixtures/invalid/actions/settings-request-missing-target.v1.json</code></a></td>
-          <td>Invalid fixture that must be rejected by schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Invalid controlInput missing deviceRef<br><code>dev.deckr.fixture.hardware.control_input.invalid_missing_device_ref.v1</code></td>
-          <td><a href="fixtures/invalid/hardware/control-input-missing-device-ref.v1.json"><code>fixtures/invalid/hardware/control-input-missing-device-ref.v1.json</code></a></td>
-          <td>Invalid fixture that must be rejected by schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Invalid serviceCommand missing serviceNamespace<br><code>dev.deckr.fixture.services.service_command.invalid_missing_namespace.v1</code></td>
-          <td><a href="fixtures/invalid/services/service-command-missing-namespace.v1.json"><code>fixtures/invalid/services/service-command-missing-namespace.v1.json</code></a></td>
-          <td>Invalid fixture that must be rejected by schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Invalid endpoint presence missing sessionId<br><code>dev.deckr.fixture.state.endpoint_presence.invalid_missing_session.v1</code></td>
-          <td><a href="fixtures/invalid/state/endpoint-presence-missing-session.v1.json"><code>fixtures/invalid/state/endpoint-presence-missing-session.v1.json</code></a></td>
-          <td>Invalid fixture that must be rejected by schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid settingsRequest action message<br><code>dev.deckr.fixture.actions.settings_request.valid.v1</code></td>
-          <td><a href="fixtures/valid/actions/settings-request.v1.json"><code>fixtures/valid/actions/settings-request.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid controlInput hardware message<br><code>dev.deckr.fixture.hardware.control_input.valid.v1</code></td>
-          <td><a href="fixtures/valid/hardware/control-input.v1.json"><code>fixtures/valid/hardware/control-input.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid deviceAvailable hardware message<br><code>dev.deckr.fixture.hardware.device_available.valid.v1</code></td>
-          <td><a href="fixtures/valid/hardware/device-available.v1.json"><code>fixtures/valid/hardware/device-available.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid serviceCommand service message<br><code>dev.deckr.fixture.services.service_command.valid.v1</code></td>
-          <td><a href="fixtures/valid/services/service-command.v1.json"><code>fixtures/valid/services/service-command.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid action provider catalog state<br><code>dev.deckr.fixture.state.action_provider_catalog.valid.v1</code></td>
-          <td><a href="fixtures/valid/state/action-provider-catalog.v1.json"><code>fixtures/valid/state/action-provider-catalog.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid device claim state<br><code>dev.deckr.fixture.state.device_claim.valid.v1</code></td>
-          <td><a href="fixtures/valid/state/device-claim.v1.json"><code>fixtures/valid/state/device-claim.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid endpoint presence state<br><code>dev.deckr.fixture.state.endpoint_presence.valid.v1</code></td>
-          <td><a href="fixtures/valid/state/endpoint-presence.v1.json"><code>fixtures/valid/state/endpoint-presence.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid hardware inventory state<br><code>dev.deckr.fixture.state.hardware_inventory.valid.v1</code></td>
-          <td><a href="fixtures/valid/state/hardware-inventory.v1.json"><code>fixtures/valid/state/hardware-inventory.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid service catalog state<br><code>dev.deckr.fixture.state.service_catalog.valid.v1</code></td>
-          <td><a href="fixtures/valid/state/service-catalog.v1.json"><code>fixtures/valid/state/service-catalog.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>fixture</code></td>
-          <td>Valid service status state<br><code>dev.deckr.fixture.state.service_status.valid.v1</code></td>
-          <td><a href="fixtures/valid/state/service-status.v1.json"><code>fixtures/valid/state/service-status.v1.json</code></a></td>
-          <td>Valid fixture for schema validation.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Actions lane messages<br><code>dev.deckr.message.actions.v1</code></td>
-          <td><a href="schemas/actions/actions.v1.schema.json"><code>schemas/actions/actions.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Deckr actions lane envelopes and bodies.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Deckr CapabilityDescriptor<br><code>dev.deckr.hardware.capability_descriptor.v1</code></td>
-          <td><a href="schemas/hardware/capability-descriptor.v1.schema.json"><code>schemas/hardware/capability-descriptor.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Deckr CapabilityDescriptor.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Deckr ControlDescriptor<br><code>dev.deckr.hardware.control_descriptor.v1</code></td>
-          <td><a href="schemas/hardware/control-descriptor.v1.schema.json"><code>schemas/hardware/control-descriptor.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Deckr ControlDescriptor.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Deckr DeviceDescriptor<br><code>dev.deckr.hardware.device_descriptor.v1</code></td>
-          <td><a href="schemas/hardware/device-descriptor.v1.schema.json"><code>schemas/hardware/device-descriptor.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Deckr DeviceDescriptor.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Hardware messages lane messages<br><code>dev.deckr.message.hardware_messages.v1</code></td>
-          <td><a href="schemas/hardware/hardware-messages.v1.schema.json"><code>schemas/hardware/hardware-messages.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Deckr hardware_messages lane envelopes and bodies.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Services lane messages<br><code>dev.deckr.message.services.v1</code></td>
-          <td><a href="schemas/services/services.v1.schema.json"><code>schemas/services/services.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Deckr services lane envelopes and bodies.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Action provider catalog state<br><code>dev.deckr.state.action_provider_catalog.v1</code></td>
-          <td><a href="schemas/state/action-provider-catalog.v1.schema.json"><code>schemas/state/action-provider-catalog.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Action provider catalog state.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Device claim state<br><code>dev.deckr.state.device_claim.v1</code></td>
-          <td><a href="schemas/state/device-claim.v1.schema.json"><code>schemas/state/device-claim.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Device claim state.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Endpoint presence state<br><code>dev.deckr.state.endpoint_presence.v1</code></td>
-          <td><a href="schemas/state/endpoint-presence.v1.schema.json"><code>schemas/state/endpoint-presence.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Endpoint presence state.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Hardware inventory state<br><code>dev.deckr.state.hardware_inventory.v1</code></td>
-          <td><a href="schemas/state/hardware-inventory.v1.schema.json"><code>schemas/state/hardware-inventory.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Hardware inventory state.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Service catalog state<br><code>dev.deckr.state.service_catalog.v1</code></td>
-          <td><a href="schemas/state/service-catalog.v1.schema.json"><code>schemas/state/service-catalog.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Service catalog state.</td>
-        </tr>
-        <tr>
-          <td><code>schema</code></td>
-          <td>Service status state<br><code>dev.deckr.state.service_status.v1</code></td>
-          <td><a href="schemas/state/service-status.v1.schema.json"><code>schemas/state/service-status.v1.schema.json</code></a></td>
-          <td>Canonical JSON Schema for Service status state.</td>
-        </tr>
-        <tr>
-          <td><code>vector</code></td>
-          <td>Key token encoding vectors<br><code>dev.deckr.vector.key_tokens.v1</code></td>
-          <td><a href="vectors/key-tokens.v1.json"><code>vectors/key-tokens.v1.json</code></a></td>
-          <td>Acceptance vectors for Deckr NATS-safe key token encoding.</td>
-        </tr>
-        <tr>
-          <td><code>vector</code></td>
-          <td>NATS lane subject and header vectors<br><code>dev.deckr.vector.nats_lane.v1</code></td>
-          <td><a href="vectors/nats-lane.v1.json"><code>vectors/nats-lane.v1.json</code></a></td>
-          <td>Acceptance vectors for Deckr NATS lane subject and header hints.</td>
-        </tr>
-        <tr>
-          <td><code>vector</code></td>
-          <td>Current-state key vectors<br><code>dev.deckr.vector.state_keys.v1</code></td>
-          <td><a href="vectors/state-keys.v1.json"><code>vectors/state-keys.v1.json</code></a></td>
-          <td>Acceptance vectors for Deckr current-state key helpers and parsers.</td>
-        </tr>
-      </tbody>
-    </table>
-  </main>
+  <h1>Deckr Contract Bundle</h1>
+  <p>Bundle: deckr-contract-v1</p>
+  <table>
+    <thead><tr><th>Kind</th><th>ID</th><th>Path</th><th>Title</th></tr></thead>
+    <tbody>
+      <tr><td>fixture</td><td>dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1</td><td><a href="fixtures/invalid/actions/settings-request-missing-target.v1.json">fixtures/invalid/actions/settings-request-missing-target.v1.json</a></td><td>Invalid settingsRequest missing target</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.beacon.invalid_missing_session.v1</td><td><a href="fixtures/invalid/beacon/advertisement-missing-session.v1.json">fixtures/invalid/beacon/advertisement-missing-session.v1.json</a></td><td>Invalid Beacon advertisement missing sessionId</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.concord.invalid_token_missing_participant.v1</td><td><a href="fixtures/invalid/concord/token-missing-participant.v1.json">fixtures/invalid/concord/token-missing-participant.v1.json</a></td><td>Invalid Concord participant token missing participant</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.hardware.control_input.invalid_missing_device_ref.v1</td><td><a href="fixtures/invalid/hardware/control-input-missing-device-ref.v1.json">fixtures/invalid/hardware/control-input-missing-device-ref.v1.json</a></td><td>Invalid controlInput missing deviceRef</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.profile.action_binding.invalid_missing_binding.v1</td><td><a href="fixtures/invalid/profiles/action-binding-missing-binding.v1.json">fixtures/invalid/profiles/action-binding-missing-binding.v1.json</a></td><td>Invalid action binding terms missing bindingId</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.profile.hardware.invalid_missing_manager.v1</td><td><a href="fixtures/invalid/profiles/hardware-missing-manager.v1.json">fixtures/invalid/profiles/hardware-missing-manager.v1.json</a></td><td>Invalid hardware profile payload missing managerId</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.services.service_command.invalid_missing_namespace.v1</td><td><a href="fixtures/invalid/services/service-command-missing-namespace.v1.json">fixtures/invalid/services/service-command-missing-namespace.v1.json</a></td><td>Invalid serviceCommand missing serviceNamespace</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.actions.settings_request.valid.v1</td><td><a href="fixtures/valid/actions/settings-request.v1.json">fixtures/valid/actions/settings-request.v1.json</a></td><td>Valid settingsRequest action message</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.beacon.actions.valid.v1</td><td><a href="fixtures/valid/beacon/actions-advertisement.v1.json">fixtures/valid/beacon/actions-advertisement.v1.json</a></td><td>Valid Beacon actions advertisement</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.beacon.hardware.valid.v1</td><td><a href="fixtures/valid/beacon/hardware-advertisement.v1.json">fixtures/valid/beacon/hardware-advertisement.v1.json</a></td><td>Valid Beacon hardware advertisement</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.concord.hardware_claim_contract.valid.v1</td><td><a href="fixtures/valid/concord/hardware-claim-contract.v1.json">fixtures/valid/concord/hardware-claim-contract.v1.json</a></td><td>Valid Concord hardware claim contract</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.concord.hardware_claim_token.valid.v1</td><td><a href="fixtures/valid/concord/hardware-claim-token.v1.json">fixtures/valid/concord/hardware-claim-token.v1.json</a></td><td>Valid Concord hardware claim participant token</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.hardware.control_input.valid.v1</td><td><a href="fixtures/valid/hardware/control-input.v1.json">fixtures/valid/hardware/control-input.v1.json</a></td><td>Valid controlInput hardware message</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.hardware.device_available.valid.v1</td><td><a href="fixtures/valid/hardware/device-available.v1.json">fixtures/valid/hardware/device-available.v1.json</a></td><td>Valid deviceAvailable hardware message</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.profile.action_binding.valid.v1</td><td><a href="fixtures/valid/profiles/action-binding.v1.json">fixtures/valid/profiles/action-binding.v1.json</a></td><td>Valid Deckr action binding Concord terms</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.profile.actions.valid.v1</td><td><a href="fixtures/valid/profiles/actions.v1.json">fixtures/valid/profiles/actions.v1.json</a></td><td>Valid Deckr actions Beacon profile payload</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.profile.hardware_claim.valid.v1</td><td><a href="fixtures/valid/profiles/hardware-claim.v1.json">fixtures/valid/profiles/hardware-claim.v1.json</a></td><td>Valid Deckr hardware claim Concord terms</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.profile.hardware.valid.v1</td><td><a href="fixtures/valid/profiles/hardware.v1.json">fixtures/valid/profiles/hardware.v1.json</a></td><td>Valid Deckr hardware Beacon profile payload</td></tr>
+      <tr><td>fixture</td><td>dev.deckr.fixture.services.service_command.valid.v1</td><td><a href="fixtures/valid/services/service-command.v1.json">fixtures/valid/services/service-command.v1.json</a></td><td>Valid serviceCommand service message</td></tr>
+      <tr><td>schema</td><td>dev.deckr.message.actions.v1</td><td><a href="schemas/actions/actions.v1.schema.json">schemas/actions/actions.v1.schema.json</a></td><td>Actions lane messages</td></tr>
+      <tr><td>schema</td><td>dev.deckr.beacon.advertisement.v1</td><td><a href="schemas/beacon/advertisement.v1.schema.json">schemas/beacon/advertisement.v1.schema.json</a></td><td>Beacon advertisement</td></tr>
+      <tr><td>schema</td><td>dev.deckr.concord.contract.v1</td><td><a href="schemas/concord/contract.v1.schema.json">schemas/concord/contract.v1.schema.json</a></td><td>Concord contract</td></tr>
+      <tr><td>schema</td><td>dev.deckr.concord.participant-token.v1</td><td><a href="schemas/concord/participant-token.v1.schema.json">schemas/concord/participant-token.v1.schema.json</a></td><td>Concord participant token</td></tr>
+      <tr><td>schema</td><td>dev.deckr.hardware.capability_descriptor.v1</td><td><a href="schemas/hardware/capability-descriptor.v1.schema.json">schemas/hardware/capability-descriptor.v1.schema.json</a></td><td>Deckr CapabilityDescriptor</td></tr>
+      <tr><td>schema</td><td>dev.deckr.hardware.control_descriptor.v1</td><td><a href="schemas/hardware/control-descriptor.v1.schema.json">schemas/hardware/control-descriptor.v1.schema.json</a></td><td>Deckr ControlDescriptor</td></tr>
+      <tr><td>schema</td><td>dev.deckr.hardware.device_descriptor.v1</td><td><a href="schemas/hardware/device-descriptor.v1.schema.json">schemas/hardware/device-descriptor.v1.schema.json</a></td><td>Deckr DeviceDescriptor</td></tr>
+      <tr><td>schema</td><td>dev.deckr.message.hardware_messages.v1</td><td><a href="schemas/hardware/hardware-messages.v1.schema.json">schemas/hardware/hardware-messages.v1.schema.json</a></td><td>Hardware messages lane messages</td></tr>
+      <tr><td>schema</td><td>dev.deckr.profile.action_binding.v1</td><td><a href="schemas/profiles/action-binding.v1.schema.json">schemas/profiles/action-binding.v1.schema.json</a></td><td>Deckr Concord action binding terms</td></tr>
+      <tr><td>schema</td><td>dev.deckr.profile.actions.v1</td><td><a href="schemas/profiles/actions.v1.schema.json">schemas/profiles/actions.v1.schema.json</a></td><td>Deckr Beacon actions profile payload</td></tr>
+      <tr><td>schema</td><td>dev.deckr.profile.hardware_claim.v1</td><td><a href="schemas/profiles/hardware-claim.v1.schema.json">schemas/profiles/hardware-claim.v1.schema.json</a></td><td>Deckr Concord hardware claim terms</td></tr>
+      <tr><td>schema</td><td>dev.deckr.profile.hardware.v1</td><td><a href="schemas/profiles/hardware.v1.schema.json">schemas/profiles/hardware.v1.schema.json</a></td><td>Deckr Beacon hardware profile payload</td></tr>
+      <tr><td>schema</td><td>dev.deckr.message.services.v1</td><td><a href="schemas/services/services.v1.schema.json">schemas/services/services.v1.schema.json</a></td><td>Services lane messages</td></tr>
+      <tr><td>vector</td><td>dev.deckr.vector.beacon_concord_keys.v1</td><td><a href="vectors/beacon-concord-keys.v1.json">vectors/beacon-concord-keys.v1.json</a></td><td>Beacon and Concord key vectors</td></tr>
+      <tr><td>vector</td><td>dev.deckr.vector.concord_terms_hash.v1</td><td><a href="vectors/concord-terms-hash.v1.json">vectors/concord-terms-hash.v1.json</a></td><td>Concord canonical terms hash vectors</td></tr>
+      <tr><td>vector</td><td>dev.deckr.vector.key_tokens.v1</td><td><a href="vectors/key-tokens.v1.json">vectors/key-tokens.v1.json</a></td><td>Key token encoding vectors</td></tr>
+      <tr><td>vector</td><td>dev.deckr.vector.nats_lane.v1</td><td><a href="vectors/nats-lane.v1.json">vectors/nats-lane.v1.json</a></td><td>NATS lane subject and header vectors</td></tr>
+    </tbody>
+  </table>
 </body>
 </html>

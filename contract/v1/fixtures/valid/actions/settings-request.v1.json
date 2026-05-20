@@ -3,12 +3,11 @@
     "target": {
       "actionId": "dev.deckr.clock.time",
       "actionInstanceId": "clock-instance-1",
-      "configId": "office-panel",
+      "configId": "clock-config-1",
       "controllerId": "controller-main",
       "providerId": "dev.deckr.clock",
       "providerInstanceId": "clock-main",
-      "scope": "action_instance",
-      "stableId": "clock"
+      "scope": "action_instance"
     }
   },
   "createdAt": "2026-04-29T10:00:00Z",

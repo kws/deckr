@@ -7,6 +7,7 @@ from deckr.contracts.artifacts import (
     contract_manifest,
     read_contract_artifact,
 )
+from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     DEFAULT_LANE_CONTRACT_REGISTRY,
@@ -115,6 +116,8 @@ __all__ = [
     "endpoint_address",
     "endpoint_target",
     "entity_subject",
+    "decode_key_token",
+    "encode_key_token",
     "freeze_json",
     "hardware_manager_address",
     "hardware_managers_broadcast",

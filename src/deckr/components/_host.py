@@ -10,13 +10,17 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import anyio
 
+from deckr.beacon import (
+    BEACON_ADVERTISEMENT_STORE_POLICY,
+    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+    BeaconDiscovery,
+)
 from deckr.components._defs import Component
 from deckr.components._runner import ComponentManager
 from deckr.components.dependencies import (
     ComponentDependency,
     DependencyCondition,
     DependencyConditionState,
-    DependencyKind,
     dependency_effective_readiness,
     dependency_from_mapping,
 )
@@ -40,15 +44,11 @@ from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.config import ConfigDocument
 from deckr.core.util.runtime_id import require_runtime_id
 from deckr.lanes import Lane, LaneRegistry
-from deckr.services.state import ServiceLiveState, live_service_check
 from deckr.state import (
-    DEFAULT_DISCOVERY_STATE_STORE_NAME,
-    DEFAULT_LEASE_STATE_STORE_NAME,
-    EndpointPresence,
+    DEFAULT_STATE_STORE_NAME,
     StateStore,
     StateStorePolicy,
     StateUnavailable,
-    presence_endpoint_key,
 )
 
 if TYPE_CHECKING:
@@ -133,7 +133,7 @@ class ComponentContext:
 
     def state(
         self,
-        name: str = DEFAULT_LEASE_STATE_STORE_NAME,
+        name: str = DEFAULT_STATE_STORE_NAME,
         *,
         policy: StateStorePolicy | None = None,
     ) -> StateStore:
@@ -471,7 +471,7 @@ def resolve_component_host_plan(
     lane_contracts = _build_lane_contract_registry(specs, document=document)
     _validate_component_lane_bindings(specs, lane_contracts)
     _report_dependency_declarations(specs, report_events)
-    _report_presence_dependency_cycles(specs, report_events)
+    _report_endpoint_dependency_cycles(specs, report_events)
     return ComponentHostPlan(
         specs=specs,
         lane_contracts=lane_contracts,
@@ -936,7 +936,7 @@ def _report_dependency_declarations(
             )
 
 
-def _report_presence_dependency_cycles(
+def _report_endpoint_dependency_cycles(
     specs: Sequence[ComponentInstanceSpec],
     report_events: list[PlanningEvent],
 ) -> None:
@@ -948,6 +948,8 @@ def _report_presence_dependency_cycles(
     graph: dict[str, set[str]] = {spec.instance_id: set() for spec in specs}
     for spec in specs:
         for dependency in spec.dependencies.values():
+            if dependency.endpoint is None:
+                continue
             target = endpoint_owners.get(
                 (dependency.endpoint.family, dependency.endpoint.endpoint_id)
             )
@@ -967,7 +969,7 @@ def _report_presence_dependency_cycles(
                         PlanningEvent(
                             instance_id=start,
                             message=(
-                                "presence dependency cycle: "
+                                "endpoint-filtered feature dependency cycle: "
                                 + " -> ".join(cycle)
                             ),
                         )
@@ -1511,8 +1513,11 @@ async def _run_dependency_observer(
     component_manager: ComponentManager,
 ) -> None:
     specs = tuple(spec for spec in plan.specs if spec.dependencies)
-    lease_state = deckr.state(DEFAULT_LEASE_STATE_STORE_NAME)
-    discovery_state = deckr.state(DEFAULT_DISCOVERY_STATE_STORE_NAME)
+    beacon_state = deckr.state(
+        DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+        policy=BEACON_ADVERTISEMENT_STORE_POLICY,
+    )
+    beacon = BeaconDiscovery(beacon_state)
     send, receive = anyio.create_memory_object_stream[object](max_buffer_size=1)
 
     async def notify() -> None:
@@ -1532,14 +1537,11 @@ async def _run_dependency_observer(
                 await anyio.sleep(1.0)
 
     async with send, receive, anyio.create_task_group() as tg:
-        tg.start_soon(watch_state, lease_state, "presence.endpoint.")
-        tg.start_soon(watch_state, discovery_state, "catalog.services.")
-        tg.start_soon(watch_state, discovery_state, "status.services.")
+        tg.start_soon(watch_state, beacon_state, "advertisements.by_feature.")
         while True:
             await _evaluate_dependency_readiness(
                 specs,
-                lease_state=lease_state,
-                discovery_state=discovery_state,
+                beacon=beacon,
                 component_manager=component_manager,
             )
             with anyio.move_on_after(0.25) as scope:
@@ -1551,8 +1553,7 @@ async def _run_dependency_observer(
 async def _evaluate_dependency_readiness(
     specs: Sequence[ComponentInstanceSpec],
     *,
-    lease_state: StateStore,
-    discovery_state: StateStore,
+    beacon: BeaconDiscovery,
     component_manager: ComponentManager,
 ) -> None:
     for spec in specs:
@@ -1560,8 +1561,7 @@ async def _evaluate_dependency_readiness(
         for dependency in spec.dependencies.values():
             conditions[dependency.name] = await _dependency_condition(
                 dependency,
-                lease_state=lease_state,
-                discovery_state=discovery_state,
+                beacon=beacon,
             )
         readiness, reasons, diagnostics = dependency_effective_readiness(conditions)
         await component_manager.report_component_dependency_readiness(
@@ -1575,26 +1575,16 @@ async def _evaluate_dependency_readiness(
 async def _dependency_condition(
     dependency: ComponentDependency,
     *,
-    lease_state: StateStore,
-    discovery_state: StateStore,
-) -> DependencyCondition:
-    if dependency.kind == DependencyKind.SERVICE:
-        return await _service_dependency_condition(
-            dependency,
-            lease_state=lease_state,
-            discovery_state=discovery_state,
-        )
-    return await _endpoint_dependency_condition(dependency, lease_state=lease_state)
-
-
-async def _endpoint_dependency_condition(
-    dependency: ComponentDependency,
-    *,
-    lease_state: StateStore,
+    beacon: BeaconDiscovery,
 ) -> DependencyCondition:
     try:
-        entry = await lease_state.get(
-            presence_endpoint_key(lane=dependency.lane, endpoint=dependency.endpoint)
+        candidates = await beacon.find(
+            dependency.feature_id,
+            selector=(
+                None
+                if dependency.endpoint is None
+                else lambda advertisement: advertisement.endpoint == dependency.endpoint
+            ),
         )
     except StateUnavailable:
         return DependencyCondition(
@@ -1604,98 +1594,29 @@ async def _endpoint_dependency_condition(
             state=DependencyConditionState.UNKNOWN,
             reason="state_unavailable",
         )
-    if entry is None:
+    diagnostics = {
+        "featureId": dependency.feature_id,
+        **(
+            {"endpoint": str(dependency.endpoint)}
+            if dependency.endpoint is not None
+            else {}
+        ),
+    }
+    if not candidates:
         return DependencyCondition(
             name=dependency.name,
             kind=dependency.kind,
             mode=dependency.mode,
             state=DependencyConditionState.UNSATISFIED,
-            reason="presence_absent",
-            diagnostics={
-                "lane": dependency.lane,
-                "endpoint": str(dependency.endpoint),
-            },
+            reason="beacon_absent",
+            diagnostics=diagnostics,
         )
-    try:
-        presence = EndpointPresence.model_validate(entry.value)
-    except ValueError:
-        return DependencyCondition(
-            name=dependency.name,
-            kind=dependency.kind,
-            mode=dependency.mode,
-            state=DependencyConditionState.UNSATISFIED,
-            reason="presence_invalid",
-        )
-    if presence.lane != dependency.lane or presence.endpoint != dependency.endpoint:
-        return DependencyCondition(
-            name=dependency.name,
-            kind=dependency.kind,
-            mode=dependency.mode,
-            state=DependencyConditionState.UNSATISFIED,
-            reason="presence_mismatch",
-        )
+    diagnostics["candidates"] = len(candidates)
+    diagnostics["sessionId"] = candidates[0].advertisement.session_id
     return DependencyCondition(
         name=dependency.name,
         kind=dependency.kind,
         mode=dependency.mode,
         state=DependencyConditionState.SATISFIED,
-        diagnostics={"sessionId": presence.session_id},
-    )
-
-
-async def _service_dependency_condition(
-    dependency: ComponentDependency,
-    *,
-    lease_state: StateStore,
-    discovery_state: StateStore,
-) -> DependencyCondition:
-    if dependency.namespace is None:
-        return DependencyCondition(
-            name=dependency.name,
-            kind=dependency.kind,
-            mode=dependency.mode,
-            state=DependencyConditionState.UNSATISFIED,
-            reason="namespace_missing",
-        )
-    try:
-        check = await live_service_check(
-            lease_state,
-            discovery_state,
-            service_id=dependency.endpoint.endpoint_id,
-            service_namespace=dependency.namespace,
-        )
-    except StateUnavailable:
-        return DependencyCondition(
-            name=dependency.name,
-            kind=dependency.kind,
-            mode=dependency.mode,
-            state=DependencyConditionState.UNKNOWN,
-            reason="state_unavailable",
-        )
-
-    diagnostics = {
-        "serviceId": check.service_id,
-        "serviceNamespace": check.service_namespace,
-    }
-    if check.session_id is not None:
-        diagnostics["sessionId"] = check.session_id
-    if check.reason is not None:
-        diagnostics["reason"] = check.reason
-
-    if check.state == ServiceLiveState.AVAILABLE:
-        state = DependencyConditionState.SATISFIED
-        reason = None
-    elif check.state == ServiceLiveState.DEGRADED:
-        state = DependencyConditionState.DEGRADED
-        reason = "service_degraded"
-    else:
-        state = DependencyConditionState.UNSATISFIED
-        reason = check.reason or f"service_{check.state.value}"
-    return DependencyCondition(
-        name=dependency.name,
-        kind=dependency.kind,
-        mode=dependency.mode,
-        state=state,
-        reason=reason,
         diagnostics=diagnostics,
     )

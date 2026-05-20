@@ -86,7 +86,8 @@ ids. They intentionally stay short:
 - core endpoint families, such as `controller`, `action_provider`,
   `hardware_manager`, and `service`
 - core NATS subject roots and shared buckets, such as `deckr.lane.*`,
-  `deckr_lease_v1`, and `deckr_discovery_v1`
+  `deckr_beacon_advertisement_v1`, `deckr_concord_contract_v1`, and
+  `deckr_concord_token_v1`
 
 Keeping those roots short does not make `deckr.*` a general-purpose public
 contract namespace. New Deckr-owned public contracts use `dev.deckr.*`.
@@ -131,16 +132,11 @@ with generic Concord contracts. Deckr core validates the Beacon/Concord
 envelopes; the service package validates its payloads, terms, operations, and
 result/view schemas.
 
-Legacy service-owned views used the generic discovery key shape:
-
-```text
-view.services.<service-id>.<service-namespace>.<tokens...>
-```
-
-The `service-id` selects the configured service instance. The
-`service-namespace` selects the globally owned payload and operation contract.
-The namespace token is encoded through the Deckr current-state token rules when
-written to NATS KV.
+Service packages should use their namespace as a Beacon `featureId` or inside
+their own profile payload. If a service needs retained views or durable domain
+state, that storage is package-owned and must use an owner-qualified private
+bucket or a service-owned Concord profile. Deckr core no longer defines shared
+service catalog, status, or view keys.
 
 ## Extension Lanes
 
@@ -177,11 +173,15 @@ extension namespace.
 
 ## Private KV Buckets
 
-The shared `deckr_lease_v1` and `deckr_discovery_v1` buckets are Deckr runtime
-coordination buckets. Package-owned private buckets are allowed only when a
-package needs durable state outside shared Deckr lease/discovery coordination,
-or when it owns a documented package-specific projection such as controller
-config.
+The shared protocol buckets are:
+
+- `deckr_beacon_advertisement_v1` for TTL-bound Beacon advertisements
+- `deckr_concord_contract_v1` for persistent Concord contracts
+- `deckr_concord_token_v1` for TTL-bound Concord participant tokens
+
+Package-owned private buckets are allowed only when a package needs durable
+state outside those shared protocols, or when it owns a documented
+package-specific projection such as controller config.
 
 Private bucket names must be owner-qualified, purpose-specific, versioned, and
 safe for JetStream bucket names. Use underscores for bucket names rather than
@@ -194,9 +194,10 @@ dots:
 Do not use generic private bucket names such as `state`, `cache`, `services`,
 `views`, or `config`.
 
-Package-owned private buckets must not redefine endpoint liveness, service
-catalogs, service status, or Deckr-owned discovery semantics. Those contracts
-remain in the shared Deckr lease/discovery model.
+Package-owned private buckets must not redefine Beacon advertisements, Concord
+contract validity, or Deckr-owned hardware/action profile semantics. Service
+packages may define their own Beacon payloads, Concord terms, and private state
+under their own public namespace.
 
 ## Pre-V1 Contract Rule
 

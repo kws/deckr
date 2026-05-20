@@ -52,10 +52,9 @@
           "outputCapabilities": [
             {
               "access": [
-                "settable",
                 "invokable"
               ],
-              "capabilityId": "raster.bitmap",
+              "capabilityId": "screen",
               "commandSchema": {
                 "schema": {
                   "oneOf": [
@@ -68,15 +67,9 @@
                             "png"
                           ]
                         },
-                        "height": {
-                          "const": 72
-                        },
                         "image": {
                           "contentEncoding": "base64",
                           "type": "string"
-                        },
-                        "width": {
-                          "const": 72
                         }
                       },
                       "required": [

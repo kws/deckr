@@ -895,9 +895,12 @@
       "title": "EndpointAddress",
       "type": "string"
     },
-    "HardwareInventoryDevice": {
+    "HardwareAdvertisementDevice": {
       "additionalProperties": false,
       "properties": {
+        "capacity": {
+          "$ref": "#/$defs/ProfileCapacity"
+        },
         "descriptor": {
           "$ref": "#/$defs/DeviceDescriptor"
         },
@@ -909,18 +912,54 @@
         "deviceRef",
         "descriptor"
       ],
-      "title": "HardwareInventoryDevice",
+      "title": "HardwareAdvertisementDevice",
       "type": "object"
     },
-    "JsonValue": {}
+    "JsonValue": {},
+    "ProfileCapacity": {
+      "additionalProperties": false,
+      "properties": {
+        "availableInstances": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Availableinstances"
+        },
+        "claimedInstances": {
+          "default": 0,
+          "title": "Claimedinstances",
+          "type": "integer"
+        },
+        "totalInstances": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Totalinstances"
+        }
+      },
+      "title": "ProfileCapacity",
+      "type": "object"
+    }
   },
-  "$id": "dev.deckr.state.hardware_inventory.v1",
+  "$id": "dev.deckr.profile.hardware.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
     "devices": {
       "additionalProperties": {
-        "$ref": "#/$defs/HardwareInventoryDevice"
+        "$ref": "#/$defs/HardwareAdvertisementDevice"
       },
       "title": "Devices",
       "type": "object"
@@ -939,23 +978,23 @@
       "title": "Managerid",
       "type": "string"
     },
-    "sessionId": {
-      "title": "Sessionid",
+    "profile": {
+      "const": "dev.deckr.profile.hardware.v1",
+      "default": "dev.deckr.profile.hardware.v1",
+      "title": "Profile",
       "type": "string"
     },
-    "timestamp": {
-      "format": "date-time",
-      "title": "Timestamp",
+    "sessionId": {
+      "title": "Sessionid",
       "type": "string"
     }
   },
   "required": [
     "managerId",
     "managerEndpoint",
-    "sessionId",
-    "timestamp"
+    "sessionId"
   ],
-  "title": "Hardware inventory state",
+  "title": "Deckr Beacon hardware profile payload",
   "type": "object",
   "x-deckr-schema-version": "1"
 }

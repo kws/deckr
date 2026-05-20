@@ -3,17 +3,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from deckr.actions.state import parse_action_provider_catalog_key
-from deckr.state import (
-    DEFAULT_DISCOVERY_STATE_STORE_NAME,
-    DEFAULT_LEASE_STATE_STORE_NAME,
-    parse_device_claim_key,
-    parse_hardware_inventory_key,
-    parse_presence_endpoint_key,
+from deckr.beacon import (
+    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+    parse_beacon_advertisement_key,
+)
+from deckr.concord import (
+    DEFAULT_CONCORD_CONTRACT_STORE_NAME,
+    DEFAULT_CONCORD_TOKEN_STORE_NAME,
+    parse_concord_contract_key,
+    parse_concord_participant_token_key,
 )
 
 
@@ -36,7 +37,7 @@ async def main() -> int:
     try:
         js = nc.jetstream()
         rows = []
-        for bucket in (args.lease_bucket, args.discovery_bucket):
+        for bucket in _buckets(args):
             try:
                 kv = await js.key_value(bucket)
             except Exception as exc:
@@ -73,119 +74,89 @@ async def _load_rows(kv, *, bucket: str) -> list[Row]:
 
 
 def _print_report(rows: list[Row]) -> None:
-    presence: list[tuple[str, str, Row]] = []
-    inventories: list[tuple[str, Row]] = []
-    catalogs: list[tuple[str, Row]] = []
-    claims: list[tuple[str, str, Row]] = []
+    advertisements: list[tuple[str, str, Row]] = []
+    contracts: list[tuple[str, int, Row]] = []
+    tokens: list[tuple[str, int, str, Row]] = []
     unknown: list[Row] = []
 
     for row in rows:
-        parsed_presence = parse_presence_endpoint_key(row.key)
-        if parsed_presence is not None:
-            lane, endpoint = parsed_presence
-            presence.append((lane, str(endpoint), row))
+        parsed_advertisement = parse_beacon_advertisement_key(row.key)
+        if parsed_advertisement is not None:
+            feature_id, advertisement_id = parsed_advertisement
+            advertisements.append((feature_id, advertisement_id, row))
             continue
-        manager_id = parse_hardware_inventory_key(row.key)
-        if manager_id is not None:
-            inventories.append((manager_id, row))
+        parsed_contract = parse_concord_contract_key(row.key)
+        if parsed_contract is not None:
+            contract_id, generation = parsed_contract
+            contracts.append((contract_id, generation, row))
             continue
-        provider_instance_id = parse_action_provider_catalog_key(row.key)
-        if provider_instance_id is not None:
-            catalogs.append((provider_instance_id, row))
-            continue
-        parsed_claim = parse_device_claim_key(row.key)
-        if parsed_claim is not None:
-            manager_id, device_id = parsed_claim
-            claims.append((manager_id, device_id, row))
+        parsed_token = parse_concord_participant_token_key(row.key)
+        if parsed_token is not None:
+            contract_id, generation, participant = parsed_token
+            tokens.append((contract_id, generation, str(participant), row))
             continue
         unknown.append(row)
 
-    print("Deckr NATS Current State")
-    print("========================")
+    print("Deckr NATS Beacon/Concord State")
+    print("================================")
     print(f"buckets: {', '.join(sorted({row.bucket for row in rows})) or 'none'}")
     print(f"keys: {len(rows)}")
     print()
-    _print_presence(presence)
-    _print_inventories(inventories)
-    _print_catalogs(catalogs)
-    _print_claims(claims)
+    _print_advertisements(advertisements)
+    _print_contracts(contracts)
+    _print_tokens(tokens)
     _print_unknown(unknown)
 
 
-def _print_presence(rows: list[tuple[str, str, Row]]) -> None:
-    print("Endpoint Presence")
+def _print_advertisements(rows: list[tuple[str, str, Row]]) -> None:
+    print("Beacon Advertisements")
     if not rows:
         print("  none")
         print()
         return
-    for lane, endpoint, row in rows:
+    for feature_id, advertisement_id, row in sorted(rows):
         print(
             "  "
-            f"{endpoint} lane={lane} session={row.value.get('sessionId')} "
+            f"{feature_id}/{advertisement_id} endpoint={row.value.get('endpoint')} "
+            f"session={row.value.get('sessionId')} refresh={row.value.get('refreshSeq')} "
             f"ttl={row.value.get('ttlSeconds')}s rev={row.revision} "
             f"bucket={row.bucket}"
         )
     print()
 
 
-def _print_inventories(rows: list[tuple[str, Row]]) -> None:
-    print("Hardware Inventory")
+def _print_contracts(rows: list[tuple[str, int, Row]]) -> None:
+    print("Concord Contracts")
     if not rows:
         print("  none")
         print()
         return
-    for manager_id, row in rows:
-        devices = row.value.get("devices")
-        count = len(devices) if isinstance(devices, dict) else 0
+    for contract_id, generation, row in sorted(rows):
+        participants = row.value.get("participants")
+        count = len(participants) if isinstance(participants, list) else 0
         print(
             "  "
-            f"{manager_id} endpoint={row.value.get('managerEndpoint')} "
-            f"session={row.value.get('sessionId')} devices={count} "
+            f"{contract_id} gen={generation} state={row.value.get('state')} "
+            f"profile={row.value.get('profile')} participants={count} "
             f"rev={row.revision} bucket={row.bucket}"
         )
     print()
 
 
-def _print_catalogs(rows: list[tuple[str, Row]]) -> None:
-    print("Action Provider Catalogs")
+def _print_tokens(rows: list[tuple[str, int, str, Row]]) -> None:
+    print("Concord Participant Tokens")
     if not rows:
         print("  none")
         print()
         return
-    for provider_instance_id, row in rows:
-        actions = _catalog_action_count(row.value)
+    for contract_id, generation, participant, row in sorted(rows):
         print(
             "  "
-            f"{provider_instance_id} endpoint={row.value.get('providerEndpoint')} "
-            f"provider={row.value.get('providerId')} "
-            f"session={row.value.get('sessionId')} actions={actions} "
-            f"rev={row.revision} bucket={row.bucket}"
+            f"{contract_id} gen={generation} participant={participant} "
+            f"session={row.value.get('sessionId')} refresh={row.value.get('refreshSeq')} "
+            f"ttl={row.value.get('ttlSeconds')}s rev={row.revision} "
+            f"bucket={row.bucket}"
         )
-    print()
-
-
-def _catalog_action_count(value: dict[str, Any]) -> int:
-    actions = value.get("actions")
-    return len(actions) if isinstance(actions, dict) else 0
-
-
-def _print_claims(rows: list[tuple[str, str, Row]]) -> None:
-    print("Device Claims")
-    if not rows:
-        print("  none")
-        print()
-        return
-    by_manager: dict[str, list[tuple[str, Row]]] = defaultdict(list)
-    for manager_id, device_id, row in rows:
-        by_manager[manager_id].append((device_id, row))
-    for manager_id, entries in sorted(by_manager.items()):
-        for device_id, row in sorted(entries):
-            print(
-                "  "
-                f"{manager_id}/{device_id} claimedBy={row.value.get('claimedByEndpoint')} "
-                f"session={row.value.get('claimedBySessionId')} "
-                f"rev={row.revision} bucket={row.bucket}"
-            )
     print()
 
 
@@ -201,12 +172,23 @@ def _print_unknown(rows: list[Row]) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="nats://127.0.0.1:4222")
-    parser.add_argument("--lease-bucket", default=DEFAULT_LEASE_STATE_STORE_NAME)
     parser.add_argument(
-        "--discovery-bucket",
-        default=DEFAULT_DISCOVERY_STATE_STORE_NAME,
+        "--bucket",
+        action="append",
+        default=None,
+        help="NATS KV bucket to inspect. May be repeated.",
     )
     return parser.parse_args()
+
+
+def _buckets(args: argparse.Namespace) -> tuple[str, ...]:
+    if args.bucket is not None:
+        return tuple(args.bucket)
+    return (
+        DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+        DEFAULT_CONCORD_CONTRACT_STORE_NAME,
+        DEFAULT_CONCORD_TOKEN_STORE_NAME,
+    )
 
 
 if __name__ == "__main__":

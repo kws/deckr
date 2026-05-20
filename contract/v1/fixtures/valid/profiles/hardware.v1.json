@@ -1,6 +1,11 @@
 {
   "devices": {
     "deck-1": {
+      "capacity": {
+        "availableInstances": 1,
+        "claimedInstances": 0,
+        "totalInstances": 1
+      },
       "descriptor": {
         "capabilities": [],
         "connections": [],
@@ -53,10 +58,9 @@
             "outputCapabilities": [
               {
                 "access": [
-                  "settable",
                   "invokable"
                 ],
-                "capabilityId": "raster.bitmap",
+                "capabilityId": "screen",
                 "commandSchema": {
                   "schema": {
                     "oneOf": [
@@ -69,15 +73,9 @@
                               "png"
                             ]
                           },
-                          "height": {
-                            "const": 72
-                          },
                           "image": {
                             "contentEncoding": "base64",
                             "type": "string"
-                          },
-                          "width": {
-                            "const": 72
                           }
                         },
                         "required": [
@@ -132,6 +130,6 @@
   },
   "managerEndpoint": "hardware_manager:mirabox-main",
   "managerId": "mirabox-main",
-  "sessionId": "manager-session",
-  "timestamp": "2026-04-29T10:00:00Z"
+  "profile": "dev.deckr.profile.hardware.v1",
+  "sessionId": "manager-session"
 }

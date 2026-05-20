@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 
 import anyio
 import pytest
 from memory_lane_substrate import memory_deckr
 
+from deckr.beacon import (
+    BEACON_ADVERTISEMENT_STORE_POLICY,
+    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+    BeaconDiscovery,
+)
 from deckr.components import (
     BaseComponent,
     ComponentCardinality,
@@ -23,17 +27,10 @@ from deckr.components import (
     start_components,
 )
 from deckr.contracts.lanes import LaneContract
-from deckr.contracts.messages import SERVICES_LANE, entity_subject, service_address
+from deckr.contracts.messages import entity_subject, service_address
 from deckr.core.config import ConfigDocument
 from deckr.lanes import Lane
 from deckr.launcher import build_runtime_substrate
-from deckr.services.state import (
-    ServiceCatalog,
-    ServiceStatus,
-    ServiceStatusValue,
-    service_catalog_key,
-    service_status_key,
-)
 from deckr.substrates.nats import NatsSubstrate
 
 
@@ -55,10 +52,6 @@ class _ReadyComponent(BaseComponent):
 
 def _document(raw: dict) -> ConfigDocument:
     return ConfigDocument(raw=raw, source_path=None, base_dir=Path.cwd())
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 @asynccontextmanager
@@ -265,15 +258,15 @@ def test_component_dependencies_are_planned_from_generic_wrapper() -> None:
                             "instance_id": "worker",
                             "dependencies": {
                                 "sonos_home": {
-                                    "kind": "service",
+                                    "kind": "feature",
                                     "mode": "required",
+                                    "feature_id": "dev.deckr.sonos.service",
                                     "endpoint": "service:sonos-home",
-                                    "namespace": "dev.deckr.sonos.service",
                                 },
                                 "controller_main": {
-                                    "kind": "endpoint",
+                                    "kind": "feature",
                                     "mode": "observed",
-                                    "lane": "actions",
+                                    "feature_id": "dev.deckr.controller",
                                     "endpoint": "controller:controller-main",
                                 },
                             },
@@ -291,9 +284,9 @@ def test_component_dependencies_are_planned_from_generic_wrapper() -> None:
 
     dependencies = specs[0].dependencies
     assert sorted(dependencies) == ["controller_main", "sonos_home"]
-    assert dependencies["sonos_home"].lane == "services"
+    assert dependencies["sonos_home"].feature_id == "dev.deckr.sonos.service"
     assert dependencies["sonos_home"].endpoint == service_address("sonos-home")
-    assert dependencies["sonos_home"].namespace == "dev.deckr.sonos.service"
+    assert dependencies["controller_main"].feature_id == "dev.deckr.controller"
 
 
 def test_component_dependencies_reject_unknown_fields() -> None:
@@ -308,10 +301,10 @@ def test_component_dependencies_reject_unknown_fields() -> None:
                             "instance_id": "worker",
                             "dependencies": {
                                 "sonos_home": {
-                                    "kind": "service",
+                                    "kind": "feature",
                                     "mode": "required",
+                                    "feature_id": "dev.deckr.sonos.service",
                                     "endpoint": "service:sonos-home",
-                                    "namespace": "dev.deckr.sonos.service",
                                     "provider_id": "not-generic",
                                 }
                             },
@@ -329,7 +322,7 @@ def test_component_dependencies_reject_unknown_fields() -> None:
         )
 
 
-def test_presence_dependency_cycles_are_reported_not_rejected() -> None:
+def test_endpoint_filtered_feature_dependency_cycles_are_reported_not_rejected() -> None:
     worker = ComponentDefinition(
         manifest=ComponentManifest(
             component_id="com.example.worker",
@@ -349,10 +342,10 @@ def test_presence_dependency_cycles_are_reported_not_rejected() -> None:
                             "endpoints": {"service": "one"},
                             "dependencies": {
                                 "two": {
-                                    "kind": "service",
+                                    "kind": "feature",
                                     "mode": "required",
+                                    "feature_id": "com.example.worker",
                                     "endpoint": "service:two",
-                                    "namespace": "com.example.worker",
                                 }
                             },
                         },
@@ -362,10 +355,10 @@ def test_presence_dependency_cycles_are_reported_not_rejected() -> None:
                             "endpoints": {"service": "two"},
                             "dependencies": {
                                 "one": {
-                                    "kind": "service",
+                                    "kind": "feature",
                                     "mode": "required",
+                                    "feature_id": "com.example.worker",
                                     "endpoint": "service:one",
-                                    "namespace": "com.example.worker",
                                 }
                             },
                         },
@@ -381,7 +374,10 @@ def test_presence_dependency_cycles_are_reported_not_rejected() -> None:
     )
 
     messages = [event.message for event in plan.report.events]
-    assert any("presence dependency cycle" in message for message in messages)
+    assert any(
+        "endpoint-filtered feature dependency cycle" in message
+        for message in messages
+    )
 
 
 def test_instance_source_generates_component_instances() -> None:
@@ -597,10 +593,10 @@ async def test_required_service_dependency_controls_effective_readiness() -> Non
                             "instance_id": "worker",
                             "dependencies": {
                                 "sonos_home": {
-                                    "kind": "service",
+                                    "kind": "feature",
                                     "mode": "required",
+                                    "feature_id": "dev.deckr.sonos.service",
                                     "endpoint": "service:sonos-home",
-                                    "namespace": "dev.deckr.sonos.service",
                                 }
                             },
                         }
@@ -626,57 +622,28 @@ async def test_required_service_dependency_controls_effective_readiness() -> Non
         )
         assert unready.readiness_reasons == ("dependency.sonos_home.unsatisfied",)
 
-        endpoint = service_address("sonos-home")
-        async with deckr.lane(SERVICES_LANE).register_endpoint(endpoint) as service:
-            discovery = deckr.state("deckr_discovery_v1")
-            await discovery.put(
-                service_catalog_key("sonos-home"),
-                ServiceCatalog(
-                    serviceId="sonos-home",
-                    serviceEndpoint=endpoint,
-                    serviceNamespace="dev.deckr.sonos.service",
-                    sessionId=service.session_id,
-                    supportedOperations=("play",),
-                    timestamp=_now(),
-                ),
+        beacon = BeaconDiscovery(
+            deckr.state(
+                DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+                policy=BEACON_ADVERTISEMENT_STORE_POLICY,
             )
-            await discovery.put(
-                service_status_key("sonos-home"),
-                ServiceStatus(
-                    serviceId="sonos-home",
-                    serviceEndpoint=endpoint,
-                    serviceNamespace="dev.deckr.sonos.service",
-                    sessionId=service.session_id,
-                    status=ServiceStatusValue.AVAILABLE,
-                    timestamp=_now(),
-                ),
-            )
+        )
+        handle = await beacon.advertise(
+            "dev.deckr.sonos.service",
+            service_address("sonos-home"),
+            "service-session",
+            advertisement_id="sonos-home",
+            operations=("play",),
+        )
 
-            ready = await _wait_for_readiness(
-                manager,
-                "com.example.worker:worker",
-                ReadinessState.READY,
-            )
-            assert ready.readiness_reasons == ()
+        ready = await _wait_for_readiness(
+            manager,
+            "com.example.worker:worker",
+            ReadinessState.READY,
+        )
+        assert ready.readiness_reasons == ()
 
-            await discovery.put(
-                service_status_key("sonos-home"),
-                ServiceStatus(
-                    serviceId="sonos-home",
-                    serviceEndpoint=endpoint,
-                    serviceNamespace="dev.deckr.sonos.service",
-                    sessionId=service.session_id,
-                    status=ServiceStatusValue.DEGRADED,
-                    timestamp=_now(),
-                ),
-            )
-            degraded = await _wait_for_readiness(
-                manager,
-                "com.example.worker:worker",
-                ReadinessState.UNREADY,
-            )
-            assert degraded.readiness_reasons == ("dependency.sonos_home.degraded",)
-
+        assert await beacon.withdraw(handle)
         lost = await _wait_for_status(
             manager,
             "com.example.worker:worker",
@@ -702,10 +669,10 @@ async def test_optional_service_dependency_reports_without_blocking_readiness() 
                             "instance_id": "worker",
                             "dependencies": {
                                 "sonos_home": {
-                                    "kind": "service",
+                                    "kind": "feature",
                                     "mode": "optional",
+                                    "feature_id": "dev.deckr.sonos.service",
                                     "endpoint": "service:sonos-home",
-                                    "namespace": "dev.deckr.sonos.service",
                                 }
                             },
                         }

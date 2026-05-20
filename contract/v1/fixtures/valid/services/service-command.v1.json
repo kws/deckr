@@ -4,7 +4,7 @@
     "params": {
       "zone": "kitchen"
     },
-    "serviceNamespace": "dev.deckr.media.service"
+    "serviceNamespace": "org.example.media.service"
   },
   "createdAt": "2026-04-29T10:00:00Z",
   "lane": "services",
@@ -21,7 +21,7 @@
   "senderSessionId": "controller-session",
   "subject": {
     "identifiers": {
-      "namespace": "dev.deckr.media.service",
+      "namespace": "org.example.media.service",
       "operation": "play",
       "serviceId": "media-home"
     },

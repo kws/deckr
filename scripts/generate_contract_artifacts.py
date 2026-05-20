@@ -15,12 +15,25 @@ from deckr.actions.endpoints import action_provider_address
 from deckr.actions.messages import (
     ACTION_MESSAGES_SCHEMA_ID,
     SETTINGS_REQUEST,
-    ActionDescriptor,
-    ActionProviderCatalog,
     SettingsTargetRef,
     action_message_schema,
 )
-from deckr.actions.state import action_provider_catalog_key
+from deckr.beacon import (
+    BEACON_ADVERTISEMENT_SCHEMA_ID,
+    AdvertisementRecord,
+    beacon_advertisement_key,
+)
+from deckr.concord import (
+    CONCORD_CONTRACT_SCHEMA_ID,
+    CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
+    ContractRecord,
+    ParticipantTokenRecord,
+    canonical_json_bytes,
+    canonical_json_hash,
+    concord_contract_key,
+    concord_participant_token_key,
+)
+from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import (
     ACTIONS_LANE,
     SERVICES_LANE,
@@ -39,7 +52,10 @@ from deckr.hardware.descriptors import (
     CAPABILITY_DESCRIPTOR_SCHEMA_ID,
     CONTROL_DESCRIPTOR_SCHEMA_ID,
     DEVICE_DESCRIPTOR_SCHEMA_ID,
+    CapabilityRef,
+    ControlRef,
     DeviceDescriptor,
+    DeviceRef,
     descriptor_schema_artifacts,
 )
 from deckr.hardware.messages import (
@@ -48,29 +64,27 @@ from deckr.hardware.messages import (
     device_available_message,
     hardware_message_schema,
 )
+from deckr.profiles import (
+    ACTION_BINDING_PROFILE_ID,
+    ACTIONS_FEATURE_ID,
+    ACTIONS_PROFILE_ID,
+    HARDWARE_CLAIM_PROFILE_ID,
+    HARDWARE_FEATURE_ID,
+    HARDWARE_PROFILE_ID,
+    ActionBeaconDescriptor,
+    ActionBindingTerms,
+    ActionsBeaconPayload,
+    HardwareAdvertisementDevice,
+    HardwareBeaconPayload,
+    HardwareClaimDevice,
+    HardwareClaimTerms,
+    ProfileCapacity,
+)
 from deckr.services.messages import (
     SERVICE_COMMAND,
     SERVICE_MESSAGES_SCHEMA_ID,
     ServiceCommandBody,
     service_message_schema,
-)
-from deckr.services.state import (
-    ServiceCatalog,
-    ServiceStatus,
-    ServiceStatusValue,
-    service_catalog_key,
-    service_status_key,
-    service_view_key,
-)
-from deckr.state import (
-    DeviceClaim,
-    EndpointPresence,
-    HardwareInventory,
-    decode_key_token,
-    device_claim_key,
-    encode_key_token,
-    hardware_inventory_key,
-    presence_endpoint_key,
 )
 from deckr.substrates.nats import _headers_for, _subject_for
 
@@ -78,15 +92,6 @@ CONTRACT_VERSION = "v1"
 SPEC_VERSION = "1"
 FIXED_NOW = datetime(2026, 4, 29, 10, 0, tzinfo=UTC)
 JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
-
-STATE_SCHEMA_IDS = {
-    "endpoint_presence": "dev.deckr.state.endpoint_presence.v1",
-    "hardware_inventory": "dev.deckr.state.hardware_inventory.v1",
-    "device_claim": "dev.deckr.state.device_claim.v1",
-    "action_provider_catalog": "dev.deckr.state.action_provider_catalog.v1",
-    "service_catalog": "dev.deckr.state.service_catalog.v1",
-    "service_status": "dev.deckr.state.service_status.v1",
-}
 
 DESCRIPTOR_SCHEMA_FILENAMES = {
     DEVICE_DESCRIPTOR_SCHEMA_ID: "device-descriptor.v1.schema.json",
@@ -184,45 +189,51 @@ def _add_schemas(add_artifact) -> None:
             payload=schema,
         )
 
-    state_schema_models: tuple[tuple[str, str, type[BaseModel], str], ...] = (
+    schema_models: tuple[tuple[str, str, type[BaseModel], str], ...] = (
         (
-            STATE_SCHEMA_IDS["endpoint_presence"],
-            "schemas/state/endpoint-presence.v1.schema.json",
-            EndpointPresence,
-            "Endpoint presence state",
+            BEACON_ADVERTISEMENT_SCHEMA_ID,
+            "schemas/beacon/advertisement.v1.schema.json",
+            AdvertisementRecord,
+            "Beacon advertisement",
         ),
         (
-            STATE_SCHEMA_IDS["hardware_inventory"],
-            "schemas/state/hardware-inventory.v1.schema.json",
-            HardwareInventory,
-            "Hardware inventory state",
+            CONCORD_CONTRACT_SCHEMA_ID,
+            "schemas/concord/contract.v1.schema.json",
+            ContractRecord,
+            "Concord contract",
         ),
         (
-            STATE_SCHEMA_IDS["device_claim"],
-            "schemas/state/device-claim.v1.schema.json",
-            DeviceClaim,
-            "Device claim state",
+            CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
+            "schemas/concord/participant-token.v1.schema.json",
+            ParticipantTokenRecord,
+            "Concord participant token",
         ),
         (
-            STATE_SCHEMA_IDS["action_provider_catalog"],
-            "schemas/state/action-provider-catalog.v1.schema.json",
-            ActionProviderCatalog,
-            "Action provider catalog state",
+            HARDWARE_PROFILE_ID,
+            "schemas/profiles/hardware.v1.schema.json",
+            HardwareBeaconPayload,
+            "Deckr Beacon hardware profile payload",
         ),
         (
-            STATE_SCHEMA_IDS["service_catalog"],
-            "schemas/state/service-catalog.v1.schema.json",
-            ServiceCatalog,
-            "Service catalog state",
+            ACTIONS_PROFILE_ID,
+            "schemas/profiles/actions.v1.schema.json",
+            ActionsBeaconPayload,
+            "Deckr Beacon actions profile payload",
         ),
         (
-            STATE_SCHEMA_IDS["service_status"],
-            "schemas/state/service-status.v1.schema.json",
-            ServiceStatus,
-            "Service status state",
+            HARDWARE_CLAIM_PROFILE_ID,
+            "schemas/profiles/hardware-claim.v1.schema.json",
+            HardwareClaimTerms,
+            "Deckr Concord hardware claim terms",
+        ),
+        (
+            ACTION_BINDING_PROFILE_ID,
+            "schemas/profiles/action-binding.v1.schema.json",
+            ActionBindingTerms,
+            "Deckr Concord action binding terms",
         ),
     )
-    for schema_id, path, model, title in state_schema_models:
+    for schema_id, path, model, title in schema_models:
         add_artifact(
             kind="schema",
             artifact_id=schema_id,
@@ -236,6 +247,11 @@ def _add_schemas(add_artifact) -> None:
 
 def _fixtures() -> list[dict[str, Any]]:
     descriptor = _device_descriptor()
+    hardware_payload = _hardware_payload(descriptor)
+    actions_payload = _actions_payload()
+    hardware_claim_terms = _hardware_claim_terms()
+    action_binding_terms = _action_binding_terms()
+
     settings_request = _stable_message(
         DeckrMessage(
             lane=ACTIONS_LANE,
@@ -273,6 +289,7 @@ def _fixtures() -> list[dict[str, Any]]:
             event_type="press",
             value={"eventType": "press"},
             sequence=1,
+            occurred_at=FIXED_NOW,
         ),
         message_id="fixture-hardware-control-input",
     )
@@ -287,11 +304,11 @@ def _fixtures() -> list[dict[str, Any]]:
             subject=entity_subject(
                 "service",
                 serviceId="media-home",
-                namespace="dev.deckr.media.service",
+                namespace="org.example.media.service",
                 operation="play",
             ),
             body=ServiceCommandBody(
-                serviceNamespace="dev.deckr.media.service",
+                serviceNamespace="org.example.media.service",
                 operation="play",
                 params={"zone": "kitchen"},
             ).to_dict(),
@@ -299,38 +316,53 @@ def _fixtures() -> list[dict[str, Any]]:
         message_id="fixture-service-command",
     )
 
-    action_catalog = ActionProviderCatalog(
-        providerInstanceId="clock-main",
-        providerEndpoint=action_provider_address("clock-main"),
-        providerId="dev.deckr.clock",
-        sessionId="provider-session",
-        timestamp=FIXED_NOW,
-        labels={"room": "office"},
-        annotations={"runtime": "python"},
-        actions={
-            "dev.deckr.clock.time": ActionDescriptor(
-                actionId="dev.deckr.clock.time",
-                name="Clock",
-            )
-        },
-    ).model_dump(by_alias=True, exclude_none=True, mode="json")
-    hardware_inventory = HardwareInventory(
-        managerId="mirabox-main",
-        managerEndpoint=hardware_manager_address("mirabox-main"),
+    hardware_advertisement = AdvertisementRecord(
+        advertisementId="hardware-advertisement-1",
+        featureId=HARDWARE_FEATURE_ID,
+        advertiser=hardware_manager_address("mirabox-main"),
+        endpoint=hardware_manager_address("mirabox-main"),
         sessionId="manager-session",
-        timestamp=FIXED_NOW,
-        labels={"room": "office"},
-        devices={
-            "deck-1": {
-                "deviceRef": {
-                    "managerId": "mirabox-main",
-                    "deviceId": "deck-1",
-                    "fingerprint": "fingerprint:deck-1",
-                },
-                "descriptor": descriptor,
-            }
-        },
-    ).model_dump(by_alias=True, exclude_none=True, mode="json")
+        refreshSeq=1,
+        ttlSeconds=30,
+        payload=hardware_payload.to_dict(),
+        createdAt=FIXED_NOW,
+        updatedAt=FIXED_NOW,
+    ).to_dict()
+    actions_advertisement = AdvertisementRecord(
+        advertisementId="actions-advertisement-1",
+        featureId=ACTIONS_FEATURE_ID,
+        advertiser=action_provider_address("clock-main"),
+        endpoint=action_provider_address("clock-main"),
+        sessionId="provider-session",
+        refreshSeq=1,
+        ttlSeconds=30,
+        payload=actions_payload.to_dict(),
+        createdAt=FIXED_NOW,
+        updatedAt=FIXED_NOW,
+    ).to_dict()
+    hardware_claim_contract = ContractRecord(
+        contractId="hardware-contract-1",
+        generation=1,
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        participants=(
+            controller_address("controller-main"),
+            hardware_manager_address("mirabox-main"),
+        ),
+        termsHash=canonical_json_hash(hardware_claim_terms),
+        terms=hardware_claim_terms.to_dict(),
+        createdBy=controller_address("controller-main"),
+        createdAt=FIXED_NOW,
+    ).to_dict()
+    hardware_claim_token = ParticipantTokenRecord(
+        contractId="hardware-contract-1",
+        generation=1,
+        participant=controller_address("controller-main"),
+        sessionId="controller-session",
+        tokenId="controller-token-1",
+        refreshSeq=1,
+        ttlSeconds=30,
+        termsHash=canonical_json_hash(hardware_claim_terms),
+    ).to_dict()
 
     return [
         _fixture(
@@ -362,75 +394,60 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=service_command,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.state.endpoint_presence.valid.v1",
-            path="fixtures/valid/state/endpoint-presence.v1.json",
-            title="Valid endpoint presence state",
-            schema_path="schemas/state/endpoint-presence.v1.schema.json",
-            payload=EndpointPresence(
-                endpoint=action_provider_address("clock-main"),
-                lane=ACTIONS_LANE,
-                sessionId="provider-session",
-                timestamp=FIXED_NOW,
-                ttlSeconds=30,
-                metadata={"runtime": "python"},
-            ).model_dump(by_alias=True, exclude_none=True, mode="json"),
+            artifact_id="dev.deckr.fixture.beacon.hardware.valid.v1",
+            path="fixtures/valid/beacon/hardware-advertisement.v1.json",
+            title="Valid Beacon hardware advertisement",
+            schema_path="schemas/beacon/advertisement.v1.schema.json",
+            payload=hardware_advertisement,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.state.hardware_inventory.valid.v1",
-            path="fixtures/valid/state/hardware-inventory.v1.json",
-            title="Valid hardware inventory state",
-            schema_path="schemas/state/hardware-inventory.v1.schema.json",
-            payload=hardware_inventory,
+            artifact_id="dev.deckr.fixture.beacon.actions.valid.v1",
+            path="fixtures/valid/beacon/actions-advertisement.v1.json",
+            title="Valid Beacon actions advertisement",
+            schema_path="schemas/beacon/advertisement.v1.schema.json",
+            payload=actions_advertisement,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.state.device_claim.valid.v1",
-            path="fixtures/valid/state/device-claim.v1.json",
-            title="Valid device claim state",
-            schema_path="schemas/state/device-claim.v1.schema.json",
-            payload=DeviceClaim(
-                claimedByEndpoint=controller_address("controller-main"),
-                claimedBySessionId="controller-session",
-                timestamp=FIXED_NOW,
-                ttlSeconds=30,
-            ).model_dump(by_alias=True, exclude_none=True, mode="json"),
+            artifact_id="dev.deckr.fixture.concord.hardware_claim_contract.valid.v1",
+            path="fixtures/valid/concord/hardware-claim-contract.v1.json",
+            title="Valid Concord hardware claim contract",
+            schema_path="schemas/concord/contract.v1.schema.json",
+            payload=hardware_claim_contract,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.state.action_provider_catalog.valid.v1",
-            path="fixtures/valid/state/action-provider-catalog.v1.json",
-            title="Valid action provider catalog state",
-            schema_path="schemas/state/action-provider-catalog.v1.schema.json",
-            payload=action_catalog,
+            artifact_id="dev.deckr.fixture.concord.hardware_claim_token.valid.v1",
+            path="fixtures/valid/concord/hardware-claim-token.v1.json",
+            title="Valid Concord hardware claim participant token",
+            schema_path="schemas/concord/participant-token.v1.schema.json",
+            payload=hardware_claim_token,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.state.service_catalog.valid.v1",
-            path="fixtures/valid/state/service-catalog.v1.json",
-            title="Valid service catalog state",
-            schema_path="schemas/state/service-catalog.v1.schema.json",
-            payload=ServiceCatalog(
-                serviceId="media-home",
-                serviceEndpoint=service_address("media-home"),
-                serviceNamespace="dev.deckr.media.service",
-                sessionId="service-session",
-                supportedOperations=("play", "pause"),
-                viewPrefixes=("zones",),
-                timestamp=FIXED_NOW,
-                labels={"room": "office"},
-                annotations={"runtime": "python"},
-            ).model_dump(by_alias=True, exclude_none=True, mode="json"),
+            artifact_id="dev.deckr.fixture.profile.hardware.valid.v1",
+            path="fixtures/valid/profiles/hardware.v1.json",
+            title="Valid Deckr hardware Beacon profile payload",
+            schema_path="schemas/profiles/hardware.v1.schema.json",
+            payload=hardware_payload.to_dict(),
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.state.service_status.valid.v1",
-            path="fixtures/valid/state/service-status.v1.json",
-            title="Valid service status state",
-            schema_path="schemas/state/service-status.v1.schema.json",
-            payload=ServiceStatus(
-                serviceId="media-home",
-                serviceEndpoint=service_address("media-home"),
-                serviceNamespace="dev.deckr.media.service",
-                sessionId="service-session",
-                status=ServiceStatusValue.AVAILABLE,
-                timestamp=FIXED_NOW,
-            ).model_dump(by_alias=True, exclude_none=True, mode="json"),
+            artifact_id="dev.deckr.fixture.profile.actions.valid.v1",
+            path="fixtures/valid/profiles/actions.v1.json",
+            title="Valid Deckr actions Beacon profile payload",
+            schema_path="schemas/profiles/actions.v1.schema.json",
+            payload=actions_payload.to_dict(),
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.profile.hardware_claim.valid.v1",
+            path="fixtures/valid/profiles/hardware-claim.v1.json",
+            title="Valid Deckr hardware claim Concord terms",
+            schema_path="schemas/profiles/hardware-claim.v1.schema.json",
+            payload=hardware_claim_terms.to_dict(),
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.profile.action_binding.valid.v1",
+            path="fixtures/valid/profiles/action-binding.v1.json",
+            title="Valid Deckr action binding Concord terms",
+            schema_path="schemas/profiles/action-binding.v1.schema.json",
+            payload=action_binding_terms.to_dict(),
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1",
@@ -460,15 +477,46 @@ def _fixtures() -> list[dict[str, Any]]:
             valid=False,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.state.endpoint_presence.invalid_missing_session.v1",
-            path="fixtures/invalid/state/endpoint-presence-missing-session.v1.json",
-            title="Invalid endpoint presence missing sessionId",
-            schema_path="schemas/state/endpoint-presence.v1.schema.json",
+            artifact_id="dev.deckr.fixture.beacon.invalid_missing_session.v1",
+            path="fixtures/invalid/beacon/advertisement-missing-session.v1.json",
+            title="Invalid Beacon advertisement missing sessionId",
+            schema_path="schemas/beacon/advertisement.v1.schema.json",
             payload={
-                "endpoint": "action_provider:clock-main",
-                "lane": "actions",
-                "timestamp": "2026-04-29T10:00:00Z",
-                "ttlSeconds": 30,
+                key: value
+                for key, value in hardware_advertisement.items()
+                if key != "sessionId"
+            },
+            valid=False,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.concord.invalid_token_missing_participant.v1",
+            path="fixtures/invalid/concord/token-missing-participant.v1.json",
+            title="Invalid Concord participant token missing participant",
+            schema_path="schemas/concord/participant-token.v1.schema.json",
+            payload={
+                key: value for key, value in hardware_claim_token.items() if key != "participant"
+            },
+            valid=False,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.profile.hardware.invalid_missing_manager.v1",
+            path="fixtures/invalid/profiles/hardware-missing-manager.v1.json",
+            title="Invalid hardware profile payload missing managerId",
+            schema_path="schemas/profiles/hardware.v1.schema.json",
+            payload={
+                key: value for key, value in hardware_payload.to_dict().items() if key != "managerId"
+            },
+            valid=False,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.profile.action_binding.invalid_missing_binding.v1",
+            path="fixtures/invalid/profiles/action-binding-missing-binding.v1.json",
+            title="Invalid action binding terms missing bindingId",
+            schema_path="schemas/profiles/action-binding.v1.schema.json",
+            payload={
+                key: value
+                for key, value in action_binding_terms.to_dict().items()
+                if key != "bindingId"
             },
             valid=False,
         ),
@@ -483,6 +531,8 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
     }
     action_fixture_path = "fixtures/valid/actions/settings-request.v1.json"
     action_message = DeckrMessage.from_dict(valid_fixture_by_path[action_fixture_path])
+    hardware_claim_terms = _hardware_claim_terms()
+    action_binding_terms = _action_binding_terms()
 
     add_artifact(
         kind="vector",
@@ -503,84 +553,62 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
     )
     add_artifact(
         kind="vector",
-        artifact_id="dev.deckr.vector.state_keys.v1",
-        path="vectors/state-keys.v1.json",
-        title="Current-state key vectors",
-        description="Acceptance vectors for Deckr current-state key helpers and parsers.",
+        artifact_id="dev.deckr.vector.beacon_concord_keys.v1",
+        path="vectors/beacon-concord-keys.v1.json",
+        title="Beacon and Concord key vectors",
+        description="Acceptance vectors for Beacon and Concord state key helpers.",
         payload={
-            "schema": "dev.deckr.vector.state_keys.v1",
+            "schema": "dev.deckr.vector.beacon_concord_keys.v1",
             "cases": [
                 {
-                    "id": "presence.actions.action_provider",
-                    "helper": "presence_endpoint_key",
+                    "id": "beacon.hardware",
+                    "helper": "beacon_advertisement_key",
                     "input": {
-                        "lane": "actions",
-                        "endpoint": "action_provider:elgato.com.example.plugin",
+                        "featureId": HARDWARE_FEATURE_ID,
+                        "advertisementId": "hardware advertisement/1",
                     },
-                    "key": presence_endpoint_key(
-                        lane="actions",
-                        endpoint="action_provider:elgato.com.example.plugin",
+                    "key": beacon_advertisement_key(
+                        feature_id=HARDWARE_FEATURE_ID,
+                        advertisement_id="hardware advertisement/1",
                     ),
-                    "parsed": {
-                        "lane": "actions",
-                        "endpoint": "action_provider:elgato.com.example.plugin",
-                    },
                 },
                 {
-                    "id": "inventory.hardware",
-                    "helper": "hardware_inventory_key",
-                    "input": {"managerId": "mirabox-main"},
-                    "key": hardware_inventory_key("mirabox-main"),
-                    "parsed": {"managerId": "mirabox-main"},
+                    "id": "concord.contract",
+                    "helper": "concord_contract_key",
+                    "input": {"contractId": "hardware contract/1", "generation": 1},
+                    "key": concord_contract_key(
+                        contract_id="hardware contract/1",
+                        generation=1,
+                    ),
                 },
                 {
-                    "id": "claim.device",
-                    "helper": "device_claim_key",
-                    "input": {"managerId": "room/a", "deviceId": "deck:one"},
-                    "key": device_claim_key(manager_id="room/a", device_id="deck:one"),
-                    "parsed": {"managerId": "room/a", "deviceId": "deck:one"},
-                },
-                {
-                    "id": "catalog.actions.providers",
-                    "helper": "action_provider_catalog_key",
-                    "input": {"providerInstanceId": "provider with spaces"},
-                    "key": action_provider_catalog_key("provider with spaces"),
-                    "parsed": {"providerInstanceId": "provider with spaces"},
-                },
-                {
-                    "id": "catalog.services",
-                    "helper": "service_catalog_key",
-                    "input": {"serviceId": "media-home"},
-                    "key": service_catalog_key("media-home"),
-                    "parsed": {"serviceId": "media-home"},
-                },
-                {
-                    "id": "status.services",
-                    "helper": "service_status_key",
-                    "input": {"serviceId": "media-home"},
-                    "key": service_status_key("media-home"),
-                    "parsed": {"serviceId": "media-home"},
-                },
-                {
-                    "id": "view.services",
-                    "helper": "service_view_key",
+                    "id": "concord.participant_token",
+                    "helper": "concord_participant_token_key",
                     "input": {
-                        "serviceId": "media-home",
-                        "serviceNamespace": "dev.deckr.media.service",
-                        "tokens": ["zones", "Kitchen/Main"],
+                        "contractId": "hardware contract/1",
+                        "generation": 1,
+                        "participant": "hardware_manager:mirabox-main",
                     },
-                    "key": service_view_key(
-                        "media-home",
-                        "dev.deckr.media.service",
-                        "zones",
-                        "Kitchen/Main",
+                    "key": concord_participant_token_key(
+                        contract_id="hardware contract/1",
+                        generation=1,
+                        participant=hardware_manager_address("mirabox-main"),
                     ),
-                    "parsed": {
-                        "serviceId": "media-home",
-                        "serviceNamespace": "dev.deckr.media.service",
-                        "tokens": ["zones", "Kitchen/Main"],
-                    },
                 },
+            ],
+        },
+    )
+    add_artifact(
+        kind="vector",
+        artifact_id="dev.deckr.vector.concord_terms_hash.v1",
+        path="vectors/concord-terms-hash.v1.json",
+        title="Concord canonical terms hash vectors",
+        description="Acceptance vectors for canonical Concord term hashing.",
+        payload={
+            "schema": "dev.deckr.vector.concord_terms_hash.v1",
+            "cases": [
+                _terms_hash_case("hardware_claim", hardware_claim_terms),
+                _terms_hash_case("action_binding", action_binding_terms),
             ],
         },
     )
@@ -633,28 +661,23 @@ def _device_descriptor() -> DeviceDescriptor:
                             "eventTypes": ["press"],
                             "valueSchema": button_activation_value_schema().model_dump(
                                 by_alias=True,
-                                exclude_none=True,
                                 mode="json",
                             ),
-                        }
+                        },
                     ],
                     "outputCapabilities": [
                         {
-                            "capabilityId": "raster.bitmap",
+                            "capabilityId": "screen",
                             "family": "dev.deckr.output.raster",
                             "type": "bitmap",
                             "direction": "output",
-                            "access": ["settable", "invokable"],
+                            "access": ["invokable"],
                             "commandTypes": ["set_frame", "clear"],
-                            "commandSchema": raster_bitmap_command_schema(
-                                width=72,
-                                height=72,
-                            ).model_dump(
+                            "commandSchema": raster_bitmap_command_schema().model_dump(
                                 by_alias=True,
-                                exclude_none=True,
                                 mode="json",
                             ),
-                        }
+                        },
                     ],
                 }
             ],
@@ -666,29 +689,124 @@ def _settings_target() -> SettingsTargetRef:
     return SettingsTargetRef(
         scope="action_instance",
         controllerId="controller-main",
-        configId="office-panel",
+        configId="clock-config-1",
         providerInstanceId="clock-main",
         providerId="dev.deckr.clock",
         actionId="dev.deckr.clock.time",
         actionInstanceId="clock-instance-1",
-        stableId="clock",
     )
 
 
-def _stable_wire_message(message: DeckrMessage, *, message_id: str) -> dict[str, Any]:
-    wire = _stable_message(message, message_id=message_id)
-    body = wire.get("body")
-    if isinstance(body, dict) and "occurredAt" in body:
-        body["occurredAt"] = "2026-04-29T10:00:00Z"
-        wire = DeckrMessage.from_dict(wire).to_dict()
-    return wire
+def _hardware_payload(descriptor: DeviceDescriptor) -> HardwareBeaconPayload:
+    return HardwareBeaconPayload(
+        managerId="mirabox-main",
+        managerEndpoint=hardware_manager_address("mirabox-main"),
+        sessionId="manager-session",
+        labels={"room": "office"},
+        devices={
+            "deck-1": HardwareAdvertisementDevice(
+                capacity=ProfileCapacity(
+                    totalInstances=1,
+                    claimedInstances=0,
+                    availableInstances=1,
+                ),
+                deviceRef=DeviceRef(
+                    managerId="mirabox-main",
+                    deviceId="deck-1",
+                    fingerprint="fingerprint:deck-1",
+                ),
+                descriptor=descriptor,
+            )
+        },
+    )
+
+
+def _actions_payload() -> ActionsBeaconPayload:
+    return ActionsBeaconPayload(
+        providerInstanceId="clock-main",
+        providerEndpoint=action_provider_address("clock-main"),
+        providerId="dev.deckr.clock",
+        sessionId="provider-session",
+        labels={"room": "office"},
+        annotations={"runtime": "python"},
+        actions={
+            "dev.deckr.clock.time": ActionBeaconDescriptor(
+                actionId="dev.deckr.clock.time",
+                providerId="dev.deckr.clock",
+                name="Clock",
+                requirements=None,
+                capacity=ProfileCapacity(claimedInstances=0),
+                hints={"priority": 100},
+            )
+        },
+    )
+
+
+def _hardware_claim_terms() -> HardwareClaimTerms:
+    return HardwareClaimTerms(
+        claimId="claim-1",
+        controllerEndpoint=controller_address("controller-main"),
+        managerEndpoint=hardware_manager_address("mirabox-main"),
+        managerAdvertisementId="hardware-advertisement-1",
+        devices=(
+            HardwareClaimDevice(
+                deviceRef=DeviceRef(
+                    managerId="mirabox-main",
+                    deviceId="deck-1",
+                    fingerprint="fingerprint:deck-1",
+                ),
+                instanceCount=1,
+            ),
+        ),
+    )
+
+
+def _action_binding_terms() -> ActionBindingTerms:
+    device_ref = DeviceRef(
+        managerId="mirabox-main",
+        deviceId="deck-1",
+        fingerprint="fingerprint:deck-1",
+    )
+    control_ref = ControlRef(deviceRef=device_ref, controlId="key.0.0")
+    return ActionBindingTerms(
+        bindingId="binding-1",
+        controllerEndpoint=controller_address("controller-main"),
+        providerEndpoint=action_provider_address("clock-main"),
+        providerInstanceId="clock-main",
+        providerId="dev.deckr.clock",
+        actionId="dev.deckr.clock.time",
+        actionInstanceId="clock-instance-1",
+        configId="clock-config-1",
+        contextId="context-1",
+        hardwareClaimId="claim-1",
+        deviceRef=device_ref,
+        controlRef=control_ref,
+        matchedCapabilities=(
+            {
+                "requirementName": "press",
+                "capability": CapabilityRef(
+                    deviceRef=device_ref,
+                    controlId="key.0.0",
+                    capabilityId="button.press",
+                ),
+                "family": "dev.deckr.input.button",
+                "type": "activation",
+                "direction": "input",
+                "eventTypes": ("press",),
+            },
+        ),
+    )
 
 
 def _stable_message(message: DeckrMessage, *, message_id: str) -> dict[str, Any]:
-    wire = message.to_dict()
-    wire["messageId"] = message_id
-    wire["createdAt"] = "2026-04-29T10:00:00Z"
-    return DeckrMessage.from_dict(wire).to_dict()
+    data = message.to_dict()
+    data["messageId"] = message_id
+    data["createdAt"] = FIXED_NOW.isoformat().replace("+00:00", "Z")
+    return data
+
+
+def _stable_wire_message(message: DeckrMessage, *, message_id: str) -> dict[str, Any]:
+    return _stable_message(message, message_id=message_id)
 
 
 def _fixture(
@@ -705,11 +823,7 @@ def _fixture(
         "artifact_id": artifact_id,
         "path": path,
         "title": title,
-        "description": (
-            "Valid fixture for schema validation."
-            if valid
-            else "Invalid fixture that must be rejected by schema validation."
-        ),
+        "description": title,
         "schemaPath": schema_path,
         "valid": valid,
         "payload": payload,
@@ -717,29 +831,28 @@ def _fixture(
 
 
 def _key_token_case(raw: str) -> dict[str, str]:
-    encoded = encode_key_token(raw)
+    return {"raw": raw, "token": encode_key_token(raw)}
+
+
+def _terms_hash_case(
+    case_id: str,
+    terms: HardwareClaimTerms | ActionBindingTerms,
+) -> dict[str, str]:
+    canonical = canonical_json_bytes(terms).decode("utf-8")
     return {
-        "raw": raw,
-        "encoded": encoded,
-        "decoded": decode_key_token(encoded),
+        "id": case_id,
+        "canonicalJson": canonical,
+        "hash": canonical_json_hash(terms),
     }
 
 
 def _model_schema(model: type[BaseModel], *, schema_id: str, title: str) -> dict[str, Any]:
-    schema = model.model_json_schema(
-        by_alias=True,
-        ref_template="#/$defs/{model}",
-    )
+    schema = model.model_json_schema(by_alias=True, ref_template="#/$defs/{model}")
     schema["$schema"] = JSON_SCHEMA_URI
     schema["$id"] = schema_id
     schema["title"] = title
     schema["x-deckr-schema-version"] = SPEC_VERSION
     return schema
-
-
-def _package_version(repo_root: Path) -> str:
-    data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
-    return str(data["project"]["version"])
 
 
 def _write_json(path: Path, payload: Mapping[str, Any] | list[Any]) -> None:
@@ -755,116 +868,50 @@ def _write_text(path: Path, payload: str) -> None:
     path.write_text(payload, encoding="utf-8")
 
 
+def _package_version(repo_root: Path) -> str:
+    data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    return str(data["project"]["version"])
+
+
 def _render_index(manifest: Mapping[str, Any]) -> str:
-    rows = "\n".join(
-        _artifact_row(artifact) for artifact in manifest["artifacts"]
-    )
-    return f"""<!doctype html>
+    rows = []
+    for artifact in manifest["artifacts"]:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(artifact['kind'])}</td>"
+            f"<td>{html.escape(artifact['id'])}</td>"
+            f"<td><a href=\"{html.escape(artifact['path'])}\">{html.escape(artifact['path'])}</a></td>"
+            f"<td>{html.escape(artifact['title'])}</td>"
+            "</tr>"
+        )
+    return """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Deckr Contract v1</title>
+  <title>Deckr Contract Bundle</title>
   <style>
-    :root {{
-      color-scheme: light;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.45;
-    }}
-    body {{
-      margin: 0;
-      background: #f6f7f9;
-      color: #17202a;
-    }}
-    main {{
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 32px 24px 48px;
-    }}
-    h1 {{
-      margin: 0 0 8px;
-      font-size: 2rem;
-      letter-spacing: 0;
-    }}
-    p {{
-      margin: 0 0 20px;
-      max-width: 760px;
-    }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
-      background: #fff;
-      border: 1px solid #d9dee7;
-    }}
-    th, td {{
-      padding: 10px 12px;
-      border-bottom: 1px solid #e5e9f0;
-      text-align: left;
-      vertical-align: top;
-      font-size: 0.92rem;
-    }}
-    th {{
-      background: #edf1f7;
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      color: #4c596a;
-    }}
-    code {{
-      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-      font-size: 0.88em;
-    }}
-    a {{
-      color: #0b63ce;
-      text-decoration: none;
-    }}
-    a:hover {{
-      text-decoration: underline;
-    }}
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }}
+    th {{ background: #f6f6f6; }}
   </style>
 </head>
 <body>
-  <main>
-    <h1>Deckr Contract v1</h1>
-    <p>
-      Generated contract artifact browser for Deckr package
-      <code>{html.escape(str(manifest["deckrPackageVersion"]))}</code>.
-      The authoritative manifest is <a href="manifest.json">manifest.json</a>.
-    </p>
-    <table>
-      <thead>
-        <tr>
-          <th>Kind</th>
-          <th>Artifact</th>
-          <th>Path</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-{rows}
-      </tbody>
-    </table>
-  </main>
+  <h1>Deckr Contract Bundle</h1>
+  <p>Bundle: {bundle}</p>
+  <table>
+    <thead><tr><th>Kind</th><th>ID</th><th>Path</th><th>Title</th></tr></thead>
+    <tbody>
+      {rows}
+    </tbody>
+  </table>
 </body>
 </html>
-"""
-
-
-def _artifact_row(artifact: Mapping[str, Any]) -> str:
-    kind = html.escape(str(artifact["kind"]))
-    artifact_id = html.escape(str(artifact["id"]))
-    title = html.escape(str(artifact["title"]))
-    path = html.escape(str(artifact["path"]))
-    description = html.escape(str(artifact["description"]))
-    return f"""        <tr>
-          <td><code>{kind}</code></td>
-          <td>{title}<br><code>{artifact_id}</code></td>
-          <td><a href="{path}"><code>{path}</code></a></td>
-          <td>{description}</td>
-        </tr>"""
-
-
-def main() -> None:
-    generate_contract_artifacts()
+""".format(
+        bundle=html.escape(str(manifest["bundle"])),
+        rows="\n      ".join(rows),
+    )
 
 
 if __name__ == "__main__":
-    main()
+    generate_contract_artifacts()

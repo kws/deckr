@@ -2,7 +2,14 @@
   "actions": {
     "dev.deckr.clock.time": {
       "actionId": "dev.deckr.clock.time",
-      "name": "Clock"
+      "capacity": {
+        "claimedInstances": 0
+      },
+      "hints": {
+        "priority": 100
+      },
+      "name": "Clock",
+      "providerId": "dev.deckr.clock"
     }
   },
   "annotations": {
@@ -11,9 +18,9 @@
   "labels": {
     "room": "office"
   },
+  "profile": "dev.deckr.profile.actions.v1",
   "providerEndpoint": "action_provider:clock-main",
   "providerId": "dev.deckr.clock",
   "providerInstanceId": "clock-main",
-  "sessionId": "provider-session",
-  "timestamp": "2026-04-29T10:00:00Z"
+  "sessionId": "provider-session"
 }

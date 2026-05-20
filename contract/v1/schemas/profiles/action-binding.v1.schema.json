@@ -1,0 +1,260 @@
+{
+  "$defs": {
+    "CapabilityRef": {
+      "additionalProperties": false,
+      "description": "Reference to a device-level or control-level capability.",
+      "properties": {
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "controlId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controlid"
+        },
+        "deviceRef": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "capabilityId"
+      ],
+      "title": "CapabilityRef",
+      "type": "object"
+    },
+    "ControlRef": {
+      "additionalProperties": false,
+      "description": "Reference to a control on a concrete device.",
+      "properties": {
+        "controlId": {
+          "title": "Controlid",
+          "type": "string"
+        },
+        "deviceRef": {
+          "$ref": "#/$defs/DeviceRef"
+        }
+      },
+      "required": [
+        "deviceRef",
+        "controlId"
+      ],
+      "title": "ControlRef",
+      "type": "object"
+    },
+    "DeviceRef": {
+      "additionalProperties": false,
+      "description": "Reference to a manager-local device in a hardware manager context.",
+      "properties": {
+        "deviceId": {
+          "title": "Deviceid",
+          "type": "string"
+        },
+        "fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fingerprint"
+        },
+        "managerId": {
+          "title": "Managerid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "managerId",
+        "deviceId"
+      ],
+      "title": "DeviceRef",
+      "type": "object"
+    },
+    "EndpointAddress": {
+      "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "title": "EndpointAddress",
+      "type": "string"
+    },
+    "MatchedCapability": {
+      "additionalProperties": false,
+      "description": "A capability selected by the controller for a binding requirement.",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/CapabilityRef"
+        },
+        "commandTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commandtypes",
+          "type": "array"
+        },
+        "direction": {
+          "enum": [
+            "input",
+            "output",
+            "state",
+            "command"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "eventTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Eventtypes",
+          "type": "array"
+        },
+        "family": {
+          "title": "Family",
+          "type": "string"
+        },
+        "provenance": {
+          "default": "native",
+          "enum": [
+            "native",
+            "projection",
+            "derivation",
+            "extension"
+          ],
+          "title": "Provenance",
+          "type": "string"
+        },
+        "requirementName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requirementname"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilityRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability",
+        "family",
+        "type",
+        "direction"
+      ],
+      "title": "MatchedCapability",
+      "type": "object"
+    }
+  },
+  "$id": "dev.deckr.profile.action_binding.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "actionId": {
+      "title": "Actionid",
+      "type": "string"
+    },
+    "actionInstanceId": {
+      "title": "Actioninstanceid",
+      "type": "string"
+    },
+    "bindingId": {
+      "title": "Bindingid",
+      "type": "string"
+    },
+    "configId": {
+      "title": "Configid",
+      "type": "string"
+    },
+    "contextId": {
+      "title": "Contextid",
+      "type": "string"
+    },
+    "controlRef": {
+      "$ref": "#/$defs/ControlRef"
+    },
+    "controllerEndpoint": {
+      "$ref": "#/$defs/EndpointAddress"
+    },
+    "deviceRef": {
+      "$ref": "#/$defs/DeviceRef"
+    },
+    "hardwareClaimId": {
+      "title": "Hardwareclaimid",
+      "type": "string"
+    },
+    "matchedCapabilities": {
+      "items": {
+        "$ref": "#/$defs/MatchedCapability"
+      },
+      "title": "Matchedcapabilities",
+      "type": "array"
+    },
+    "profile": {
+      "const": "dev.deckr.profile.action_binding.v1",
+      "default": "dev.deckr.profile.action_binding.v1",
+      "title": "Profile",
+      "type": "string"
+    },
+    "providerEndpoint": {
+      "$ref": "#/$defs/EndpointAddress"
+    },
+    "providerId": {
+      "title": "Providerid",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "title": "Providerinstanceid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bindingId",
+    "controllerEndpoint",
+    "providerEndpoint",
+    "providerInstanceId",
+    "providerId",
+    "actionId",
+    "actionInstanceId",
+    "configId",
+    "contextId",
+    "hardwareClaimId",
+    "deviceRef",
+    "controlRef"
+  ],
+  "title": "Deckr Concord action binding terms",
+  "type": "object",
+  "x-deckr-schema-version": "1"
+}

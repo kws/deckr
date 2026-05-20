@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 
 import anyio
 import pytest
@@ -12,39 +11,36 @@ from deckr.actions.endpoints import (
     action_providers_broadcast,
 )
 from deckr.actions.messages import action_message
-from deckr.actions.state import (
-    action_provider_catalog_key,
-    parse_action_provider_catalog_key,
+from deckr.beacon import (
+    BEACON_ADVERTISEMENT_STORE_POLICY,
+    beacon_advertisement_key,
+    parse_beacon_advertisement_key,
 )
+from deckr.concord import (
+    CONCORD_TOKEN_STORE_POLICY,
+    concord_contract_key,
+    concord_participant_token_key,
+    parse_concord_contract_key,
+    parse_concord_participant_token_key,
+)
+from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.lanes import DEFAULT_LANE_CONTRACT_REGISTRY
 from deckr.contracts.messages import (
     ACTIONS_LANE,
     DeckrMessage,
     controller_address,
-    endpoint_address,
     endpoint_target,
     entity_subject,
     hardware_manager_address,
 )
-from deckr.lanes import EndpointRegistrationConflict, EndpointSessionLost
+from deckr.lanes import EndpointRegistrationConflict
 from deckr.runtime import Deckr
 from deckr.state import (
-    DEFAULT_DISCOVERY_STATE_STORE_NAME,
     PERSISTENT_STATE_STORE_POLICY,
-    EndpointPresence,
-    HardwareInventory,
     StateConflict,
     StateEntry,
     StateUnavailable,
-    decode_key_token,
-    device_claim_key,
-    encode_key_token,
-    hardware_inventory_key,
     observe_prefix_current,
-    parse_device_claim_key,
-    parse_hardware_inventory_key,
-    parse_presence_endpoint_key,
-    presence_endpoint_key,
 )
 from deckr.substrates.nats import (
     NatsStateStore,
@@ -226,27 +222,19 @@ async def test_endpoint_publish_accepts_prebuilt_message_from_bound_sender() -> 
 
 
 @pytest.mark.asyncio
-async def test_register_endpoint_creates_presence_and_withdraws_on_exit() -> None:
+async def test_register_endpoint_is_local_runtime_identity_only() -> None:
     async with memory_deckr() as deckr:
         state = deckr.state()
-        key = presence_endpoint_key(
-            lane=ACTIONS_LANE,
-            endpoint=action_provider_address("python"),
-        )
 
         async with deckr.lane(ACTIONS_LANE).register_endpoint(
             action_provider_address("python"),
             metadata={"runtime": "test-provider"},
         ) as provider:
-            entry = await state.get(key)
-            assert entry is not None
-            presence = EndpointPresence.model_validate(entry.value)
-            assert presence.endpoint == provider.endpoint
-            assert presence.lane == ACTIONS_LANE
-            assert presence.session_id == provider.session_id
-            assert presence.metadata["runtime"] == "test-provider"
+            assert provider.endpoint == action_provider_address("python")
+            assert provider.session_id
+            assert await state.items() == ()
 
-        assert await state.get(key) is None
+        assert await state.items() == ()
 
 
 @pytest.mark.asyncio
@@ -272,70 +260,42 @@ async def test_register_endpoint_closes_inside_later_cancel_scope() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_endpoint_rejects_existing_distributed_presence() -> None:
+async def test_same_endpoint_can_register_in_separate_runtime_instances() -> None:
     substrate = MemoryLaneSubstrate(lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY)
     async with (
         Deckr(substrate=substrate) as deckr_a,
         Deckr(substrate=substrate) as deckr_b,
-        deckr_a.lane(ACTIONS_LANE).register_endpoint(action_provider_address("python")),
+        deckr_a.lane(ACTIONS_LANE).register_endpoint(
+            action_provider_address("python")
+        ) as provider_a,
+        deckr_b.lane(ACTIONS_LANE).register_endpoint(
+            action_provider_address("python")
+        ) as provider_b,
     ):
-        with pytest.raises(EndpointRegistrationConflict):
-            async with deckr_b.lane(ACTIONS_LANE).register_endpoint(
-                action_provider_address("python")
-            ):
-                pass
+        assert provider_a.endpoint == provider_b.endpoint
+        assert provider_a.session_id != provider_b.session_id
 
 
 @pytest.mark.asyncio
-async def test_endpoint_renewal_refreshes_same_session_with_revision_guard() -> None:
+async def test_closed_endpoint_session_is_local_terminal_state() -> None:
     async with memory_deckr() as deckr:
-        state = deckr.state()
-        key = presence_endpoint_key(
-            lane=ACTIONS_LANE,
-            endpoint=action_provider_address("python"),
-        )
-        async with deckr.lane(ACTIONS_LANE).register_endpoint(
+        endpoint_cm = deckr.lane(ACTIONS_LANE).register_endpoint(
             action_provider_address("python")
-        ) as provider:
-            before = await state.get(key)
-            assert before is not None
-            await provider.renew()
-            after = await state.get(key)
+        )
+        provider = await endpoint_cm.__aenter__()
+        await endpoint_cm.__aexit__(None, None, None)
 
-        assert after is not None
-        assert after.revision > before.revision
-        presence = EndpointPresence.model_validate(after.value)
-        assert presence.session_id == provider.session_id
+        with pytest.raises(RuntimeError, match="is closed"):
+            await provider.send(
+                recipient=controller_address("main"),
+                subject=entity_subject("settings", contextId="ctx"),
+                message_type="settingsRequest",
+                body={"target": _settings_target()},
+            )
 
 
 @pytest.mark.asyncio
-async def test_endpoint_session_loss_is_terminal_after_stale_presence() -> None:
-    async with memory_deckr() as deckr:
-        state = deckr.state()
-        key = presence_endpoint_key(
-            lane=ACTIONS_LANE,
-            endpoint=action_provider_address("python"),
-        )
-        async with deckr.lane(ACTIONS_LANE).register_endpoint(
-            action_provider_address("python")
-        ) as provider:
-            entry = await state.get(key)
-            assert entry is not None
-            await state.delete(key, revision=entry.revision)
-
-            with pytest.raises(EndpointSessionLost):
-                await provider.renew()
-            with pytest.raises(EndpointSessionLost):
-                await provider.send(
-                    recipient=controller_address("main"),
-                    subject=entity_subject("settings", contextId="ctx"),
-                    message_type="settingsRequest",
-                    body={"target": _settings_target()},
-                )
-
-
-@pytest.mark.asyncio
-async def test_stale_sender_session_is_not_delivered() -> None:
+async def test_sender_session_is_syntactic_and_not_presence_gated() -> None:
     async with (
         memory_deckr() as deckr, deckr.lane(ACTIONS_LANE).register_endpoint(
             action_provider_address("python")
@@ -355,10 +315,10 @@ async def test_stale_sender_session_is_not_delivered() -> None:
             body={"target": _settings_target()},
         )
         await provider.lane._substrate.publish(message)
-        with anyio.move_on_after(0.05) as scope:
-            await stream.receive()
+        received = await _receive(stream)
 
-    assert scope.cancel_called
+    assert received == message
+    assert received.sender_session_id == "stale-session"
 
 
 @pytest.mark.asyncio
@@ -386,15 +346,19 @@ async def test_recipient_session_mismatch_is_not_delivered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_state_creates_bucket_with_broker_lease_ttl() -> None:
+async def test_nats_state_creates_bucket_with_explicit_broker_ttl() -> None:
     fake_js = _FakeJs(existing=False)
     store = NatsStateStore(
         name="test_state",
         js=fake_js,
         buffer_size=10,
+        policy=BEACON_ADVERTISEMENT_STORE_POLICY,
     )
 
-    await store.put("claim.device.main.deck", {"owner": "controller"})
+    await store.put(
+        "advertisements.by_feature.dev_deckr_hardware.advertisement_1",
+        {"owner": "controller"},
+    )
 
     assert fake_js.created_config is not None
     assert fake_js.created_config.ttl == 30.0
@@ -402,15 +366,16 @@ async def test_nats_state_creates_bucket_with_broker_lease_ttl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_state_updates_existing_bucket_to_broker_lease_ttl() -> None:
+async def test_nats_state_updates_existing_bucket_to_explicit_broker_ttl() -> None:
     fake_js = _FakeJs(existing=True, max_age=None)
     store = NatsStateStore(
         name="test_state",
         js=fake_js,
         buffer_size=10,
+        policy=BEACON_ADVERTISEMENT_STORE_POLICY,
     )
 
-    await store.items("claim.")
+    await store.items("advertisements.")
 
     assert fake_js.kv is not None
     assert fake_js.kv.keys_filters is None
@@ -421,16 +386,16 @@ async def test_nats_state_updates_existing_bucket_to_broker_lease_ttl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_state_creates_discovery_bucket_without_broker_ttl() -> None:
+async def test_nats_state_creates_persistent_bucket_without_broker_ttl() -> None:
     fake_js = _FakeJs(existing=False)
     store = NatsStateStore(
-        name=DEFAULT_DISCOVERY_STATE_STORE_NAME,
+        name="deckr_concord_contract_v1",
         js=fake_js,
         buffer_size=10,
-        lease_ttl_seconds=None,
+        policy=PERSISTENT_STATE_STORE_POLICY,
     )
 
-    await store.put("catalog.actions.providers.python", {"provider": "python"})
+    await store.put("contracts.contract_1.1.meta", {"contract": "contract-1"})
 
     assert fake_js.created_config is not None
     assert fake_js.created_config.ttl is None
@@ -439,36 +404,35 @@ async def test_nats_state_creates_discovery_bucket_without_broker_ttl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_state_discovery_bucket_rejects_ttl_writes() -> None:
+async def test_nats_state_persistent_bucket_rejects_ttl_writes() -> None:
     fake_js = _FakeJs()
     store = NatsStateStore(
-        name=DEFAULT_DISCOVERY_STATE_STORE_NAME,
+        name="deckr_concord_contract_v1",
         js=fake_js,
         buffer_size=10,
-        lease_ttl_seconds=None,
+        policy=PERSISTENT_STATE_STORE_POLICY,
     )
 
     with pytest.raises(ValueError, match="persistent current state"):
         await store.put(
-            "catalog.actions.providers.python",
+            "contracts.contract_1.1.meta",
             {"provider": "python"},
             ttl=30,
         )
 
 
 @pytest.mark.asyncio
-async def test_nats_substrate_uses_configured_discovery_store_without_ttl() -> None:
+async def test_nats_substrate_default_state_store_is_persistent() -> None:
     substrate = NatsSubstrate(
         lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
-        discovery_state_name="deckr_discovery_custom",
     )
     substrate._js = _FakeJs()
 
-    discovery_state = substrate.state("deckr_discovery_custom")
+    state = substrate.state("deckr_state_custom")
 
     with pytest.raises(ValueError, match="persistent current state"):
-        await discovery_state.put(
-            "catalog.actions.providers.python",
+        await state.put(
+            "contracts.contract_1.1.meta",
             {"provider": "python"},
             ttl=30,
         )
@@ -503,7 +467,10 @@ def test_nats_substrate_rejects_same_bucket_with_conflicting_policy() -> None:
     )
 
     with pytest.raises(ValueError, match="already opened"):
-        substrate.state("dev_deckr_controller_config_v1")
+        substrate.state(
+            "dev_deckr_controller_config_v1",
+            policy=CONCORD_TOKEN_STORE_POLICY,
+        )
 
 
 @pytest.mark.asyncio
@@ -515,15 +482,18 @@ async def test_nats_state_items_reads_prefix_snapshot_without_global_keys() -> N
         buffer_size=10,
     )
 
-    await store.put("inventory.hardware.elgato-main", {"manager": "elgato"})
-    claim = await store.put(
-        "claim.device.mirabox-main.deck",
-        {"owner": "controller"},
+    await store.put(
+        "advertisements.by_feature.dev_deckr_hardware.elgato-main",
+        {"manager": "elgato"},
+    )
+    token = await store.put(
+        "contracts.hardware_contract.1.participants.controller_main",
+        {"participant": "controller"},
     )
 
-    entries = await store.items("claim.device.")
+    entries = await store.items("contracts.")
 
-    assert entries == (claim,)
+    assert entries == (token,)
     assert fake_js.kv.keys_filters is None
 
 
@@ -531,31 +501,37 @@ async def test_nats_state_items_reads_prefix_snapshot_without_global_keys() -> N
 async def test_observe_prefix_current_exact_confirms_omitted_known_keys() -> None:
     state = _PartialState(
         entries={
-            "claim.device.main.a": StateEntry(
-                key="claim.device.main.a",
+            "contracts.main.1.participants.a": StateEntry(
+                key="contracts.main.1.participants.a",
                 value={"owner": "controller"},
                 revision=1,
             ),
-            "claim.device.main.b": StateEntry(
-                key="claim.device.main.b",
+            "contracts.main.1.participants.b": StateEntry(
+                key="contracts.main.1.participants.b",
                 value={"owner": "controller"},
                 revision=2,
             ),
         },
-        observed_keys={"claim.device.main.a"},
+        observed_keys={"contracts.main.1.participants.a"},
     )
 
     observation = await observe_prefix_current(
         state,
-        "claim.device.",
-        known_keys=("claim.device.main.a", "claim.device.main.b", "claim.device.main.c"),
+        "contracts.main.1.participants.",
+        known_keys=(
+            "contracts.main.1.participants.a",
+            "contracts.main.1.participants.b",
+            "contracts.main.1.participants.c",
+        ),
     )
 
     assert tuple(entry.key for entry in observation.entries) == (
-        "claim.device.main.a",
-        "claim.device.main.b",
+        "contracts.main.1.participants.a",
+        "contracts.main.1.participants.b",
     )
-    assert observation.confirmed_missing == frozenset({"claim.device.main.c"})
+    assert observation.confirmed_missing == frozenset(
+        {"contracts.main.1.participants.c"}
+    )
 
 
 @pytest.mark.asyncio
@@ -569,20 +545,20 @@ async def test_observe_prefix_current_does_not_guess_when_exact_get_fails() -> N
     with pytest.raises(StateUnavailable):
         await observe_prefix_current(
             state,
-            "claim.device.",
-            known_keys=("claim.device.main.a",),
+            "contracts.main.1.participants.",
+            known_keys=("contracts.main.1.participants.a",),
         )
 
 
 @pytest.mark.asyncio
-async def test_nats_state_create_reclaims_broker_expired_claim() -> None:
+async def test_nats_state_create_reclaims_broker_expired_token() -> None:
     fake_js = _FakeJs()
     store = NatsStateStore(
         name="test_state",
         js=fake_js,
         buffer_size=10,
     )
-    key = "claim.device.main.stale"
+    key = "contracts.main.1.participants.controller"
     stale = await store.create(key, {"owner": "dead-controller"})
 
     await fake_js.kv.expire(key)
@@ -600,7 +576,7 @@ async def test_nats_state_get_treats_max_age_marker_as_missing() -> None:
         js=fake_js,
         buffer_size=10,
     )
-    key = "claim.device.main.stale"
+    key = "contracts.main.1.participants.controller"
 
     await store.create(key, {"owner": "dead-controller"})
     await fake_js.kv.expire(key)
@@ -616,23 +592,23 @@ async def test_nats_state_items_omit_max_age_marker() -> None:
         js=fake_js,
         buffer_size=10,
     )
-    key = "claim.device.main.stale"
+    key = "contracts.main.1.participants.controller"
 
     await store.create(key, {"owner": "dead-controller"})
     await fake_js.kv.expire(key)
 
-    assert await store.items("claim.device.") == ()
+    assert await store.items("contracts.main.1.participants.") == ()
 
 
 @pytest.mark.asyncio
-async def test_nats_state_update_rejects_broker_expired_claim_refresh() -> None:
+async def test_nats_state_update_rejects_broker_expired_token_refresh() -> None:
     fake_js = _FakeJs()
     store = NatsStateStore(
         name="test_state",
         js=fake_js,
         buffer_size=10,
     )
-    key = "claim.device.main.stale"
+    key = "contracts.main.1.participants.controller"
     stale = await store.create(key, {"owner": "dead-controller"})
 
     await fake_js.kv.expire(key)
@@ -650,9 +626,9 @@ async def test_nats_state_watch_maps_delete_and_max_age_marker(caplog) -> None:
         js=fake_js,
         buffer_size=10,
     )
-    key = "claim.device.main.deck"
+    key = "contracts.main.1.participants.controller"
 
-    async with store.watch("claim.") as changes:
+    async with store.watch("contracts.") as changes:
         put = await store.create(key, {"owner": "controller"})
         put_change = await _receive(changes)
         await store.delete(key, revision=put.revision)
@@ -669,7 +645,7 @@ async def test_nats_state_watch_maps_delete_and_max_age_marker(caplog) -> None:
     assert expire_change.entry is None
     assert (
         "NATS Deckr state expire marker bucket=test_state "
-        "key=claim.device.main.deck marker_reason=MaxAge"
+        "key=contracts.main.1.participants.controller marker_reason=MaxAge"
     ) in caplog.text
 
 
@@ -682,9 +658,9 @@ async def test_nats_state_watch_ignores_stale_max_age_marker(caplog) -> None:
         js=fake_js,
         buffer_size=10,
     )
-    key = "claim.device.main.deck"
+    key = "contracts.main.1.participants.controller"
 
-    async with store.watch("claim.") as changes:
+    async with store.watch("contracts.") as changes:
         first = await store.create(key, {"owner": "controller"})
         await _receive(changes)
         await store.update(
@@ -703,7 +679,7 @@ async def test_nats_state_watch_ignores_stale_max_age_marker(caplog) -> None:
     assert scope.cancel_called
     assert (
         "Ignoring stale NATS Deckr state expire marker bucket=test_state "
-        "key=claim.device.main.deck marker_reason=MaxAge"
+        "key=contracts.main.1.participants.controller marker_reason=MaxAge"
     ) in caplog.text
     assert "current_revision=2" in caplog.text
 
@@ -719,7 +695,7 @@ async def test_nats_state_reports_substrate_failures_as_unavailable() -> None:
     fake_js.kv.fail_get = RuntimeError("broker unavailable")
 
     with pytest.raises(StateUnavailable):
-        await store.get("claim.device.main.deck")
+        await store.get("contracts.main.1.participants.controller")
 
 
 @pytest.mark.asyncio
@@ -733,7 +709,10 @@ async def test_nats_state_create_reports_non_conflict_failures_as_unavailable() 
     fake_js.kv.fail_create = RuntimeError("broker unavailable")
 
     with pytest.raises(StateUnavailable):
-        await store.create("claim.device.main.deck", {"owner": "controller"})
+        await store.create(
+            "contracts.main.1.participants.controller",
+            {"owner": "controller"},
+        )
 
 
 @pytest.mark.asyncio
@@ -745,7 +724,7 @@ async def test_nats_state_delete_missing_key_is_idempotent() -> None:
         buffer_size=10,
     )
 
-    await store.delete("claim.device.main.missing")
+    await store.delete("contracts.main.1.participants.missing")
 
 
 def test_key_token_encoding_round_trips_nats_safe_and_fallback_tokens() -> None:
@@ -759,48 +738,28 @@ def test_key_token_encoding_round_trips_nats_safe_and_fallback_tokens() -> None:
     assert decode_key_token(encoded) == "deck:one"
 
 
-def test_state_key_helpers_round_trip_encoded_tokens() -> None:
-    presence_key = presence_endpoint_key(
-        lane="hardware_messages",
-        endpoint="hardware_manager:room/a",
+def test_protocol_key_helpers_round_trip_encoded_tokens() -> None:
+    advertisement_key = beacon_advertisement_key(
+        feature_id="dev.deckr.hardware",
+        advertisement_id="room/a",
     )
-    inventory_key = hardware_inventory_key("room/a")
-    claim_key = device_claim_key(manager_id="room/a", device_id="deck:one")
-    catalog_key = action_provider_catalog_key("provider.main")
-
-    assert parse_presence_endpoint_key(presence_key) == (
-        "hardware_messages",
-        endpoint_address("hardware_manager", "room/a"),
-    )
-    assert parse_hardware_inventory_key(inventory_key) == "room/a"
-    assert parse_device_claim_key(claim_key) == ("room/a", "deck:one")
-    assert parse_action_provider_catalog_key(catalog_key) == "provider.main"
-
-
-def test_hardware_inventory_labels_round_trip_and_default_empty() -> None:
-    inventory = HardwareInventory(
-        managerId="mqtt-main",
-        managerEndpoint=hardware_manager_address("mqtt-main"),
-        sessionId="session-1",
-        timestamp=datetime.now(UTC),
-        labels={"mqtt-host": "openhabian"},
+    contract_key = concord_contract_key(contract_id="hardware contract/1", generation=2)
+    token_key = concord_participant_token_key(
+        contract_id="hardware contract/1",
+        generation=2,
+        participant=hardware_manager_address("room/a"),
     )
 
-    dumped = inventory.model_dump(by_alias=True, mode="json")
-
-    assert dumped["labels"] == {"mqtt-host": "openhabian"}
-    assert HardwareInventory.model_validate(dumped).labels == {
-        "mqtt-host": "openhabian"
-    }
-    assert HardwareInventory.model_validate(
-        {
-            "managerId": "mqtt-main",
-            "managerEndpoint": "hardware_manager:mqtt-main",
-            "sessionId": "session-1",
-            "timestamp": "2026-05-06T12:00:00Z",
-            "devices": {},
-        }
-    ).labels == {}
+    assert parse_beacon_advertisement_key(advertisement_key) == (
+        "dev.deckr.hardware",
+        "room/a",
+    )
+    assert parse_concord_contract_key(contract_key) == ("hardware contract/1", 2)
+    assert parse_concord_participant_token_key(token_key) == (
+        "hardware contract/1",
+        2,
+        hardware_manager_address("room/a"),
+    )
 
 
 def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() -> None:

@@ -7,9 +7,7 @@ from pydantic import ValidationError
 
 import deckr.contracts as public_contracts
 import deckr.contracts.messages as contract_messages
-import deckr.state as public_state
 from deckr.actions import endpoints as action_endpoints
-from deckr.actions import state as action_state
 from deckr.contracts.lanes import CORE_LANE_CONTRACTS
 from deckr.contracts.messages import (
     ACTIONS_LANE,
@@ -77,10 +75,6 @@ def test_action_provider_helpers_live_on_action_modules() -> None:
     assert broadcast.scope == "action_providers"
     assert broadcast.endpoint_family == "action_provider"
 
-    catalog_key = action_state.action_provider_catalog_key("python")
-    assert catalog_key == "catalog.actions.providers.python"
-    assert action_state.parse_action_provider_catalog_key(catalog_key) == "python"
-
 
 @pytest.mark.parametrize(
     ("module", "helper_names"),
@@ -105,13 +99,6 @@ def test_action_provider_helpers_live_on_action_modules() -> None:
                 "action_providers_broadcast",
                 "parse_action_provider_address",
                 "require_provider_instance_id",
-            },
-        ),
-        (
-            public_state,
-            {
-                "action_provider_catalog_key",
-                "parse_action_provider_catalog_key",
             },
         ),
     ],

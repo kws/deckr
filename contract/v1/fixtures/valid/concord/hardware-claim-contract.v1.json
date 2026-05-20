@@ -1,0 +1,31 @@
+{
+  "contractId": "hardware-contract-1",
+  "createdAt": "2026-04-29T10:00:00Z",
+  "createdBy": "controller:controller-main",
+  "generation": 1,
+  "participants": [
+    "controller:controller-main",
+    "hardware_manager:mirabox-main"
+  ],
+  "profile": "dev.deckr.profile.hardware_claim.v1",
+  "schema": "dev.deckr.concord.contract.v1",
+  "state": "open",
+  "terms": {
+    "claimId": "claim-1",
+    "controllerEndpoint": "controller:controller-main",
+    "devices": [
+      {
+        "deviceRef": {
+          "deviceId": "deck-1",
+          "fingerprint": "fingerprint:deck-1",
+          "managerId": "mirabox-main"
+        },
+        "instanceCount": 1
+      }
+    ],
+    "managerAdvertisementId": "hardware-advertisement-1",
+    "managerEndpoint": "hardware_manager:mirabox-main",
+    "profile": "dev.deckr.profile.hardware_claim.v1"
+  },
+  "termsHash": "sha256:2a0f7e680916b7f4fd1ddae4dbeadd47461efafe36b15c6bb7a71b3a6549a75a"
+}

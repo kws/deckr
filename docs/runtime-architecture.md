@@ -120,8 +120,8 @@ The current core lane set includes:
 
 The distributed lane substrate is NATS. This document owns the generic component
 and lane model. The NATS bus specification owns endpoint-bound lane handles,
-recipient filtering, KV current state, device claims, action resolution, and
-broker diagnostics in [`nats-bus.md`](nats-bus.md). The v1 device, control, and
+recipient filtering, Beacon/Concord KV stores, and broker diagnostics in
+[`nats-bus.md`](nats-bus.md). The v1 device, control, and
 capability descriptor contracts are implemented in `deckr.hardware.descriptors`.
 Canonical core capability value contracts and helpers live in
 `deckr.hardware.capabilities`; the BAU contract is documented in
@@ -179,15 +179,14 @@ It includes:
 - one application-facing event bus per lane
 - endpoint-bound lane handles
 - recipient filtering for local endpoints
-- current-state, diagnostics, or control-plane hooks that remain lane-generic
+- explicit StateStore access for protocols such as Beacon and Concord
 
 The managed lane runtime belongs in `deckr`. It is not a transport, controller,
 hardware manager, action provider runtime, or special discovered component.
 
 Every runtime host must either use the Deckr-provided managed lane runtime or
-explicitly provide equivalent behavior. Endpoint liveness and current-state
-expiry are being moved to the NATS/KV substrate design and must not be
-reimplemented as home-grown WebSocket/MQTT route leases.
+explicitly provide equivalent behavior. Discovery and live agreement authority
+belong to Beacon and Concord, not to home-grown WebSocket/MQTT route metadata.
 
 The Deckr launcher should use the same managed lane runtime API that embedding
 hosts use. It may add configuration loading, component discovery, signal
@@ -214,7 +213,7 @@ That object is a runtime host helper around the managed lane runtime. It should:
 - expose lane handles through one obvious API such as `lane(name)` or
   `lanes.require(name)`
 - expose endpoint-bound lane handles, recipient filtering diagnostics, and
-  current-state hooks
+  explicit protocol stores
 - start required generic bus infrastructure exactly once
 - stop that infrastructure through normal async context-manager cancellation
 
@@ -254,7 +253,7 @@ These modes are deployment shapes, not different architectures.
   - does not require a local controller or action provider runtime
 
 Every mode must use the same managed lane runtime, lane contracts,
-endpoint-bound send/subscribe API, recipient filtering, current-state behavior,
+endpoint-bound send/subscribe API, recipient filtering, protocol-store behavior,
 component model, and substrate binding rules. A "skinny" runtime omits
 components; it does not get a thinner protocol, a different bus, or a
 role-specific discovery path.
@@ -275,8 +274,9 @@ true when shutdown starts from a cancelled host scope such as SIGINT handling.
 
 `RunContext.stopping` is the cooperative stop signal for component-owned tasks.
 `Component.stop()` must be idempotent and bounded; it may perform final protocol
-cleanup, publish lifecycle messages, withdraw discovery records, or release
-claims while the component's borrowed runtime resources are still valid.
+cleanup, publish lifecycle messages, withdraw Beacon advertisements, or cancel
+Concord contracts while the component's borrowed runtime resources are still
+valid.
 
 Parent runtimes that register resources and pass them into hosted children must
 keep those resources alive until all children using them have stopped. This is
@@ -627,15 +627,15 @@ namespace = "org.example.media.service"
 
 [deckr.components.instances.worker.dependencies.controller_main]
 kind = "endpoint"
+kind = "feature"
 mode = "observed"
-lane = "actions"
+feature_id = "dev.deckr.controller"
 endpoint = "controller:controller-main"
 ```
 
 Supported dependency kinds are:
 
-- `endpoint`
-- `service`
+- `feature`
 
 Supported modes are:
 
@@ -644,25 +644,23 @@ Supported modes are:
 - `preferred`
 - `observed`
 
-Endpoint dependencies require a lane and endpoint address. Service dependencies
-require a `service:<service-id>` endpoint and service namespace; they imply the
-`services` lane, service endpoint presence, service catalog/status checks,
-matching endpoint session id, and service status evaluation.
+Feature dependencies require a Beacon `feature_id`. They may include an
+endpoint filter when the component needs a specific configured endpoint.
 
 Dependencies never create component instances, start services, import local
 objects, block `start(ctx)`, block endpoint registration, or stop a component.
-The component host observes dependencies continuously through endpoint presence
-and exact-key current-state checks. A running component can therefore be ready,
-unready, or unknown while its local lifecycle remains `running`.
+The component host observes dependencies continuously through Beacon feature
+queries. A running component can therefore be ready, unready, or unknown while
+its local lifecycle remains `running`.
 
 Required dependencies with `unknown`, `degraded`, or `unsatisfied` conditions
 make the effective component readiness unready. Optional, preferred, and
 observed dependencies are reported in diagnostics without forcing effective
 readiness unready by themselves.
 
-Presence-dependency cycles are reported as diagnostics in the planning report,
-but they are not plan errors. Cyclic presence dependencies are rendezvous
-predicates, not startup ordering.
+Endpoint-filtered feature dependency cycles are reported as diagnostics in the
+planning report, but they are not plan errors. They are rendezvous predicates,
+not startup ordering.
 
 ### Activation
 
@@ -678,7 +676,7 @@ explicitly configured component instance source produces an instance.
 There is no generic runtime-host `enabled` flag. The existence of an instance
 definition is the activation signal. If a component has a domain-specific
 sometimes-on mode, that behavior belongs in the component and should be exposed
-through readiness, endpoint presence, service state, or domain state as
+through readiness, Beacon features, Concord agreements, or domain state as
 appropriate.
 
 Every instantiated component has a runtime-host-scoped identity used for
@@ -765,7 +763,7 @@ For that first-party source, omitted `block` defaults to an empty list,
 
 Each Python action-provider runtime instance registers
 `action_provider:<provider-instance-id>` on both `actions` and `services`.
-The `actions` endpoint carries controller/action traffic and catalogs. The
+The `actions` endpoint carries controller/action traffic. The
 `services` endpoint lets hosted action instances use service command/reply and
 service view helpers without becoming service components themselves.
 
@@ -779,9 +777,9 @@ diagnostics.
 Readiness is local operator visibility, not a Deckr protocol fact. A ready
 component may expose no endpoints, and a running component with reachable
 endpoints may still report unready for its own local reasons or because a
-declared dependency is unavailable. Endpoint reachability remains
-lane/current-state protocol state, and device, action, binding, page, service,
-and settings availability remain domain state.
+declared dependency is unavailable. Device, action, binding, page, service, and
+settings availability remain domain state. Shared discovery and agreement
+evidence is represented by Beacon and Concord.
 
 Components may report readiness through `RunContext.status` or the convenience
 reporting helpers. The component manager combines component-reported local
@@ -804,7 +802,7 @@ example through the bundled launcher's `[deckr.runtime.substrate]` table. It is
 not discovered, instantiated, or supervised as a Deckr component. The runtime
 host may either connect to an external broker or supervise a private local
 `nats-server` child process through `SupervisedNatsSubstrate`; both forms expose
-the same NATS-backed lane and current-state contract. A component or external
+the same NATS-backed lane and protocol-store contract. A component or external
 adapter may still use WebSocket, MQTT, USB, HID, HTTP, vendor framing, or even a
 substrate-like package name at a real protocol boundary, but that does not make
 it the generic Deckr lane substrate.
@@ -813,8 +811,8 @@ The live design is:
 
 - Deckr lanes remain logical contracts.
 - NATS carries distributed lane traffic.
-- KV carries retained current state, device descriptors, endpoint reachability,
-  device claims, action catalogs, and service discovery state where appropriate.
+- KV carries Beacon advertisements, Concord contracts, Concord participant
+  tokens, and owner-qualified private state where appropriate.
 - Lane listeners register with their Deckr endpoint address.
 - The lane layer stamps envelope senders and filters received envelopes for the
   local endpoint before application code sees them.
@@ -898,7 +896,9 @@ to understand component-specific settings.
 ## Hard Rules
 
 - There is one component model.
-- There is one discovery model.
+- There is one runtime participant model.
+- Beacon is the shared weak feature discovery protocol.
+- Concord is the shared live agreement protocol.
 - Lane contracts are the only generic wiring primitive.
 - The runtime host creates the full core lane set before component startup.
 - Core lane names belong in `deckr`.
@@ -920,11 +920,10 @@ to understand component-specific settings.
 - Transport-local framing may exist, but it must not redefine the carried Deckr
   message contract.
 - NATS must not replace Deckr lanes, envelopes, endpoint addresses, subjects,
-  discovery, or component lifecycle semantics.
+  Beacon, Concord, or component lifecycle semantics.
 - Substrate-local identity must not leak into application-level addressing or
   delivery.
-- Endpoint identity and endpoint reachability are distinct from component lifecycle
-  identity.
+- Endpoint identity is distinct from component lifecycle identity.
 - Endpoint addresses are distinct from the domain entity subjects carried by
   lane messages.
 - Client/session identity, transport addresses, component runtime identity, and

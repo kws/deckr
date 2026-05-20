@@ -146,7 +146,7 @@
     },
     "BindingMetadata": {
       "additionalProperties": false,
-      "description": "Action-provider-facing metadata for one active binding lease.",
+      "description": "Action-provider-facing metadata for one active binding agreement.",
       "properties": {
         "actionId": {
           "title": "Actionid",

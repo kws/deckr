@@ -1,12 +1,22 @@
 {
   "$defs": {
-    "ActionDescriptor": {
+    "ActionBeaconDescriptor": {
       "additionalProperties": false,
-      "description": "Action identity advertised by an action provider.",
       "properties": {
         "actionId": {
           "title": "Actionid",
           "type": "string"
+        },
+        "capacity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileCapacity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "controllers": {
           "anyOf": [
@@ -22,6 +32,13 @@
           ],
           "default": null,
           "title": "Controllers"
+        },
+        "hints": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Hints",
+          "type": "object"
         },
         "manifestDefaults": {
           "anyOf": [
@@ -123,7 +140,7 @@
       "required": [
         "actionId"
       ],
-      "title": "ActionDescriptor",
+      "title": "ActionBeaconDescriptor",
       "type": "object"
     },
     "CapabilityRequirement": {
@@ -263,16 +280,51 @@
       "title": "EndpointAddress",
       "type": "string"
     },
-    "JsonValue": {}
+    "JsonValue": {},
+    "ProfileCapacity": {
+      "additionalProperties": false,
+      "properties": {
+        "availableInstances": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Availableinstances"
+        },
+        "claimedInstances": {
+          "default": 0,
+          "title": "Claimedinstances",
+          "type": "integer"
+        },
+        "totalInstances": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Totalinstances"
+        }
+      },
+      "title": "ProfileCapacity",
+      "type": "object"
+    }
   },
-  "$id": "dev.deckr.state.action_provider_catalog.v1",
+  "$id": "dev.deckr.profile.actions.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Current action catalog advertised by one action provider endpoint.",
   "properties": {
     "actions": {
       "additionalProperties": {
-        "$ref": "#/$defs/ActionDescriptor"
+        "$ref": "#/$defs/ActionBeaconDescriptor"
       },
       "title": "Actions",
       "type": "object"
@@ -291,6 +343,12 @@
       "title": "Labels",
       "type": "object"
     },
+    "profile": {
+      "const": "dev.deckr.profile.actions.v1",
+      "default": "dev.deckr.profile.actions.v1",
+      "title": "Profile",
+      "type": "string"
+    },
     "providerEndpoint": {
       "$ref": "#/$defs/EndpointAddress"
     },
@@ -305,21 +363,15 @@
     "sessionId": {
       "title": "Sessionid",
       "type": "string"
-    },
-    "timestamp": {
-      "format": "date-time",
-      "title": "Timestamp",
-      "type": "string"
     }
   },
   "required": [
     "providerInstanceId",
     "providerEndpoint",
     "providerId",
-    "sessionId",
-    "timestamp"
+    "sessionId"
   ],
-  "title": "Action provider catalog state",
+  "title": "Deckr Beacon actions profile payload",
   "type": "object",
   "x-deckr-schema-version": "1"
 }
