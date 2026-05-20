@@ -178,6 +178,13 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
         terms=terms,
         created_by=controller,
     )
+    resolved = await concord.get_contract(
+        {"contractId": "hardware-contract-1", "generation": 1}
+    )
+    assert resolved == contract
+    assert await concord.get_contract(
+        {"contractId": "missing-contract", "generation": 1}
+    ) is None
     assert (await concord.validate(contract)).status == ContractValidityStatus.MISSING_TOKEN
 
     controller_token = await concord.attach(

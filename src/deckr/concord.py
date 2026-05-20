@@ -441,6 +441,30 @@ class ConcordCoordinator:
         entry = await self._contract_state.create(key, record)
         return _contract_handle(key, record, entry.revision)
 
+    async def get_contract(
+        self,
+        pointer: ContractPointer | Mapping[str, Any],
+    ) -> ContractHandle | None:
+        parsed = (
+            pointer
+            if isinstance(pointer, ContractPointer)
+            else ContractPointer.model_validate(pointer)
+        )
+        key = concord_contract_key(
+            contract_id=parsed.contract_id,
+            generation=parsed.generation,
+        )
+        entry = await self._contract_state.get(key)
+        if entry is None:
+            return None
+        record = ContractRecord.model_validate(entry.value)
+        if (
+            record.contract_id != parsed.contract_id
+            or record.generation != parsed.generation
+        ):
+            return None
+        return _contract_handle(key, record, entry.revision)
+
     async def attach(
         self,
         contract: ContractHandle,

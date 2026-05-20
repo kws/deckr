@@ -156,6 +156,9 @@
           "title": "Actioninstanceid",
           "type": "string"
         },
+        "bindingContract": {
+          "$ref": "#/$defs/ContractPointer"
+        },
         "bindingId": {
           "title": "Bindingid",
           "type": "string"
@@ -239,6 +242,7 @@
         "configId",
         "contextId",
         "bindingId",
+        "bindingContract",
         "deviceRef",
         "controlRef"
       ],
@@ -567,6 +571,25 @@
         "capabilityId"
       ],
       "title": "CapabilityRef",
+      "type": "object"
+    },
+    "ContractPointer": {
+      "additionalProperties": false,
+      "properties": {
+        "contractId": {
+          "title": "Contractid",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "contractId",
+        "generation"
+      ],
+      "title": "ContractPointer",
       "type": "object"
     },
     "ControlRef": {
