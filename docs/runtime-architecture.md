@@ -120,8 +120,8 @@ The current core lane set includes:
 
 The distributed lane substrate is NATS. This document owns the generic component
 and lane model. The NATS bus specification owns endpoint-bound lane handles,
-recipient filtering, Beacon/Concord KV stores, and broker diagnostics in
-[`nats-bus.md`](nats-bus.md). The v1 device, control, and
+recipient filtering, Beacon/Concord KV stores, broker-resource ownership, and
+broker diagnostics in [`nats-bus.md`](nats-bus.md). The v1 device, control, and
 capability descriptor contracts are implemented in `deckr.hardware.descriptors`.
 Canonical core capability value contracts and helpers live in
 `deckr.hardware.capabilities`; the BAU contract is documented in

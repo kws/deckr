@@ -255,6 +255,20 @@ Run it with a supervised local NATS server:
 uv run --extra supervised-nats python scripts/nats_smoke.py --supervised --check-ttl
 ```
 
+### JetStream Consumer Hygiene
+
+NATS KV `watch()` and list-style helpers are backed by JetStream consumers.
+Beacon and Concord state reads, snapshots, and watches must not create
+unbounded growth in unbound broker consumers. Temporary watch/list consumers
+must be explicitly deleted or avoided once the read is complete; server-side
+inactive cleanup is a fallback, not the steady-state cleanup path.
+
+Treat watch events as wakeups and exact KV reads as authority, but remember that
+every watch still consumes broker resources. Use the smoke harness and
+`scripts/nats_state_report.py` for current Beacon/Concord keys and TTL behavior,
+then pair them with the `/jsz` check below to confirm that steady-state unbound
+consumer counts remain bounded.
+
 ## Troubleshooting
 
 If a runtime cannot find hardware, actions, or services:
@@ -273,6 +287,19 @@ If lane messages are not delivered:
 2. Check sender and recipient endpoint families.
 3. Check direct recipient session filters when `recipientSessionId` is set.
 4. Confirm NATS subject/header hints match the payload.
+
+If broker load or JetStream consumer counts grow unexpectedly:
+
+1. Inspect `/jsz?accounts=true&streams=true&consumers=true&config=true` on the
+   NATS monitoring endpoint.
+2. Separate bound consumers from unbound consumers; unbound consumers commonly
+   show no active subscription or `push_bound=false`.
+3. Look for stale consumers on Beacon/Concord KV bucket streams, especially
+   filters such as `KV_deckr_beacon_advertisement_v1.>` or
+   `advertisements.by_feature.>`.
+4. Check high-frequency snapshot, reconciliation, watch, and list paths first.
+5. Confirm the consumer count stabilizes and drops after the fix, deploy, or
+   runtime restart.
 
 ## Alpha Rule
 

@@ -142,7 +142,8 @@ same NATS/KV runtime contract, not an in-memory or no-NATS product mode.
 
 A real-NATS smoke harness is available at `scripts/nats_smoke.py`, and
 `scripts/nats_state_report.py` summarizes the broker's current Deckr
-Beacon/Concord communication state.
+Beacon/Concord communication state. The NATS bus docs also cover JetStream
+consumer hygiene checks for watch/list paths.
 
 Run the smoke harness against the included JetStream-enabled NATS compose service:
 
