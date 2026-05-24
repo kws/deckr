@@ -155,9 +155,9 @@ Deckr core ships these profile contracts:
 | `dev.deckr.profile.action_binding.v1` | Concord | live controller/provider action bindings |
 
 The generic Beacon layer validates only the advertisement envelope. The generic
-Concord layer validates only contract and token mechanics. Profile validation
-lives in `deckr.profiles`, with hardware-facing profile models also exported
-from `deckr.hardware`.
+Concord layer validates only contract and token mechanics. Action profile
+validation lives in `deckr.profiles`; hardware profile validation lives in
+`deckr.hardware.profiles` and is exported from `deckr.hardware`.
 
 Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
@@ -265,7 +265,7 @@ If a runtime cannot find hardware, actions, or services:
 4. If a live agreement is expected, validate the Concord contract and every
    participant token.
 5. For profile-specific behavior, validate the Beacon payload or Concord terms
-   with `deckr.profiles`.
+   with `deckr.hardware.profiles` or `deckr.profiles`, depending on the profile.
 
 If lane messages are not delivered:
 

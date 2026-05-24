@@ -21,21 +21,23 @@ from deckr.concord import (
 )
 from deckr.contracts.messages import controller_address, hardware_manager_address
 from deckr.hardware.descriptors import ControlRef, DeviceDescriptor, DeviceRef
-from deckr.profiles import (
-    ACTION_BINDING_PROFILE_ID,
-    ACTIONS_FEATURE_ID,
+from deckr.hardware.profiles import (
     HARDWARE_CLAIM_PROFILE_ID,
     HARDWARE_FEATURE_ID,
-    ActionBindingTerms,
-    ActionsBeaconPayload,
     HardwareAdvertisementDevice,
     HardwareBeaconPayload,
     HardwareClaimDevice,
     HardwareClaimTerms,
     ProfileCapacity,
-    actions_payload_from_advertisement,
     hardware_claim_conflicts,
     hardware_payload_from_advertisement,
+)
+from deckr.profiles import (
+    ACTION_BINDING_PROFILE_ID,
+    ACTIONS_FEATURE_ID,
+    ActionBindingTerms,
+    ActionsBeaconPayload,
+    actions_payload_from_advertisement,
     profile_terms_hash,
 )
 from deckr.state import StateConflict

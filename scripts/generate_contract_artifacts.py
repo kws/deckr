@@ -64,21 +64,23 @@ from deckr.hardware.messages import (
     device_available_message,
     hardware_message_schema,
 )
-from deckr.profiles import (
-    ACTION_BINDING_PROFILE_ID,
-    ACTIONS_FEATURE_ID,
-    ACTIONS_PROFILE_ID,
+from deckr.hardware.profiles import (
     HARDWARE_CLAIM_PROFILE_ID,
     HARDWARE_FEATURE_ID,
     HARDWARE_PROFILE_ID,
-    ActionBeaconDescriptor,
-    ActionBindingTerms,
-    ActionsBeaconPayload,
     HardwareAdvertisementDevice,
     HardwareBeaconPayload,
     HardwareClaimDevice,
     HardwareClaimTerms,
     ProfileCapacity,
+)
+from deckr.profiles import (
+    ACTION_BINDING_PROFILE_ID,
+    ACTIONS_FEATURE_ID,
+    ACTIONS_PROFILE_ID,
+    ActionBeaconDescriptor,
+    ActionBindingTerms,
+    ActionsBeaconPayload,
 )
 from deckr.services.messages import (
     SERVICE_COMMAND,

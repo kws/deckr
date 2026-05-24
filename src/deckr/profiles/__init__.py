@@ -15,18 +15,7 @@ from deckr.concord import canonical_json_hash
 from deckr.contracts.messages import EndpointAddress
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 from deckr.hardware.descriptors import ControlRef, DeviceRef
-from deckr.hardware.profiles import (
-    HARDWARE_CLAIM_PROFILE_ID,
-    HARDWARE_FEATURE_ID,
-    HARDWARE_PROFILE_ID,
-    HardwareAdvertisementDevice,
-    HardwareBeaconPayload,
-    HardwareClaimDevice,
-    HardwareClaimTerms,
-    ProfileCapacity,
-    hardware_claim_conflicts,
-    hardware_payload_from_advertisement,
-)
+from deckr.hardware.profiles import ProfileCapacity as _ProfileCapacity
 
 ACTIONS_PROFILE_ID = "dev.deckr.profile.actions.v1"
 ACTION_BINDING_PROFILE_ID = "dev.deckr.profile.action_binding.v1"
@@ -50,7 +39,7 @@ def _endpoint_id(endpoint: EndpointAddress, *, family: str, field_name: str) -> 
 
 
 class ActionBeaconDescriptor(ActionDescriptor):
-    capacity: ProfileCapacity | None = None
+    capacity: _ProfileCapacity | None = None
     hints: JsonObject = Field(default_factory=dict)
 
     @field_validator("hints", mode="before")
@@ -218,7 +207,7 @@ class ActionBindingTerms(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
-def profile_terms_hash(terms: HardwareClaimTerms | ActionBindingTerms) -> str:
+def profile_terms_hash(terms: DeckrModel) -> str:
     return canonical_json_hash(terms)
 
 
@@ -241,19 +230,9 @@ __all__ = [
     "ACTION_BINDING_PROFILE_ID",
     "ACTIONS_FEATURE_ID",
     "ACTIONS_PROFILE_ID",
-    "HARDWARE_CLAIM_PROFILE_ID",
-    "HARDWARE_FEATURE_ID",
-    "HARDWARE_PROFILE_ID",
     "ActionBeaconDescriptor",
     "ActionBindingTerms",
     "ActionsBeaconPayload",
-    "HardwareAdvertisementDevice",
-    "HardwareBeaconPayload",
-    "HardwareClaimDevice",
-    "HardwareClaimTerms",
-    "ProfileCapacity",
     "actions_payload_from_advertisement",
-    "hardware_claim_conflicts",
-    "hardware_payload_from_advertisement",
     "profile_terms_hash",
 ]

@@ -45,7 +45,7 @@ from deckr.hardware.descriptors import (
     DeviceDescriptor,
     DeviceRef,
 )
-from deckr.profiles import (
+from deckr.hardware.profiles import (
     HARDWARE_CLAIM_PROFILE_ID,
     HARDWARE_FEATURE_ID,
     HardwareAdvertisementDevice,
