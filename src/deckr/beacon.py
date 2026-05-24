@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable, Mapping
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -32,6 +33,8 @@ BEACON_ADVERTISEMENT_STORE_POLICY = StateStorePolicy(
     description="Beacon advertisement state",
 )
 
+logger = logging.getLogger(__name__)
+
 
 class CandidateStatus(StrEnum):
     CANDIDATE = "candidate"
@@ -40,6 +43,14 @@ class CandidateStatus(StrEnum):
     FEATURE_MISMATCH = "feature_mismatch"
     SESSION_MISMATCH = "session_mismatch"
     UNAVAILABLE = "unavailable"
+
+
+class BeaconFeatureEventType(StrEnum):
+    ADVERTISED = "advertised"
+    UPDATED = "updated"
+    WITHDRAWN = "withdrawn"
+    EXPIRED = "expired"
+    INVALID = "invalid"
 
 
 class AdvertisementSelector(Protocol):
@@ -232,6 +243,17 @@ class BeaconEvent:
     candidate: Candidate | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class BeaconFeatureEvent:
+    event_type: BeaconFeatureEventType
+    feature_id: str
+    key: str
+    candidate: Candidate | None = None
+    previous: Candidate | None = None
+    reason: str | None = None
+    change: StateChange | None = None
+
+
 class BeaconDiscovery:
     def __init__(
         self,
@@ -378,6 +400,340 @@ class BeaconDiscovery:
         return self._state.watch(beacon_feature_prefix(feature_id))
 
 
+class BeaconAdvertiser:
+    """Owns one refreshable Beacon advertisement for a running participant."""
+
+    def __init__(
+        self,
+        service: BeaconService,
+        *,
+        feature_id: str,
+        endpoint: str | EndpointAddress,
+        session_id: str,
+        advertiser: str | EndpointAddress | None = None,
+        advertisement_id: str | None = None,
+        protocol: Mapping[str, str] | BeaconProtocol | None = None,
+        operations: tuple[str, ...] | list[str] = (),
+        labels: Mapping[str, str] | None = None,
+        hints: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
+        ttl_seconds: int | None = None,
+        refresh_interval: float = 5.0,
+        log_label: str = "Beacon",
+    ) -> None:
+        if refresh_interval <= 0:
+            raise ValueError("refresh_interval must be greater than zero")
+        self._service = service
+        self.feature_id = _require_text(feature_id, field_name="Beacon feature id")
+        self.endpoint = parse_endpoint_address(endpoint)
+        self.session_id = _require_text(session_id, field_name="Beacon session id")
+        self.advertiser = (
+            parse_endpoint_address(advertiser)
+            if advertiser is not None
+            else self.endpoint
+        )
+        self._advertisement_id = advertisement_id
+        self._protocol = protocol
+        self._operations = tuple(operations)
+        self._labels = dict(labels or {})
+        self._hints = dict(hints or {})
+        self._payload = dict(payload) if payload is not None else None
+        self._ttl_seconds = ttl_seconds
+        self._refresh_interval = refresh_interval
+        self._log_label = log_label
+        self._handle: AdvertisementHandle | None = None
+        self._lock = anyio.Lock()
+        self._started = False
+
+    @property
+    def handle(self) -> AdvertisementHandle | None:
+        return self._handle
+
+    def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        if self._started:
+            return
+        self._started = True
+        task_group.start_soon(self.heartbeat_loop)
+
+    async def publish(
+        self,
+        *,
+        payload: Mapping[str, Any] | None = None,
+        labels: Mapping[str, str] | None = None,
+        hints: Mapping[str, Any] | None = None,
+        operations: tuple[str, ...] | list[str] | None = None,
+    ) -> AdvertisementHandle:
+        async with self._lock:
+            if payload is not None:
+                self._payload = dict(payload)
+            if labels is not None:
+                self._labels = dict(labels)
+            if hints is not None:
+                self._hints = dict(hints)
+            if operations is not None:
+                self._operations = tuple(operations)
+            return await self._publish_locked()
+
+    async def heartbeat_loop(self) -> None:
+        while True:
+            await anyio.sleep(self._refresh_interval)
+            try:
+                await self.publish()
+            except StateUnavailable:
+                logger.warning(
+                    "%s Beacon advertisement unavailable; heartbeat will retry "
+                    "feature=%s endpoint=%s session=%s advertisement=%s",
+                    self._log_label,
+                    self.feature_id,
+                    self.endpoint,
+                    self.session_id,
+                    self._handle.advertisement_id if self._handle is not None else None,
+                    exc_info=True,
+                )
+
+    async def withdraw(self) -> bool:
+        async with self._lock:
+            handle = self._handle
+            self._handle = None
+        if handle is None:
+            return False
+        return await self._service.withdraw(handle, log_label=self._log_label)
+
+    async def _publish_locked(self) -> AdvertisementHandle:
+        handle = self._handle
+        try:
+            if handle is None:
+                self._handle = await self._service.advertise(
+                    self.feature_id,
+                    self.endpoint,
+                    self.session_id,
+                    advertiser=self.advertiser,
+                    advertisement_id=self._advertisement_id,
+                    protocol=self._protocol,
+                    operations=self._operations,
+                    labels=self._labels,
+                    hints=self._hints,
+                    payload=self._payload,
+                    ttl_seconds=self._ttl_seconds,
+                    log_label=self._log_label,
+                )
+            else:
+                self._handle = await self._service.refresh(
+                    handle,
+                    hints=self._hints,
+                    labels=self._labels,
+                    payload=self._payload,
+                    log_label=self._log_label,
+                )
+            return self._handle
+        except StateConflict:
+            logger.warning(
+                "%s Beacon advertisement refresh conflict; republishing "
+                "feature=%s endpoint=%s session=%s advertisement=%s",
+                self._log_label,
+                self.feature_id,
+                self.endpoint,
+                self.session_id,
+                handle.advertisement_id if handle is not None else self._advertisement_id,
+                exc_info=True,
+            )
+            self._handle = None
+            self._handle = await self._service.advertise(
+                self.feature_id,
+                self.endpoint,
+                self.session_id,
+                advertiser=self.advertiser,
+                advertisement_id=self._advertisement_id,
+                protocol=self._protocol,
+                operations=self._operations,
+                labels=self._labels,
+                hints=self._hints,
+                payload=self._payload,
+                ttl_seconds=self._ttl_seconds,
+                log_label=self._log_label,
+            )
+            return self._handle
+
+
+class BeaconService:
+    """Runtime-facing Beacon API with heartbeat helpers and semantic events."""
+
+    def __init__(
+        self,
+        discovery: BeaconDiscovery,
+    ) -> None:
+        self._discovery = discovery
+
+    async def advertise(
+        self,
+        feature_id: str,
+        endpoint: str | EndpointAddress,
+        session_id: str,
+        *,
+        advertiser: str | EndpointAddress | None = None,
+        advertisement_id: str | None = None,
+        protocol: Mapping[str, str] | BeaconProtocol | None = None,
+        operations: tuple[str, ...] | list[str] = (),
+        labels: Mapping[str, str] | None = None,
+        hints: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
+        ttl_seconds: int | None = None,
+        log_label: str = "Beacon",
+    ) -> AdvertisementHandle:
+        handle = await self._discovery.advertise(
+            feature_id,
+            endpoint,
+            session_id,
+            advertiser=advertiser,
+            advertisement_id=advertisement_id,
+            protocol=protocol,
+            operations=operations,
+            labels=labels,
+            hints=hints,
+            payload=payload,
+            ttl_seconds=ttl_seconds,
+        )
+        logger.info(
+            "%s Beacon advertisement announced feature=%s endpoint=%s "
+            "session=%s advertisement=%s refresh=%s revision=%s",
+            log_label,
+            handle.feature_id,
+            handle.endpoint,
+            handle.session_id,
+            handle.advertisement_id,
+            handle.refresh_seq,
+            handle.revision,
+        )
+        return handle
+
+    async def refresh(
+        self,
+        handle: AdvertisementHandle,
+        *,
+        hints: Mapping[str, Any] | None = None,
+        labels: Mapping[str, str] | None = None,
+        payload: Mapping[str, Any] | None = None,
+        log_label: str = "Beacon",
+    ) -> AdvertisementHandle:
+        refreshed = await self._discovery.refresh(
+            handle,
+            hints=hints,
+            labels=labels,
+            payload=payload,
+        )
+        logger.debug(
+            "%s Beacon advertisement heartbeat feature=%s endpoint=%s "
+            "session=%s advertisement=%s refresh=%s revision=%s",
+            log_label,
+            refreshed.feature_id,
+            refreshed.endpoint,
+            refreshed.session_id,
+            refreshed.advertisement_id,
+            refreshed.refresh_seq,
+            refreshed.revision,
+        )
+        return refreshed
+
+    async def withdraw(
+        self,
+        handle: AdvertisementHandle,
+        *,
+        log_label: str = "Beacon",
+    ) -> bool:
+        withdrawn = await self._discovery.withdraw(handle)
+        if withdrawn:
+            logger.info(
+                "%s Beacon advertisement withdrawn feature=%s endpoint=%s "
+                "session=%s advertisement=%s revision=%s",
+                log_label,
+                handle.feature_id,
+                handle.endpoint,
+                handle.session_id,
+                handle.advertisement_id,
+                handle.revision,
+            )
+        return withdrawn
+
+    def advertiser(
+        self,
+        *,
+        feature_id: str,
+        endpoint: str | EndpointAddress,
+        session_id: str,
+        advertiser: str | EndpointAddress | None = None,
+        advertisement_id: str | None = None,
+        protocol: Mapping[str, str] | BeaconProtocol | None = None,
+        operations: tuple[str, ...] | list[str] = (),
+        labels: Mapping[str, str] | None = None,
+        hints: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
+        ttl_seconds: int | None = None,
+        refresh_interval: float = 5.0,
+        log_label: str = "Beacon",
+    ) -> BeaconAdvertiser:
+        return BeaconAdvertiser(
+            self,
+            feature_id=feature_id,
+            endpoint=endpoint,
+            session_id=session_id,
+            advertiser=advertiser,
+            advertisement_id=advertisement_id,
+            protocol=protocol,
+            operations=operations,
+            labels=labels,
+            hints=hints,
+            payload=payload,
+            ttl_seconds=ttl_seconds,
+            refresh_interval=refresh_interval,
+            log_label=log_label,
+        )
+
+    async def find(
+        self,
+        feature_id: str,
+        selector: AdvertisementFilter | None = None,
+    ) -> tuple[Candidate, ...]:
+        return await self._discovery.find(feature_id, selector=selector)
+
+    async def validate(
+        self,
+        candidate: Candidate,
+        *,
+        current_sessions: Mapping[str, str] | None = None,
+    ) -> CandidateStatus:
+        return await self._discovery.validate(
+            candidate,
+            current_sessions=current_sessions,
+        )
+
+    @asynccontextmanager
+    async def watch_feature(
+        self,
+        feature_id: str,
+    ) -> Any:
+        send, receive = anyio.create_memory_object_stream[BeaconFeatureEvent](100)
+        known: dict[str, Candidate] = {}
+
+        async def run() -> None:
+            try:
+                async with self._discovery.watch(feature_id) as changes:
+                    async for change in changes:
+                        event = _beacon_feature_event(feature_id, change, known)
+                        if event is None:
+                            continue
+                        _log_beacon_feature_event(event)
+                        await send.send(event)
+            finally:
+                await send.aclose()
+
+        async with receive, send, anyio.create_task_group() as task_group:
+            task_group.start_soon(run)
+            try:
+                yield receive
+            finally:
+                task_group.cancel_scope.cancel()
+
+
 def _advertisement_handle(
     key: str,
     record: AdvertisementRecord,
@@ -440,6 +796,88 @@ def _selector_accepts(
     return bool(selector(advertisement))
 
 
+def _beacon_feature_event(
+    feature_id: str,
+    change: StateChange,
+    known: dict[str, Candidate],
+) -> BeaconFeatureEvent | None:
+    if change.operation == "put" and change.entry is not None:
+        previous = known.get(change.key)
+        candidate = _candidate_from_entry(change.entry)
+        if candidate is None or candidate.advertisement.feature_id != feature_id:
+            known.pop(change.key, None)
+            return BeaconFeatureEvent(
+                BeaconFeatureEventType.INVALID,
+                feature_id,
+                change.key,
+                previous=previous,
+                reason="invalid_advertisement",
+                change=change,
+            )
+        known[change.key] = candidate
+        return BeaconFeatureEvent(
+            (
+                BeaconFeatureEventType.ADVERTISED
+                if previous is None
+                else BeaconFeatureEventType.UPDATED
+            ),
+            feature_id,
+            change.key,
+            candidate=candidate,
+            previous=previous,
+            change=change,
+        )
+    if change.operation in {"delete", "expire"}:
+        previous = known.pop(change.key, None)
+        return BeaconFeatureEvent(
+            (
+                BeaconFeatureEventType.EXPIRED
+                if change.operation == "expire"
+                else BeaconFeatureEventType.WITHDRAWN
+            ),
+            feature_id,
+            change.key,
+            previous=previous,
+            reason=change.operation,
+            change=change,
+        )
+    return None
+
+
+def _log_beacon_feature_event(event: BeaconFeatureEvent) -> None:
+    candidate = event.candidate or event.previous
+    advertisement = candidate.advertisement if candidate is not None else None
+    if event.event_type == BeaconFeatureEventType.UPDATED:
+        return
+    if event.event_type == BeaconFeatureEventType.INVALID:
+        logger.warning(
+            "Beacon advertisement invalid feature=%s key=%s reason=%s",
+            event.feature_id,
+            event.key,
+            event.reason,
+        )
+        return
+    message = "Beacon advertisement %s feature=%s key=%s"
+    args: tuple[Any, ...] = (
+        event.event_type.value,
+        event.feature_id,
+        event.key,
+    )
+    if advertisement is not None:
+        message += " endpoint=%s session=%s advertisement=%s refresh=%s revision=%s"
+        args += (
+            advertisement.endpoint,
+            advertisement.session_id,
+            advertisement.advertisement_id,
+            advertisement.refresh_seq,
+            candidate.revision if candidate is not None else None,
+        )
+    if event.event_type == BeaconFeatureEventType.EXPIRED:
+        logger.info(message, *args)
+    else:
+        logger.info(message, *args)
+
+
 __all__ = [
     "BEACON_ADVERTISEMENT_SCHEMA_ID",
     "BEACON_ADVERTISEMENT_STORE_POLICY",
@@ -447,9 +885,13 @@ __all__ = [
     "DEFAULT_BEACON_TTL_SECONDS",
     "AdvertisementHandle",
     "AdvertisementRecord",
+    "BeaconAdvertiser",
     "BeaconDiscovery",
     "BeaconEvent",
+    "BeaconFeatureEvent",
+    "BeaconFeatureEventType",
     "BeaconProtocol",
+    "BeaconService",
     "Candidate",
     "CandidateStatus",
     "beacon_advertisement_key",

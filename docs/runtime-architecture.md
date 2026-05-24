@@ -620,13 +620,12 @@ readiness predicates, not activation rules.
 
 ```toml
 [deckr.components.instances.media_actions.dependencies.media_home]
-kind = "service"
+kind = "feature"
 mode = "required"
 endpoint = "service:media-home"
-namespace = "org.example.media.service"
+feature_id = "org.example.media.service"
 
 [deckr.components.instances.worker.dependencies.controller_main]
-kind = "endpoint"
 kind = "feature"
 mode = "observed"
 feature_id = "dev.deckr.controller"
@@ -649,9 +648,9 @@ endpoint filter when the component needs a specific configured endpoint.
 
 Dependencies never create component instances, start services, import local
 objects, block `start(ctx)`, block endpoint registration, or stop a component.
-The component host observes dependencies continuously through Beacon feature
-queries. A running component can therefore be ready, unready, or unknown while
-its local lifecycle remains `running`.
+The component host observes dependencies continuously through `BeaconService`
+feature queries and semantic feature events. A running component can therefore
+be ready, unready, or unknown while its local lifecycle remains `running`.
 
 Required dependencies with `unknown`, `degraded`, or `unsatisfied` conditions
 make the effective component readiness unready. Optional, preferred, and
@@ -783,8 +782,9 @@ evidence is represented by Beacon and Concord.
 
 Python hardware managers use the shared `deckr.hardware.runtime`
 implementation for the manager side of that protocol. A manager advertises its
-current devices through the `dev.deckr.hardware` Beacon feature, accepts
-controller ownership only by attaching its participant token to a matching
+current devices through the `dev.deckr.hardware` Beacon feature with
+`BeaconAdvertiser`, accepts controller ownership only by maintaining a
+`ConcordParticipantLease` on a matching
 `dev.deckr.profile.hardware_claim.v1` Concord contract, and routes hardware
 input or controller commands only while that contract remains valid. The removed
 inventory, endpoint-presence, and unilateral device-claim current-state records
@@ -908,6 +908,9 @@ to understand component-specific settings.
 - There is one runtime participant model.
 - Beacon is the shared weak feature discovery protocol.
 - Concord is the shared live agreement protocol.
+- Runtime components use `BeaconService` and `ConcordService`; raw
+  Beacon/Concord authority state watches belong only inside those core services
+  and substrate internals.
 - Lane contracts are the only generic wiring primitive.
 - The runtime host creates the full core lane set before component startup.
 - Core lane names belong in `deckr`.

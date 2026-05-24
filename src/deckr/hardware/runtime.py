@@ -10,9 +10,10 @@ from typing import Any, Protocol
 import anyio
 
 import deckr.hardware.messages as hw_messages
-from deckr.beacon import AdvertisementHandle, BeaconDiscovery
+from deckr.beacon import AdvertisementHandle, BeaconAdvertiser, BeaconService
 from deckr.concord import (
-    ConcordCoordinator,
+    ConcordParticipantLease,
+    ConcordService,
     ContractHandle,
     ContractState,
     ContractValidityStatus,
@@ -83,8 +84,8 @@ class _ClaimCandidate:
 @dataclass(slots=True)
 class HardwareManagerRuntime:
     endpoint: HardwareEndpoint
-    beacon: BeaconDiscovery
-    concord: ConcordCoordinator
+    beacon: BeaconService
+    concord: ConcordService
     manager_id: str
     labels: Mapping[str, str] | None = None
     command_handler: HardwareCommandHandler | None = None
@@ -95,6 +96,7 @@ class HardwareManagerRuntime:
     watch_retry_seconds: float = DEFAULT_HARDWARE_WATCH_RETRY_SECONDS
     _devices: dict[str, DeviceDescriptor] = field(init=False, default_factory=dict)
     _advertisement: AdvertisementHandle | None = field(init=False, default=None)
+    _advertiser: BeaconAdvertiser | None = field(init=False, default=None)
     _advertisement_id: str = field(init=False, default="")
     _advertisement_dirty: bool = field(init=False, default=True)
     _claims: dict[str, LiveHardwareClaim] = field(init=False, default_factory=dict)
@@ -102,12 +104,13 @@ class HardwareManagerRuntime:
         init=False,
         default_factory=dict,
     )
-    _manager_tokens: dict[str, ParticipantHandle] = field(
+    _manager_leases: dict[str, ConcordParticipantLease] = field(
         init=False,
         default_factory=dict,
     )
     _lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
     _advertisement_lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
+    _task_group: anyio.abc.TaskGroup | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         if self.endpoint.endpoint.family != "hardware_manager":
@@ -137,19 +140,23 @@ class HardwareManagerRuntime:
         return tuple(self._claims[key] for key in sorted(self._claims))
 
     async def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        self._task_group = task_group
         await self.publish_advertisement()
+        if self._advertiser is not None:
+            self._advertiser.start(task_group)
         task_group.start_soon(self.command_subscription_loop)
         task_group.start_soon(self.contract_watch_loop)
         task_group.start_soon(self.contract_reconcile_loop)
-        task_group.start_soon(self.advertisement_refresh_loop)
-        task_group.start_soon(self.token_refresh_loop)
 
     async def stop(self) -> None:
         with anyio.CancelScope(shield=True):
             await self.withdraw_advertisement()
             self._claims.clear()
             self._claims_by_device.clear()
-            self._manager_tokens.clear()
+            for lease in self._manager_leases.values():
+                await lease.aclose()
+            self._manager_leases.clear()
+            self._task_group = None
 
     async def replace_devices(
         self,
@@ -293,25 +300,28 @@ class HardwareManagerRuntime:
         async with self._advertisement_lock:
             payload = self._hardware_payload()
             try:
-                if self._advertisement is None:
-                    self._advertisement = await self.beacon.advertise(
-                        HARDWARE_FEATURE_ID,
-                        self.endpoint.endpoint,
-                        self.endpoint.session_id,
+                if self._advertiser is None:
+                    self._advertiser = self.beacon.advertiser(
+                        feature_id=HARDWARE_FEATURE_ID,
+                        endpoint=self.endpoint.endpoint,
+                        session_id=self.endpoint.session_id,
                         advertisement_id=self._advertisement_id,
                         labels=payload.labels,
                         payload=payload.to_dict(),
+                        refresh_interval=self.advertisement_refresh_seconds,
+                        log_label="Hardware",
                     )
-                else:
-                    self._advertisement = await self.beacon.refresh(
-                        self._advertisement,
-                        labels=payload.labels,
-                        payload=payload.to_dict(),
-                    )
+                    if self._task_group is not None:
+                        self._advertiser.start(self._task_group)
+                self._advertisement = await self._advertiser.publish(
+                    labels=payload.labels,
+                    payload=payload.to_dict(),
+                )
                 self._advertisement_dirty = False
             except StateConflict:
                 logger.info("Hardware Beacon advertisement changed; creating a fresh one")
                 self._advertisement = None
+                self._advertiser = None
                 self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
                 self._advertisement_dirty = True
             except StateUnavailable:
@@ -326,9 +336,13 @@ class HardwareManagerRuntime:
             if advertisement is None:
                 return
             try:
-                await self.beacon.withdraw(advertisement)
+                if self._advertiser is not None:
+                    await self._advertiser.withdraw()
+                else:
+                    await self.beacon.withdraw(advertisement, log_label="Hardware")
             except (StateConflict, StateUnavailable):
                 logger.debug("Could not withdraw hardware Beacon advertisement")
+            self._advertiser = None
 
     async def advertisement_refresh_loop(self) -> None:
         while True:
@@ -338,7 +352,9 @@ class HardwareManagerRuntime:
     async def contract_watch_loop(self) -> None:
         while True:
             try:
-                async with self.concord.watch_contracts() as stream:
+                async with self.concord.watch_contracts(
+                    HARDWARE_CLAIM_PROFILE_ID
+                ) as stream:
                     async for _change in stream:
                         await self.reconcile_claims(reason="contract watch")
             except StateUnavailable:
@@ -355,16 +371,6 @@ class HardwareManagerRuntime:
                 )
             await anyio.sleep(self.claim_reconcile_seconds)
 
-    async def token_refresh_loop(self) -> None:
-        while True:
-            await anyio.sleep(self.token_refresh_seconds)
-            for key, token in list(self._manager_tokens.items()):
-                try:
-                    self._manager_tokens[key] = await self.concord.refresh(token)
-                except StateConflict:
-                    self._manager_tokens.pop(key, None)
-            await self.reconcile_claims(reason="token refresh")
-
     async def reconcile_claims(self, *, reason: str) -> None:
         async with self._lock:
             await self._reconcile_claims_locked(reason=reason)
@@ -375,23 +381,30 @@ class HardwareManagerRuntime:
         ordered = self._ordered_claim_candidates(candidates)
         next_claims: dict[str, LiveHardwareClaim] = {}
         next_by_device: dict[str, LiveHardwareClaim] = {}
-        refreshed_tokens: dict[str, ParticipantHandle] = {}
+        next_leases: dict[str, ConcordParticipantLease] = {}
 
         for candidate in ordered:
             overlapping = set(candidate.device_ids) & set(next_by_device)
             if overlapping:
                 continue
-            token = candidate.token
-            if token is None:
-                try:
-                    token = await self.concord.attach(
-                        candidate.contract,
-                        self.endpoint.endpoint,
-                        self.endpoint.session_id,
-                    )
-                except StateConflict:
-                    continue
-            refreshed_tokens[candidate.contract.key] = token
+            lease = self._manager_leases.get(candidate.contract.key)
+            if lease is None:
+                lease = self.concord.participant_lease(
+                    contract=candidate.contract,
+                    participant=self.endpoint.endpoint,
+                    session_id=self.endpoint.session_id,
+                    refresh_interval=self.token_refresh_seconds,
+                    log_label="Hardware",
+                )
+                if self._task_group is not None:
+                    lease.start(self._task_group)
+            if lease.token is None and candidate.token is not None:
+                lease.adopt(candidate.token)
+            try:
+                token = await lease.attach_or_refresh()
+            except StateConflict:
+                continue
+            next_leases[candidate.contract.key] = lease
             validity = await self.concord.validate(
                 candidate.contract,
                 current_sessions={str(self.endpoint.endpoint): self.endpoint.session_id},
@@ -418,7 +431,10 @@ class HardwareManagerRuntime:
         }
         self._claims = next_claims
         self._claims_by_device = next_by_device
-        self._manager_tokens = refreshed_tokens
+        for key, lease in self._manager_leases.items():
+            if key not in next_leases:
+                await lease.aclose()
+        self._manager_leases = next_leases
         if lost_claims:
             await self._reset_lost_claim_devices(lost_claims.values())
         await self.publish_advertisement()
@@ -446,7 +462,12 @@ class HardwareManagerRuntime:
                 continue
             if terms.controller_endpoint not in contract.participants:
                 continue
-            token = self._manager_tokens.get(contract.key)
+            lease = self._manager_leases.get(contract.key)
+            token = (
+                lease.token
+                if lease is not None
+                else validity.tokens.get(str(self.endpoint.endpoint))
+            )
             candidates[contract.key] = _ClaimCandidate(
                 contract=contract,
                 terms=terms,

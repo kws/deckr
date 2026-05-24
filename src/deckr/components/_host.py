@@ -14,6 +14,7 @@ from deckr.beacon import (
     BEACON_ADVERTISEMENT_STORE_POLICY,
     DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
     BeaconDiscovery,
+    BeaconService,
 )
 from deckr.components._defs import Component
 from deckr.components._runner import ComponentManager
@@ -1513,11 +1514,21 @@ async def _run_dependency_observer(
     component_manager: ComponentManager,
 ) -> None:
     specs = tuple(spec for spec in plan.specs if spec.dependencies)
-    beacon_state = deckr.state(
-        DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-        policy=BEACON_ADVERTISEMENT_STORE_POLICY,
+    beacon = BeaconService(
+        BeaconDiscovery(
+            deckr.state(
+                DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+                policy=BEACON_ADVERTISEMENT_STORE_POLICY,
+            )
+        )
     )
-    beacon = BeaconDiscovery(beacon_state)
+    feature_ids = sorted(
+        {
+            dependency.feature_id
+            for spec in specs
+            for dependency in spec.dependencies.values()
+        }
+    )
     send, receive = anyio.create_memory_object_stream[object](max_buffer_size=1)
 
     async def notify() -> None:
@@ -1526,10 +1537,10 @@ async def _run_dependency_observer(
         except anyio.WouldBlock:
             pass
 
-    async def watch_state(state: StateStore, prefix: str) -> None:
+    async def watch_feature(feature_id: str) -> None:
         while True:
             try:
-                async with state.watch(prefix) as changes:
+                async with beacon.watch_feature(feature_id) as changes:
                     async for _change in changes:
                         await notify()
             except StateUnavailable:
@@ -1537,7 +1548,8 @@ async def _run_dependency_observer(
                 await anyio.sleep(1.0)
 
     async with send, receive, anyio.create_task_group() as tg:
-        tg.start_soon(watch_state, beacon_state, "advertisements.by_feature.")
+        for feature_id in feature_ids:
+            tg.start_soon(watch_feature, feature_id)
         while True:
             await _evaluate_dependency_readiness(
                 specs,
@@ -1553,7 +1565,7 @@ async def _run_dependency_observer(
 async def _evaluate_dependency_readiness(
     specs: Sequence[ComponentInstanceSpec],
     *,
-    beacon: BeaconDiscovery,
+    beacon: BeaconService,
     component_manager: ComponentManager,
 ) -> None:
     for spec in specs:
@@ -1575,7 +1587,7 @@ async def _evaluate_dependency_readiness(
 async def _dependency_condition(
     dependency: ComponentDependency,
     *,
-    beacon: BeaconDiscovery,
+    beacon: BeaconService,
 ) -> DependencyCondition:
     try:
         candidates = await beacon.find(

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
-from collections.abc import Mapping
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -37,6 +38,8 @@ CONCORD_TOKEN_STORE_POLICY = StateStorePolicy(
     description="Concord participant token state",
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ContractState(StrEnum):
     OPEN = "open"
@@ -55,6 +58,15 @@ class ContractValidityStatus(StrEnum):
     SESSION_MISMATCH = "session_mismatch"
     TERMS_HASH_MISMATCH = "terms_hash_mismatch"
     UNAVAILABLE = "unavailable"
+
+
+class ConcordEventType(StrEnum):
+    OPENED = "opened"
+    VALID = "valid"
+    PENDING = "pending"
+    INVALID = "invalid"
+    CANCELLED = "cancelled"
+    TOKEN_EXPIRED = "token_expired"
 
 
 def _require_text(value: str, *, field_name: str) -> str:
@@ -392,6 +404,17 @@ class ContractValidity:
         return self.status == ContractValidityStatus.VALID
 
 
+@dataclass(frozen=True, slots=True)
+class ConcordContractEvent:
+    event_type: ConcordEventType
+    contract: ContractHandle | None
+    validity: ContractValidity | None = None
+    profile: str | None = None
+    participant: EndpointAddress | None = None
+    reason: str | None = None
+    change: StateChange | None = None
+
+
 class ConcordCoordinator:
     def __init__(
         self,
@@ -667,6 +690,384 @@ class ConcordCoordinator:
         )
 
 
+class ConcordParticipantLease:
+    """Owns one participant token and its heartbeat for a Concord contract."""
+
+    def __init__(
+        self,
+        service: ConcordService,
+        *,
+        contract: ContractHandle,
+        participant: str | EndpointAddress,
+        session_id: str,
+        refresh_interval: float = 5.0,
+        log_label: str = "Concord",
+    ) -> None:
+        if refresh_interval <= 0:
+            raise ValueError("refresh_interval must be greater than zero")
+        self._service = service
+        self.contract = contract
+        self.participant = parse_endpoint_address(participant)
+        self.session_id = _require_text(session_id, field_name="Concord session id")
+        self._refresh_interval = refresh_interval
+        self._log_label = log_label
+        self._token: ParticipantHandle | None = None
+        self._lock = anyio.Lock()
+        self._started = False
+        self._closed = False
+
+    @property
+    def token(self) -> ParticipantHandle | None:
+        return self._token
+
+    def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        self.start_soon(task_group.start_soon)
+
+    def start_soon(self, start_soon: Callable[..., object]) -> None:
+        if self._started:
+            return
+        self._started = True
+        start_soon(self.heartbeat_loop)
+
+    async def aclose(self) -> None:
+        self._closed = True
+
+    def adopt(self, token: ParticipantHandle) -> None:
+        if token.contract_id != self.contract.contract_id:
+            raise ValueError("participant token belongs to a different contract")
+        if token.generation != self.contract.generation:
+            raise ValueError("participant token belongs to a different generation")
+        if token.participant != self.participant:
+            raise ValueError("participant token belongs to a different participant")
+        if token.session_id != self.session_id:
+            raise ValueError("participant token belongs to a different session")
+        self._token = token
+
+    async def attach_or_refresh(self) -> ParticipantHandle:
+        async with self._lock:
+            token = self._token
+            if token is not None:
+                try:
+                    self._token = await self._service.refresh_token(
+                        token,
+                        log_label=self._log_label,
+                    )
+                    return self._token
+                except StateConflict:
+                    logger.warning(
+                        "%s Concord participant token refresh conflict; "
+                        "reattaching contract=%s generation=%s participant=%s "
+                        "session=%s",
+                        self._log_label,
+                        self.contract.contract_id,
+                        self.contract.generation,
+                        self.participant,
+                        self.session_id,
+                        exc_info=True,
+                    )
+                    self._token = None
+            self._token = await self._service.attach(
+                self.contract,
+                self.participant,
+                self.session_id,
+                log_label=self._log_label,
+            )
+            return self._token
+
+    async def heartbeat_loop(self) -> None:
+        while not self._closed:
+            await anyio.sleep(self._refresh_interval)
+            if self._closed:
+                return
+            try:
+                await self.attach_or_refresh()
+            except StateConflict:
+                logger.warning(
+                    "%s Concord participant token conflict; heartbeat will retry "
+                    "contract=%s generation=%s participant=%s session=%s",
+                    self._log_label,
+                    self.contract.contract_id,
+                    self.contract.generation,
+                    self.participant,
+                    self.session_id,
+                    exc_info=True,
+                )
+            except StateUnavailable:
+                logger.warning(
+                    "%s Concord participant token unavailable; heartbeat will retry "
+                    "contract=%s generation=%s participant=%s session=%s",
+                    self._log_label,
+                    self.contract.contract_id,
+                    self.contract.generation,
+                    self.participant,
+                    self.session_id,
+                    exc_info=True,
+                )
+
+
+class ConcordService:
+    """Runtime-facing Concord API with participant leases and semantic events."""
+
+    def __init__(self, coordinator: ConcordCoordinator) -> None:
+        self._coordinator = coordinator
+
+    async def create_contract(
+        self,
+        participants: tuple[str | EndpointAddress, ...] | list[str | EndpointAddress],
+        *,
+        contract_id: str | None = None,
+        generation: int = 1,
+        profile: str | None = None,
+        terms: Mapping[str, Any] | DeckrModel | None = None,
+        created_by: str | EndpointAddress | None = None,
+        supersedes: ContractPointer | Mapping[str, Any] | None = None,
+        log_label: str = "Concord",
+    ) -> ContractHandle:
+        contract = await self._coordinator.create_contract(
+            participants,
+            contract_id=contract_id,
+            generation=generation,
+            profile=profile,
+            terms=terms,
+            created_by=created_by,
+            supersedes=supersedes,
+        )
+        logger.info(
+            "%s Concord contract opened profile=%s contract=%s generation=%s "
+            "participants=%s revision=%s created_by=%s",
+            log_label,
+            contract.profile,
+            contract.contract_id,
+            contract.generation,
+            [str(item) for item in contract.participants],
+            contract.revision,
+            created_by,
+        )
+        return contract
+
+    async def get_contract(
+        self,
+        pointer: ContractPointer | Mapping[str, Any],
+    ) -> ContractHandle | None:
+        return await self._coordinator.get_contract(pointer)
+
+    async def find_contracts(
+        self,
+        profile: str | None = None,
+    ) -> tuple[ContractHandle, ...]:
+        return await self._coordinator.find_contracts(profile)
+
+    async def attach(
+        self,
+        contract: ContractHandle,
+        participant: str | EndpointAddress,
+        session_id: str,
+        *,
+        token_id: str | None = None,
+        ttl_seconds: int | None = None,
+        log_label: str = "Concord",
+    ) -> ParticipantHandle:
+        token = await self._coordinator.attach(
+            contract,
+            participant,
+            session_id,
+            token_id=token_id,
+            ttl_seconds=ttl_seconds,
+        )
+        logger.info(
+            "%s Concord participant token attached profile=%s contract=%s "
+            "generation=%s participant=%s session=%s token=%s refresh=%s "
+            "revision=%s ttl=%s",
+            log_label,
+            contract.profile,
+            contract.contract_id,
+            contract.generation,
+            token.participant,
+            token.session_id,
+            token.token_id,
+            token.refresh_seq,
+            token.revision,
+            token.ttl_seconds,
+        )
+        return token
+
+    async def refresh_token(
+        self,
+        handle: ParticipantHandle,
+        *,
+        log_label: str = "Concord",
+    ) -> ParticipantHandle:
+        refreshed = await self._coordinator.refresh(handle)
+        logger.debug(
+            "%s Concord participant token heartbeat contract=%s generation=%s "
+            "participant=%s session=%s token=%s refresh=%s revision=%s ttl=%s",
+            log_label,
+            refreshed.contract_id,
+            refreshed.generation,
+            refreshed.participant,
+            refreshed.session_id,
+            refreshed.token_id,
+            refreshed.refresh_seq,
+            refreshed.revision,
+            refreshed.ttl_seconds,
+        )
+        return refreshed
+
+    async def cancel(
+        self,
+        contract: ContractHandle,
+        participant: str | EndpointAddress,
+        *,
+        reason: str | None = None,
+        log_label: str = "Concord",
+    ) -> bool:
+        cancelled = await self._coordinator.cancel(
+            contract,
+            participant,
+            reason=reason,
+        )
+        if cancelled:
+            logger.info(
+                "%s Concord contract cancelled profile=%s contract=%s generation=%s "
+                "participant=%s reason=%s revision=%s",
+                log_label,
+                contract.profile,
+                contract.contract_id,
+                contract.generation,
+                parse_endpoint_address(participant),
+                reason,
+                contract.revision,
+            )
+        return cancelled
+
+    async def validate(
+        self,
+        contract: ContractHandle,
+        *,
+        current_sessions: Mapping[str, str] | None = None,
+        log_label: str = "Concord",
+    ) -> ContractValidity:
+        validity = await self._coordinator.validate(
+            contract,
+            current_sessions=current_sessions,
+        )
+        if validity.status in {
+            ContractValidityStatus.MISSING_TOKEN,
+            ContractValidityStatus.INVALID_TOKEN,
+            ContractValidityStatus.GENERATION_MISMATCH,
+            ContractValidityStatus.SESSION_MISMATCH,
+            ContractValidityStatus.TERMS_HASH_MISMATCH,
+        }:
+            logger.warning(
+                "%s Concord contract invalid profile=%s contract=%s generation=%s "
+                "status=%s reason=%s",
+                log_label,
+                contract.profile,
+                contract.contract_id,
+                contract.generation,
+                validity.status.value,
+                validity.reason,
+            )
+        return validity
+
+    def participant_lease(
+        self,
+        *,
+        contract: ContractHandle,
+        participant: str | EndpointAddress,
+        session_id: str,
+        refresh_interval: float = 5.0,
+        log_label: str = "Concord",
+    ) -> ConcordParticipantLease:
+        return ConcordParticipantLease(
+            self,
+            contract=contract,
+            participant=participant,
+            session_id=session_id,
+            refresh_interval=refresh_interval,
+            log_label=log_label,
+        )
+
+    @asynccontextmanager
+    async def watch_contracts(
+        self,
+        profile: str | None = None,
+    ) -> Any:
+        send, receive = anyio.create_memory_object_stream[ConcordContractEvent](100)
+        last_status: dict[tuple[str, int], ContractValidityStatus] = {}
+
+        async def publish_validity(contract: ContractHandle, change: StateChange) -> None:
+            if profile is not None and contract.profile != profile:
+                return
+            validity = await self._coordinator.validate(contract)
+            key = (contract.contract_id, contract.generation)
+            previous = last_status.get(key)
+            last_status[key] = validity.status
+            if previous == validity.status and validity.status == ContractValidityStatus.VALID:
+                return
+            event_type = _concord_event_type(validity)
+            event = ConcordContractEvent(
+                event_type,
+                contract,
+                validity=validity,
+                profile=contract.profile,
+                reason=validity.reason,
+                change=change,
+            )
+            _log_concord_event(event)
+            await send.send(event)
+
+        async def contract_loop() -> None:
+            try:
+                async with self._coordinator.watch_contracts() as changes:
+                    async for change in changes:
+                        contract = _contract_handle_from_change(change)
+                        if contract is None:
+                            continue
+                        await publish_validity(contract, change)
+            finally:
+                await send.aclose()
+
+        async def token_loop() -> None:
+            async with self._coordinator._token_state.watch(  # noqa: SLF001
+                concord_contracts_prefix()
+            ) as changes:
+                async for change in changes:
+                    parsed = parse_concord_participant_token_key(change.key)
+                    if parsed is None:
+                        continue
+                    contract_id, generation, participant = parsed
+                    contract = await self.get_contract(
+                        ContractPointer(contractId=contract_id, generation=generation)
+                    )
+                    if contract is None:
+                        continue
+                    if profile is not None and contract.profile != profile:
+                        continue
+                    if change.operation == "expire":
+                        event = ConcordContractEvent(
+                            ConcordEventType.TOKEN_EXPIRED,
+                            contract,
+                            validity=await self._coordinator.validate(contract),
+                            profile=contract.profile,
+                            participant=participant,
+                            reason="token_expired",
+                            change=change,
+                        )
+                        _log_concord_event(event)
+                        await send.send(event)
+                        continue
+                    await publish_validity(contract, change)
+
+        async with receive, send, anyio.create_task_group() as task_group:
+            task_group.start_soon(contract_loop)
+            task_group.start_soon(token_loop)
+            try:
+                yield receive
+            finally:
+                task_group.cancel_scope.cancel()
+
+
 def _contract_handle(
     key: str,
     record: ContractRecord,
@@ -739,6 +1140,87 @@ def _token_validity_status(
     return None
 
 
+def _contract_handle_from_change(change: StateChange) -> ContractHandle | None:
+    if change.entry is None:
+        return None
+    parsed = parse_concord_contract_key(change.key)
+    if parsed is None:
+        return None
+    try:
+        record = ContractRecord.model_validate(change.entry.value)
+    except ValueError:
+        return None
+    contract_id, generation = parsed
+    if record.contract_id != contract_id or record.generation != generation:
+        return None
+    return _contract_handle(change.key, record, change.entry.revision)
+
+
+def _concord_event_type(validity: ContractValidity) -> ConcordEventType:
+    if validity.status == ContractValidityStatus.VALID:
+        return ConcordEventType.VALID
+    if validity.status == ContractValidityStatus.CANCELLED:
+        return ConcordEventType.CANCELLED
+    if validity.status in {
+        ContractValidityStatus.NOT_YET_FULFILLED,
+        ContractValidityStatus.MISSING_TOKEN,
+    }:
+        return ConcordEventType.PENDING
+    return ConcordEventType.INVALID
+
+
+def _log_concord_event(event: ConcordContractEvent) -> None:
+    contract = event.contract
+    if contract is None:
+        return
+    status = event.validity.status.value if event.validity is not None else None
+    if event.event_type == ConcordEventType.VALID:
+        logger.info(
+            "Concord contract valid profile=%s contract=%s generation=%s revision=%s",
+            event.profile,
+            contract.contract_id,
+            contract.generation,
+            contract.revision,
+        )
+        return
+    if event.event_type == ConcordEventType.CANCELLED:
+        logger.info(
+            "Concord contract cancelled profile=%s contract=%s generation=%s "
+            "status=%s reason=%s revision=%s",
+            event.profile,
+            contract.contract_id,
+            contract.generation,
+            status,
+            event.reason,
+            contract.revision,
+        )
+        return
+    if event.event_type == ConcordEventType.TOKEN_EXPIRED:
+        logger.warning(
+            "Concord participant token expired profile=%s contract=%s generation=%s "
+            "participant=%s status=%s reason=%s revision=%s",
+            event.profile,
+            contract.contract_id,
+            contract.generation,
+            event.participant,
+            status,
+            event.reason,
+            contract.revision,
+        )
+        return
+    logger.warning(
+        "Concord contract %s profile=%s contract=%s generation=%s status=%s "
+        "reason=%s revision=%s",
+        event.event_type.value,
+        event.profile,
+        contract.contract_id,
+        contract.generation,
+        status,
+        event.reason,
+        contract.revision,
+    )
+
+
 __all__ = [
     "CONCORD_CONTRACT_SCHEMA_ID",
     "CONCORD_CONTRACT_STORE_POLICY",
@@ -754,6 +1236,10 @@ __all__ = [
     "ContractValidity",
     "ContractValidityStatus",
     "ConcordCoordinator",
+    "ConcordContractEvent",
+    "ConcordEventType",
+    "ConcordParticipantLease",
+    "ConcordService",
     "ParticipantHandle",
     "ParticipantTokenRecord",
     "TokenObservation",

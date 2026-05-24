@@ -10,11 +10,15 @@ from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import (
     AdvertisementRecord,
     BeaconDiscovery,
+    BeaconFeatureEventType,
+    BeaconService,
     CandidateStatus,
     beacon_advertisement_key,
 )
 from deckr.concord import (
     ConcordCoordinator,
+    ConcordEventType,
+    ConcordService,
     ContractValidityStatus,
     ParticipantTokenRecord,
     canonical_json_hash,
@@ -46,6 +50,14 @@ from deckr.state import StateConflict
 async def _receive(stream):
     with anyio.fail_after(1):
         return await stream.receive()
+
+
+async def _receive_event_type(stream, *event_types):
+    with anyio.fail_after(1):
+        while True:
+            event = await stream.receive()
+            if event.event_type in event_types:
+                return event
 
 
 def _descriptor() -> DeviceDescriptor:
@@ -165,6 +177,75 @@ async def test_beacon_create_refresh_withdraw_find_watch_and_validate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_beacon_service_advertiser_emits_semantic_events_and_logs(caplog) -> None:
+    state = MemoryStateStore(name="beacon")
+    service = BeaconService(BeaconDiscovery(state, default_ttl_seconds=30))
+    endpoint = hardware_manager_address("manager-main")
+    caplog.set_level("INFO", logger="deckr.beacon")
+
+    async with service.watch_feature(HARDWARE_FEATURE_ID) as events:
+        advertiser = service.advertiser(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=endpoint,
+            session_id="manager-session",
+            advertisement_id="advertisement-1",
+            labels={"room": "office"},
+            payload=_hardware_payload().to_dict(),
+            log_label="TestHardware",
+        )
+        handle = await advertiser.publish()
+        advertised = await _receive(events)
+        assert advertised.event_type == BeaconFeatureEventType.ADVERTISED
+        assert advertised.candidate is not None
+        assert advertised.candidate.advertisement.advertisement_id == (
+            handle.advertisement_id
+        )
+
+        refreshed = await advertiser.publish(
+            payload=_hardware_payload(session_id="manager-session").to_dict()
+        )
+        updated = await _receive(events)
+        assert updated.event_type == BeaconFeatureEventType.UPDATED
+        assert updated.candidate is not None
+        assert updated.candidate.advertisement.refresh_seq == refreshed.refresh_seq
+
+        assert await advertiser.withdraw()
+        withdrawn = await _receive(events)
+        assert withdrawn.event_type == BeaconFeatureEventType.WITHDRAWN
+        assert withdrawn.previous is not None
+        assert withdrawn.previous.advertisement.advertisement_id == "advertisement-1"
+
+    assert "TestHardware Beacon advertisement announced" in caplog.text
+    assert "Beacon advertisement withdrawn" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_beacon_service_feature_watch_reports_expiry(caplog) -> None:
+    state = MemoryStateStore(name="beacon")
+    service = BeaconService(BeaconDiscovery(state, default_ttl_seconds=30))
+    endpoint = hardware_manager_address("manager-main")
+    caplog.set_level("INFO", logger="deckr.beacon")
+
+    async with service.watch_feature(HARDWARE_FEATURE_ID) as events:
+        handle = await service.advertise(
+            HARDWARE_FEATURE_ID,
+            endpoint,
+            "manager-session",
+            advertisement_id="advertisement-1",
+            labels={"room": "office"},
+            payload=_hardware_payload().to_dict(),
+            log_label="TestHardware",
+        )
+        await _receive(events)
+        await state.expire(handle.key)
+        expired = await _receive(events)
+
+    assert expired.event_type == BeaconFeatureEventType.EXPIRED
+    assert expired.reason == "expire"
+    assert "Beacon advertisement expired" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() -> None:
     contract_state = MemoryStateStore(name="contracts")
     token_state = MemoryStateStore(name="tokens")
@@ -234,6 +315,69 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
     assert (await concord.validate(contract)).status == ContractValidityStatus.CANCELLED
     with pytest.raises(StateConflict, match="cancelled"):
         await concord.attach(contract, controller, "new-session")
+
+
+@pytest.mark.asyncio
+async def test_concord_service_lease_events_and_logs(caplog) -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    terms = _hardware_claim_terms()
+    caplog.set_level("INFO", logger="deckr.concord")
+
+    async with service.watch_contracts(HARDWARE_CLAIM_PROFILE_ID) as events:
+        contract = await service.create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=terms,
+            created_by=controller,
+            log_label="TestConcord",
+        )
+        pending = await _receive_event_type(events, ConcordEventType.PENDING)
+        assert pending.contract == contract
+
+        controller_lease = service.participant_lease(
+            contract=contract,
+            participant=controller,
+            session_id="controller-session",
+            log_label="TestConcord",
+        )
+        controller_token = await controller_lease.attach_or_refresh()
+        refreshed_controller_token = await controller_lease.attach_or_refresh()
+        assert refreshed_controller_token.refresh_seq == 2
+
+        manager_lease = service.participant_lease(
+            contract=contract,
+            participant=manager,
+            session_id="manager-session",
+            log_label="TestConcord",
+        )
+        await manager_lease.attach_or_refresh()
+        valid = await _receive_event_type(events, ConcordEventType.VALID)
+        assert valid.validity is not None
+        assert valid.validity.status == ContractValidityStatus.VALID
+
+        await token_state.expire(controller_token.key)
+        expired = await _receive_event_type(events, ConcordEventType.TOKEN_EXPIRED)
+        assert expired.participant == controller
+        assert expired.reason == "token_expired"
+
+        assert await service.cancel(
+            contract,
+            controller,
+            reason="test complete",
+            log_label="TestConcord",
+        )
+        cancelled = await _receive_event_type(events, ConcordEventType.CANCELLED)
+        assert cancelled.reason is None
+
+    assert "TestConcord Concord contract opened" in caplog.text
+    assert "TestConcord Concord participant token attached" in caplog.text
+    assert "Concord participant token expired" in caplog.text
+    assert "TestConcord Concord contract cancelled" in caplog.text
 
 
 @pytest.mark.asyncio

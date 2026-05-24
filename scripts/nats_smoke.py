@@ -13,6 +13,7 @@ from deckr.beacon import (
     BEACON_ADVERTISEMENT_STORE_POLICY,
     DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
     BeaconDiscovery,
+    BeaconService,
     beacon_advertisement_key,
 )
 from deckr.concord import (
@@ -21,12 +22,11 @@ from deckr.concord import (
     DEFAULT_CONCORD_CONTRACT_STORE_NAME,
     DEFAULT_CONCORD_TOKEN_STORE_NAME,
     ConcordCoordinator,
+    ConcordService,
     ContractHandle,
-    ContractRecord,
     ContractState,
     ContractValidityStatus,
     concord_participant_token_key,
-    parse_concord_contract_key,
 )
 from deckr.contracts.lanes import CORE_LANE_CONTRACTS, LaneContractRegistry
 from deckr.contracts.messages import (
@@ -140,8 +140,8 @@ async def _run_manager(args: argparse.Namespace) -> None:
     descriptor = _device_descriptor(device_id, fingerprint=f"smoke:{args.run_id}")
     async with _deckr(args.url, auth_token=args.auth_token) as deckr:
         beacon_state, contract_state, token_state = _protocol_states(deckr, args)
-        beacon = BeaconDiscovery(beacon_state)
-        concord = ConcordCoordinator(contract_state, token_state)
+        beacon = BeaconService(BeaconDiscovery(beacon_state))
+        concord = ConcordService(ConcordCoordinator(contract_state, token_state))
         async with (
             deckr.lane("hardware_messages").register_endpoint(
                 endpoint,
@@ -167,7 +167,6 @@ async def _run_manager(args: argparse.Namespace) -> None:
             tg.start_soon(
                 _attach_manager_token,
                 concord,
-                contract_state,
                 endpoint,
                 lane.session_id,
             )
@@ -202,8 +201,8 @@ async def _run_controller(args: argparse.Namespace) -> None:
     manager = hardware_manager_address(manager_id)
     async with _deckr(args.url, auth_token=args.auth_token) as deckr:
         beacon_state, contract_state, token_state = _protocol_states(deckr, args)
-        beacon = BeaconDiscovery(beacon_state)
-        concord = ConcordCoordinator(contract_state, token_state)
+        beacon = BeaconService(BeaconDiscovery(beacon_state))
+        concord = ConcordService(ConcordCoordinator(contract_state, token_state))
         async with deckr.lane("hardware_messages").register_endpoint(controller) as lane:
             candidate = await _wait_for_hardware_advertisement(beacon, manager)
             payload = hardware_payload_from_advertisement(candidate.advertisement)
@@ -270,36 +269,17 @@ async def _run_controller(args: argparse.Namespace) -> None:
 
 
 async def _attach_manager_token(
-    concord: ConcordCoordinator,
-    contract_state: StateStore,
+    concord: ConcordService,
     endpoint: EndpointAddress,
     session_id: str,
 ) -> None:
     while True:
-        for entry in await contract_state.items("contracts."):
-            parsed = parse_concord_contract_key(entry.key)
-            if parsed is None:
-                continue
-            try:
-                record = ContractRecord.model_validate(entry.value)
-            except ValueError:
-                continue
+        for handle in await concord.find_contracts(HARDWARE_CLAIM_PROFILE_ID):
             if (
-                record.profile != HARDWARE_CLAIM_PROFILE_ID
-                or record.state != ContractState.OPEN
-                or endpoint not in record.participants
+                handle.state != ContractState.OPEN
+                or endpoint not in handle.participants
             ):
                 continue
-            handle = ContractHandle(
-                key=entry.key,
-                contract_id=record.contract_id,
-                generation=record.generation,
-                participants=record.participants,
-                revision=entry.revision,
-                state=record.state,
-                profile=record.profile,
-                terms_hash=record.terms_hash,
-            )
             try:
                 await concord.attach(handle, endpoint, session_id)
             except StateConflict:
@@ -309,7 +289,7 @@ async def _attach_manager_token(
 
 
 async def _wait_for_hardware_advertisement(
-    beacon: BeaconDiscovery,
+    beacon: BeaconService,
     manager: EndpointAddress,
 ):
     with anyio.fail_after(15):
@@ -324,7 +304,7 @@ async def _wait_for_hardware_advertisement(
 
 
 async def _wait_for_valid_contract(
-    concord: ConcordCoordinator,
+    concord: ConcordService,
     contract: ContractHandle,
 ) -> None:
     with anyio.fail_after(15):

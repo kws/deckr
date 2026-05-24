@@ -248,6 +248,14 @@ class MemoryStateStore:
             watchers = self._watchers_for(key)
         await self._publish(watchers, StateChange("delete", key, None))
 
+    async def expire(self, key: str) -> None:
+        async with self._lock:
+            current = self._entries.pop(key, None)
+            if current is None:
+                return
+            watchers = self._watchers_for(key)
+        await self._publish(watchers, StateChange("expire", key, current))
+
     @asynccontextmanager
     async def watch(
         self,

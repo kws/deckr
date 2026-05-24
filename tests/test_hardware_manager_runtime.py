@@ -6,11 +6,16 @@ from descriptor_fixtures import stream_deck_bitmap_grid
 from memory_lane_substrate import memory_deckr
 
 import deckr.hardware.messages as hw_messages
-from deckr.beacon import DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME, BeaconDiscovery
+from deckr.beacon import (
+    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+    BeaconDiscovery,
+    BeaconService,
+)
 from deckr.concord import (
     DEFAULT_CONCORD_CONTRACT_STORE_NAME,
     DEFAULT_CONCORD_TOKEN_STORE_NAME,
     ConcordCoordinator,
+    ConcordService,
     ContractValidityStatus,
 )
 from deckr.contracts.messages import controller_address, hardware_manager_address
@@ -34,14 +39,18 @@ def _descriptor(device_id: str = "stream-deck-mini") -> DeviceDescriptor:
     return DeviceDescriptor.model_validate(payload)
 
 
-def _beacon(deckr) -> BeaconDiscovery:
-    return BeaconDiscovery(deckr.state(DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME))
+def _beacon(deckr) -> BeaconService:
+    return BeaconService(
+        BeaconDiscovery(deckr.state(DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME))
+    )
 
 
-def _concord(deckr) -> ConcordCoordinator:
-    return ConcordCoordinator(
-        deckr.state(DEFAULT_CONCORD_CONTRACT_STORE_NAME),
-        deckr.state(DEFAULT_CONCORD_TOKEN_STORE_NAME),
+def _concord(deckr) -> ConcordService:
+    return ConcordService(
+        ConcordCoordinator(
+            deckr.state(DEFAULT_CONCORD_CONTRACT_STORE_NAME),
+            deckr.state(DEFAULT_CONCORD_TOKEN_STORE_NAME),
+        )
     )
 
 
@@ -79,7 +88,7 @@ async def _add_device(runtime: HardwareManagerRuntime, descriptor: DeviceDescrip
 
 async def _claim(
     runtime: HardwareManagerRuntime,
-    concord: ConcordCoordinator,
+    concord: ConcordService,
     *,
     contract_id: str = "claim-a",
     controller_id: str = "controller-main",

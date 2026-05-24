@@ -19,9 +19,10 @@ from pydantic import (
     model_validator,
 )
 
-from deckr.beacon import AdvertisementHandle, BeaconDiscovery, Candidate
+from deckr.beacon import AdvertisementHandle, BeaconAdvertiser, BeaconService, Candidate
 from deckr.concord import (
-    ConcordCoordinator,
+    ConcordParticipantLease,
+    ConcordService,
     ContractHandle,
     ContractState,
     ContractValidityStatus,
@@ -51,6 +52,7 @@ from deckr.state import StateConflict, StateStore, StateUnavailable
 logger = logging.getLogger(__name__)
 
 DEFAULT_SERVICE_CONTRACT_RECONCILE_SECONDS = 1.0
+DEFAULT_SERVICE_ADVERTISEMENT_REFRESH_SECONDS = 5.0
 DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS = 5.0
 _CLIENT_CONTRACT_WAIT_INTERVAL_SECONDS = 0.05
 
@@ -299,7 +301,7 @@ class _ServiceLease:
     service: ServiceAdvertisement
     terms: ServiceUseTerms
     client_token: ParticipantHandle | None = None
-    refresh_started: bool = False
+    client_lease: ConcordParticipantLease | None = None
 
 
 class ServiceClient:
@@ -309,8 +311,8 @@ class ServiceClient:
         self,
         *,
         endpoint: RegisteredEndpointLane,
-        beacon: BeaconDiscovery,
-        concord: ConcordCoordinator,
+        beacon: BeaconService,
+        concord: ConcordService,
         state_for: Callable[[str], StateStore],
         task_group: anyio.abc.TaskGroup | None = None,
     ) -> None:
@@ -492,9 +494,6 @@ class ServiceClient:
             lease = await self._create_or_reuse_lease(service)
             self._leases[key] = lease
         await self._attach_or_refresh_token(lease)
-        if self._task_group is not None and not lease.refresh_started:
-            lease.refresh_started = True
-            self._task_group.start_soon(self._refresh_token_loop, key)
         return await self._valid_lease(lease, timeout=timeout)
 
     async def _service_advertisement(
@@ -561,11 +560,14 @@ class ServiceClient:
                 )
 
     async def _cancel_lease(self, lease: _ServiceLease, *, reason: str) -> None:
+        if lease.client_lease is not None:
+            await lease.client_lease.aclose()
         try:
             await self._concord.cancel(
                 lease.contract,
                 self._endpoint.endpoint,
                 reason=reason,
+                log_label="ServiceClient",
             )
         except (StateConflict, StateUnavailable):
             logger.debug("Could not cancel service-use contract")
@@ -620,33 +622,22 @@ class ServiceClient:
         return _ServiceLease(contract=contract, service=service, terms=terms)
 
     async def _attach_or_refresh_token(self, lease: _ServiceLease) -> None:
-        token = lease.client_token
-        if token is not None:
-            try:
-                lease.client_token = await self._concord.refresh(token)
-                return
-            except StateConflict:
-                lease.client_token = None
-        if lease.client_token is None:
-            try:
-                lease.client_token = await self._concord.attach(
-                    lease.contract,
-                    self._endpoint.endpoint,
-                    self._endpoint.session_id,
-                )
-            except StateConflict:
-                logger.debug("Could not attach service-use client token", exc_info=True)
-
-    async def _refresh_token_loop(
-        self,
-        key: tuple[str, str, str, str],
-    ) -> None:
-        while True:
-            await anyio.sleep(DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS)
-            lease = self._leases.get(key)
-            if lease is None or self._closed:
-                return
-            await self._attach_or_refresh_token(lease)
+        if lease.client_lease is None:
+            lease.client_lease = self._concord.participant_lease(
+                contract=lease.contract,
+                participant=self._endpoint.endpoint,
+                session_id=self._endpoint.session_id,
+                refresh_interval=DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS,
+                log_label="ServiceClient",
+            )
+            if lease.client_token is not None:
+                lease.client_lease.adopt(lease.client_token)
+            if self._task_group is not None:
+                lease.client_lease.start(self._task_group)
+        try:
+            lease.client_token = await lease.client_lease.attach_or_refresh()
+        except StateConflict:
+            logger.debug("Could not attach service-use client token", exc_info=True)
 
     async def _valid_lease(
         self,
@@ -694,11 +685,14 @@ class GenericService:
         protocol: ServiceProtocol,
         service_id: str,
         endpoint: RegisteredEndpointLane,
-        beacon: BeaconDiscovery | None,
-        concord: ConcordCoordinator | None,
+        beacon: BeaconService | None,
+        concord: ConcordService | None,
         view_state: StateStore | None,
         log_label: str = "service",
         reconcile_interval: float = DEFAULT_SERVICE_CONTRACT_RECONCILE_SECONDS,
+        advertisement_refresh_interval: float = (
+            DEFAULT_SERVICE_ADVERTISEMENT_REFRESH_SECONDS
+        ),
         refresh_interval: float = DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS,
     ) -> None:
         self.protocol = protocol
@@ -709,13 +703,16 @@ class GenericService:
         self._view_state = view_state
         self._log_label = log_label
         self._reconcile_interval = reconcile_interval
+        self._advertisement_refresh_interval = advertisement_refresh_interval
         self._refresh_interval = refresh_interval
         self._advertisement: AdvertisementHandle | None = None
+        self._advertiser: BeaconAdvertiser | None = None
         self._backend_status = ServiceBackendStatus.UNAVAILABLE
         self._backend_diagnostics: Mapping[str, Any] = {}
         self._view_revisions: dict[str, int] = {}
-        self._service_tokens: dict[tuple[str, int], ParticipantHandle] = {}
+        self._service_leases: dict[tuple[str, int], ConcordParticipantLease] = {}
         self._contracts_lock = anyio.Lock()
+        self._task_group: anyio.abc.TaskGroup | None = None
 
     @property
     def advertisement(self) -> AdvertisementHandle | None:
@@ -730,9 +727,11 @@ class GenericService:
         return self._backend_diagnostics
 
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        self._task_group = task_group
         task_group.start_soon(self.contract_watch_loop)
         task_group.start_soon(self.contract_reconcile_loop)
-        task_group.start_soon(self.token_refresh_loop)
+        if self._advertiser is not None:
+            self._advertiser.start(task_group)
 
     async def publish_status(
         self,
@@ -751,20 +750,48 @@ class GenericService:
             diagnostics=self._backend_diagnostics,
         )
         try:
-            if self._advertisement is None:
-                self._advertisement = await self._beacon.advertise(
-                    self.protocol.feature_id,
-                    self.endpoint.endpoint,
-                    self.endpoint.session_id,
+            if self._advertiser is None:
+                self._advertiser = self._beacon.advertiser(
+                    feature_id=self.protocol.feature_id,
+                    endpoint=self.endpoint.endpoint,
+                    session_id=self.endpoint.session_id,
+                    payload=payload.to_dict(),
+                    operations=self.protocol.operations,
+                    refresh_interval=self._advertisement_refresh_interval,
+                    log_label=self._log_label,
+                )
+                if self._task_group is not None:
+                    self._advertiser.start(self._task_group)
+            self._advertisement = await self._advertiser.publish(
+                payload=payload.to_dict(),
+                operations=self.protocol.operations,
+            )
+        except StateConflict:
+            self._advertisement = None
+            self._advertiser = None
+            try:
+                self._advertiser = self._beacon.advertiser(
+                    feature_id=self.protocol.feature_id,
+                    endpoint=self.endpoint.endpoint,
+                    session_id=self.endpoint.session_id,
+                    payload=payload.to_dict(),
+                    operations=self.protocol.operations,
+                    refresh_interval=self._advertisement_refresh_interval,
+                    log_label=self._log_label,
+                )
+                if self._task_group is not None:
+                    self._advertiser.start(self._task_group)
+                self._advertisement = await self._advertiser.publish(
                     payload=payload.to_dict(),
                     operations=self.protocol.operations,
                 )
-            else:
-                self._advertisement = await self._beacon.refresh(
-                    self._advertisement,
-                    payload=payload.to_dict(),
+            except (StateConflict, StateUnavailable):
+                logger.warning(
+                    "Could not publish %s Beacon advertisement",
+                    self._log_label,
+                    exc_info=True,
                 )
-        except (StateConflict, StateUnavailable):
+        except StateUnavailable:
             logger.warning(
                 "Could not publish %s Beacon advertisement",
                 self._log_label,
@@ -789,20 +816,42 @@ class GenericService:
             for key, revision in list(self._view_revisions.items()):
                 await _delete_if_current(self._view_state, key, revision)
         self._view_revisions.clear()
-        self._service_tokens.clear()
+        for lease in self._service_leases.values():
+            await lease.aclose()
+        self._service_leases.clear()
         if self._advertisement is not None and self._beacon is not None:
             try:
-                await self._beacon.withdraw(self._advertisement)
+                if self._advertiser is not None:
+                    await self._advertiser.withdraw()
+                else:
+                    await self._beacon.withdraw(
+                        self._advertisement,
+                        log_label=self._log_label,
+                    )
             except (StateConflict, StateUnavailable):
                 logger.debug("Could not withdraw %s Beacon advertisement", self._log_label)
         self._advertisement = None
+        self._advertiser = None
+        self._task_group = None
+
+    async def advertisement_refresh_loop(self) -> None:
+        if self._beacon is None:
+            return
+        while True:
+            await anyio.sleep(self._advertisement_refresh_interval)
+            await self.publish_status(
+                self._backend_status,
+                diagnostics=self._backend_diagnostics,
+            )
 
     async def contract_watch_loop(self) -> None:
         if self._concord is None:
             return
         while True:
             try:
-                async with self._concord.watch_contracts() as stream:
+                async with self._concord.watch_contracts(
+                    self.protocol.use_profile
+                ) as stream:
                     async for _change in stream:
                         await self.reconcile_contracts()
             except StateUnavailable:
@@ -815,50 +864,47 @@ class GenericService:
             await self.reconcile_contracts()
             await anyio.sleep(self._reconcile_interval)
 
-    async def token_refresh_loop(self) -> None:
-        if self._concord is None:
-            return
-        while True:
-            await anyio.sleep(self._refresh_interval)
-            for key, token in list(self._service_tokens.items()):
-                try:
-                    self._service_tokens[key] = await self._concord.refresh(token)
-                except StateConflict:
-                    self._service_tokens.pop(key, None)
-
     async def reconcile_contracts(self) -> None:
         if self._concord is None:
             return
         async with self._contracts_lock:
             contracts = await self._concord.find_contracts(self.protocol.use_profile)
-            live_keys: set[tuple[str, int]] = set()
+            next_leases: dict[tuple[str, int], ConcordParticipantLease] = {}
             for contract in contracts:
                 terms = await self.matching_terms(contract)
                 if terms is None:
                     continue
                 key = (contract.contract_id, contract.generation)
-                live_keys.add(key)
-                token = self._service_tokens.get(key)
-                if token is not None:
-                    try:
-                        self._service_tokens[key] = await self._concord.refresh(token)
-                        continue
-                    except StateConflict:
-                        self._service_tokens.pop(key, None)
-                try:
-                    self._service_tokens[key] = await self._concord.attach(
-                        contract,
-                        terms.service_endpoint,
-                        self.endpoint.session_id,
+                lease = self._service_leases.get(key)
+                if lease is None:
+                    lease = self._concord.participant_lease(
+                        contract=contract,
+                        participant=terms.service_endpoint,
+                        session_id=self.endpoint.session_id,
+                        refresh_interval=self._refresh_interval,
+                        log_label=self._log_label,
                     )
+                    if self._task_group is not None:
+                        lease.start(self._task_group)
+                    validity = await self._concord.validate(contract)
+                    existing = validity.tokens.get(str(terms.service_endpoint))
+                    if existing is not None and existing.session_id == (
+                        self.endpoint.session_id
+                    ):
+                        lease.adopt(existing)
+                try:
+                    await lease.attach_or_refresh()
+                    next_leases[key] = lease
                 except StateConflict:
                     logger.debug(
                         "Could not attach %s service token",
                         self._log_label,
                         exc_info=True,
                     )
-            for key in set(self._service_tokens) - live_keys:
-                self._service_tokens.pop(key, None)
+            for key, lease in self._service_leases.items():
+                if key not in next_leases:
+                    await lease.aclose()
+            self._service_leases = next_leases
 
     async def matching_terms(
         self,

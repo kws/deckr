@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import anyio
 import pytest
 from memory_lane_substrate import MemoryStateStore, memory_deckr
 
 from deckr.actions.endpoints import action_provider_address
-from deckr.beacon import BeaconDiscovery, CandidateStatus
-from deckr.concord import ConcordCoordinator, ContractState
+from deckr.beacon import BeaconDiscovery, BeaconService, CandidateStatus
+from deckr.concord import ConcordCoordinator, ConcordService, ContractState
 from deckr.contracts.messages import SERVICES_LANE, entity_subject, service_address
 from deckr.services import (
     GenericService,
@@ -78,10 +79,12 @@ def test_service_protocol_payload_terms_and_view_keys() -> None:
 
 @pytest.mark.asyncio
 async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> None:
-    beacon = BeaconDiscovery(MemoryStateStore(name="beacon"))
-    concord = ConcordCoordinator(
-        MemoryStateStore(name="contracts"),
-        MemoryStateStore(name="tokens"),
+    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
     )
     view_store = MemoryStateStore(name="views")
     protocol = _protocol()
@@ -200,10 +203,12 @@ async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> N
 
 @pytest.mark.asyncio
 async def test_generic_service_advertise_authorize_and_withdraw() -> None:
-    beacon = BeaconDiscovery(MemoryStateStore(name="beacon"))
-    concord = ConcordCoordinator(
-        MemoryStateStore(name="contracts"),
-        MemoryStateStore(name="tokens"),
+    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
     )
     view_store = MemoryStateStore(name="views")
     protocol = _protocol()
@@ -276,3 +281,36 @@ async def test_generic_service_advertise_authorize_and_withdraw() -> None:
         await service.withdraw()
         assert await beacon.validate(candidate) == CandidateStatus.MISSING
         assert await view_store.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_generic_service_refreshes_beacon_advertisement() -> None:
+    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    protocol = _protocol()
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        service_address("openhab-home")
+    ) as service_endpoint:
+        service = GenericService(
+            protocol=protocol,
+            service_id="openhab-home",
+            endpoint=service_endpoint,
+            beacon=beacon,
+            concord=None,
+            view_state=None,
+            log_label="test-service",
+            advertisement_refresh_interval=0.05,
+        )
+        await service.publish_status(ServiceBackendStatus.AVAILABLE)
+        first = (await beacon.find(protocol.feature_id))[0]
+        assert first.advertisement.refresh_seq == 1
+
+        async with anyio.create_task_group() as tg:
+            service.start(tg)
+            with anyio.fail_after(1):
+                while True:
+                    current = (await beacon.find(protocol.feature_id))[0]
+                    if current.advertisement.refresh_seq > first.advertisement.refresh_seq:
+                        break
+                    await anyio.sleep(0.01)
+            tg.cancel_scope.cancel()

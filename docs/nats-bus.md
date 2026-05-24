@@ -26,10 +26,14 @@ The supported shared stores are:
 | Concord contracts | `deckr_concord_contract_v1` | persistent |
 | Concord participant tokens | `deckr_concord_token_v1` | TTL-bound |
 
-`StateStore` remains the generic CAS/watch abstraction used by these protocols,
-but retired shared coordination buckets are not part of the v1 surface.
-Opening a store without an explicit policy creates a persistent generic store.
-Beacon and Concord coordinators pass their own `StateStorePolicy` values.
+`StateStore` remains the generic CAS/watch abstraction below these protocols,
+but production runtime code does not subscribe directly to Beacon or Concord
+authority state. Runtime participants use the shared `BeaconService` and
+`ConcordService` APIs, which own raw state watches, semantic lifecycle events,
+heartbeats, leases, and lifecycle logging. Retired shared coordination buckets
+are not part of the v1 surface. Opening a store without an explicit policy
+creates a persistent generic store. Beacon and Concord services pass their own
+`StateStorePolicy` values.
 
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence
@@ -85,21 +89,24 @@ key:    advertisements.by_feature.<feature-id-token>.<advertisement-id-token>
 schema: dev.deckr.beacon.advertisement.v1
 ```
 
-The Python API is `deckr.beacon.BeaconDiscovery`.
+The runtime-facing Python API is `deckr.beacon.BeaconService`.
 
 ```python
-beacon = BeaconDiscovery(
-    deckr.state(
-        DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-        policy=BEACON_ADVERTISEMENT_STORE_POLICY,
+beacon = BeaconService(
+    BeaconDiscovery(
+        deckr.state(
+            DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+            policy=BEACON_ADVERTISEMENT_STORE_POLICY,
+        )
     )
 )
-handle = await beacon.advertise(
-    "dev.deckr.hardware",
-    "hardware_manager:mirabox-main",
-    "manager-session",
+advertiser = beacon.advertiser(
+    feature_id="dev.deckr.hardware",
+    endpoint="hardware_manager:mirabox-main",
+    session_id="manager-session",
     payload=payload,
 )
+handle = await advertiser.publish()
 candidates = await beacon.find("dev.deckr.hardware")
 ```
 
@@ -126,16 +133,21 @@ key:    contracts.<contract-id-token>.<generation>.participants.<participant-tok
 schema: dev.deckr.concord.participant-token.v1
 ```
 
-The Python API is `deckr.concord.ConcordCoordinator`.
+The runtime-facing Python API is `deckr.concord.ConcordService`.
 
 ```python
-concord = ConcordCoordinator(contract_state, token_state)
+concord = ConcordService(ConcordCoordinator(contract_state, token_state))
 contract = await concord.create_contract(
     ("controller:main", "hardware_manager:mirabox-main"),
     profile="dev.deckr.profile.hardware_claim.v1",
     terms=terms,
 )
-await concord.attach(contract, "controller:main", "controller-session")
+lease = concord.participant_lease(
+    contract=contract,
+    participant="controller:main",
+    session_id="controller-session",
+)
+await lease.attach_or_refresh()
 validity = await concord.validate(contract)
 ```
 
@@ -163,9 +175,12 @@ Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
 whether a claim or binding is live. Python hardware managers use the shared
 `deckr.hardware.runtime.HardwareManagerRuntime` implementation to advertise
-hardware through Beacon, attach their Concord participant token to matching
-hardware-claim contracts, refresh that token, and route input only for live
-claims.
+hardware through `BeaconAdvertiser`, maintain claim tokens through
+`ConcordParticipantLease`, and route input only for live claims.
+
+Service components use `deckr.services.GenericService` to advertise their
+package-owned service feature through `BeaconAdvertiser` and maintain service
+use tokens through `ConcordParticipantLease`.
 
 ## Component Dependencies
 
@@ -180,8 +195,9 @@ endpoint = "service:sonos-home"
 ```
 
 The endpoint filter is optional. A missing candidate makes required dependencies
-unready and optional dependencies diagnostic-only. Dependency observation does
-not use lane subscription state as an authority source.
+unready and optional dependencies diagnostic-only. Dependency observation uses
+`BeaconService` semantic feature events and does not use lane subscription state
+or raw Beacon KV watches as an authority source.
 
 ## Store Configuration
 
