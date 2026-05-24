@@ -421,6 +421,23 @@ async def test_nats_state_updates_existing_bucket_to_broker_lease_ttl() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nats_state_items_deletes_temporary_consumer() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+
+    await store.put("claim.device.main.deck", {"owner": "controller"})
+
+    entries = await store.items("claim.")
+
+    assert [entry.key for entry in entries] == ["claim.device.main.deck"]
+    assert fake_js.deleted_consumers == [("KV_test_state", "consumer-1")]
+
+
+@pytest.mark.asyncio
 async def test_nats_state_creates_discovery_bucket_without_broker_ttl() -> None:
     fake_js = _FakeJs(existing=False)
     store = NatsStateStore(
@@ -902,7 +919,10 @@ class _FakeKv:
             for key, entry in sorted(self._entries.items())
             if _subject_matches(keys, key)
         ]
-        return _FakeKvWatcher(entries)
+        return _FakeKvWatcher(
+            entries,
+            _FakeSubscription(self._js, f"{self._pre}{keys}", callback=None),
+        )
 
     async def put(self, key: str, value: bytes) -> int:
         self._revision += 1
@@ -972,6 +992,8 @@ class _FakeKv:
 class _FakeSubscription:
     def __init__(self, js: _FakeJs, subject: str, callback) -> None:
         self._js = js
+        self._stream = f"KV_{js.bucket}"
+        self._consumer = js.next_consumer_name()
         self.subject = subject
         self.callback = callback
         self.delivered = 0
@@ -981,16 +1003,21 @@ class _FakeSubscription:
 
     async def deliver(self, message: _FakeMsg) -> None:
         self.delivered += 1
-        await self.callback(message)
+        if self.callback is not None:
+            await self.callback(message)
 
     async def unsubscribe(self) -> None:
-        self._js.subscriptions.remove(self)
+        if self in self._js.subscriptions:
+            self._js.subscriptions.remove(self)
 
 
 class _FakeKvWatcher:
-    def __init__(self, entries: list[_FakeKvEntry]) -> None:
+    def __init__(
+        self, entries: list[_FakeKvEntry], subscription: _FakeSubscription
+    ) -> None:
         self._entries = [*entries, None]
         self._index = 0
+        self._sub = subscription
 
     def __aiter__(self):
         return self
@@ -1003,6 +1030,7 @@ class _FakeKvWatcher:
         return entry
 
     async def stop(self) -> None:
+        await self._sub.unsubscribe()
         self._index = len(self._entries)
 
 
@@ -1069,6 +1097,13 @@ class _FakeJs:
         self.created_config = None
         self.updated_config = None
         self.subscriptions: list[_FakeSubscription] = []
+        self.deleted_consumers: list[tuple[str, str]] = []
+        self._consumer_index = 0
+        self._jsm = self
+
+    def next_consumer_name(self) -> str:
+        self._consumer_index += 1
+        return f"consumer-{self._consumer_index}"
 
     async def key_value(self, name: str) -> _FakeKv:
         self.bucket = name
@@ -1113,6 +1148,10 @@ class _FakeJs:
         if getattr(deliver_policy, "value", deliver_policy) == "last_per_subject":
             await self._deliver_last_per_subject(subscription)
         return subscription
+
+    async def delete_consumer(self, stream: str, consumer: str) -> bool:
+        self.deleted_consumers.append((stream, consumer))
+        return True
 
     async def _deliver_last_per_subject(self, subscription: _FakeSubscription) -> None:
         if self.kv is None:

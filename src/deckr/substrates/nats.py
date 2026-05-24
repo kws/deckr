@@ -349,7 +349,14 @@ class NatsStateStore:
                     f"Timed out listing state keys with prefix {prefix!r}"
                 ) from exc
         finally:
-            await watcher.stop()
+            subscription = getattr(watcher, "_sub", None)
+            try:
+                await watcher.stop()
+            finally:
+                await _delete_ephemeral_consumer(
+                    subscription,
+                    reason=f"state items prefix {prefix!r}",
+                )
         return tuple(entry for _key, entry in sorted(entries.items()))
 
     async def put(
@@ -507,7 +514,13 @@ class NatsStateStore:
         try:
             yield receive
         finally:
-            await subscription.unsubscribe()
+            try:
+                await subscription.unsubscribe()
+            finally:
+                await _delete_ephemeral_consumer(
+                    subscription,
+                    reason=f"state watch prefix {prefix!r}",
+                )
             await send.aclose()
             await receive.aclose()
 
@@ -793,6 +806,25 @@ def _kv_watch_pattern(prefix: str) -> str:
     if prefix.endswith("."):
         return f"{prefix}>"
     return prefix
+
+
+async def _delete_ephemeral_consumer(subscription, *, reason: str) -> None:
+    stream = getattr(subscription, "_stream", None)
+    consumer = getattr(subscription, "_consumer", None)
+    js = getattr(subscription, "_js", None)
+    jsm = getattr(js, "_jsm", None)
+    if not stream or not consumer or jsm is None:
+        return
+    try:
+        await jsm.delete_consumer(stream, consumer)
+    except Exception:
+        logger.debug(
+            "Could not delete NATS ephemeral consumer stream=%s consumer=%s after %s",
+            stream,
+            consumer,
+            reason,
+            exc_info=True,
+        )
 
 
 def _exception_names(exc: BaseException) -> set[str]:
