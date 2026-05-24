@@ -781,6 +781,15 @@ declared dependency is unavailable. Device, action, binding, page, service, and
 settings availability remain domain state. Shared discovery and agreement
 evidence is represented by Beacon and Concord.
 
+Python hardware managers use the shared `deckr.hardware.runtime`
+implementation for the manager side of that protocol. A manager advertises its
+current devices through the `dev.deckr.hardware` Beacon feature, accepts
+controller ownership only by attaching its participant token to a matching
+`dev.deckr.profile.hardware_claim.v1` Concord contract, and routes hardware
+input or controller commands only while that contract remains valid. The removed
+inventory, endpoint-presence, and unilateral device-claim current-state records
+are not part of the v1 hardware-manager path.
+
 Components may report readiness through `RunContext.status` or the convenience
 reporting helpers. The component manager combines component-reported local
 readiness with dependency observations to publish effective `ComponentStatus`

@@ -1,0 +1,606 @@
+from __future__ import annotations
+
+import logging
+import uuid
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+import anyio
+
+import deckr.hardware.messages as hw_messages
+from deckr.beacon import AdvertisementHandle, BeaconDiscovery
+from deckr.concord import (
+    ConcordCoordinator,
+    ContractHandle,
+    ContractState,
+    ContractValidityStatus,
+    ParticipantHandle,
+)
+from deckr.contracts.messages import DeckrMessage, EndpointAddress, endpoint_target
+from deckr.contracts.models import thaw_json
+from deckr.hardware.descriptors import DeviceDescriptor, DeviceRef
+from deckr.hardware.profiles import (
+    HARDWARE_CLAIM_PROFILE_ID,
+    HARDWARE_FEATURE_ID,
+    HardwareAdvertisementDevice,
+    HardwareBeaconPayload,
+    HardwareClaimTerms,
+    ProfileCapacity,
+)
+from deckr.state import StateConflict, StateUnavailable
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS = 5.0
+DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS = 1.0
+DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS = 5.0
+DEFAULT_HARDWARE_WATCH_RETRY_SECONDS = 1.0
+
+HardwareCommandHandler = Callable[[DeckrMessage], Awaitable[bool | None]]
+HardwareResetHandler = Callable[[str], Awaitable[None]]
+
+
+class HardwareEndpoint(Protocol):
+    endpoint: EndpointAddress
+    session_id: str
+
+    async def publish(self, message: DeckrMessage) -> DeckrMessage: ...
+
+    def subscribe(
+        self,
+    ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class LiveHardwareClaim:
+    contract: ContractHandle
+    terms: HardwareClaimTerms
+    manager_token: ParticipantHandle
+    controller_endpoint: EndpointAddress
+    controller_session_id: str
+    device_refs: tuple[DeviceRef, ...]
+
+    @property
+    def device_ids(self) -> tuple[str, ...]:
+        return tuple(ref.device_id for ref in self.device_refs)
+
+
+@dataclass(slots=True)
+class _ClaimCandidate:
+    contract: ContractHandle
+    terms: HardwareClaimTerms
+    token: ParticipantHandle | None
+    valid: bool = False
+    controller_session_id: str | None = None
+
+    @property
+    def device_ids(self) -> tuple[str, ...]:
+        return tuple(device.device_ref.device_id for device in self.terms.devices)
+
+
+@dataclass(slots=True)
+class HardwareManagerRuntime:
+    endpoint: HardwareEndpoint
+    beacon: BeaconDiscovery
+    concord: ConcordCoordinator
+    manager_id: str
+    labels: Mapping[str, str] | None = None
+    command_handler: HardwareCommandHandler | None = None
+    reset_handler: HardwareResetHandler | None = None
+    advertisement_refresh_seconds: float = DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS
+    claim_reconcile_seconds: float = DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS
+    token_refresh_seconds: float = DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS
+    watch_retry_seconds: float = DEFAULT_HARDWARE_WATCH_RETRY_SECONDS
+    _devices: dict[str, DeviceDescriptor] = field(init=False, default_factory=dict)
+    _advertisement: AdvertisementHandle | None = field(init=False, default=None)
+    _advertisement_id: str = field(init=False, default="")
+    _advertisement_dirty: bool = field(init=False, default=True)
+    _claims: dict[str, LiveHardwareClaim] = field(init=False, default_factory=dict)
+    _claims_by_device: dict[str, LiveHardwareClaim] = field(
+        init=False,
+        default_factory=dict,
+    )
+    _manager_tokens: dict[str, ParticipantHandle] = field(
+        init=False,
+        default_factory=dict,
+    )
+    _lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
+    _advertisement_lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
+
+    def __post_init__(self) -> None:
+        if self.endpoint.endpoint.family != "hardware_manager":
+            raise ValueError("hardware manager runtime endpoint must be hardware_manager")
+        if self.endpoint.endpoint.endpoint_id != self.manager_id:
+            raise ValueError("manager_id must match hardware_manager endpoint id")
+        if self.advertisement_refresh_seconds <= 0:
+            raise ValueError("advertisement_refresh_seconds must be greater than zero")
+        if self.claim_reconcile_seconds <= 0:
+            raise ValueError("claim_reconcile_seconds must be greater than zero")
+        if self.token_refresh_seconds <= 0:
+            raise ValueError("token_refresh_seconds must be greater than zero")
+        if self.watch_retry_seconds <= 0:
+            raise ValueError("watch_retry_seconds must be greater than zero")
+        self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
+
+    @property
+    def advertisement(self) -> AdvertisementHandle | None:
+        return self._advertisement
+
+    @property
+    def devices(self) -> Mapping[str, DeviceDescriptor]:
+        return dict(self._devices)
+
+    @property
+    def live_claims(self) -> tuple[LiveHardwareClaim, ...]:
+        return tuple(self._claims[key] for key in sorted(self._claims))
+
+    async def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        await self.publish_advertisement()
+        task_group.start_soon(self.command_subscription_loop)
+        task_group.start_soon(self.contract_watch_loop)
+        task_group.start_soon(self.contract_reconcile_loop)
+        task_group.start_soon(self.advertisement_refresh_loop)
+        task_group.start_soon(self.token_refresh_loop)
+
+    async def stop(self) -> None:
+        with anyio.CancelScope(shield=True):
+            await self.withdraw_advertisement()
+            self._claims.clear()
+            self._claims_by_device.clear()
+            self._manager_tokens.clear()
+
+    async def replace_devices(
+        self,
+        devices: Mapping[str, DeviceDescriptor],
+        *,
+        announce: bool = False,
+        removed_reason: str = "removed",
+    ) -> None:
+        next_devices = dict(devices)
+        previous = dict(self._devices)
+        self._devices = next_devices
+        await self.publish_advertisement()
+        await self.reconcile_claims(reason="device snapshot changed")
+        if not announce:
+            return
+        for device_id in sorted(set(previous) - set(next_devices)):
+            await self.endpoint.publish(
+                hw_messages.device_unavailable_message(
+                    manager_id=self.manager_id,
+                    sender_session_id=self.endpoint.session_id,
+                    device_id=device_id,
+                    reason=removed_reason,
+                )
+            )
+        for device_id, descriptor in sorted(next_devices.items()):
+            if device_id not in previous:
+                await self.endpoint.publish(
+                    hw_messages.device_available_message(
+                        manager_id=self.manager_id,
+                        sender_session_id=self.endpoint.session_id,
+                        descriptor=descriptor,
+                    )
+                )
+            elif previous[device_id] != descriptor:
+                await self.endpoint.publish(
+                    hw_messages.device_descriptor_changed_message(
+                        manager_id=self.manager_id,
+                        sender_session_id=self.endpoint.session_id,
+                        descriptor=descriptor,
+                    )
+                )
+
+    async def handle_hardware_message(self, message: DeckrMessage) -> bool:
+        event = hw_messages.hardware_body_from_message(message)
+        ref = hw_messages.hardware_device_ref_from_message(message)
+        if ref is None or ref.manager_id != self.manager_id:
+            return False
+        if isinstance(event, hw_messages.DeviceAvailableMessage):
+            self._devices[ref.device_id] = event.descriptor
+            await self.publish_advertisement()
+            await self.endpoint.publish(message)
+            await self.reconcile_claims(reason="device available")
+            return True
+        if isinstance(event, hw_messages.DeviceDescriptorChangedMessage):
+            self._devices[ref.device_id] = event.descriptor
+            await self.publish_advertisement()
+            await self.endpoint.publish(message)
+            await self.reconcile_claims(reason="device descriptor changed")
+            return True
+        if isinstance(event, hw_messages.DeviceUnavailableMessage):
+            self._devices.pop(ref.device_id, None)
+            await self.publish_advertisement()
+            await self.endpoint.publish(message)
+            await self.reconcile_claims(reason="device unavailable")
+            return True
+        if not isinstance(
+            event,
+            hw_messages.ControlInputMessage | hw_messages.CapabilityStateChangedMessage,
+        ):
+            return False
+        if ref.device_id not in self._devices:
+            logger.debug(
+                "Dropping input/state for unknown hardware device %s/%s",
+                ref.manager_id,
+                ref.device_id,
+            )
+            return False
+        claim = self._claims_by_device.get(ref.device_id)
+        if claim is None:
+            logger.debug(
+                "Dropping unclaimed hardware input/state for %s/%s",
+                ref.manager_id,
+                ref.device_id,
+            )
+            return False
+        await self.endpoint.publish(
+            hw_messages.hardware_message(
+                sender=self.endpoint.endpoint,
+                sender_session_id=self.endpoint.session_id,
+                recipient=endpoint_target(claim.controller_endpoint),
+                recipient_session_id=claim.controller_session_id,
+                message_type=message.message_type,
+                body=event,
+                subject=message.subject,
+                causation_id=message.causation_id,
+            )
+        )
+        return True
+
+    async def command_subscription_loop(self) -> None:
+        async with self.endpoint.subscribe() as stream:
+            async for envelope in stream:
+                await self.handle_command(envelope)
+
+    async def handle_command(self, envelope: DeckrMessage) -> bool:
+        ref = hw_messages.hardware_device_ref_from_message(envelope)
+        if ref is None or ref.manager_id != self.manager_id:
+            return False
+        body = hw_messages.hardware_body_from_message(envelope)
+        if not isinstance(
+            body,
+            hw_messages.ControlCommandMessage | hw_messages.CapabilityStateRequestMessage,
+        ):
+            return False
+        if ref.device_id not in self._devices:
+            await self._reject_command(envelope, body, reason="stale")
+            return False
+        claim = self._claims_by_device.get(ref.device_id)
+        if claim is None or envelope.sender != claim.controller_endpoint:
+            await self._reject_command(envelope, body, reason="unauthorized")
+            return False
+        if envelope.sender_session_id != claim.controller_session_id:
+            await self._reject_command(envelope, body, reason="stale")
+            return False
+        if self.command_handler is None:
+            await self._reject_command(envelope, body, reason="unsupported")
+            return False
+        try:
+            handled = await self.command_handler(envelope)
+        except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+            handled = False
+        if handled is None:
+            await self._reject_command(envelope, body, reason="unsupported")
+            return False
+        if not handled:
+            await self._reject_command(envelope, body, reason="stale")
+            return False
+        return True
+
+    async def publish_advertisement(self) -> None:
+        async with self._advertisement_lock:
+            payload = self._hardware_payload()
+            try:
+                if self._advertisement is None:
+                    self._advertisement = await self.beacon.advertise(
+                        HARDWARE_FEATURE_ID,
+                        self.endpoint.endpoint,
+                        self.endpoint.session_id,
+                        advertisement_id=self._advertisement_id,
+                        labels=payload.labels,
+                        payload=payload.to_dict(),
+                    )
+                else:
+                    self._advertisement = await self.beacon.refresh(
+                        self._advertisement,
+                        labels=payload.labels,
+                        payload=payload.to_dict(),
+                    )
+                self._advertisement_dirty = False
+            except StateConflict:
+                logger.info("Hardware Beacon advertisement changed; creating a fresh one")
+                self._advertisement = None
+                self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
+                self._advertisement_dirty = True
+            except StateUnavailable:
+                logger.warning("Hardware Beacon advertisements unavailable; retrying later")
+                self._advertisement_dirty = True
+
+    async def withdraw_advertisement(self) -> None:
+        async with self._advertisement_lock:
+            advertisement = self._advertisement
+            self._advertisement = None
+            self._advertisement_dirty = True
+            if advertisement is None:
+                return
+            try:
+                await self.beacon.withdraw(advertisement)
+            except (StateConflict, StateUnavailable):
+                logger.debug("Could not withdraw hardware Beacon advertisement")
+
+    async def advertisement_refresh_loop(self) -> None:
+        while True:
+            await anyio.sleep(self.advertisement_refresh_seconds)
+            await self.publish_advertisement()
+
+    async def contract_watch_loop(self) -> None:
+        while True:
+            try:
+                async with self.concord.watch_contracts() as stream:
+                    async for _change in stream:
+                        await self.reconcile_claims(reason="contract watch")
+            except StateUnavailable:
+                await anyio.sleep(self.watch_retry_seconds)
+
+    async def contract_reconcile_loop(self) -> None:
+        while True:
+            try:
+                await self.reconcile_claims(reason="contract snapshot")
+            except StateUnavailable:
+                logger.warning(
+                    "Hardware claim contracts unavailable; reconciliation will retry",
+                    exc_info=True,
+                )
+            await anyio.sleep(self.claim_reconcile_seconds)
+
+    async def token_refresh_loop(self) -> None:
+        while True:
+            await anyio.sleep(self.token_refresh_seconds)
+            for key, token in list(self._manager_tokens.items()):
+                try:
+                    self._manager_tokens[key] = await self.concord.refresh(token)
+                except StateConflict:
+                    self._manager_tokens.pop(key, None)
+            await self.reconcile_claims(reason="token refresh")
+
+    async def reconcile_claims(self, *, reason: str) -> None:
+        async with self._lock:
+            await self._reconcile_claims_locked(reason=reason)
+
+    async def _reconcile_claims_locked(self, *, reason: str) -> None:
+        logger.debug("Reconciling hardware manager claims via %s", reason)
+        candidates = await self._matching_claim_candidates()
+        ordered = self._ordered_claim_candidates(candidates)
+        next_claims: dict[str, LiveHardwareClaim] = {}
+        next_by_device: dict[str, LiveHardwareClaim] = {}
+        refreshed_tokens: dict[str, ParticipantHandle] = {}
+
+        for candidate in ordered:
+            overlapping = set(candidate.device_ids) & set(next_by_device)
+            if overlapping:
+                continue
+            token = candidate.token
+            if token is None:
+                try:
+                    token = await self.concord.attach(
+                        candidate.contract,
+                        self.endpoint.endpoint,
+                        self.endpoint.session_id,
+                    )
+                except StateConflict:
+                    continue
+            refreshed_tokens[candidate.contract.key] = token
+            validity = await self.concord.validate(
+                candidate.contract,
+                current_sessions={str(self.endpoint.endpoint): self.endpoint.session_id},
+            )
+            if validity.status != ContractValidityStatus.VALID:
+                continue
+            controller_token = validity.tokens.get(str(candidate.terms.controller_endpoint))
+            if controller_token is None:
+                continue
+            live = LiveHardwareClaim(
+                contract=candidate.contract,
+                terms=candidate.terms,
+                manager_token=token,
+                controller_endpoint=candidate.terms.controller_endpoint,
+                controller_session_id=controller_token.session_id,
+                device_refs=tuple(device.device_ref for device in candidate.terms.devices),
+            )
+            next_claims[candidate.contract.key] = live
+            for device_id in live.device_ids:
+                next_by_device[device_id] = live
+
+        lost_claims = {
+            key: claim for key, claim in self._claims.items() if key not in next_claims
+        }
+        self._claims = next_claims
+        self._claims_by_device = next_by_device
+        self._manager_tokens = refreshed_tokens
+        if lost_claims:
+            await self._reset_lost_claim_devices(lost_claims.values())
+        await self.publish_advertisement()
+
+    async def _matching_claim_candidates(self) -> dict[str, _ClaimCandidate]:
+        advertisement = self._advertisement
+        if advertisement is None:
+            return {}
+        candidates: dict[str, _ClaimCandidate] = {}
+        for contract in await self.concord.find_contracts(HARDWARE_CLAIM_PROFILE_ID):
+            validity = await self.concord.validate(
+                contract,
+                current_sessions={str(self.endpoint.endpoint): self.endpoint.session_id},
+            )
+            record = validity.contract
+            if record is None or record.state != ContractState.OPEN:
+                continue
+            try:
+                terms = HardwareClaimTerms.model_validate(thaw_json(record.terms or {}))
+            except ValueError:
+                continue
+            if not self._claim_terms_match_current_advertisement(terms):
+                continue
+            if self.endpoint.endpoint not in contract.participants:
+                continue
+            if terms.controller_endpoint not in contract.participants:
+                continue
+            token = self._manager_tokens.get(contract.key)
+            candidates[contract.key] = _ClaimCandidate(
+                contract=contract,
+                terms=terms,
+                token=token,
+                valid=validity.status == ContractValidityStatus.VALID,
+                controller_session_id=(
+                    validity.tokens[str(terms.controller_endpoint)].session_id
+                    if validity.status == ContractValidityStatus.VALID
+                    and str(terms.controller_endpoint) in validity.tokens
+                    else None
+                ),
+            )
+        return candidates
+
+    def _claim_terms_match_current_advertisement(
+        self,
+        terms: HardwareClaimTerms,
+    ) -> bool:
+        advertisement = self._advertisement
+        if advertisement is None:
+            return False
+        if terms.manager_endpoint != self.endpoint.endpoint:
+            return False
+        if terms.manager_advertisement_id != advertisement.advertisement_id:
+            return False
+        for claim_device in terms.devices:
+            ref = claim_device.device_ref
+            descriptor = self._devices.get(ref.device_id)
+            if descriptor is None:
+                return False
+            if ref.manager_id != self.manager_id:
+                return False
+            if ref.fingerprint not in {None, descriptor.fingerprint}:
+                return False
+        return True
+
+    def _ordered_claim_candidates(
+        self,
+        candidates: Mapping[str, _ClaimCandidate],
+    ) -> tuple[_ClaimCandidate, ...]:
+        existing = [
+            candidates[key]
+            for key in sorted(self._claims)
+            if key in candidates and self._claims[key].contract.key == key
+        ]
+        existing_keys = {candidate.contract.key for candidate in existing}
+        new = [
+            candidate
+            for key, candidate in sorted(candidates.items())
+            if key not in existing_keys
+        ]
+        return tuple(existing + new)
+
+    async def _reset_lost_claim_devices(
+        self,
+        claims: Any,
+    ) -> None:
+        if self.reset_handler is None:
+            return
+        reset_devices: set[str] = set()
+        for claim in claims:
+            reset_devices.update(claim.device_ids)
+        for device_id in sorted(reset_devices):
+            try:
+                await self.reset_handler(device_id)
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                logger.debug("Could not reset closed hardware device session %s", device_id)
+
+    def _hardware_payload(self) -> HardwareBeaconPayload:
+        claimed = set(self._claims_by_device)
+        return HardwareBeaconPayload(
+            managerId=self.manager_id,
+            managerEndpoint=self.endpoint.endpoint,
+            sessionId=self.endpoint.session_id,
+            labels=dict(self.labels or {}),
+            devices={
+                device_id: HardwareAdvertisementDevice(
+                    capacity=ProfileCapacity(
+                        totalInstances=1,
+                        claimedInstances=1 if device_id in claimed else 0,
+                        availableInstances=0 if device_id in claimed else 1,
+                    ),
+                    deviceRef=DeviceRef(
+                        managerId=self.manager_id,
+                        deviceId=device_id,
+                        fingerprint=descriptor.fingerprint,
+                    ),
+                    descriptor=descriptor,
+                )
+                for device_id, descriptor in sorted(self._devices.items())
+            },
+        )
+
+    async def _reject_command(
+        self,
+        envelope: DeckrMessage,
+        body: hw_messages.ControlCommandMessage | hw_messages.CapabilityStateRequestMessage,
+        *,
+        reason: hw_messages.CommandRejectionReason,
+    ) -> None:
+        if isinstance(body, hw_messages.ControlCommandMessage):
+            reply_body = hw_messages.CommandRejectedMessage(
+                deviceRef=body.device_ref,
+                controlId=body.control_id,
+                capabilityId=body.capability_id,
+                commandType=body.command_type,
+                reason=reason,
+                message=f"Hardware command {reason}",
+            )
+            await self.endpoint.publish(
+                hw_messages.hardware_message(
+                    sender=self.endpoint.endpoint,
+                    sender_session_id=self.endpoint.session_id,
+                    recipient=endpoint_target(envelope.sender),
+                    recipient_session_id=envelope.sender_session_id,
+                    message_type=hw_messages.COMMAND_REJECTED,
+                    body=reply_body,
+                    subject=envelope.subject,
+                    in_reply_to=envelope.message_id,
+                    causation_id=envelope.causation_id,
+                )
+            )
+            return
+        reply_body = hw_messages.CapabilityStateReplyMessage(
+            deviceRef=body.device_ref,
+            controlId=body.control_id,
+            capabilityId=body.capability_id,
+            stateType=body.state_type,
+            status="rejected" if reason != "unsupported" else "unsupported",
+            error=f"Hardware state request {reason}",
+        )
+        await self.endpoint.publish(
+            hw_messages.hardware_message(
+                sender=self.endpoint.endpoint,
+                sender_session_id=self.endpoint.session_id,
+                recipient=endpoint_target(envelope.sender),
+                recipient_session_id=envelope.sender_session_id,
+                message_type=hw_messages.CAPABILITY_STATE_REPLY,
+                body=reply_body,
+                subject=envelope.subject,
+                in_reply_to=envelope.message_id,
+                causation_id=envelope.causation_id,
+            )
+        )
+
+
+__all__ = [
+    "DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS",
+    "DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS",
+    "DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS",
+    "DEFAULT_HARDWARE_WATCH_RETRY_SECONDS",
+    "HardwareCommandHandler",
+    "HardwareEndpoint",
+    "HardwareManagerRuntime",
+    "HardwareResetHandler",
+    "LiveHardwareClaim",
+]

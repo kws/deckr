@@ -156,11 +156,16 @@ Deckr core ships these profile contracts:
 
 The generic Beacon layer validates only the advertisement envelope. The generic
 Concord layer validates only contract and token mechanics. Profile validation
-lives in `deckr.profiles`.
+lives in `deckr.profiles`, with hardware-facing profile models also exported
+from `deckr.hardware`.
 
 Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
-whether a claim or binding is live.
+whether a claim or binding is live. Python hardware managers use the shared
+`deckr.hardware.runtime.HardwareManagerRuntime` implementation to advertise
+hardware through Beacon, attach their Concord participant token to matching
+hardware-claim contracts, refresh that token, and route input only for live
+claims.
 
 ## Component Dependencies
 
