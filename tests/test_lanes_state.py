@@ -70,15 +70,14 @@ async def _receive(stream):
 @pytest.mark.asyncio
 async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane("actions").register_endpoint(
+        memory_deckr() as deckr,
+        deckr.lane("actions").register_endpoint(
             action_provider_address("python")
         ) as provider,
         deckr.lane("actions").register_endpoint(
             controller_address("main")
         ) as controller,
-        deckr.lane("actions").register_endpoint(
-            controller_address("other")
-        ) as other,
+        deckr.lane("actions").register_endpoint(controller_address("other")) as other,
         controller.subscribe() as controller_stream,
         other.subscribe() as other_stream,
     ):
@@ -101,7 +100,8 @@ async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> Non
 @pytest.mark.asyncio
 async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane("actions").register_endpoint(
+        memory_deckr() as deckr,
+        deckr.lane("actions").register_endpoint(
             controller_address("main")
         ) as controller,
         deckr.lane("actions").register_endpoint(
@@ -196,7 +196,8 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
 @pytest.mark.asyncio
 async def test_endpoint_publish_accepts_prebuilt_message_from_bound_sender() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane("actions").register_endpoint(
+        memory_deckr() as deckr,
+        deckr.lane("actions").register_endpoint(
             action_provider_address("python")
         ) as provider,
         deckr.lane("actions").register_endpoint(
@@ -297,7 +298,8 @@ async def test_closed_endpoint_session_is_local_terminal_state() -> None:
 @pytest.mark.asyncio
 async def test_sender_session_is_syntactic_and_not_presence_gated() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane(ACTIONS_LANE).register_endpoint(
+        memory_deckr() as deckr,
+        deckr.lane(ACTIONS_LANE).register_endpoint(
             action_provider_address("python")
         ) as provider,
         deckr.lane(ACTIONS_LANE).register_endpoint(
@@ -324,7 +326,8 @@ async def test_sender_session_is_syntactic_and_not_presence_gated() -> None:
 @pytest.mark.asyncio
 async def test_recipient_session_mismatch_is_not_delivered() -> None:
     async with (
-        memory_deckr() as deckr, deckr.lane(ACTIONS_LANE).register_endpoint(
+        memory_deckr() as deckr,
+        deckr.lane(ACTIONS_LANE).register_endpoint(
             action_provider_address("python")
         ) as provider,
         deckr.lane(ACTIONS_LANE).register_endpoint(
@@ -383,6 +386,28 @@ async def test_nats_state_updates_existing_bucket_to_explicit_broker_ttl() -> No
     assert fake_js.updated_config.max_age == 30.0
     assert fake_js.updated_config.max_msgs_per_subject == 1
     assert fake_js.updated_config.allow_msg_ttl is True
+
+
+@pytest.mark.asyncio
+async def test_nats_state_items_deletes_temporary_consumer() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+
+    await store.put(
+        "advertisements.by_feature.dev_deckr_hardware.deck",
+        {"owner": "manager"},
+    )
+
+    entries = await store.items("advertisements.")
+
+    assert [entry.key for entry in entries] == [
+        "advertisements.by_feature.dev_deckr_hardware.deck"
+    ]
+    assert fake_js.deleted_consumers == [("KV_test_state", "consumer-1")]
 
 
 @pytest.mark.asyncio
@@ -766,7 +791,8 @@ def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() ->
     # Build through the public lane API so sender stamping and validation stay covered.
     async def build():
         async with (
-            memory_deckr() as deckr, deckr.lane(ACTIONS_LANE).register_endpoint(
+            memory_deckr() as deckr,
+            deckr.lane(ACTIONS_LANE).register_endpoint(
                 action_provider_address("python")
             ) as provider,
             deckr.lane(ACTIONS_LANE).register_endpoint(
@@ -861,7 +887,10 @@ class _FakeKv:
             for key, entry in sorted(self._entries.items())
             if _subject_matches(keys, key)
         ]
-        return _FakeKvWatcher(entries)
+        return _FakeKvWatcher(
+            entries,
+            _FakeSubscription(self._js, f"{self._pre}{keys}", callback=None),
+        )
 
     async def put(self, key: str, value: bytes) -> int:
         self._revision += 1
@@ -931,6 +960,8 @@ class _FakeKv:
 class _FakeSubscription:
     def __init__(self, js: _FakeJs, subject: str, callback) -> None:
         self._js = js
+        self._stream = f"KV_{js.bucket}"
+        self._consumer = js.next_consumer_name()
         self.subject = subject
         self.callback = callback
         self.delivered = 0
@@ -940,16 +971,21 @@ class _FakeSubscription:
 
     async def deliver(self, message: _FakeMsg) -> None:
         self.delivered += 1
-        await self.callback(message)
+        if self.callback is not None:
+            await self.callback(message)
 
     async def unsubscribe(self) -> None:
-        self._js.subscriptions.remove(self)
+        if self in self._js.subscriptions:
+            self._js.subscriptions.remove(self)
 
 
 class _FakeKvWatcher:
-    def __init__(self, entries: list[_FakeKvEntry]) -> None:
+    def __init__(
+        self, entries: list[_FakeKvEntry], subscription: _FakeSubscription
+    ) -> None:
         self._entries = [*entries, None]
         self._index = 0
+        self._sub = subscription
 
     def __aiter__(self):
         return self
@@ -962,6 +998,7 @@ class _FakeKvWatcher:
         return entry
 
     async def stop(self) -> None:
+        await self._sub.unsubscribe()
         self._index = len(self._entries)
 
 
@@ -1028,6 +1065,13 @@ class _FakeJs:
         self.created_config = None
         self.updated_config = None
         self.subscriptions: list[_FakeSubscription] = []
+        self.deleted_consumers: list[tuple[str, str]] = []
+        self._consumer_index = 0
+        self._jsm = self
+
+    def next_consumer_name(self) -> str:
+        self._consumer_index += 1
+        return f"consumer-{self._consumer_index}"
 
     async def key_value(self, name: str) -> _FakeKv:
         self.bucket = name
@@ -1072,6 +1116,10 @@ class _FakeJs:
         if getattr(deliver_policy, "value", deliver_policy) == "last_per_subject":
             await self._deliver_last_per_subject(subscription)
         return subscription
+
+    async def delete_consumer(self, stream: str, consumer: str) -> bool:
+        self.deleted_consumers.append((stream, consumer))
+        return True
 
     async def _deliver_last_per_subject(self, subscription: _FakeSubscription) -> None:
         if self.kv is None:
