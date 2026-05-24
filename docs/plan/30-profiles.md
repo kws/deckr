@@ -704,10 +704,17 @@ controller restart scenarios
 action provider restart scenarios
 binding cancellation scenarios
 message-with-stale-binding scenarios
+NATS consumer stability scenarios for Beacon and Concord watch/list paths
 ```
 
 The existing Deckr descriptor and action schemas should be reused rather than
 redefined where their shapes are already correct.
+
+Cross-language implementations must prove that steady Beacon/Concord
+reconciliation does not create unbounded JetStream consumers. Python, Rust, and
+JavaScript adapters may use different NATS client APIs, but each adapter must
+own and clean up temporary watch/list consumers or use a non-lingering read
+path. This is a conformance concern, not just an operations tuning detail.
 
 If this document disagrees with the old unilateral claim behavior, this document
 wins. Deckr is still alpha; the fix is replacement, not backward compatibility.

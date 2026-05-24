@@ -1076,6 +1076,22 @@ A consumer that sees a watch event should re-read the relevant feature prefix an
 
 A consumer should also periodically revalidate watched feature sets if missed watches matter to its local behaviour.
 
+Implementation note from the May 2026 Deckr/NATS incident: NATS KV watches are
+backed by JetStream consumers. Short-lived feature scans and retrying watch
+loops must be treated as broker resource owners, not as free reads. Every
+NATS-backed Beacon implementation must either:
+
+```text
+use direct key listing/get APIs that do not create lingering consumers
+or explicitly delete temporary consumers after unsubscribe/stop
+or use long-lived owned watches with bounded restart cadence
+```
+
+Consumer cleanup is part of Beacon's NATS backend conformance. A feature
+consumer must not create one ephemeral consumer per periodic reconciliation
+tick and rely only on inactive cleanup. Tests and smoke scripts should assert
+that unbound JetStream consumers do not grow under steady discovery load.
+
 ### 23.6 TTL and expiry
 
 NATS KV buckets can be configured with TTL limits.
@@ -1476,6 +1492,8 @@ KV update(last=revision) is used for refresh
 KV delete(last=revision) is used for withdrawal
 blind put is avoided for session-owned advertisements
 TTL expiry is observed by exact get/revalidation
+temporary watch/list consumers are explicitly cleaned up
+steady-state unbound consumer count is monitored and bounded
 read-your-writes is not assumed from arbitrary direct get
 ```
 
@@ -1497,6 +1515,7 @@ exact/prefix reads: repair path
 client timestamps: diagnostic only
 NATS Core: notification only
 JetStream KV: Beacon state substrate
+JetStream consumers: explicitly owned and bounded
 ```
 
 The protocol should be deliberately small enough that it can later be implemented on:

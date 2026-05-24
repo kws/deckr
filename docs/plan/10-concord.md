@@ -1136,6 +1136,23 @@ A participant that sees a watch event should reread the contract/token set and r
 
 A participant must also periodically revalidate current contracts in case watch delivery is delayed, missed, restarted, or filtered.
 
+Implementation note from the May 2026 Deckr/NATS incident: NATS KV watches are
+backed by JetStream consumers. Short-lived snapshot helpers, `keys()` helpers,
+and retrying watch loops must be treated as broker resource owners, not as free
+reads. Every NATS-backed Concord implementation must either:
+
+```text
+use direct key listing/get APIs that do not create lingering consumers
+or explicitly delete temporary consumers after unsubscribe/stop
+or use long-lived owned watches with bounded restart cadence
+```
+
+Consumer cleanup is part of protocol correctness for the NATS backend. A
+Concord implementation must not create one ephemeral consumer per periodic
+revalidation tick and rely only on inactive cleanup. Tests and smoke scripts
+should assert that unbound JetStream consumers do not grow under steady
+reconciliation load.
+
 ### 23.6 TTL and expiry
 
 NATS KV buckets can be configured with TTL limits for how long values are kept. ([docs.nats.io][2])
@@ -1529,6 +1546,8 @@ KV update(last=revision) is used for refresh/cancel
 blind put is not used for protocol transitions
 token bucket TTL expiry is observed by exact get/revalidation
 delete markers are handled if configured
+temporary watch/list consumers are explicitly cleaned up
+steady-state unbound consumer count is monitored and bounded
 read-your-writes is not assumed from arbitrary direct get
 ```
 
@@ -1549,6 +1568,7 @@ blind put: forbidden for protocol transitions
 timestamps: diagnostic only
 NATS Core: notification only
 JetStream KV: authority
+JetStream consumers: explicitly owned and bounded
 ```
 
 The protocol should be deliberately small enough that it can later be implemented on:
