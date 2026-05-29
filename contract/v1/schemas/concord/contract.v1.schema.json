@@ -38,6 +38,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "attachedParticipants": {
+      "items": {
+        "$ref": "#/$defs/EndpointAddress"
+      },
+      "title": "Attachedparticipants",
+      "type": "array"
+    },
     "cancelReason": {
       "anyOf": [
         {
@@ -189,7 +196,8 @@
   "required": [
     "contractId",
     "generation",
-    "participants"
+    "participants",
+    "attachedParticipants"
   ],
   "title": "Concord contract",
   "type": "object",

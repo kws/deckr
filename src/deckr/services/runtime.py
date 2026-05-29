@@ -658,10 +658,7 @@ class ServiceClient:
             )
             if validity.valid:
                 return lease
-            if validity.status not in {
-                ContractValidityStatus.MISSING_TOKEN,
-                ContractValidityStatus.NOT_YET_FULFILLED,
-            }:
+            if validity.status != ContractValidityStatus.NOT_YET_FULFILLED:
                 raise _ServiceUnavailable(
                     f"contract_{validity.status.value}",
                     "Service-use contract is not valid",

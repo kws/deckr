@@ -132,6 +132,8 @@ A contract record must have:
 - `contractId` as a non-empty string with no leading or trailing whitespace
 - `generation > 0`
 - a non-empty, unique, lexicographically sorted `participants` list
+- a unique, lexicographically sorted `attachedParticipants` list whose entries
+  are a subset of `participants`
 - `state` as `open` or `cancelled`
 - optional `profile`, `terms`, `termsHash`, diagnostics, and `supersedes`
 
@@ -149,11 +151,12 @@ A participant token record must have:
 - `ttlSeconds > 0`
 - optional `termsHash`, `contractHash`, and `observed`
 
-Create a candidate contract with `create(contractKey, contractRecord)`. Creating
-a contract does not make it valid. A participant attaches by exact-reading the
-contract, confirming it is open and names that participant, then creating its
-own participant-token key. A participant must not write another participant's
-token.
+Create a candidate contract with `create(contractKey, contractRecord)` and an
+empty `attachedParticipants` list. Creating a contract does not make it valid.
+A participant attaches by exact-reading the contract, confirming it is open and
+names that participant, creating its own participant-token key, then adding
+itself to `attachedParticipants` with a revision-guarded contract update. A
+participant must not write another participant's token.
 
 Refresh a token by exact-reading the contract and token, confirming both still
 match the local handle, incrementing `refreshSeq`, and revision-guarded
@@ -167,10 +170,16 @@ must not silently recreate a token for the same contract generation. It should
 cancel when possible or negotiate a successor contract using a new generation or
 new contract id.
 
+A missing token for a participant that is not yet in `attachedParticipants`
+means the contract is not yet fulfilled. A missing token for a participant that
+is already in `attachedParticipants` means authority was lost and the contract is
+invalid for that generation.
+
 Validate a contract by exact-reading the contract and every named participant
 token. The result is valid only if:
 
 - the contract exists and is `open`
+- every named participant is in `attachedParticipants`
 - every named participant token exists
 - every token names the same `contractId` and `generation`
 - every token belongs to the participant whose key is being checked

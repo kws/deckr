@@ -317,7 +317,7 @@ async def test_competing_claims_choose_existing_or_lowest_contract_key() -> None
         assert [claim.terms.claim_id for claim in runtime.live_claims] == ["claim-a"]
         assert (await concord.validate(claim_a)).status == ContractValidityStatus.VALID
         assert (await concord.validate(claim_b)).status == (
-            ContractValidityStatus.MISSING_TOKEN
+            ContractValidityStatus.NOT_YET_FULFILLED
         )
     finally:
         await runtime.stop()

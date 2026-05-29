@@ -211,6 +211,9 @@ class ContractRecord(DeckrModel):
     contract_id: str = Field(alias="contractId")
     generation: int
     participants: tuple[EndpointAddress, ...]
+    attached_participants: tuple[EndpointAddress, ...] = Field(
+        alias="attachedParticipants"
+    )
     state: ContractState = ContractState.OPEN
     profile: str | None = None
     terms_hash: str | None = Field(default=None, alias="termsHash")
@@ -248,6 +251,19 @@ class ContractRecord(DeckrModel):
             raise ValueError("Concord contract participants must be unique")
         if strings != sorted(strings):
             raise ValueError("Concord contract participants must be canonicalized")
+        return value
+
+    @field_validator("attached_participants", mode="after")
+    @classmethod
+    def _validate_attached_participants(
+        cls,
+        value: tuple[EndpointAddress, ...],
+    ) -> tuple[EndpointAddress, ...]:
+        strings = [str(item) for item in value]
+        if len(strings) != len(set(strings)):
+            raise ValueError("Concord attached participants must be unique")
+        if strings != sorted(strings):
+            raise ValueError("Concord attached participants must be canonicalized")
         return value
 
     @field_validator("profile", "terms_hash", "cancel_reason")
@@ -289,6 +305,14 @@ class ContractRecord(DeckrModel):
             profile = self.terms.get("profile")
             if profile is not None and profile != self.profile:
                 raise ValueError("Concord contract profile must match terms.profile")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_attached_participants_subset(self) -> ContractRecord:
+        participants = {str(item) for item in self.participants}
+        attached = {str(item) for item in self.attached_participants}
+        if not attached <= participants:
+            raise ValueError("attachedParticipants must be a subset of participants")
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -372,6 +396,7 @@ class ContractHandle:
     contract_id: str
     generation: int
     participants: tuple[EndpointAddress, ...]
+    attached_participants: tuple[EndpointAddress, ...]
     revision: int
     state: ContractState
     profile: str | None = None
@@ -453,6 +478,7 @@ class ConcordCoordinator:
             contractId=contract_id or str(uuid.uuid4()),
             generation=generation,
             participants=parsed_participants,
+            attachedParticipants=(),
             state=ContractState.OPEN,
             profile=profile,
             termsHash=terms_hash,
@@ -533,6 +559,8 @@ class ConcordCoordinator:
         parsed_participant = parse_endpoint_address(participant)
         if parsed_participant not in record.participants:
             raise ValueError("participant is not named by the Concord contract")
+        if parsed_participant in record.attached_participants:
+            raise StateConflict("Concord participant is already attached")
         ttl = ttl_seconds or self._token_ttl_seconds
         token = ParticipantTokenRecord(
             contractId=record.contract_id,
@@ -549,8 +577,68 @@ class ConcordCoordinator:
             generation=record.generation,
             participant=parsed_participant,
         )
-        entry = await self._token_state.create(key, token, ttl=token.ttl_seconds)
+        try:
+            entry = await self._token_state.create(key, token, ttl=token.ttl_seconds)
+        except StateConflict as exc:
+            token_entry = await self._token_state.get(key)
+            if token_entry is None:
+                raise StateConflict(
+                    "Concord participant token changed during attach"
+                ) from exc
+            token = ParticipantTokenRecord.model_validate(token_entry.value)
+            if not _token_matches_attach_request(
+                token,
+                record=record,
+                participant=parsed_participant,
+                session_id=session_id,
+                token_id=token_id,
+            ):
+                raise StateConflict("Concord participant token already exists") from exc
+            entry = token_entry
+            await self._mark_participant_attached(
+                contract_key=contract.key,
+                participant=parsed_participant,
+                allow_already_attached=False,
+            )
+        else:
+            await self._mark_participant_attached(
+                contract_key=contract.key,
+                participant=parsed_participant,
+                allow_already_attached=True,
+            )
         return _participant_handle(key, token, entry.revision)
+
+    async def _mark_participant_attached(
+        self,
+        *,
+        contract_key: str,
+        participant: EndpointAddress,
+        allow_already_attached: bool,
+    ) -> None:
+        while True:
+            current = await self._contract_state.get(contract_key)
+            if current is None:
+                raise StateConflict(f"Concord contract {contract_key!r} is missing")
+            record = ContractRecord.model_validate(current.value)
+            if record.state == ContractState.CANCELLED:
+                raise StateConflict(f"Concord contract {contract_key!r} is cancelled")
+            if participant not in record.participants:
+                raise StateConflict("participant is not named by the Concord contract")
+            if participant in record.attached_participants:
+                if allow_already_attached:
+                    return
+                raise StateConflict("Concord participant is already attached")
+            attached = tuple(sorted((*record.attached_participants, participant), key=str))
+            updated = record.model_copy(update={"attached_participants": attached})
+            try:
+                await self._contract_state.update(
+                    contract_key,
+                    updated,
+                    revision=current.revision,
+                )
+            except StateConflict:
+                continue
+            return
 
     async def refresh(self, handle: ParticipantHandle) -> ParticipantHandle:
         contract_entry = await self._contract_state.get(
@@ -633,8 +721,11 @@ class ConcordCoordinator:
         if record.state == ContractState.CANCELLED:
             return ContractValidity(ContractValidityStatus.CANCELLED, contract=record)
 
+        attached_participants = {str(item) for item in record.attached_participants}
+        pending_participant: str | None = None
         tokens: dict[str, ParticipantTokenRecord] = {}
         for participant in record.participants:
+            participant_key = str(participant)
             token_key = concord_participant_token_key(
                 contract_id=record.contract_id,
                 generation=record.generation,
@@ -648,12 +739,15 @@ class ConcordCoordinator:
                     contract=record,
                 )
             if token_entry is None:
-                return ContractValidity(
-                    ContractValidityStatus.MISSING_TOKEN,
-                    contract=record,
-                    tokens=tokens,
-                    reason=str(participant),
-                )
+                if participant_key in attached_participants:
+                    return ContractValidity(
+                        ContractValidityStatus.MISSING_TOKEN,
+                        contract=record,
+                        tokens=tokens,
+                        reason=participant_key,
+                    )
+                pending_participant = pending_participant or participant_key
+                continue
             try:
                 token = ParticipantTokenRecord.model_validate(token_entry.value)
             except ValueError as exc:
@@ -669,9 +763,18 @@ class ConcordCoordinator:
                 participant=participant,
                 current_sessions=current_sessions,
             )
-            tokens[str(participant)] = token
+            tokens[participant_key] = token
             if status is not None:
                 return ContractValidity(status, contract=record, tokens=tokens)
+            if participant_key not in attached_participants:
+                pending_participant = pending_participant or participant_key
+        if pending_participant is not None:
+            return ContractValidity(
+                ContractValidityStatus.NOT_YET_FULFILLED,
+                contract=record,
+                tokens=tokens,
+                reason=pending_participant,
+            )
         return ContractValidity(
             ContractValidityStatus.VALID,
             contract=record,
@@ -756,7 +859,7 @@ class ConcordParticipantLease:
                 except StateConflict:
                     logger.warning(
                         "%s Concord participant token refresh conflict; "
-                        "reattaching contract=%s generation=%s participant=%s "
+                        "authority lost contract=%s generation=%s participant=%s "
                         "session=%s",
                         self._log_label,
                         self.contract.contract_id,
@@ -766,6 +869,7 @@ class ConcordParticipantLease:
                         exc_info=True,
                     )
                     self._token = None
+                    raise
             self._token = await self._service.attach(
                 self.contract,
                 self.participant,
@@ -1078,6 +1182,7 @@ def _contract_handle(
         contract_id=record.contract_id,
         generation=record.generation,
         participants=record.participants,
+        attached_participants=record.attached_participants,
         revision=revision,
         state=record.state,
         profile=record.profile,
@@ -1101,6 +1206,24 @@ def _participant_handle(
         refresh_seq=record.refresh_seq,
         ttl_seconds=record.ttl_seconds,
         terms_hash=record.terms_hash,
+    )
+
+
+def _token_matches_attach_request(
+    token: ParticipantTokenRecord,
+    *,
+    record: ContractRecord,
+    participant: EndpointAddress,
+    session_id: str,
+    token_id: str | None,
+) -> bool:
+    return (
+        token.contract_id == record.contract_id
+        and token.generation == record.generation
+        and token.participant == participant
+        and token.session_id == session_id
+        and (token_id is None or token.token_id == token_id)
+        and token.terms_hash == record.terms_hash
     )
 
 
@@ -1163,7 +1286,6 @@ def _concord_event_type(validity: ContractValidity) -> ConcordEventType:
         return ConcordEventType.CANCELLED
     if validity.status in {
         ContractValidityStatus.NOT_YET_FULFILLED,
-        ContractValidityStatus.MISSING_TOKEN,
     }:
         return ConcordEventType.PENDING
     return ConcordEventType.INVALID

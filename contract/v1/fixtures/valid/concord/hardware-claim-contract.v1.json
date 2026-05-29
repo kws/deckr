@@ -1,4 +1,7 @@
 {
+  "attachedParticipants": [
+    "controller:controller-main"
+  ],
   "contractId": "hardware-contract-1",
   "createdAt": "2026-04-29T10:00:00Z",
   "createdBy": "controller:controller-main",

@@ -350,6 +350,7 @@ def _fixtures() -> list[dict[str, Any]]:
             controller_address("controller-main"),
             hardware_manager_address("mirabox-main"),
         ),
+        attachedParticipants=(controller_address("controller-main"),),
         termsHash=canonical_json_hash(hardware_claim_terms),
         terms=hardware_claim_terms.to_dict(),
         createdBy=controller_address("controller-main"),

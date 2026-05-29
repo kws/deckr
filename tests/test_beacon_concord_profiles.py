@@ -19,6 +19,7 @@ from deckr.concord import (
     ConcordCoordinator,
     ConcordEventType,
     ConcordService,
+    ContractRecord,
     ContractValidityStatus,
     ParticipantTokenRecord,
     canonical_json_hash,
@@ -268,7 +269,9 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
     assert await concord.get_contract(
         {"contractId": "missing-contract", "generation": 1}
     ) is None
-    assert (await concord.validate(contract)).status == ContractValidityStatus.MISSING_TOKEN
+    assert (await concord.validate(contract)).status == (
+        ContractValidityStatus.NOT_YET_FULFILLED
+    )
 
     controller_token = await concord.attach(
         contract,
@@ -276,7 +279,9 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
         "controller-session",
         token_id="controller-token",
     )
-    assert (await concord.validate(contract)).status == ContractValidityStatus.MISSING_TOKEN
+    assert (await concord.validate(contract)).status == (
+        ContractValidityStatus.NOT_YET_FULFILLED
+    )
 
     manager_token = await concord.attach(
         contract,
@@ -300,13 +305,13 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
     await token_state.delete(manager_token.key, revision=manager_token.revision)
     missing = await concord.validate(contract)
     assert missing.status == ContractValidityStatus.MISSING_TOKEN
-    manager_token = await concord.attach(
-        contract,
-        manager,
-        "manager-session",
-        token_id="manager-token-2",
-    )
-    assert manager_token.revision > 0
+    with pytest.raises(StateConflict, match="already attached"):
+        await concord.attach(
+            contract,
+            manager,
+            "manager-session",
+            token_id="manager-token-2",
+        )
 
     async with concord.watch(contract) as changes:
         assert await concord.cancel(contract, controller, reason="test complete")
@@ -364,6 +369,10 @@ async def test_concord_service_lease_events_and_logs(caplog) -> None:
         expired = await _receive_event_type(events, ConcordEventType.TOKEN_EXPIRED)
         assert expired.participant == controller
         assert expired.reason == "token_expired"
+        with pytest.raises(StateConflict, match="missing"):
+            await controller_lease.attach_or_refresh()
+        with pytest.raises(StateConflict, match="already attached"):
+            await controller_lease.attach_or_refresh()
 
         assert await service.cancel(
             contract,
@@ -528,6 +537,16 @@ def test_profile_payloads_terms_hashes_and_hardware_claim_conflicts() -> None:
     assert hardware_claim_conflicts((conflicting, non_conflicting), claim_terms) == (
         conflicting,
     )
+
+
+def test_concord_contract_attached_participants_must_be_named() -> None:
+    with pytest.raises(ValidationError, match="attachedParticipants"):
+        ContractRecord(
+            contractId="contract-1",
+            generation=1,
+            participants=(controller_address("controller-main"),),
+            attachedParticipants=(hardware_manager_address("manager-main"),),
+        )
 
 
 def test_beacon_key_helper_uses_feature_namespace_prefix() -> None:
