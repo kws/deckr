@@ -14,14 +14,16 @@ That includes:
   helpers
 - hardware-facing and action-provider-facing shared models
 
-The normative architecture reference now lives in:
+The normative architecture and protocol references now live in:
 
 - [docs/runtime-architecture.md](docs/runtime-architecture.md)
 - [docs/runtime-modes.md](docs/runtime-modes.md)
+- [docs/beacon-concord.md](docs/beacon-concord.md)
 - [docs/nats-bus.md](docs/nats-bus.md)
 
-Those documents are the source of truth for the current architecture. They are
-explicitly normative, alpha-stage, and intentionally non-backward-compatible.
+Those documents are the source of truth for the current architecture and
+protocol contract. They are explicitly normative, alpha-stage, and
+intentionally non-backward-compatible.
 The distributed bus replacement has closed on NATS as the Deckr distributed
 substrate: Core NATS carries lane traffic and JetStream KV carries current
 state. The supported NATS/KV contract now lives in
@@ -49,6 +51,7 @@ src/deckr/
   runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
   state.py     Generic StateStore protocol and CAS/watch primitives
 docs/
+  beacon-concord.md
   nats-bus.md
   runtime-architecture.md
   runtime-modes.md
@@ -101,7 +104,7 @@ uv build
 Deckr’s target architecture is:
 
 - one runtime abstraction: `Component`
-- one Python-first discovery/agreement model: Beacon advertisements for weak
+- one shared discovery/agreement model: Beacon advertisements for weak
   feature discovery and Concord contracts for live agreements
 - named event lanes as the only generic wiring primitive
 - shared lane infrastructure for application-facing send/subscribe/fan-out
@@ -121,6 +124,8 @@ lane substrate configuration, wire-safe schemas, component planning, and alpha
 policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
 Public contract identifier ownership and collision-avoidance rules live in
 [docs/namespaces.md](docs/namespaces.md).
+Beacon and Concord protocol semantics for non-Python implementors live in
+[docs/beacon-concord.md](docs/beacon-concord.md).
 
 The Deckr distributed lane substrate is NATS. Read
 [docs/nats-bus.md](docs/nats-bus.md) for endpoint-bound lane handles, recipient

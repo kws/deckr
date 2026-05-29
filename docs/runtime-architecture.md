@@ -119,10 +119,12 @@ The current core lane set includes:
 - `services`
 
 The distributed lane substrate is NATS. This document owns the generic component
-and lane model. The NATS bus specification owns endpoint-bound lane handles,
-recipient filtering, Beacon/Concord KV stores, broker-resource ownership, and
-broker diagnostics in [`nats-bus.md`](nats-bus.md). The v1 device, control, and
-capability descriptor contracts are implemented in `deckr.hardware.descriptors`.
+and lane model. Beacon/Concord protocol semantics are specified in
+[`beacon-concord.md`](beacon-concord.md). The NATS bus specification owns
+endpoint-bound lane handles, recipient filtering, Beacon/Concord KV stores,
+broker-resource ownership, and broker diagnostics in [`nats-bus.md`](nats-bus.md).
+The v1 device, control, and capability descriptor contracts are implemented in
+`deckr.hardware.descriptors`.
 Canonical core capability value contracts and helpers live in
 `deckr.hardware.capabilities`; the BAU contract is documented in
 [`capabilities.md`](capabilities.md), with the architecture background in
@@ -906,8 +908,10 @@ to understand component-specific settings.
 
 - There is one component model.
 - There is one runtime participant model.
-- Beacon is the shared weak feature discovery protocol.
-- Concord is the shared live agreement protocol.
+- Beacon is the shared weak feature discovery protocol specified in
+  [`beacon-concord.md`](beacon-concord.md).
+- Concord is the shared live agreement protocol specified in
+  [`beacon-concord.md`](beacon-concord.md).
 - Runtime components use `BeaconService` and `ConcordService`; raw
   Beacon/Concord authority state watches belong only inside those core services
   and substrate internals.

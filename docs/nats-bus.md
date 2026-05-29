@@ -13,8 +13,10 @@ Deckr's distributed substrate is NATS:
 - Concord provides live multi-participant agreements.
 
 NATS subjects, headers, streams, and KV buckets are substrate details. Deckr
-participants must treat the Python models and generated `contract/v1` artifacts
-as the contract boundary.
+participants must treat [`beacon-concord.md`](beacon-concord.md), this document,
+and the generated `contract/v1` artifacts as the language-neutral contract
+boundary. The Python models are the current reference implementation and source
+for generated artifacts.
 
 ## Current Contract
 
@@ -26,14 +28,15 @@ The supported shared stores are:
 | Concord contracts | `deckr_concord_contract_v1` | persistent |
 | Concord participant tokens | `deckr_concord_token_v1` | TTL-bound |
 
-`StateStore` remains the generic CAS/watch abstraction below these protocols,
-but production runtime code does not subscribe directly to Beacon or Concord
-authority state. Runtime participants use the shared `BeaconService` and
+`StateStore` remains the generic CAS/watch abstraction below these protocols.
+Production runtime code does not subscribe directly to Beacon or Concord
+authority state. Python runtime participants use the shared `BeaconService` and
 `ConcordService` APIs, which own raw state watches, semantic lifecycle events,
-heartbeats, leases, and lifecycle logging. Retired shared coordination buckets
-are not part of the v1 surface. Opening a store without an explicit policy
-creates a persistent generic store. Beacon and Concord services pass their own
-`StateStorePolicy` values.
+heartbeats, leases, and lifecycle logging. Non-Python implementations must
+follow the same protocol semantics in [`beacon-concord.md`](beacon-concord.md).
+Retired shared coordination buckets are not part of the v1 surface. Opening a
+store without an explicit policy creates a persistent generic store. Beacon and
+Concord services pass their own `StateStorePolicy` values.
 
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence
@@ -114,6 +117,8 @@ Beacon answers "which endpoints currently advertise this feature?" It does not
 grant ownership, reserve anything, prove future success, or make a command safe.
 Consumers should treat results as candidates and establish any needed Concord
 agreement before relying on them.
+The full Beacon semantic contract is specified in
+[`beacon-concord.md`](beacon-concord.md#beacon).
 
 ## Concord Stores
 
@@ -154,6 +159,8 @@ validity = await concord.validate(contract)
 A Concord contract is valid only while the contract is open and every named
 participant maintains an acceptable token for the same contract id, generation,
 participant, session, and terms hash. Any participant may cancel the contract.
+The full Concord semantic contract is specified in
+[`beacon-concord.md`](beacon-concord.md#concord).
 
 ## Deckr Profiles
 
@@ -170,6 +177,8 @@ The generic Beacon layer validates only the advertisement envelope. The generic
 Concord layer validates only contract and token mechanics. Action profile
 validation lives in `deckr.profiles`; hardware profile validation lives in
 `deckr.hardware.profiles` and is exported from `deckr.hardware`.
+The language-neutral profile rules are summarized in
+[`beacon-concord.md`](beacon-concord.md#profiles).
 
 Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
@@ -243,6 +252,11 @@ Regenerate the bundle with:
 ```bash
 uv run python scripts/generate_contract_artifacts.py
 ```
+
+JSON Schemas are structural contracts. Implementations must also enforce the
+semantic rules in [`beacon-concord.md`](beacon-concord.md), such as endpoint
+parsing, positive counters and TTLs, canonical participant ordering,
+terms-hash validation, and profile identity checks.
 
 ## Operations
 
