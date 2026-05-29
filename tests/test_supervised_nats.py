@@ -49,6 +49,22 @@ def test_nats_config_keeps_auth_token_in_private_config() -> None:
     assert "ports_file_dir" in text
 
 
+def test_nats_config_omits_authorization_when_auth_disabled() -> None:
+    text = _config_text(
+        server_name="deckr-test",
+        host="127.0.0.1",
+        port=4222,
+        ports_dir=Path("/tmp/deckr/ports"),
+        store_dir=Path("/tmp/deckr/jetstream"),
+        auth_token=None,
+    )
+
+    assert 'host: "127.0.0.1"' in text
+    assert "port: 4222" in text
+    assert "authorization {" not in text
+    assert "token:" not in text
+
+
 def test_configured_nats_server_path_must_be_absolute() -> None:
     resolver = NatsServerBinaryResolver(server_path="bin/nats-server")
 
@@ -87,8 +103,91 @@ def test_runtime_substrate_config_builds_supervised_nats(
     assert isinstance(substrate, SupervisedNatsSubstrate)
     assert substrate.supervisor.runtime_dir == tmp_path / "run" / "nats"
     assert substrate.supervisor.store_dir == tmp_path / "state" / "nats"
+    assert substrate.supervisor.auth_enabled is True
+    assert substrate.supervisor.configured_auth_token is None
     assert substrate.supervisor.startup_timeout == 3.5
     assert substrate.supervisor.shutdown_timeout == 1.5
+
+
+def test_runtime_substrate_config_builds_supervised_nats_without_auth(
+    tmp_path: Path,
+) -> None:
+    document = _document(
+        {
+            "deckr": {
+                "runtime": {
+                    "substrate": {
+                        "kind": "nats",
+                        "supervised": True,
+                        "auth": False,
+                    }
+                }
+            }
+        },
+        base_dir=tmp_path,
+    )
+
+    substrate = build_runtime_substrate(
+        document,
+        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+    )
+
+    assert isinstance(substrate, SupervisedNatsSubstrate)
+    assert substrate.supervisor.auth_enabled is False
+    assert substrate.supervisor.configured_auth_token is None
+
+
+def test_runtime_substrate_config_builds_supervised_nats_with_dev_token(
+    tmp_path: Path,
+) -> None:
+    document = _document(
+        {
+            "deckr": {
+                "runtime": {
+                    "substrate": {
+                        "kind": "nats",
+                        "supervised": True,
+                        "auth": "token",
+                    }
+                }
+            }
+        },
+        base_dir=tmp_path,
+    )
+
+    substrate = build_runtime_substrate(
+        document,
+        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+    )
+
+    assert isinstance(substrate, SupervisedNatsSubstrate)
+    assert substrate.supervisor.auth_enabled is True
+    assert substrate.supervisor.configured_auth_token == "token"
+
+
+def test_runtime_substrate_config_rejects_invalid_supervised_nats_auth(
+    tmp_path: Path,
+) -> None:
+    document = _document(
+        {
+            "deckr": {
+                "runtime": {
+                    "substrate": {
+                        "kind": "nats",
+                        "supervised": True,
+                        "auth": True,
+                    }
+                }
+            }
+        },
+        base_dir=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="auth must be false"):
+        build_runtime_substrate(
+            document,
+            lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        )
 
 
 def test_runtime_substrate_config_rejects_url_for_supervised_nats(

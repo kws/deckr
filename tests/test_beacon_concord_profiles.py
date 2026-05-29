@@ -61,6 +61,40 @@ async def _receive_event_type(stream, *event_types):
                 return event
 
 
+class RacingUpdateStateStore:
+    def __init__(self, inner: MemoryStateStore) -> None:
+        self._inner = inner
+        self.raced = False
+
+    async def get(self, *args, **kwargs):
+        return await self._inner.get(*args, **kwargs)
+
+    async def items(self, *args, **kwargs):
+        return await self._inner.items(*args, **kwargs)
+
+    async def put(self, *args, **kwargs):
+        return await self._inner.put(*args, **kwargs)
+
+    async def create(self, *args, **kwargs):
+        return await self._inner.create(*args, **kwargs)
+
+    async def update(self, key, value, *, revision, ttl=None):
+        if not self.raced and ".participants." in key:
+            self.raced = True
+            current = await self._inner.get(key)
+            assert current is not None
+            token = ParticipantTokenRecord.model_validate(current.value)
+            bumped = token.model_copy(update={"refresh_seq": token.refresh_seq + 1})
+            await self._inner.update(key, bumped, revision=current.revision, ttl=ttl)
+        return await self._inner.update(key, value, revision=revision, ttl=ttl)
+
+    async def delete(self, *args, **kwargs):
+        return await self._inner.delete(*args, **kwargs)
+
+    def watch(self, *args, **kwargs):
+        return self._inner.watch(*args, **kwargs)
+
+
 def _descriptor() -> DeviceDescriptor:
     return DeviceDescriptor.model_validate(stream_deck_bitmap_grid())
 
@@ -323,6 +357,66 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
 
 
 @pytest.mark.asyncio
+async def test_concord_refresh_returns_latest_token_after_revision_race() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = RacingUpdateStateStore(MemoryStateStore(name="tokens"))
+    concord = ConcordCoordinator(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    terms = _hardware_claim_terms()
+
+    contract = await concord.create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=terms,
+        created_by=controller,
+    )
+    controller_token = await concord.attach(
+        contract,
+        controller,
+        "controller-session",
+        token_id="controller-token",
+    )
+
+    refreshed = await concord.refresh(controller_token)
+
+    assert token_state.raced
+    assert refreshed.refresh_seq == 2
+    assert refreshed.revision != controller_token.revision
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_lease_closes_after_cancelled_contract() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    terms = _hardware_claim_terms()
+
+    contract = await service.create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=terms,
+        created_by=controller,
+    )
+    lease = service.participant_lease(
+        contract=contract,
+        participant=controller,
+        session_id="controller-session",
+    )
+    await lease.attach_or_refresh()
+    await service.cancel(contract, controller, reason="test complete")
+
+    with pytest.raises(StateConflict, match="cancelled"):
+        await lease.attach_or_refresh()
+    with pytest.raises(StateConflict, match="closed"):
+        await lease.attach_or_refresh()
+
+
+@pytest.mark.asyncio
 async def test_concord_service_lease_events_and_logs(caplog) -> None:
     contract_state = MemoryStateStore(name="contracts")
     token_state = MemoryStateStore(name="tokens")
@@ -371,7 +465,7 @@ async def test_concord_service_lease_events_and_logs(caplog) -> None:
         assert expired.reason == "token_expired"
         with pytest.raises(StateConflict, match="missing"):
             await controller_lease.attach_or_refresh()
-        with pytest.raises(StateConflict, match="already attached"):
+        with pytest.raises(StateConflict, match="closed"):
             await controller_lease.attach_or_refresh()
 
         assert await service.cancel(

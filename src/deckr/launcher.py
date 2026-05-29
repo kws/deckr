@@ -65,11 +65,14 @@ def build_runtime_substrate(
                 raise ValueError(
                     "[deckr.runtime.substrate].url is not used when supervised = true"
                 )
+            auth_enabled, auth_token = _supervised_auth_config(source)
             server_path = _absolute_path_config(source, "server_path")
             runtime_dir = _relative_path_config(document, source, "runtime_dir")
             store_dir = _relative_path_config(document, source, "store_dir")
             return SupervisedNatsSubstrate(
                 lane_contracts=lane_contracts,
+                auth_enabled=auth_enabled,
+                auth_token=auth_token,
                 server_path=server_path,
                 runtime_dir=runtime_dir,
                 store_dir=store_dir,
@@ -106,6 +109,17 @@ def build_runtime_substrate(
             lane_contracts=lane_contracts,
         )
     raise ValueError(f"Unsupported Deckr runtime substrate kind: {kind!r}")
+
+
+def _supervised_auth_config(source: Mapping[str, object]) -> tuple[bool, str | None]:
+    if "auth" not in source:
+        return True, None
+    value = source["auth"]
+    if value is False:
+        return False, None
+    if isinstance(value, str) and value.strip().lower() == "token":
+        return True, "token"
+    raise ValueError('[deckr.runtime.substrate].auth must be false or "token"')
 
 
 def _bool_config(source: Mapping[str, object], key: str, *, default: bool) -> bool:

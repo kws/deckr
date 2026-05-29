@@ -31,6 +31,7 @@ CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID = "dev.deckr.concord.participant-token.v1"
 DEFAULT_CONCORD_CONTRACT_STORE_NAME = "deckr_concord_contract_v1"
 DEFAULT_CONCORD_TOKEN_STORE_NAME = "deckr_concord_token_v1"
 DEFAULT_CONCORD_TOKEN_TTL_SECONDS = 30
+ACTION_BINDING_PROFILE_ID = "dev.deckr.profile.action_binding.v1"
 CONCORD_CONTRACT_STORE_POLICY = PERSISTENT_STATE_STORE_POLICY
 CONCORD_TOKEN_STORE_POLICY = StateStorePolicy(
     broker_ttl_seconds=float(DEFAULT_CONCORD_TOKEN_TTL_SECONDS),
@@ -39,6 +40,24 @@ CONCORD_TOKEN_STORE_POLICY = StateStorePolicy(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _contract_lifecycle_log_level(profile: str | None) -> int:
+    if _is_chattery_contract_profile(profile):
+        return logging.DEBUG
+    return logging.INFO
+
+
+def _contract_pending_log_level(profile: str | None) -> int:
+    if _is_chattery_contract_profile(profile):
+        return logging.DEBUG
+    return logging.INFO
+
+
+def _is_chattery_contract_profile(profile: str | None) -> bool:
+    return profile == ACTION_BINDING_PROFILE_ID or (
+        profile is not None and profile.endswith(".service_use.v1")
+    )
 
 
 class ContractState(StrEnum):
@@ -659,12 +678,23 @@ class ConcordCoordinator:
         if not _token_matches_handle(token, handle):
             raise StateConflict("Concord participant token changed owner")
         refreshed = token.model_copy(update={"refresh_seq": token.refresh_seq + 1})
-        entry = await self._token_state.update(
-            handle.key,
-            refreshed,
-            revision=token_entry.revision,
-            ttl=refreshed.ttl_seconds,
-        )
+        try:
+            entry = await self._token_state.update(
+                handle.key,
+                refreshed,
+                revision=token_entry.revision,
+                ttl=refreshed.ttl_seconds,
+            )
+        except StateConflict as exc:
+            if not _is_state_revision_conflict(exc):
+                raise
+            latest_entry = await self._token_state.get(handle.key)
+            if latest_entry is None:
+                raise StateConflict("Concord participant token is missing") from exc
+            latest = ParticipantTokenRecord.model_validate(latest_entry.value)
+            if not _token_matches_handle(latest, handle):
+                raise StateConflict("Concord participant token changed owner") from exc
+            return _participant_handle(handle.key, latest, latest_entry.revision)
         return _participant_handle(handle.key, refreshed, entry.revision)
 
     async def cancel(
@@ -848,6 +878,8 @@ class ConcordParticipantLease:
 
     async def attach_or_refresh(self) -> ParticipantHandle:
         async with self._lock:
+            if self._closed:
+                raise StateConflict("Concord participant lease is closed")
             token = self._token
             if token is not None:
                 try:
@@ -856,26 +888,34 @@ class ConcordParticipantLease:
                         log_label=self._log_label,
                     )
                     return self._token
-                except StateConflict:
-                    logger.warning(
-                        "%s Concord participant token refresh conflict; "
-                        "authority lost contract=%s generation=%s participant=%s "
-                        "session=%s",
-                        self._log_label,
-                        self.contract.contract_id,
-                        self.contract.generation,
-                        self.participant,
-                        self.session_id,
-                        exc_info=True,
-                    )
+                except StateConflict as exc:
                     self._token = None
+                    if _is_terminal_participant_conflict(exc):
+                        self._closed = True
+                    else:
+                        logger.warning(
+                            "%s Concord participant token refresh conflict; "
+                            "authority lost contract=%s generation=%s participant=%s "
+                            "session=%s",
+                            self._log_label,
+                            self.contract.contract_id,
+                            self.contract.generation,
+                            self.participant,
+                            self.session_id,
+                            exc_info=True,
+                        )
                     raise
-            self._token = await self._service.attach(
-                self.contract,
-                self.participant,
-                self.session_id,
-                log_label=self._log_label,
-            )
+            try:
+                self._token = await self._service.attach(
+                    self.contract,
+                    self.participant,
+                    self.session_id,
+                    log_label=self._log_label,
+                )
+            except StateConflict as exc:
+                if _is_terminal_participant_conflict(exc):
+                    self._closed = True
+                raise
             return self._token
 
     async def heartbeat_loop(self) -> None:
@@ -886,6 +926,8 @@ class ConcordParticipantLease:
             try:
                 await self.attach_or_refresh()
             except StateConflict:
+                if self._closed:
+                    return
                 logger.warning(
                     "%s Concord participant token conflict; heartbeat will retry "
                     "contract=%s generation=%s participant=%s session=%s",
@@ -936,7 +978,8 @@ class ConcordService:
             created_by=created_by,
             supersedes=supersedes,
         )
-        logger.info(
+        logger.log(
+            _contract_lifecycle_log_level(contract.profile),
             "%s Concord contract opened profile=%s contract=%s generation=%s "
             "participants=%s revision=%s created_by=%s",
             log_label,
@@ -978,7 +1021,8 @@ class ConcordService:
             token_id=token_id,
             ttl_seconds=ttl_seconds,
         )
-        logger.info(
+        logger.log(
+            _contract_lifecycle_log_level(contract.profile),
             "%s Concord participant token attached profile=%s contract=%s "
             "generation=%s participant=%s session=%s token=%s refresh=%s "
             "revision=%s ttl=%s",
@@ -1031,7 +1075,8 @@ class ConcordService:
             reason=reason,
         )
         if cancelled:
-            logger.info(
+            logger.log(
+                _contract_lifecycle_log_level(contract.profile),
                 "%s Concord contract cancelled profile=%s contract=%s generation=%s "
                 "participant=%s reason=%s revision=%s",
                 log_label,
@@ -1241,6 +1286,28 @@ def _token_matches_handle(
     )
 
 
+def _is_state_revision_conflict(exc: StateConflict) -> bool:
+    return "revision changed" in str(exc)
+
+
+def _is_terminal_participant_conflict(exc: StateConflict) -> bool:
+    message = str(exc)
+    if message.startswith("Concord contract ") and (
+        " is missing" in message or " is cancelled" in message
+    ):
+        return True
+    return any(
+        part in message
+        for part in (
+            "Concord contract is missing",
+            "Concord contract is cancelled",
+            "Concord participant token is missing",
+            "Concord participant token changed owner",
+            "Concord participant is already attached",
+        )
+    )
+
+
 def _token_validity_status(
     token: ParticipantTokenRecord,
     *,
@@ -1297,7 +1364,8 @@ def _log_concord_event(event: ConcordContractEvent) -> None:
         return
     status = event.validity.status.value if event.validity is not None else None
     if event.event_type == ConcordEventType.VALID:
-        logger.info(
+        logger.log(
+            _contract_lifecycle_log_level(event.profile),
             "Concord contract valid profile=%s contract=%s generation=%s revision=%s",
             event.profile,
             contract.contract_id,
@@ -1306,7 +1374,8 @@ def _log_concord_event(event: ConcordContractEvent) -> None:
         )
         return
     if event.event_type == ConcordEventType.CANCELLED:
-        logger.info(
+        logger.log(
+            _contract_lifecycle_log_level(event.profile),
             "Concord contract cancelled profile=%s contract=%s generation=%s "
             "status=%s reason=%s revision=%s",
             event.profile,
@@ -1330,7 +1399,13 @@ def _log_concord_event(event: ConcordContractEvent) -> None:
             contract.revision,
         )
         return
-    logger.warning(
+    level = (
+        _contract_pending_log_level(event.profile)
+        if event.event_type == ConcordEventType.PENDING
+        else logging.WARNING
+    )
+    logger.log(
+        level,
         "Concord contract %s profile=%s contract=%s generation=%s status=%s "
         "reason=%s revision=%s",
         event.event_type.value,

@@ -5,6 +5,7 @@ import logging
 _DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 _DEFAULT_DATE_FORMAT = "%H:%M:%S"
 _QUIET_DEFAULT_LOGGER_LEVELS = {
+    "httpx": logging.WARNING,
     "websockets.server": logging.WARNING,
 }
 

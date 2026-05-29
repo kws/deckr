@@ -61,7 +61,7 @@ class ResolvedNatsServerBinary:
 @dataclass(frozen=True, slots=True)
 class NatsServerHandle:
     url: str
-    auth_token: str
+    auth_token: str | None
     runtime_dir: Path
     config_path: Path
     store_dir: Path
@@ -139,6 +139,8 @@ class NatsServerSupervisor:
         runtime_dir: Path | str | None = None,
         store_dir: Path | str | None = None,
         server_name: str = "deckr-local-nats",
+        auth_enabled: bool = True,
+        auth_token: str | None = None,
         startup_timeout: float = 10.0,
         shutdown_timeout: float = 5.0,
         log_buffer_lines: int = 200,
@@ -160,6 +162,8 @@ class NatsServerSupervisor:
         self.runtime_dir = Path(runtime_dir).expanduser() if runtime_dir else None
         self.store_dir = Path(store_dir).expanduser() if store_dir else None
         self.server_name = server_name
+        self.auth_enabled = auth_enabled
+        self.configured_auth_token = auth_token
         self.startup_timeout = float(startup_timeout)
         self.shutdown_timeout = float(shutdown_timeout)
         self._logs: deque[str] = deque(maxlen=log_buffer_lines)
@@ -201,7 +205,7 @@ class NatsServerSupervisor:
         _chmod_private_directory(ports_dir)
         _remove_stale_ports_files(ports_dir)
 
-        token = secrets.token_urlsafe(32)
+        token = self._resolve_auth_token()
         config_path = runtime_dir / "nats-server.conf"
         _write_private_text(
             config_path,
@@ -247,6 +251,13 @@ class NatsServerSupervisor:
             url,
         )
         return self._handle
+
+    def _resolve_auth_token(self) -> str | None:
+        if not self.auth_enabled:
+            return None
+        if self.configured_auth_token is not None:
+            return self.configured_auth_token
+        return secrets.token_urlsafe(32)
 
     def start_monitor(self, tg: anyio.abc.TaskGroup) -> None:
         tg.start_soon(self._raise_on_unexpected_exit)
@@ -398,6 +409,8 @@ class SupervisedNatsSubstrate:
         port: int = _DEFAULT_PORT,
         runtime_dir: Path | str | None = None,
         store_dir: Path | str | None = None,
+        auth_enabled: bool = True,
+        auth_token: str | None = None,
         startup_timeout: float = 10.0,
         shutdown_timeout: float = 5.0,
         log_buffer_lines: int = 200,
@@ -410,6 +423,8 @@ class SupervisedNatsSubstrate:
             port=port,
             runtime_dir=runtime_dir,
             store_dir=store_dir,
+            auth_enabled=auth_enabled,
+            auth_token=auth_token,
             startup_timeout=startup_timeout,
             shutdown_timeout=shutdown_timeout,
             log_buffer_lines=log_buffer_lines,
@@ -583,23 +598,27 @@ def _config_text(
     port: int,
     ports_dir: Path,
     store_dir: Path,
-    auth_token: str,
+    auth_token: str | None,
 ) -> str:
-    return "\n".join(
-        (
-            f"server_name: {json.dumps(server_name)}",
-            f"host: {json.dumps(host)}",
-            f"port: {port}",
-            f"ports_file_dir: {json.dumps(str(ports_dir))}",
-            "jetstream {",
-            f"  store_dir: {json.dumps(str(store_dir))}",
-            "}",
-            "authorization {",
-            f"  token: {json.dumps(auth_token)}",
-            "}",
-            "",
+    lines = [
+        f"server_name: {json.dumps(server_name)}",
+        f"host: {json.dumps(host)}",
+        f"port: {port}",
+        f"ports_file_dir: {json.dumps(str(ports_dir))}",
+        "jetstream {",
+        f"  store_dir: {json.dumps(str(store_dir))}",
+        "}",
+    ]
+    if auth_token is not None:
+        lines.extend(
+            (
+                "authorization {",
+                f"  token: {json.dumps(auth_token)}",
+                "}",
+            )
         )
-    )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _nats_url_from_ports_file(path: Path) -> str:

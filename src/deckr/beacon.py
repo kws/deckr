@@ -36,6 +36,12 @@ BEACON_ADVERTISEMENT_STORE_POLICY = StateStorePolicy(
 logger = logging.getLogger(__name__)
 
 
+def _beacon_lifecycle_log_level(feature_id: str) -> int:
+    if feature_id == "dev.deckr.hardware":
+        return logging.INFO
+    return logging.DEBUG
+
+
 class CandidateStatus(StrEnum):
     CANDIDATE = "candidate"
     MISSING = "missing"
@@ -593,7 +599,8 @@ class BeaconService:
             payload=payload,
             ttl_seconds=ttl_seconds,
         )
-        logger.info(
+        logger.log(
+            _beacon_lifecycle_log_level(handle.feature_id),
             "%s Beacon advertisement announced feature=%s endpoint=%s "
             "session=%s advertisement=%s refresh=%s revision=%s",
             log_label,
@@ -642,7 +649,8 @@ class BeaconService:
     ) -> bool:
         withdrawn = await self._discovery.withdraw(handle)
         if withdrawn:
-            logger.info(
+            logger.log(
+                _beacon_lifecycle_log_level(handle.feature_id),
                 "%s Beacon advertisement withdrawn feature=%s endpoint=%s "
                 "session=%s advertisement=%s revision=%s",
                 log_label,
@@ -872,10 +880,7 @@ def _log_beacon_feature_event(event: BeaconFeatureEvent) -> None:
             advertisement.refresh_seq,
             candidate.revision if candidate is not None else None,
         )
-    if event.event_type == BeaconFeatureEventType.EXPIRED:
-        logger.info(message, *args)
-    else:
-        logger.info(message, *args)
+    logger.log(_beacon_lifecycle_log_level(event.feature_id), message, *args)
 
 
 __all__ = [
