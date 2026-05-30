@@ -66,7 +66,6 @@ def _binding_metadata() -> BindingMetadata:
         configId="device-config-1",
         contextId="ctx-1",
         bindingId="binding-1",
-        bindingContract={"contractId": "binding-1", "generation": 1},
         deviceRef={"managerId": "manager-1", "deviceId": "device-1"},
         controlRef={
             "deviceRef": {"managerId": "manager-1", "deviceId": "device-1"},
@@ -141,18 +140,12 @@ def test_actions_beacon_payload_serializes_actions_by_action_id() -> None:
     }
 
 
-def test_binding_metadata_requires_concord_contract_pointer() -> None:
+def test_binding_metadata_is_controller_routing_metadata() -> None:
     metadata = _binding_metadata()
 
-    assert metadata.binding_contract.contract_id == "binding-1"
-    assert metadata.model_dump(by_alias=True, mode="json")["bindingContract"] == {
-        "contractId": "binding-1",
-        "generation": 1,
-    }
-
-    dumped = metadata.model_dump(by_alias=True, exclude={"binding_contract"})
-    with pytest.raises(ValidationError):
-        BindingMetadata.model_validate(dumped)
+    dumped = metadata.model_dump(by_alias=True, mode="json")
+    assert dumped["bindingId"] == "binding-1"
+    assert "bindingContract" not in dumped
 
 
 def test_actions_beacon_payload_validates_provider_and_action_identity() -> None:

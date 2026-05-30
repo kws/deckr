@@ -22,7 +22,6 @@ from deckr.actions.endpoints import (
     action_provider_address,
     require_provider_instance_id,
 )
-from deckr.concord import ContractPointer
 from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import (
     ACTION_MESSAGES_SCHEMA_ID,
@@ -376,7 +375,7 @@ class MatchedCapability(DeckrModel):
 
 
 class BindingMetadata(DeckrModel):
-    """Action-provider-facing metadata for one active binding agreement."""
+    """Action-provider-facing metadata for one controller-owned control binding."""
 
     provider_instance_id: str = Field(alias="providerInstanceId")
     provider_id: str = Field(alias="providerId")
@@ -385,7 +384,6 @@ class BindingMetadata(DeckrModel):
     config_id: str = Field(alias="configId")
     context_id: str = Field(alias="contextId")
     binding_id: str = Field(alias="bindingId")
-    binding_contract: ContractPointer = Field(alias="bindingContract")
     page_session_id: str | None = Field(default=None, alias="pageSessionId")
     device_ref: DeviceRef = Field(alias="deviceRef")
     control_ref: ControlRef = Field(alias="controlRef")

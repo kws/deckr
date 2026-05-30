@@ -25,7 +25,7 @@ from deckr.concord import (
     canonical_json_hash,
 )
 from deckr.contracts.messages import controller_address, hardware_manager_address
-from deckr.hardware.descriptors import ControlRef, DeviceDescriptor, DeviceRef
+from deckr.hardware.descriptors import DeviceDescriptor, DeviceRef
 from deckr.hardware.profiles import (
     HARDWARE_CLAIM_PROFILE_ID,
     HARDWARE_FEATURE_ID,
@@ -38,9 +38,9 @@ from deckr.hardware.profiles import (
     hardware_payload_from_advertisement,
 )
 from deckr.profiles import (
-    ACTION_BINDING_PROFILE_ID,
+    ACTION_PROVIDER_SESSION_PROFILE_ID,
     ACTIONS_FEATURE_ID,
-    ActionBindingTerms,
+    ActionProviderSessionTerms,
     ActionsBeaconPayload,
     actions_payload_from_advertisement,
     profile_terms_hash,
@@ -326,6 +326,8 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
     validity = await concord.validate(contract)
     assert validity.status == ContractValidityStatus.VALID
     assert validity.valid
+    assert validity.tokens[str(controller)].key == controller_token.key
+    assert validity.tokens[str(manager)].key == manager_token.key
 
     refreshed = await concord.refresh(controller_token)
     assert refreshed.refresh_seq == 2
@@ -458,6 +460,14 @@ async def test_concord_service_lease_events_and_logs(caplog) -> None:
         valid = await _receive_event_type(events, ConcordEventType.VALID)
         assert valid.validity is not None
         assert valid.validity.status == ContractValidityStatus.VALID
+        adopted_manager_lease = service.participant_lease(
+            contract=contract,
+            participant=manager,
+            session_id="manager-session",
+            log_label="TestConcord",
+        )
+        adopted_manager_lease.adopt(valid.validity.tokens[str(manager)])
+        assert (await adopted_manager_lease.attach_or_refresh()).refresh_seq == 2
 
         await token_state.expire(controller_token.key)
         expired = await _receive_event_type(events, ConcordEventType.TOKEN_EXPIRED)
@@ -602,26 +612,16 @@ def test_profile_payloads_terms_hashes_and_hardware_claim_conflicts() -> None:
         )
 
     claim_terms = _hardware_claim_terms()
-    binding_terms = ActionBindingTerms(
-        bindingId="binding-1",
+    session_terms = ActionProviderSessionTerms(
+        sessionId="provider-session",
         controllerEndpoint=controller_address("controller-main"),
         providerEndpoint=action_provider_address("provider-main"),
         providerInstanceId="provider-main",
         providerId="dev.deckr.clock",
-        actionId="dev.deckr.clock.time",
-        actionInstanceId="clock-instance-1",
-        configId="config-1",
-        contextId="context-1",
-        hardwareClaimId="claim-1",
-        deviceRef=claim_terms.devices[0].device_ref,
-        controlRef=ControlRef(
-            deviceRef=claim_terms.devices[0].device_ref,
-            controlId="key.0.0",
-        ),
     )
     assert profile_terms_hash(claim_terms) == canonical_json_hash(claim_terms)
-    assert profile_terms_hash(binding_terms) == canonical_json_hash(binding_terms)
-    assert binding_terms.profile == ACTION_BINDING_PROFILE_ID
+    assert profile_terms_hash(session_terms) == canonical_json_hash(session_terms)
+    assert session_terms.profile == ACTION_PROVIDER_SESSION_PROFILE_ID
 
     conflicting = _hardware_claim_terms(claim_id="claim-2")
     non_conflicting = _hardware_claim_terms(

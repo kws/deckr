@@ -204,7 +204,7 @@ Deckr core owns these profiles:
 | `dev.deckr.profile.hardware.v1` | Beacon | hardware devices, controls, capabilities |
 | `dev.deckr.profile.actions.v1` | Beacon | action provider actions and requirements |
 | `dev.deckr.profile.hardware_claim.v1` | Concord | controller ownership of hardware devices |
-| `dev.deckr.profile.action_binding.v1` | Concord | live controller/provider action bindings |
+| `dev.deckr.profile.action_provider_session.v1` | Concord | live controller/provider runtime sessions |
 
 For `dev.deckr.profile.hardware.v1`, the Beacon payload `sessionId` must match
 the advertisement `sessionId`, `managerEndpoint` must match the advertisement
@@ -220,11 +220,12 @@ claimed devices. Device ids in one claim must be unique. `instanceCount` must
 be greater than zero. Hardware single-owner and capacity enforcement are
 hardware-manager/profile policy over valid Concord claims.
 
-For `dev.deckr.profile.action_binding.v1`, the binding terms bind a controller,
-action provider, hardware claim, device/control reference, action identity, and
-matched capabilities. A binding is live only while the matching Concord contract
-is valid and the referenced provider advertisement/session remains acceptable to
-controller policy.
+For `dev.deckr.profile.action_provider_session.v1`, the terms bind a
+controller endpoint to one action-provider runtime endpoint and the provider
+runtime session advertised through Beacon. Individual control bindings are
+controller-owned routing state. They remain usable only while the provider
+session contract is valid and the referenced provider advertisement/session
+remains acceptable to controller policy.
 
 Service packages may use generic Beacon and Concord with package-owned feature
 ids, advertisement payload profiles, terms profiles, and private state. Deckr

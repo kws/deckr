@@ -146,7 +146,7 @@
     },
     "BindingMetadata": {
       "additionalProperties": false,
-      "description": "Action-provider-facing metadata for one active binding agreement.",
+      "description": "Action-provider-facing metadata for one controller-owned control binding.",
       "properties": {
         "actionId": {
           "title": "Actionid",
@@ -155,9 +155,6 @@
         "actionInstanceId": {
           "title": "Actioninstanceid",
           "type": "string"
-        },
-        "bindingContract": {
-          "$ref": "#/$defs/ContractPointer"
         },
         "bindingId": {
           "title": "Bindingid",
@@ -242,7 +239,6 @@
         "configId",
         "contextId",
         "bindingId",
-        "bindingContract",
         "deviceRef",
         "controlRef"
       ],
@@ -571,25 +567,6 @@
         "capabilityId"
       ],
       "title": "CapabilityRef",
-      "type": "object"
-    },
-    "ContractPointer": {
-      "additionalProperties": false,
-      "properties": {
-        "contractId": {
-          "title": "Contractid",
-          "type": "string"
-        },
-        "generation": {
-          "title": "Generation",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "contractId",
-        "generation"
-      ],
-      "title": "ContractPointer",
       "type": "object"
     },
     "ControlRef": {

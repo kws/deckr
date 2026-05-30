@@ -31,7 +31,7 @@ CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID = "dev.deckr.concord.participant-token.v1"
 DEFAULT_CONCORD_CONTRACT_STORE_NAME = "deckr_concord_contract_v1"
 DEFAULT_CONCORD_TOKEN_STORE_NAME = "deckr_concord_token_v1"
 DEFAULT_CONCORD_TOKEN_TTL_SECONDS = 30
-ACTION_BINDING_PROFILE_ID = "dev.deckr.profile.action_binding.v1"
+ACTION_PROVIDER_SESSION_PROFILE_ID = "dev.deckr.profile.action_provider_session.v1"
 CONCORD_CONTRACT_STORE_POLICY = PERSISTENT_STATE_STORE_POLICY
 CONCORD_TOKEN_STORE_POLICY = StateStorePolicy(
     broker_ttl_seconds=float(DEFAULT_CONCORD_TOKEN_TTL_SECONDS),
@@ -55,7 +55,7 @@ def _contract_pending_log_level(profile: str | None) -> int:
 
 
 def _is_chattery_contract_profile(profile: str | None) -> bool:
-    return profile == ACTION_BINDING_PROFILE_ID or (
+    return profile == ACTION_PROVIDER_SESSION_PROFILE_ID or (
         profile is not None and profile.endswith(".service_use.v1")
     )
 
@@ -440,7 +440,7 @@ class ParticipantHandle:
 class ContractValidity:
     status: ContractValidityStatus
     contract: ContractRecord | None = None
-    tokens: Mapping[str, ParticipantTokenRecord] = field(default_factory=dict)
+    tokens: Mapping[str, ParticipantHandle] = field(default_factory=dict)
     reason: str | None = None
 
     @property
@@ -753,7 +753,7 @@ class ConcordCoordinator:
 
         attached_participants = {str(item) for item in record.attached_participants}
         pending_participant: str | None = None
-        tokens: dict[str, ParticipantTokenRecord] = {}
+        tokens: dict[str, ParticipantHandle] = {}
         for participant in record.participants:
             participant_key = str(participant)
             token_key = concord_participant_token_key(
@@ -793,7 +793,11 @@ class ConcordCoordinator:
                 participant=participant,
                 current_sessions=current_sessions,
             )
-            tokens[participant_key] = token
+            tokens[participant_key] = _participant_handle(
+                token_key,
+                token,
+                token_entry.revision,
+            )
             if status is not None:
                 return ContractValidity(status, contract=record, tokens=tokens)
             if participant_key not in attached_participants:

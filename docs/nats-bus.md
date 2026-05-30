@@ -171,7 +171,7 @@ Deckr core ships these profile contracts:
 | `dev.deckr.profile.hardware.v1` | Beacon | hardware devices, controls, capabilities |
 | `dev.deckr.profile.actions.v1` | Beacon | action provider actions and requirements |
 | `dev.deckr.profile.hardware_claim.v1` | Concord | controller ownership of hardware devices |
-| `dev.deckr.profile.action_binding.v1` | Concord | live controller/provider action bindings |
+| `dev.deckr.profile.action_provider_session.v1` | Concord | live controller/provider runtime sessions |
 
 The generic Beacon layer validates only the advertisement envelope. The generic
 Concord layer validates only contract and token mechanics. Action profile
@@ -182,8 +182,8 @@ The language-neutral profile rules are summarized in
 
 Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
-whether a claim or binding is live. Python hardware managers use the shared
-`deckr.hardware.runtime.HardwareManagerRuntime` implementation to advertise
+whether a claim or provider session is live. Python hardware managers use the
+shared `deckr.hardware.runtime.HardwareManagerRuntime` implementation to advertise
 hardware through `BeaconAdvertiser`, maintain claim tokens through
 `ConcordParticipantLease`, and route input only for live claims.
 

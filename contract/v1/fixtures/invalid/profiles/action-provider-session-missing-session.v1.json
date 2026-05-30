@@ -1,0 +1,7 @@
+{
+  "controllerEndpoint": "controller:controller-main",
+  "profile": "dev.deckr.profile.action_provider_session.v1",
+  "providerEndpoint": "action_provider:clock-main",
+  "providerId": "dev.deckr.clock",
+  "providerInstanceId": "clock-main"
+}

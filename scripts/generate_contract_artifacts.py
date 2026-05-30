@@ -52,8 +52,6 @@ from deckr.hardware.descriptors import (
     CAPABILITY_DESCRIPTOR_SCHEMA_ID,
     CONTROL_DESCRIPTOR_SCHEMA_ID,
     DEVICE_DESCRIPTOR_SCHEMA_ID,
-    CapabilityRef,
-    ControlRef,
     DeviceDescriptor,
     DeviceRef,
     descriptor_schema_artifacts,
@@ -75,11 +73,11 @@ from deckr.hardware.profiles import (
     ProfileCapacity,
 )
 from deckr.profiles import (
-    ACTION_BINDING_PROFILE_ID,
+    ACTION_PROVIDER_SESSION_PROFILE_ID,
     ACTIONS_FEATURE_ID,
     ACTIONS_PROFILE_ID,
     ActionBeaconDescriptor,
-    ActionBindingTerms,
+    ActionProviderSessionTerms,
     ActionsBeaconPayload,
 )
 from deckr.services.messages import (
@@ -229,10 +227,10 @@ def _add_schemas(add_artifact) -> None:
             "Deckr Concord hardware claim terms",
         ),
         (
-            ACTION_BINDING_PROFILE_ID,
-            "schemas/profiles/action-binding.v1.schema.json",
-            ActionBindingTerms,
-            "Deckr Concord action binding terms",
+            ACTION_PROVIDER_SESSION_PROFILE_ID,
+            "schemas/profiles/action-provider-session.v1.schema.json",
+            ActionProviderSessionTerms,
+            "Deckr Concord action provider session terms",
         ),
     )
     for schema_id, path, model, title in schema_models:
@@ -252,7 +250,7 @@ def _fixtures() -> list[dict[str, Any]]:
     hardware_payload = _hardware_payload(descriptor)
     actions_payload = _actions_payload()
     hardware_claim_terms = _hardware_claim_terms()
-    action_binding_terms = _action_binding_terms()
+    action_provider_session_terms = _action_provider_session_terms()
 
     settings_request = _stable_message(
         DeckrMessage(
@@ -446,11 +444,11 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=hardware_claim_terms.to_dict(),
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.profile.action_binding.valid.v1",
-            path="fixtures/valid/profiles/action-binding.v1.json",
-            title="Valid Deckr action binding Concord terms",
-            schema_path="schemas/profiles/action-binding.v1.schema.json",
-            payload=action_binding_terms.to_dict(),
+            artifact_id="dev.deckr.fixture.profile.action_provider_session.valid.v1",
+            path="fixtures/valid/profiles/action-provider-session.v1.json",
+            title="Valid Deckr action provider session Concord terms",
+            schema_path="schemas/profiles/action-provider-session.v1.schema.json",
+            payload=action_provider_session_terms.to_dict(),
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1",
@@ -512,14 +510,14 @@ def _fixtures() -> list[dict[str, Any]]:
             valid=False,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.profile.action_binding.invalid_missing_binding.v1",
-            path="fixtures/invalid/profiles/action-binding-missing-binding.v1.json",
-            title="Invalid action binding terms missing bindingId",
-            schema_path="schemas/profiles/action-binding.v1.schema.json",
+            artifact_id="dev.deckr.fixture.profile.action_provider_session.invalid_missing_session.v1",
+            path="fixtures/invalid/profiles/action-provider-session-missing-session.v1.json",
+            title="Invalid action provider session terms missing sessionId",
+            schema_path="schemas/profiles/action-provider-session.v1.schema.json",
             payload={
                 key: value
-                for key, value in action_binding_terms.to_dict().items()
-                if key != "bindingId"
+                for key, value in action_provider_session_terms.to_dict().items()
+                if key != "sessionId"
             },
             valid=False,
         ),
@@ -535,7 +533,7 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
     action_fixture_path = "fixtures/valid/actions/settings-request.v1.json"
     action_message = DeckrMessage.from_dict(valid_fixture_by_path[action_fixture_path])
     hardware_claim_terms = _hardware_claim_terms()
-    action_binding_terms = _action_binding_terms()
+    action_provider_session_terms = _action_provider_session_terms()
 
     add_artifact(
         kind="vector",
@@ -611,7 +609,7 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
             "schema": "dev.deckr.vector.concord_terms_hash.v1",
             "cases": [
                 _terms_hash_case("hardware_claim", hardware_claim_terms),
-                _terms_hash_case("action_binding", action_binding_terms),
+                _terms_hash_case("action_provider_session", action_provider_session_terms),
             ],
         },
     )
@@ -764,40 +762,13 @@ def _hardware_claim_terms() -> HardwareClaimTerms:
     )
 
 
-def _action_binding_terms() -> ActionBindingTerms:
-    device_ref = DeviceRef(
-        managerId="mirabox-main",
-        deviceId="deck-1",
-        fingerprint="fingerprint:deck-1",
-    )
-    control_ref = ControlRef(deviceRef=device_ref, controlId="key.0.0")
-    return ActionBindingTerms(
-        bindingId="binding-1",
+def _action_provider_session_terms() -> ActionProviderSessionTerms:
+    return ActionProviderSessionTerms(
+        sessionId="provider-session",
         controllerEndpoint=controller_address("controller-main"),
         providerEndpoint=action_provider_address("clock-main"),
         providerInstanceId="clock-main",
         providerId="dev.deckr.clock",
-        actionId="dev.deckr.clock.time",
-        actionInstanceId="clock-instance-1",
-        configId="clock-config-1",
-        contextId="context-1",
-        hardwareClaimId="claim-1",
-        deviceRef=device_ref,
-        controlRef=control_ref,
-        matchedCapabilities=(
-            {
-                "requirementName": "press",
-                "capability": CapabilityRef(
-                    deviceRef=device_ref,
-                    controlId="key.0.0",
-                    capabilityId="button.press",
-                ),
-                "family": "dev.deckr.input.button",
-                "type": "activation",
-                "direction": "input",
-                "eventTypes": ("press",),
-            },
-        ),
     )
 
 
@@ -839,7 +810,7 @@ def _key_token_case(raw: str) -> dict[str, str]:
 
 def _terms_hash_case(
     case_id: str,
-    terms: HardwareClaimTerms | ActionBindingTerms,
+    terms: HardwareClaimTerms | ActionProviderSessionTerms,
 ) -> dict[str, str]:
     canonical = canonical_json_bytes(terms).decode("utf-8")
     return {

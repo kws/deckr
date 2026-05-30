@@ -37,12 +37,12 @@
       "valid": false
     },
     {
-      "description": "Invalid action binding terms missing bindingId",
-      "id": "dev.deckr.fixture.profile.action_binding.invalid_missing_binding.v1",
+      "description": "Invalid action provider session terms missing sessionId",
+      "id": "dev.deckr.fixture.profile.action_provider_session.invalid_missing_session.v1",
       "kind": "fixture",
-      "path": "fixtures/invalid/profiles/action-binding-missing-binding.v1.json",
-      "schemaPath": "schemas/profiles/action-binding.v1.schema.json",
-      "title": "Invalid action binding terms missing bindingId",
+      "path": "fixtures/invalid/profiles/action-provider-session-missing-session.v1.json",
+      "schemaPath": "schemas/profiles/action-provider-session.v1.schema.json",
+      "title": "Invalid action provider session terms missing sessionId",
       "valid": false
     },
     {
@@ -127,12 +127,12 @@
       "valid": true
     },
     {
-      "description": "Valid Deckr action binding Concord terms",
-      "id": "dev.deckr.fixture.profile.action_binding.valid.v1",
+      "description": "Valid Deckr action provider session Concord terms",
+      "id": "dev.deckr.fixture.profile.action_provider_session.valid.v1",
       "kind": "fixture",
-      "path": "fixtures/valid/profiles/action-binding.v1.json",
-      "schemaPath": "schemas/profiles/action-binding.v1.schema.json",
-      "title": "Valid Deckr action binding Concord terms",
+      "path": "fixtures/valid/profiles/action-provider-session.v1.json",
+      "schemaPath": "schemas/profiles/action-provider-session.v1.schema.json",
+      "title": "Valid Deckr action provider session Concord terms",
       "valid": true
     },
     {
@@ -236,12 +236,12 @@
       "title": "Hardware messages lane messages"
     },
     {
-      "description": "Canonical JSON Schema for Deckr Concord action binding terms.",
-      "id": "dev.deckr.profile.action_binding.v1",
+      "description": "Canonical JSON Schema for Deckr Concord action provider session terms.",
+      "id": "dev.deckr.profile.action_provider_session.v1",
       "kind": "schema",
-      "path": "schemas/profiles/action-binding.v1.schema.json",
-      "schemaId": "dev.deckr.profile.action_binding.v1",
-      "title": "Deckr Concord action binding terms"
+      "path": "schemas/profiles/action-provider-session.v1.schema.json",
+      "schemaId": "dev.deckr.profile.action_provider_session.v1",
+      "title": "Deckr Concord action provider session terms"
     },
     {
       "description": "Canonical JSON Schema for Deckr Beacon actions profile payload.",

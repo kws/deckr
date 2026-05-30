@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "EndpointAddress": {
+      "description": "A typed Deckr endpoint address serialized as ``<family>:<endpoint_id>``.",
+      "title": "EndpointAddress",
+      "type": "string"
+    }
+  },
+  "$id": "dev.deckr.profile.action_provider_session.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "controllerEndpoint": {
+      "$ref": "#/$defs/EndpointAddress"
+    },
+    "profile": {
+      "const": "dev.deckr.profile.action_provider_session.v1",
+      "default": "dev.deckr.profile.action_provider_session.v1",
+      "title": "Profile",
+      "type": "string"
+    },
+    "providerEndpoint": {
+      "$ref": "#/$defs/EndpointAddress"
+    },
+    "providerId": {
+      "title": "Providerid",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "title": "Providerinstanceid",
+      "type": "string"
+    },
+    "sessionId": {
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "controllerEndpoint",
+    "providerEndpoint",
+    "providerInstanceId",
+    "providerId"
+  ],
+  "title": "Deckr Concord action provider session terms",
+  "type": "object",
+  "x-deckr-schema-version": "1"
+}

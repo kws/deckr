@@ -9,16 +9,15 @@ from deckr.actions.endpoints import (
     action_provider_address,
     require_provider_instance_id,
 )
-from deckr.actions.messages import ActionDescriptor, MatchedCapability
+from deckr.actions.messages import ActionDescriptor
 from deckr.beacon import AdvertisementRecord
 from deckr.concord import canonical_json_hash
 from deckr.contracts.messages import EndpointAddress
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
-from deckr.hardware.descriptors import ControlRef, DeviceRef
 from deckr.hardware.profiles import ProfileCapacity as _ProfileCapacity
 
 ACTIONS_PROFILE_ID = "dev.deckr.profile.actions.v1"
-ACTION_BINDING_PROFILE_ID = "dev.deckr.profile.action_binding.v1"
+ACTION_PROVIDER_SESSION_PROFILE_ID = "dev.deckr.profile.action_provider_session.v1"
 
 ACTIONS_FEATURE_ID = "dev.deckr.actions"
 
@@ -142,37 +141,23 @@ class ActionsBeaconPayload(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
-class ActionBindingTerms(DeckrModel):
-    profile: Literal[ACTION_BINDING_PROFILE_ID] = ACTION_BINDING_PROFILE_ID
-    binding_id: str = Field(alias="bindingId")
+class ActionProviderSessionTerms(DeckrModel):
+    profile: Literal[ACTION_PROVIDER_SESSION_PROFILE_ID] = (
+        ACTION_PROVIDER_SESSION_PROFILE_ID
+    )
+    session_id: str = Field(alias="sessionId")
     controller_endpoint: EndpointAddress = Field(alias="controllerEndpoint")
     provider_endpoint: EndpointAddress = Field(alias="providerEndpoint")
     provider_instance_id: str = Field(alias="providerInstanceId")
     provider_id: str = Field(alias="providerId")
-    action_id: str = Field(alias="actionId")
-    action_instance_id: str = Field(alias="actionInstanceId")
-    config_id: str = Field(alias="configId")
-    context_id: str = Field(alias="contextId")
-    hardware_claim_id: str = Field(alias="hardwareClaimId")
-    device_ref: DeviceRef = Field(alias="deviceRef")
-    control_ref: ControlRef = Field(alias="controlRef")
-    matched_capabilities: tuple[MatchedCapability, ...] = Field(
-        default_factory=tuple,
-        alias="matchedCapabilities",
-    )
 
     @field_validator(
-        "binding_id",
+        "session_id",
         "provider_id",
-        "action_id",
-        "action_instance_id",
-        "config_id",
-        "context_id",
-        "hardware_claim_id",
     )
     @classmethod
     def _validate_text(cls, value: str) -> str:
-        return _require_text(value, field_name="action binding field")
+        return _require_text(value, field_name="action provider session field")
 
     @field_validator("provider_instance_id")
     @classmethod
@@ -180,7 +165,7 @@ class ActionBindingTerms(DeckrModel):
         return require_provider_instance_id(value, field_name="providerInstanceId")
 
     @model_validator(mode="after")
-    def _validate_identity(self) -> ActionBindingTerms:
+    def _validate_identity(self) -> ActionProviderSessionTerms:
         _endpoint_id(
             self.controller_endpoint,
             family="controller",
@@ -193,14 +178,6 @@ class ActionBindingTerms(DeckrModel):
         )
         if provider_instance_id != self.provider_instance_id:
             raise ValueError("providerEndpoint must equal action_provider:<providerInstanceId>")
-        if self.device_ref != self.control_ref.device_ref:
-            raise ValueError("controlRef.deviceRef must match deviceRef")
-        for matched in self.matched_capabilities:
-            capability = matched.capability
-            if capability.device_ref != self.device_ref:
-                raise ValueError("matchedCapabilities must refer to the binding device")
-            if capability.control_id not in {None, self.control_ref.control_id}:
-                raise ValueError("matchedCapabilities must refer to the binding control")
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -227,11 +204,11 @@ def actions_payload_from_advertisement(
 
 
 __all__ = [
-    "ACTION_BINDING_PROFILE_ID",
+    "ACTION_PROVIDER_SESSION_PROFILE_ID",
     "ACTIONS_FEATURE_ID",
     "ACTIONS_PROFILE_ID",
     "ActionBeaconDescriptor",
-    "ActionBindingTerms",
+    "ActionProviderSessionTerms",
     "ActionsBeaconPayload",
     "actions_payload_from_advertisement",
     "profile_terms_hash",

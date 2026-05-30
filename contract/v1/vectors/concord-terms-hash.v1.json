@@ -6,9 +6,9 @@
       "id": "hardware_claim"
     },
     {
-      "canonicalJson": "{\"actionId\":\"dev.deckr.clock.time\",\"actionInstanceId\":\"clock-instance-1\",\"bindingId\":\"binding-1\",\"configId\":\"clock-config-1\",\"contextId\":\"context-1\",\"controlRef\":{\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"}},\"controllerEndpoint\":\"controller:controller-main\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"hardwareClaimId\":\"claim-1\",\"matchedCapabilities\":[{\"capability\":{\"capabilityId\":\"button.press\",\"controlId\":\"key.0.0\",\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"}},\"commandTypes\":[],\"direction\":\"input\",\"eventTypes\":[\"press\"],\"family\":\"dev.deckr.input.button\",\"provenance\":\"native\",\"requirementName\":\"press\",\"type\":\"activation\"}],\"profile\":\"dev.deckr.profile.action_binding.v1\",\"providerEndpoint\":\"action_provider:clock-main\",\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\"}",
-      "hash": "sha256:a74339543f7bc0e1eef70a4bd6873a90c8182188d8ecb62857f957938530b475",
-      "id": "action_binding"
+      "canonicalJson": "{\"controllerEndpoint\":\"controller:controller-main\",\"profile\":\"dev.deckr.profile.action_provider_session.v1\",\"providerEndpoint\":\"action_provider:clock-main\",\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\",\"sessionId\":\"provider-session\"}",
+      "hash": "sha256:304ed033bf0f28d086a4f2e5a60dd61425008b8096ad4578d56c5ee89248dfa3",
+      "id": "action_provider_session"
     }
   ],
   "schema": "dev.deckr.vector.concord_terms_hash.v1"
