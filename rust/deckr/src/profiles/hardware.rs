@@ -88,6 +88,8 @@ impl HardwareBeaconPayload {
         }
         for (key, device) in &self.devices {
             device.capacity.validate()?;
+            device.device_ref.validate()?;
+            device.descriptor.validate()?;
             if device.device_ref.manager_id != self.manager_id {
                 return Err(Error::Invalid(
                     "deviceRef.managerId must match managerId".to_string(),

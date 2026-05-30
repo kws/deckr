@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
@@ -14,6 +14,18 @@ pub const LANE_SUBJECT_PREFIX: &str = "deckr.lane";
 pub const HARDWARE_MESSAGES_LANE: &str = "hardware_messages";
 pub const HARDWARE_MESSAGES_SCHEMA_ID: &str = "dev.deckr.message.hardware_messages.v1";
 pub const DECKR_PROTOCOL_VERSION: &str = "1";
+
+const JSON_SCHEMA_CONTRACT_KEYS: &[&str] = &[
+    "$ref",
+    "allOf",
+    "anyOf",
+    "const",
+    "enum",
+    "items",
+    "oneOf",
+    "properties",
+    "type",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +127,295 @@ pub struct DeviceDescriptor {
     pub controls: Vec<ControlDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<CapabilityDescriptor>,
+}
+
+impl DeviceRef {
+    pub fn validate(&self) -> Result<()> {
+        require_not_endpoint_address(&self.manager_id, "device reference")?;
+        require_not_endpoint_address(&self.device_id, "device reference")?;
+        if let Some(fingerprint) = &self.fingerprint {
+            require_non_empty(fingerprint, "fingerprint")?;
+        }
+        Ok(())
+    }
+}
+
+impl ControlGeometry {
+    pub fn validate(&self) -> Result<()> {
+        require_finite(self.x, "geometry value")?;
+        require_finite(self.y, "geometry value")?;
+        require_optional_positive_finite(self.width, "geometry width")?;
+        require_optional_positive_finite(self.height, "geometry height")?;
+        if !matches!(
+            self.unit.as_str(),
+            "grid" | "pixel" | "normalized" | "millimeter"
+        ) {
+            return Err(Error::Invalid(
+                "geometry unit must be grid, pixel, normalized, or millimeter".to_string(),
+            ));
+        }
+        if self.unit == "normalized" {
+            require_normalized(self.x, "normalized geometry x")?;
+            require_normalized(self.y, "normalized geometry y")?;
+            if let Some(width) = self.width {
+                require_normalized(width, "normalized geometry width")?;
+            }
+            if let Some(height) = self.height {
+                require_normalized(height, "normalized geometry height")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl CapabilitySchema {
+    pub fn validate(&self) -> Result<()> {
+        if let Some(schema_id) = &self.schema_id {
+            require_globally_qualified_name(schema_id, "schema_id")?;
+        }
+        let Some(object) = self.schema.as_object() else {
+            return Err(Error::Invalid(
+                "capability schema must be a JSON object".to_string(),
+            ));
+        };
+        if object.is_empty() {
+            return Err(Error::Invalid(
+                "capability schema must not be empty".to_string(),
+            ));
+        }
+        if !JSON_SCHEMA_CONTRACT_KEYS
+            .iter()
+            .any(|key| object.contains_key(*key))
+        {
+            return Err(Error::Invalid(
+                "capability schema must include a JSON Schema contract keyword".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl CapabilityConstraint {
+    pub fn validate(&self) -> Result<()> {
+        require_contract_token(&self.constraint_type, "constraint type")?;
+        require_contract_token(&self.subject, "constraint subject")?;
+        if let Some(unit) = &self.unit {
+            require_contract_token(unit, "capability constraint unit")?;
+        }
+        if let Some(minimum) = self.minimum {
+            require_finite(minimum, "capability constraint number")?;
+        }
+        if let Some(maximum) = self.maximum {
+            require_finite(maximum, "capability constraint number")?;
+        }
+        if let Some(step) = self.step {
+            require_finite(step, "capability constraint number")?;
+            if step <= 0.0 {
+                return Err(Error::Invalid(
+                    "capability constraint step must be positive".to_string(),
+                ));
+            }
+        }
+        if let (Some(minimum), Some(maximum)) = (self.minimum, self.maximum) {
+            if minimum > maximum {
+                return Err(Error::Invalid(
+                    "capability constraint minimum must not exceed maximum".to_string(),
+                ));
+            }
+        }
+        if self.value.as_ref().is_none_or(Value::is_null)
+            && self.values.is_empty()
+            && self.minimum.is_none()
+            && self.maximum.is_none()
+            && self.step.is_none()
+        {
+            return Err(Error::Invalid(
+                "capability constraint must carry a bound or value".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl CapabilityDescriptor {
+    pub fn validate(&self) -> Result<()> {
+        require_contract_token(&self.capability_id, "capability_id")?;
+        require_globally_qualified_name(&self.family, "capability family")?;
+        validate_core_capability_family(&self.family)?;
+        require_contract_token(&self.capability_type, "capability type")?;
+        validate_capability_direction(&self.direction)?;
+        validate_access(&self.direction, &self.access)?;
+        if let Some(value_schema) = &self.value_schema {
+            value_schema.validate()?;
+        }
+        if let Some(command_schema) = &self.command_schema {
+            if !matches!(self.direction.as_str(), "output" | "command") {
+                return Err(Error::Invalid(
+                    "command schema is only valid on output or command capabilities".to_string(),
+                ));
+            }
+            command_schema.validate()?;
+        }
+        for constraint in &self.constraints {
+            constraint.validate()?;
+        }
+        validate_contract_token_list(&self.event_types, "event or command type")?;
+        validate_contract_token_list(&self.command_types, "event or command type")?;
+        if !self.event_types.is_empty() && !matches!(self.direction.as_str(), "input" | "state") {
+            return Err(Error::Invalid(
+                "event types are only valid on input or state capabilities".to_string(),
+            ));
+        }
+        if !self.command_types.is_empty()
+            && !matches!(self.direction.as_str(), "output" | "command")
+        {
+            return Err(Error::Invalid(
+                "command types are only valid on output or command capabilities".to_string(),
+            ));
+        }
+        self.validate_core_family_type()
+    }
+
+    fn validate_core_family_type(&self) -> Result<()> {
+        match self.family.as_str() {
+            "dev.deckr.input.button" => {
+                if !matches!(self.capability_type.as_str(), "activation" | "momentary") {
+                    return Err(Error::Invalid(
+                        "dev.deckr.input.button capability type must be activation or momentary"
+                            .to_string(),
+                    ));
+                }
+                if self.capability_type == "activation" && self.event_types != ["press"] {
+                    return Err(Error::Invalid(
+                        "dev.deckr.input.button activation capabilities emit press only"
+                            .to_string(),
+                    ));
+                }
+                if self.capability_type == "momentary" && self.event_types != ["down", "up"] {
+                    return Err(Error::Invalid(
+                        "dev.deckr.input.button momentary capabilities emit down and up"
+                            .to_string(),
+                    ));
+                }
+            }
+            "dev.deckr.input.encoder" => {
+                if self.capability_type != "relative" {
+                    return Err(Error::Invalid(
+                        "dev.deckr.input.encoder capability type must be relative".to_string(),
+                    ));
+                }
+                if self.event_types != ["rotate"] {
+                    return Err(Error::Invalid(
+                        "dev.deckr.input.encoder relative capabilities emit rotate".to_string(),
+                    ));
+                }
+            }
+            "dev.deckr.input.touch" => {
+                if self.capability_type != "gesture" {
+                    return Err(Error::Invalid(
+                        "dev.deckr.input.touch capability type must be gesture".to_string(),
+                    ));
+                }
+                if self.event_types != ["tap", "swipe"] {
+                    return Err(Error::Invalid(
+                        "dev.deckr.input.touch gesture capabilities emit tap and swipe".to_string(),
+                    ));
+                }
+            }
+            "dev.deckr.output.raster" => {
+                if self.capability_type != "bitmap" {
+                    return Err(Error::Invalid(
+                        "dev.deckr.output.raster capability type must be bitmap".to_string(),
+                    ));
+                }
+                if self.command_types != ["set_frame", "clear"] {
+                    return Err(Error::Invalid(
+                        "dev.deckr.output.raster bitmap capabilities support set_frame and clear"
+                            .to_string(),
+                    ));
+                }
+            }
+            "dev.deckr.device.power" => {
+                if self.capability_type != "screen" {
+                    return Err(Error::Invalid(
+                        "dev.deckr.device.power capability type must be screen".to_string(),
+                    ));
+                }
+                if self.command_types != ["sleep", "wake"] {
+                    return Err(Error::Invalid(
+                        "dev.deckr.device.power screen capabilities support sleep and wake"
+                            .to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl ControlDescriptor {
+    pub fn validate(&self) -> Result<()> {
+        require_non_empty(&self.control_id, "control_id")?;
+        require_contract_token(&self.kind, "control kind")?;
+        if let Some(label) = &self.label {
+            require_non_empty(label, "control text")?;
+        }
+        if let Some(geometry) = &self.geometry {
+            geometry.validate()?;
+        }
+        let mut capability_ids = Vec::new();
+        for capability in &self.input_capabilities {
+            if capability.direction != "input" {
+                return Err(Error::Invalid(
+                    "input_capabilities must have input direction".to_string(),
+                ));
+            }
+            capability.validate()?;
+            capability_ids.push(capability.capability_id.clone());
+        }
+        for capability in &self.output_capabilities {
+            if capability.direction != "output" {
+                return Err(Error::Invalid(
+                    "output_capabilities must have output direction".to_string(),
+                ));
+            }
+            capability.validate()?;
+            capability_ids.push(capability.capability_id.clone());
+        }
+        require_unique(&capability_ids, "capability ids on control")?;
+        Ok(())
+    }
+}
+
+impl DeviceDescriptor {
+    pub fn validate(&self) -> Result<()> {
+        require_not_endpoint_address(&self.device_id, "device_id")?;
+        require_non_empty(&self.fingerprint, "device descriptor text")?;
+        require_non_empty(&self.display_name, "device descriptor text")?;
+        if let Some(manufacturer) = &self.manufacturer {
+            require_non_empty(manufacturer, "device descriptor text")?;
+        }
+        if let Some(model) = &self.model {
+            require_non_empty(model, "device descriptor text")?;
+        }
+        if let Some(serial_number) = &self.serial_number {
+            require_non_empty(serial_number, "device descriptor text")?;
+        }
+        let mut control_ids = Vec::new();
+        for control in &self.controls {
+            control.validate()?;
+            control_ids.push(control.control_id.clone());
+        }
+        require_unique(&control_ids, "control ids")?;
+        let mut capability_ids = Vec::new();
+        for capability in &self.capabilities {
+            capability.validate()?;
+            capability_ids.push(capability.capability_id.clone());
+        }
+        require_unique(&capability_ids, "device-level capability ids")?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -647,8 +948,264 @@ fn recipient_header(message: &DeckrMessage) -> String {
     }
 }
 
+fn require_non_empty(value: &str, field_name: &str) -> Result<()> {
+    if value.trim() != value || value.is_empty() {
+        return Err(Error::Invalid(format!(
+            "{field_name} must be non-empty with no leading or trailing whitespace"
+        )));
+    }
+    Ok(())
+}
+
+fn require_not_endpoint_address(value: &str, field_name: &str) -> Result<()> {
+    require_non_empty(value, field_name)?;
+    if value.starts_with("action_provider:")
+        || value.starts_with("controller:")
+        || value.starts_with("hardware_manager:")
+    {
+        return Err(Error::Invalid(format!(
+            "{field_name} must not be a Deckr endpoint address"
+        )));
+    }
+    Ok(())
+}
+
+fn require_contract_token(value: &str, field_name: &str) -> Result<()> {
+    require_non_empty(value, field_name)?;
+    let mut segments = value.split('.');
+    let Some(first) = segments.next() else {
+        return Err(Error::Invalid(format!(
+            "{field_name} must be a lowercase contract identifier"
+        )));
+    };
+    if !segment_starts_with_lowercase(first) || !contract_segment_tail_valid(first) {
+        return Err(Error::Invalid(format!(
+            "{field_name} must be a lowercase contract identifier"
+        )));
+    }
+    for segment in segments {
+        if !segment_starts_with_lowercase_or_digit(segment) || !contract_segment_tail_valid(segment)
+        {
+            return Err(Error::Invalid(format!(
+                "{field_name} must be a lowercase contract identifier"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn require_globally_qualified_name(value: &str, field_name: &str) -> Result<()> {
+    require_contract_token(value, field_name)?;
+    if !value.contains('.') {
+        return Err(Error::Invalid(format!(
+            "{field_name} must be globally namespaced"
+        )));
+    }
+    Ok(())
+}
+
+fn segment_starts_with_lowercase(segment: &str) -> bool {
+    segment
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_lowercase())
+}
+
+fn segment_starts_with_lowercase_or_digit(segment: &str) -> bool {
+    segment
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+}
+
+fn contract_segment_tail_valid(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+        })
+}
+
+fn require_finite(value: f64, field_name: &str) -> Result<()> {
+    if !value.is_finite() {
+        return Err(Error::Invalid(format!("{field_name} must be finite")));
+    }
+    Ok(())
+}
+
+fn require_optional_positive_finite(value: Option<f64>, field_name: &str) -> Result<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    require_finite(value, field_name)?;
+    if value <= 0.0 {
+        return Err(Error::Invalid(format!("{field_name} must be positive")));
+    }
+    Ok(())
+}
+
+fn require_normalized(value: f64, field_name: &str) -> Result<()> {
+    require_finite(value, field_name)?;
+    if !(0.0..=1.0).contains(&value) {
+        return Err(Error::Invalid(format!(
+            "{field_name} must be between 0 and 1"
+        )));
+    }
+    Ok(())
+}
+
+fn require_unique(values: &[String], field_name: &str) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        if !seen.insert(value) {
+            return Err(Error::Invalid(format!("{field_name} must be unique")));
+        }
+    }
+    Ok(())
+}
+
+fn validate_contract_token_list(values: &[String], field_name: &str) -> Result<()> {
+    for value in values {
+        require_contract_token(value, field_name)?;
+    }
+    require_unique(values, "event or command types")
+}
+
+fn validate_core_capability_family(family: &str) -> Result<()> {
+    if family.starts_with("dev.deckr.")
+        && !matches!(
+            family,
+            "dev.deckr.device.power"
+                | "dev.deckr.input.button"
+                | "dev.deckr.input.encoder"
+                | "dev.deckr.input.touch"
+                | "dev.deckr.output.raster"
+        )
+    {
+        return Err(Error::Invalid(format!(
+            "unsupported Deckr core capability family: {family}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_capability_direction(direction: &str) -> Result<()> {
+    if !matches!(direction, "input" | "output" | "state" | "command") {
+        return Err(Error::Invalid(
+            "capability direction must be input, output, state, or command".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_access(direction: &str, access: &[String]) -> Result<()> {
+    if access.is_empty() {
+        return Err(Error::Invalid(
+            "capability access must not be empty".to_string(),
+        ));
+    }
+    require_unique(access, "capability access")?;
+    for value in access {
+        if !matches!(
+            value.as_str(),
+            "emits" | "readable" | "settable" | "requestable" | "invokable"
+        ) {
+            return Err(Error::Invalid(format!(
+                "unsupported capability access: {value}"
+            )));
+        }
+    }
+    let allowed = match direction {
+        "input" => ["emits"].as_slice(),
+        "output" => ["settable", "invokable"].as_slice(),
+        "state" => ["readable", "requestable", "settable", "emits"].as_slice(),
+        "command" => ["invokable"].as_slice(),
+        _ => {
+            return Err(Error::Invalid(
+                "unsupported capability direction".to_string(),
+            ))
+        }
+    };
+    if !access
+        .iter()
+        .any(|value| allowed.iter().any(|allowed| value == allowed))
+    {
+        return Err(Error::Invalid(format!(
+            "{direction} capability access does not include a supported access"
+        )));
+    }
+    Ok(())
+}
+
 fn parse_datetime(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|value| value.with_timezone(&Utc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_descriptor_validation_rejects_legacy_geometry_unit() {
+        let mut descriptor = sample_descriptor();
+        descriptor.controls[0].geometry.as_mut().unwrap().unit = "relative".to_string();
+
+        let error = descriptor.validate().unwrap_err().to_string();
+
+        assert!(error.contains("geometry unit"));
+    }
+
+    #[test]
+    fn device_descriptor_validation_rejects_legacy_constraint_subject() {
+        let mut descriptor = sample_descriptor();
+        descriptor.controls[0].output_capabilities[0].constraints[0].subject =
+            "channelOrder".to_string();
+
+        let error = descriptor.validate().unwrap_err().to_string();
+
+        assert!(error.contains("lowercase contract identifier"));
+    }
+
+    fn sample_descriptor() -> DeviceDescriptor {
+        DeviceDescriptor {
+            device_id: "fip".to_string(),
+            fingerprint: "fingerprint".to_string(),
+            display_name: "Flight Instrument Panel".to_string(),
+            manufacturer: Some("Logitech".to_string()),
+            model: Some("Flight Instrument Panel".to_string()),
+            serial_number: None,
+            controls: vec![ControlDescriptor {
+                control_id: "screen".to_string(),
+                kind: "screen".to_string(),
+                label: Some("Screen".to_string()),
+                geometry: Some(ControlGeometry {
+                    x: 0.0,
+                    y: 0.0,
+                    width: Some(4.0),
+                    height: Some(3.0),
+                    unit: "grid".to_string(),
+                }),
+                input_capabilities: Vec::new(),
+                output_capabilities: vec![CapabilityDescriptor {
+                    capability_id: "raster.bitmap".to_string(),
+                    family: "dev.deckr.output.raster".to_string(),
+                    capability_type: "bitmap".to_string(),
+                    direction: "output".to_string(),
+                    access: vec!["settable".to_string()],
+                    value_schema: None,
+                    command_schema: None,
+                    constraints: vec![CapabilityConstraint {
+                        constraint_type: "fixed".to_string(),
+                        subject: "channel_order".to_string(),
+                        value: Some(json!("bgr")),
+                        ..Default::default()
+                    }],
+                    event_types: Vec::new(),
+                    command_types: vec!["set_frame".to_string(), "clear".to_string()],
+                }],
+            }],
+            capabilities: Vec::new(),
+        }
+    }
 }
