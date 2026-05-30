@@ -563,6 +563,18 @@ class ConcordCoordinator:
             return None
         return _contract_handle(key, record, entry.revision)
 
+    async def contract_record(self, contract: ContractHandle) -> ContractRecord | None:
+        entry = await self._contract_state.get(contract.key)
+        if entry is None:
+            return None
+        record = ContractRecord.model_validate(entry.value)
+        if (
+            record.contract_id != contract.contract_id
+            or record.generation != contract.generation
+        ):
+            return None
+        return record
+
     async def find_contracts(self, profile: str | None = None) -> tuple[ContractHandle, ...]:
         contracts: list[ContractHandle] = []
         for entry in await self._contract_state.items(concord_contracts_prefix()):
@@ -1028,6 +1040,9 @@ class ConcordService:
     ) -> ContractHandle | None:
         return await self._coordinator.get_contract(pointer)
 
+    async def contract_record(self, contract: ContractHandle) -> ContractRecord | None:
+        return await self._coordinator.contract_record(contract)
+
     async def find_contracts(
         self,
         profile: str | None = None,
@@ -1171,6 +1186,8 @@ class ConcordService:
     async def watch_contracts(
         self,
         profile: str | None = None,
+        *,
+        log_events: bool = True,
     ) -> Any:
         send, receive = anyio.create_memory_object_stream[ConcordContractEvent](100)
         last_status: dict[tuple[str, int], ContractValidityStatus] = {}
@@ -1193,7 +1210,8 @@ class ConcordService:
                 reason=validity.reason,
                 change=change,
             )
-            _log_concord_event(event)
+            if log_events:
+                _log_concord_event(event)
             await send.send(event)
 
         async def contract_loop() -> None:
@@ -1233,7 +1251,8 @@ class ConcordService:
                             reason="token_expired",
                             change=change,
                         )
-                        _log_concord_event(event)
+                        if log_events:
+                            _log_concord_event(event)
                         await send.send(event)
                         continue
                     await publish_validity(contract, change)
@@ -1368,7 +1387,10 @@ class ConcordParticipantManager:
     async def watch_loop(self) -> None:
         while not self._closed:
             try:
-                async with self._concord.watch_contracts(self.profile) as stream:
+                async with self._concord.watch_contracts(
+                    self.profile,
+                    log_events=False,
+                ) as stream:
                     async for event in stream:
                         if self._closed:
                             return
@@ -1439,18 +1461,23 @@ class ConcordParticipantManager:
             await self._release_locked(contract.key, reason="participant_not_named")
             return None
 
-        sessions = await self._current_sessions_for(contract)
-        validity = await self._concord.validate(
-            contract,
-            current_sessions=sessions,
-            log_label=self._log_label,
-        )
-        record = validity.contract
+        try:
+            record = await self._concord.contract_record(contract)
+        except ValueError:
+            await self._release_locked(
+                contract.key,
+                reason=ContractValidityStatus.INVALID_CONTRACT.value,
+            )
+            return None
         if record is None:
-            await self._release_locked(contract.key, reason=validity.status.value)
+            await self._release_locked(
+                contract.key,
+                reason=ContractValidityStatus.MISSING_CONTRACT.value,
+            )
             return None
 
         if record.state == ContractState.CANCELLED:
+            validity = ContractValidity(ContractValidityStatus.CANCELLED, contract=record)
             await self._publish_terminal_locked(
                 contract,
                 record=record,
@@ -1464,6 +1491,14 @@ class ConcordParticipantManager:
         if not await _maybe_await(self._accept_contract(contract, record)):
             await self._release_locked(contract.key, reason="policy_rejected")
             return None
+
+        sessions = await self._current_sessions_for(contract)
+        validity = await self._concord.validate(
+            contract,
+            current_sessions=sessions,
+            log_label=self._log_label,
+        )
+        record = validity.contract or record
 
         existing = validity.tokens.get(str(self.participant))
         if _terminal_managed_status(validity.status):

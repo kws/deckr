@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use deckr::beacon::{beacon_advertisement_key, AdvertisementRecord};
 use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_value};
 use deckr::concord::{
-    concord_contract_key, concord_participant_token_key, ConcordCoordinator, ContractRecord,
-    ContractValidityStatus, ParticipantTokenRecord,
+    concord_contract_key, concord_participant_token_key, ConcordCoordinator,
+    ConcordParticipantManager, ContractRecord, ContractValidityStatus, ParticipantTokenRecord,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
@@ -333,6 +333,66 @@ async fn concord_validation_distinguishes_pending_missing_and_lost_tokens() {
         concord.validate(&contract, None).await.status,
         ContractValidityStatus::MissingToken
     );
+}
+
+#[tokio::test]
+async fn concord_participant_manager_does_not_resurrect_lost_authority() {
+    let contracts = MemoryStateStore::new();
+    let tokens = MemoryStateStore::new();
+    let concord = ConcordCoordinator::new(contracts, tokens.clone());
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let contract = concord
+        .create_contract(
+            vec![manager.clone(), controller.clone()],
+            Some("contract-1".to_string()),
+            1,
+            None,
+            None,
+            Some(controller.clone()),
+        )
+        .await
+        .unwrap();
+    concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some("controller-token".into()),
+        )
+        .await
+        .unwrap();
+
+    let mut manager_lifecycle =
+        ConcordParticipantManager::new(concord.clone(), manager, "manager-session".into()).unwrap();
+    let managed = manager_lifecycle
+        .reconcile(|_, _| Ok(true), None)
+        .await
+        .unwrap();
+    assert_eq!(managed.len(), 1);
+    assert_eq!(managed[0].validity.status, ContractValidityStatus::Valid);
+
+    let manager_token = managed[0].token.clone().unwrap();
+    tokens
+        .delete(&manager_token.key, Some(manager_token.revision))
+        .await
+        .unwrap();
+
+    let managed = manager_lifecycle
+        .reconcile(|_, _| Ok(true), None)
+        .await
+        .unwrap();
+    assert!(managed.is_empty());
+    assert_eq!(
+        concord.validate(&contract, None).await.status,
+        ContractValidityStatus::MissingToken
+    );
+
+    let managed = manager_lifecycle
+        .reconcile(|_, _| Ok(true), None)
+        .await
+        .unwrap();
+    assert!(managed.is_empty());
 }
 
 #[tokio::test]

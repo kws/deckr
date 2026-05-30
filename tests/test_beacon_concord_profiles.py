@@ -633,6 +633,71 @@ async def test_concord_participant_manager_policy_rejection_does_not_cancel() ->
 
 
 @pytest.mark.asyncio
+async def test_concord_participant_manager_policy_rejection_skips_validation_logs(
+    caplog,
+) -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service.create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    token = await service.attach(contract, controller, "controller-session")
+    await token_state.delete(token.key, revision=token.revision)
+    lifecycle = ConcordParticipantManager(
+        concord=service,
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: False,
+    )
+    caplog.set_level("INFO", logger="deckr.concord")
+
+    caplog.clear()
+    assert await lifecycle.reconcile(reason="policy rejection") == ()
+
+    assert "Concord contract invalid" not in caplog.text
+    assert "Concord contract pending" not in caplog.text
+    record = await service.contract_record(contract)
+    assert record is not None
+    assert record.state == ContractState.OPEN
+
+
+@pytest.mark.asyncio
+async def test_concord_watch_can_suppress_lifecycle_logging(caplog) -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    caplog.set_level("INFO", logger="deckr.concord")
+
+    async with service.watch_contracts(
+        HARDWARE_CLAIM_PROFILE_ID,
+        log_events=False,
+    ) as events:
+        caplog.clear()
+        contract = await service.create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(),
+            created_by=controller,
+        )
+        event = await _receive_event_type(events, ConcordEventType.PENDING)
+
+    assert event.contract is not None
+    assert event.contract.contract_id == contract.contract_id
+    assert "Concord contract pending" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_concord_service_lease_events_and_logs(caplog) -> None:
     contract_state = MemoryStateStore(name="contracts")
     token_state = MemoryStateStore(name="tokens")
