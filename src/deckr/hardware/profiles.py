@@ -155,10 +155,9 @@ class HardwareClaimTerms(DeckrModel):
     claim_id: str = Field(alias="claimId")
     controller_endpoint: EndpointAddress = Field(alias="controllerEndpoint")
     manager_endpoint: EndpointAddress = Field(alias="managerEndpoint")
-    manager_advertisement_id: str = Field(alias="managerAdvertisementId")
     devices: tuple[HardwareClaimDevice, ...]
 
-    @field_validator("claim_id", "manager_advertisement_id")
+    @field_validator("claim_id")
     @classmethod
     def _validate_text(cls, value: str) -> str:
         return _require_text(value, field_name="hardware claim field")

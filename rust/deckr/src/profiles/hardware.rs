@@ -135,7 +135,6 @@ pub struct HardwareClaimTerms {
     pub claim_id: String,
     pub controller_endpoint: EndpointAddress,
     pub manager_endpoint: EndpointAddress,
-    pub manager_advertisement_id: String,
     pub devices: Vec<HardwareClaimDevice>,
 }
 
@@ -158,7 +157,6 @@ impl HardwareClaimTerms {
             )));
         }
         require_text(&self.claim_id, "hardware claim field")?;
-        require_text(&self.manager_advertisement_id, "hardware claim field")?;
         if self.controller_endpoint.family() != CONTROLLER_FAMILY {
             return Err(Error::Invalid(
                 "controllerEndpoint must use controller:<id>".to_string(),

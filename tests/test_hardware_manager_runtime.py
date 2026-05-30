@@ -94,13 +94,10 @@ async def _claim(
     controller_id: str = "controller-main",
     device_id: str = "stream-deck-mini",
 ):
-    advertisement = runtime.advertisement
-    assert advertisement is not None
     terms = HardwareClaimTerms(
         claimId=contract_id,
         controllerEndpoint=controller_address(controller_id),
         managerEndpoint=hardware_manager_address("manager-main"),
-        managerAdvertisementId=advertisement.advertisement_id,
         devices=(
             HardwareClaimDevice(
                 deviceRef=DeviceRef(
@@ -210,6 +207,34 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         )
         assert await runtime.handle_command(command)
         assert delivered_commands == [command]
+    finally:
+        await runtime.stop()
+        await endpoint_cm.__aexit__(None, None, None)
+        await controller_cm.__aexit__(None, None, None)
+
+
+async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None:
+    deckr, endpoint_cm, runtime = await _runtime()
+    controller_cm = deckr.lane("hardware_messages").register_endpoint(
+        controller_address("controller-main")
+    )
+    controller_endpoint = await controller_cm.__aenter__()
+    concord = _concord(deckr)
+    try:
+        await _add_device(runtime, _descriptor())
+        await runtime.withdraw_advertisement()
+        contract = await _claim(runtime, concord)
+        await concord.attach(
+            contract,
+            controller_endpoint.endpoint,
+            controller_endpoint.session_id,
+        )
+
+        await runtime.reconcile_claims(reason="test direct claim")
+
+        assert len(runtime.live_claims) == 1
+        assert runtime.live_claims[0].terms.claim_id == "claim-a"
+        assert (await concord.validate(contract)).status == ContractValidityStatus.VALID
     finally:
         await runtime.stop()
         await endpoint_cm.__aexit__(None, None, None)

@@ -74,10 +74,6 @@
       "title": "Devices",
       "type": "array"
     },
-    "managerAdvertisementId": {
-      "title": "Manageradvertisementid",
-      "type": "string"
-    },
     "managerEndpoint": {
       "$ref": "#/$defs/EndpointAddress"
     },
@@ -92,7 +88,6 @@
     "claimId",
     "controllerEndpoint",
     "managerEndpoint",
-    "managerAdvertisementId",
     "devices"
   ],
   "title": "Deckr Concord hardware claim terms",

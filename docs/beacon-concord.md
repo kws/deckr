@@ -215,10 +215,13 @@ the advertisement `sessionId`, `providerEndpoint` must match the advertisement
 `endpoint`, and `providerInstanceId` must be the action-provider endpoint id.
 
 For `dev.deckr.profile.hardware_claim.v1`, the claim terms bind a controller
-endpoint, hardware-manager endpoint, manager advertisement id, and one or more
-claimed devices. Device ids in one claim must be unique. `instanceCount` must
-be greater than zero. Hardware single-owner and capacity enforcement are
-hardware-manager/profile policy over valid Concord claims.
+endpoint, hardware-manager endpoint, and one or more claimed devices. Device
+ids in one claim must be unique. `instanceCount` must be greater than zero.
+Beacon may discover a candidate device before a claim is created, but Beacon is
+not part of claim validity. Participants validate ownership through the Concord
+contract, participant tokens, endpoint, session, and device refs. Hardware
+single-owner and capacity enforcement are hardware-manager/profile policy over
+valid Concord claims.
 
 For `dev.deckr.profile.action_provider_session.v1`, the terms bind a
 controller endpoint to one action-provider runtime endpoint and the provider

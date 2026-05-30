@@ -18,8 +18,11 @@ from deckr.beacon import (
 from deckr.concord import (
     ConcordCoordinator,
     ConcordEventType,
+    ConcordManagedContractEventType,
+    ConcordParticipantManager,
     ConcordService,
     ContractRecord,
+    ContractState,
     ContractValidityStatus,
     ParticipantTokenRecord,
     canonical_json_hash,
@@ -54,6 +57,14 @@ async def _receive(stream):
 
 
 async def _receive_event_type(stream, *event_types):
+    with anyio.fail_after(1):
+        while True:
+            event = await stream.receive()
+            if event.event_type in event_types:
+                return event
+
+
+async def _receive_managed_event_type(stream, *event_types):
     with anyio.fail_after(1):
         while True:
             event = await stream.receive()
@@ -133,7 +144,6 @@ def _hardware_claim_terms(
         claimId=claim_id,
         controllerEndpoint=controller_address("controller-main"),
         managerEndpoint=hardware_manager_address("manager-main"),
-        managerAdvertisementId="advertisement-1",
         devices=(
             HardwareClaimDevice(
                 deviceRef=DeviceRef(
@@ -416,6 +426,210 @@ async def test_concord_participant_lease_closes_after_cancelled_contract() -> No
         await lease.attach_or_refresh()
     with pytest.raises(StateConflict, match="closed"):
         await lease.attach_or_refresh()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_attaches_adopts_refreshes_and_filters() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    terms = _hardware_claim_terms()
+    contract = await service.create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=terms,
+        created_by=controller,
+    )
+    other = await service.create_contract(
+        (manager, controller),
+        contract_id="other-contract-1",
+        profile="dev.deckr.profile.other.v1",
+        created_by=controller,
+    )
+    await service.attach(contract, controller, "controller-session")
+    await service.attach(other, controller, "controller-session")
+
+    manager_lifecycle = ConcordParticipantManager(
+        concord=service,
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    managed = await manager_lifecycle.reconcile(reason="test attach")
+
+    assert [item.contract.contract_id for item in managed] == ["hardware-contract-1"]
+    assert managed[0].validity.status == ContractValidityStatus.VALID
+    assert managed[0].token is not None
+    assert managed[0].token.refresh_seq == 1
+
+    adopted_lifecycle = ConcordParticipantManager(
+        concord=service,
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    adopted = await adopted_lifecycle.reconcile(reason="test adopt")
+
+    assert adopted[0].token is not None
+    assert adopted[0].token.token_id == managed[0].token.token_id
+    assert adopted[0].token.refresh_seq == 2
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(
+        ConcordCoordinator(contract_state, token_state, token_ttl_seconds=30)
+    )
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    lifecycle = ConcordParticipantManager(
+        concord=service,
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        refresh_interval=0.05,
+        reconcile_interval=0.05,
+        accept_contract=lambda _contract, _record: True,
+    )
+
+    async with lifecycle.watch() as events, anyio.create_task_group() as task_group:
+        lifecycle.start(task_group)
+        contract = await service.create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(),
+            created_by=controller,
+        )
+        pending = await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.PENDING,
+        )
+        assert pending.contract.contract_id == contract.contract_id
+
+        await service.attach(contract, controller, "controller-session")
+        valid = await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.VALID,
+        )
+        assert valid.validity is not None
+        assert valid.validity.status == ContractValidityStatus.VALID
+
+        with anyio.fail_after(1):
+            while True:
+                managed = lifecycle.managed_contract(contract)
+                if (
+                    managed is not None
+                    and managed.token is not None
+                    and managed.token.refresh_seq > 1
+                ):
+                    break
+                await anyio.sleep(0.01)
+
+        await lifecycle.reconcile(reason="dedupe check")
+        with anyio.move_on_after(0.1) as scope:
+            await events.receive()
+        assert scope.cancel_called
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_releases_on_token_expiry_and_cancel() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    lifecycle = ConcordParticipantManager(
+        concord=service,
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    contract = await service.create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    controller_token = await service.attach(
+        contract,
+        controller,
+        "controller-session",
+    )
+    async with lifecycle.watch() as events:
+        managed = (await lifecycle.reconcile(reason="test live"))[0]
+        assert managed.validity.status == ContractValidityStatus.VALID
+        await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.VALID,
+        )
+
+        await token_state.expire(controller_token.key)
+        await lifecycle.reconcile(reason="test token expiry")
+        invalid = await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.INVALID,
+        )
+        assert invalid.validity is not None
+        assert invalid.validity.status == ContractValidityStatus.MISSING_TOKEN
+        released = await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.RELEASED,
+        )
+        assert released.reason == ContractValidityStatus.MISSING_TOKEN.value
+        assert lifecycle.managed_contracts == ()
+
+    contract = await service.create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-2",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(claim_id="claim-2"),
+        created_by=controller,
+    )
+    await service.attach(contract, controller, "controller-session")
+    await lifecycle.reconcile(reason="test live again")
+    await service.cancel(contract, controller, reason="done")
+    await lifecycle.reconcile(reason="test cancel")
+    assert lifecycle.managed_contracts == ()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_policy_rejection_does_not_cancel() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service.create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    lifecycle = ConcordParticipantManager(
+        concord=service,
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: False,
+    )
+
+    assert await lifecycle.reconcile(reason="policy rejection") == ()
+    validity = await service.validate(contract)
+    assert validity.contract is not None
+    assert validity.contract.state == ContractState.OPEN
+    assert validity.status == ContractValidityStatus.NOT_YET_FULFILLED
 
 
 @pytest.mark.asyncio

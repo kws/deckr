@@ -217,7 +217,6 @@ async def _run_controller(args: argparse.Namespace) -> None:
                 claimId=f"smoke-claim-{args.run_id}",
                 controllerEndpoint=controller,
                 managerEndpoint=manager,
-                managerAdvertisementId=candidate.advertisement.advertisement_id,
                 devices=(HardwareClaimDevice(deviceRef=device_ref, instanceCount=1),),
             )
             contract = await concord.create_contract(

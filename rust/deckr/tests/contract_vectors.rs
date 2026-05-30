@@ -257,7 +257,6 @@ async fn concord_validation_distinguishes_pending_missing_and_lost_tokens() {
         "claimId": "claim-1",
         "controllerEndpoint": "controller:main",
         "managerEndpoint": "hardware_manager:mirabox-main",
-        "managerAdvertisementId": "ad-1",
         "devices": [{
             "deviceRef": {"managerId": "mirabox-main", "deviceId": "deck"},
             "instanceCount": 1
@@ -354,7 +353,6 @@ async fn concord_refresh_returns_latest_token_after_revision_race() {
                 "claimId": "claim-1",
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:mirabox-main",
-                "managerAdvertisementId": "ad-1",
                 "devices": []
             })),
             Some(controller.clone()),

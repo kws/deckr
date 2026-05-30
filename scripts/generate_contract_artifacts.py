@@ -748,7 +748,6 @@ def _hardware_claim_terms() -> HardwareClaimTerms:
         claimId="claim-1",
         controllerEndpoint=controller_address("controller-main"),
         managerEndpoint=hardware_manager_address("mirabox-main"),
-        managerAdvertisementId="hardware-advertisement-1",
         devices=(
             HardwareClaimDevice(
                 deviceRef=DeviceRef(

@@ -12,7 +12,7 @@ import anyio
 import deckr.hardware.messages as hw_messages
 from deckr.beacon import AdvertisementHandle, BeaconAdvertiser, BeaconService
 from deckr.concord import (
-    ConcordParticipantLease,
+    ConcordParticipantManager,
     ConcordService,
     ContractHandle,
     ContractState,
@@ -104,10 +104,8 @@ class HardwareManagerRuntime:
         init=False,
         default_factory=dict,
     )
-    _manager_leases: dict[str, ConcordParticipantLease] = field(
-        init=False,
-        default_factory=dict,
-    )
+    _claim_selection_device_ids: set[str] = field(init=False, default_factory=set)
+    _claim_manager: ConcordParticipantManager = field(init=False)
     _lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
     _advertisement_lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
     _task_group: anyio.abc.TaskGroup | None = field(init=False, default=None)
@@ -126,6 +124,19 @@ class HardwareManagerRuntime:
         if self.watch_retry_seconds <= 0:
             raise ValueError("watch_retry_seconds must be greater than zero")
         self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
+        self._claim_manager = ConcordParticipantManager(
+            concord=self.concord,
+            participant=self.endpoint.endpoint,
+            session_id=self.endpoint.session_id,
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            refresh_interval=self.token_refresh_seconds,
+            reconcile_interval=self.claim_reconcile_seconds,
+            log_label="Hardware",
+            accept_contract=self._accept_claim_contract,
+            current_sessions=self._claim_current_sessions,
+            prepare_reconcile=self._prepare_claim_reconcile,
+            contract_sort_key=self._claim_contract_sort_key,
+        )
 
     @property
     def advertisement(self) -> AdvertisementHandle | None:
@@ -144,8 +155,9 @@ class HardwareManagerRuntime:
         await self.publish_advertisement()
         if self._advertiser is not None:
             self._advertiser.start(task_group)
+        self._claim_manager.start(task_group)
         task_group.start_soon(self.command_subscription_loop)
-        task_group.start_soon(self.contract_watch_loop)
+        task_group.start_soon(self.contract_event_loop)
         task_group.start_soon(self.contract_reconcile_loop)
 
     async def stop(self) -> None:
@@ -153,9 +165,7 @@ class HardwareManagerRuntime:
             await self.withdraw_advertisement()
             self._claims.clear()
             self._claims_by_device.clear()
-            for lease in self._manager_leases.values():
-                await lease.aclose()
-            self._manager_leases.clear()
+            await self._claim_manager.aclose()
             self._task_group = None
 
     async def replace_devices(
@@ -349,16 +359,12 @@ class HardwareManagerRuntime:
             await anyio.sleep(self.advertisement_refresh_seconds)
             await self.publish_advertisement()
 
-    async def contract_watch_loop(self) -> None:
-        while True:
-            try:
-                async with self.concord.watch_contracts(
-                    HARDWARE_CLAIM_PROFILE_ID
-                ) as stream:
-                    async for _change in stream:
-                        await self.reconcile_claims(reason="contract watch")
-            except StateUnavailable:
-                await anyio.sleep(self.watch_retry_seconds)
+    async def contract_event_loop(self) -> None:
+        async with self._claim_manager.watch() as stream:
+            async for event in stream:
+                await self.reconcile_claims(
+                    reason=f"managed contract {event.event_type.value}"
+                )
 
     async def contract_reconcile_loop(self) -> None:
         while True:
@@ -381,45 +387,21 @@ class HardwareManagerRuntime:
         ordered = self._ordered_claim_candidates(candidates)
         next_claims: dict[str, LiveHardwareClaim] = {}
         next_by_device: dict[str, LiveHardwareClaim] = {}
-        next_leases: dict[str, ConcordParticipantLease] = {}
 
         for candidate in ordered:
             overlapping = set(candidate.device_ids) & set(next_by_device)
             if overlapping:
                 continue
-            lease = self._manager_leases.get(candidate.contract.key)
-            if lease is None:
-                lease = self.concord.participant_lease(
-                    contract=candidate.contract,
-                    participant=self.endpoint.endpoint,
-                    session_id=self.endpoint.session_id,
-                    refresh_interval=self.token_refresh_seconds,
-                    log_label="Hardware",
-                )
-                if self._task_group is not None:
-                    lease.start(self._task_group)
-            if lease.token is None and candidate.token is not None:
-                lease.adopt(candidate.token)
-            try:
-                token = await lease.attach_or_refresh()
-            except StateConflict:
+            if not candidate.valid or candidate.token is None:
                 continue
-            next_leases[candidate.contract.key] = lease
-            validity = await self.concord.validate(
-                candidate.contract,
-                current_sessions={str(self.endpoint.endpoint): self.endpoint.session_id},
-            )
-            if validity.status != ContractValidityStatus.VALID:
-                continue
-            controller_token = validity.tokens.get(str(candidate.terms.controller_endpoint))
-            if controller_token is None:
+            if candidate.controller_session_id is None:
                 continue
             live = LiveHardwareClaim(
                 contract=candidate.contract,
                 terms=candidate.terms,
-                manager_token=token,
+                manager_token=candidate.token,
                 controller_endpoint=candidate.terms.controller_endpoint,
-                controller_session_id=controller_token.session_id,
+                controller_session_id=candidate.controller_session_id,
                 device_refs=tuple(device.device_ref for device in candidate.terms.devices),
             )
             next_claims[candidate.contract.key] = live
@@ -431,47 +413,31 @@ class HardwareManagerRuntime:
         }
         self._claims = next_claims
         self._claims_by_device = next_by_device
-        for key, lease in self._manager_leases.items():
-            if key not in next_leases:
-                await lease.aclose()
-        self._manager_leases = next_leases
         if lost_claims:
             await self._reset_lost_claim_devices(lost_claims.values())
         await self.publish_advertisement()
 
     async def _matching_claim_candidates(self) -> dict[str, _ClaimCandidate]:
-        advertisement = self._advertisement
-        if advertisement is None:
-            return {}
         candidates: dict[str, _ClaimCandidate] = {}
-        for contract in await self.concord.find_contracts(HARDWARE_CLAIM_PROFILE_ID):
-            validity = await self.concord.validate(
-                contract,
-                current_sessions={str(self.endpoint.endpoint): self.endpoint.session_id},
-            )
-            record = validity.contract
+        for managed in await self._claim_manager.reconcile(reason="hardware runtime"):
+            validity = managed.validity
+            record = managed.record
             if record is None or record.state != ContractState.OPEN:
                 continue
             try:
                 terms = HardwareClaimTerms.model_validate(thaw_json(record.terms or {}))
             except ValueError:
                 continue
-            if not self._claim_terms_match_current_advertisement(terms):
+            if not self._claim_terms_match_current_devices(terms):
                 continue
-            if self.endpoint.endpoint not in contract.participants:
+            if self.endpoint.endpoint not in managed.contract.participants:
                 continue
-            if terms.controller_endpoint not in contract.participants:
+            if terms.controller_endpoint not in managed.contract.participants:
                 continue
-            lease = self._manager_leases.get(contract.key)
-            token = (
-                lease.token
-                if lease is not None
-                else validity.tokens.get(str(self.endpoint.endpoint))
-            )
-            candidates[contract.key] = _ClaimCandidate(
-                contract=contract,
+            candidates[managed.contract.key] = _ClaimCandidate(
+                contract=managed.contract,
                 terms=terms,
-                token=token,
+                token=managed.token,
                 valid=validity.status == ContractValidityStatus.VALID,
                 controller_session_id=(
                     validity.tokens[str(terms.controller_endpoint)].session_id
@@ -482,16 +448,11 @@ class HardwareManagerRuntime:
             )
         return candidates
 
-    def _claim_terms_match_current_advertisement(
+    def _claim_terms_match_current_devices(
         self,
         terms: HardwareClaimTerms,
     ) -> bool:
-        advertisement = self._advertisement
-        if advertisement is None:
-            return False
         if terms.manager_endpoint != self.endpoint.endpoint:
-            return False
-        if terms.manager_advertisement_id != advertisement.advertisement_id:
             return False
         for claim_device in terms.devices:
             ref = claim_device.device_ref
@@ -503,6 +464,36 @@ class HardwareManagerRuntime:
             if ref.fingerprint not in {None, descriptor.fingerprint}:
                 return False
         return True
+
+    async def _accept_claim_contract(
+        self,
+        contract: ContractHandle,
+        record: Any,
+    ) -> bool:
+        try:
+            terms = HardwareClaimTerms.model_validate(thaw_json(record.terms or {}))
+        except ValueError:
+            return False
+        if not (
+            self._claim_terms_match_current_devices(terms)
+            and self.endpoint.endpoint in contract.participants
+            and terms.controller_endpoint in contract.participants
+        ):
+            return False
+        device_ids = {device.device_ref.device_id for device in terms.devices}
+        if device_ids & self._claim_selection_device_ids:
+            return False
+        self._claim_selection_device_ids.update(device_ids)
+        return True
+
+    def _claim_current_sessions(self, _contract: ContractHandle) -> Mapping[str, str]:
+        return {str(self.endpoint.endpoint): self.endpoint.session_id}
+
+    def _prepare_claim_reconcile(self) -> None:
+        self._claim_selection_device_ids = set()
+
+    def _claim_contract_sort_key(self, contract: ContractHandle) -> tuple[int, str]:
+        return (0 if contract.key in self._claims else 1, contract.key)
 
     def _ordered_claim_candidates(
         self,

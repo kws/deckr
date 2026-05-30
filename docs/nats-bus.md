@@ -185,7 +185,7 @@ claims. Beacon capacity fields are hints; Concord validity is the authority for
 whether a claim or provider session is live. Python hardware managers use the
 shared `deckr.hardware.runtime.HardwareManagerRuntime` implementation to advertise
 hardware through `BeaconAdvertiser`, maintain claim tokens through
-`ConcordParticipantLease`, and route input only for live claims.
+`ConcordParticipantManager`, and route input only for live claims.
 
 Service components use `deckr.services.GenericService` to advertise their
 package-owned service feature through `BeaconAdvertiser` and maintain service
