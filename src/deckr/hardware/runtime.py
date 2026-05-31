@@ -12,8 +12,8 @@ import anyio
 import deckr.hardware.messages as hw_messages
 from deckr.beacon import (
     AdvertisementHandle,
+    BeaconAdvertisement,
     BeaconAdvertisementSpec,
-    BeaconAdvertiser,
     BeaconService,
 )
 from deckr.concord import (
@@ -101,7 +101,7 @@ class HardwareManagerRuntime:
     watch_retry_seconds: float = DEFAULT_HARDWARE_WATCH_RETRY_SECONDS
     _devices: dict[str, DeviceDescriptor] = field(init=False, default_factory=dict)
     _advertisement: AdvertisementHandle | None = field(init=False, default=None)
-    _advertiser: BeaconAdvertiser | None = field(init=False, default=None)
+    _advertiser: BeaconAdvertisement | None = field(init=False, default=None)
     _advertisement_id: str = field(init=False, default="")
     _advertisement_dirty: bool = field(init=False, default=True)
     _claims: dict[str, LiveHardwareClaim] = field(init=False, default_factory=dict)
@@ -352,23 +352,14 @@ class HardwareManagerRuntime:
 
     async def withdraw_advertisement(self) -> None:
         async with self._advertisement_lock:
-            advertisement = self._advertisement
             self._advertisement = None
             self._advertisement_dirty = True
-            if advertisement is None:
-                return
-            try:
-                if self._advertiser is not None:
+            if self._advertiser is not None:
+                try:
                     await self._advertiser.aclose()
-                else:
-                    logger.debug(
-                        "Hardware Beacon advert object missing during withdraw; "
-                        "skipping low-level Beacon withdrawal and dropping cached "
-                        "handle",
-                    )
-            except (StateConflict, StateUnavailable):
-                logger.debug("Could not withdraw hardware Beacon advertisement")
-            self._advertiser = None
+                except (StateConflict, StateUnavailable):
+                    logger.debug("Could not withdraw hardware Beacon advertisement")
+                self._advertiser = None
 
     async def advertisement_refresh_loop(self) -> None:
         while True:

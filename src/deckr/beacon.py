@@ -544,7 +544,7 @@ class BeaconAdvertisement:
                 self._hints = dict(hints)
             if operations is not None:
                 self._operations = tuple(operations)
-        return await self._publish_locked()
+            return await self._publish_locked()
 
     async def heartbeat_loop(self) -> None:
         while not self._closed:
@@ -565,22 +565,14 @@ class BeaconAdvertisement:
                     exc_info=True,
                 )
 
-    async def withdraw(self) -> bool:
-        if self._closed:
-            return False
-        async with self._lock:
-            handle = self._handle
-            self._handle = None
-        if handle is None:
-            return False
-        return await self._service.withdraw(handle, log_label=self._log_label)
-
     async def aclose(self) -> None:
         self._closed = True
         async with self._lock:
-            if self._handle is not None:
-                await self._service.withdraw(self._handle, log_label=self._log_label)
-                self._handle = None
+            handle = self._handle
+            self._handle = None
+            if handle is not None:
+                await self._service._withdraw(handle, log_label=self._log_label)
+        await self._service._forget_advertisement(self)
 
     async def _publish_locked(self) -> AdvertisementHandle:
         if self._closed:
@@ -588,7 +580,7 @@ class BeaconAdvertisement:
         handle = self._handle
         try:
             if handle is None:
-                self._handle = await self._service.advertise(
+                self._handle = await self._service._advertise(
                     self.feature_id,
                     self.endpoint,
                     self.session_id,
@@ -603,7 +595,7 @@ class BeaconAdvertisement:
                     log_label=self._log_label,
                 )
             else:
-                self._handle = await self._service.refresh(
+                self._handle = await self._service._refresh(
                     handle,
                     hints=self._hints,
                     labels=self._labels,
@@ -623,7 +615,7 @@ class BeaconAdvertisement:
                 exc_info=True,
             )
             self._handle = None
-            self._handle = await self._service.advertise(
+            self._handle = await self._service._advertise(
                 self.feature_id,
                 self.endpoint,
                 self.session_id,
@@ -660,20 +652,24 @@ class BeaconService:
         """Create or reuse a managed Beacon advertisement lifecycle."""
         async with self._advertisement_lock:
             cache_key = _beacon_advertisement_cache_key(spec)
-            if cache_key is not None:
-                current = self._advertisements.get(cache_key)
-                if current is not None and not current.closed:
-                    if start_soon is not None:
-                        current.start_soon(start_soon)
-                    return current
+            current = self._advertisements.get(cache_key)
+            if current is not None and not current.closed:
+                if start_soon is not None:
+                    current.start_soon(start_soon)
+                return current
             advertisement = BeaconAdvertisement(self, spec=spec)
-            if cache_key is not None:
-                self._advertisements[cache_key] = advertisement
+            self._advertisements[cache_key] = advertisement
             if start_soon is not None:
                 advertisement.start_soon(start_soon)
             return advertisement
 
-    async def advertise(
+    async def _forget_advertisement(self, advertisement: BeaconAdvertisement) -> None:
+        async with self._advertisement_lock:
+            for key, current in tuple(self._advertisements.items()):
+                if current is advertisement:
+                    self._advertisements.pop(key, None)
+
+    async def _advertise(
         self,
         feature_id: str,
         endpoint: str | EndpointAddress,
@@ -716,7 +712,7 @@ class BeaconService:
         )
         return handle
 
-    async def refresh(
+    async def _refresh(
         self,
         handle: AdvertisementHandle,
         *,
@@ -744,7 +740,7 @@ class BeaconService:
         )
         return refreshed
 
-    async def withdraw(
+    async def _withdraw(
         self,
         handle: AdvertisementHandle,
         *,
@@ -764,42 +760,6 @@ class BeaconService:
                 handle.revision,
             )
         return withdrawn
-
-    def advertiser(
-        self,
-        *,
-        feature_id: str,
-        endpoint: str | EndpointAddress,
-        session_id: str,
-        advertiser: str | EndpointAddress | None = None,
-        advertisement_id: str | None = None,
-        protocol: Mapping[str, str] | BeaconProtocol | None = None,
-        operations: tuple[str, ...] | list[str] = (),
-        labels: Mapping[str, str] | None = None,
-        hints: Mapping[str, Any] | None = None,
-        payload: Mapping[str, Any] | None = None,
-        ttl_seconds: int | None = None,
-        refresh_interval: float = 5.0,
-        log_label: str = "Beacon",
-    ) -> BeaconAdvertisement:
-        return BeaconAdvertisement(
-            self,
-            spec=BeaconAdvertisementSpec(
-                feature_id=feature_id,
-                endpoint=endpoint,
-                session_id=session_id,
-                advertiser=advertiser,
-                advertisement_id=advertisement_id,
-                protocol=protocol,
-                operations=operations,
-                labels=labels,
-                hints=hints,
-                payload=payload,
-                ttl_seconds=ttl_seconds,
-                refresh_interval=refresh_interval,
-                log_label=log_label,
-            ),
-        )
 
     async def find(
         self,
@@ -1007,9 +967,7 @@ def _log_beacon_feature_event(event: BeaconFeatureEvent) -> None:
 
 def _beacon_advertisement_cache_key(
     spec: BeaconAdvertisementSpec,
-) -> tuple[Any, ...] | None:
-    if spec.advertisement_id is None:
-        return None
+) -> tuple[Any, ...]:
     return (
         spec.feature_id,
         str(spec.endpoint),
@@ -1017,9 +975,6 @@ def _beacon_advertisement_cache_key(
         spec.advertisement_id,
         spec.session_id,
     )
-
-
-BeaconAdvertiser = BeaconAdvertisement
 
 
 __all__ = [
@@ -1031,7 +986,6 @@ __all__ = [
     "AdvertisementRecord",
     "BeaconAdvertisement",
     "BeaconAdvertisementSpec",
-    "BeaconAdvertiser",
     "BeaconDiscovery",
     "BeaconEvent",
     "BeaconFeatureEvent",

@@ -5,7 +5,12 @@ import pytest
 from memory_lane_substrate import MemoryStateStore, memory_deckr
 
 from deckr.actions.endpoints import action_provider_address
-from deckr.beacon import BeaconDiscovery, BeaconService, CandidateStatus
+from deckr.beacon import (
+    BeaconAdvertisementSpec,
+    BeaconDiscovery,
+    BeaconService,
+    CandidateStatus,
+)
 from deckr.concord import (
     ConcordCoordinator,
     ConcordService,
@@ -70,6 +75,44 @@ class FailingDeleteStateStore(MemoryStateStore):
         raise StateUnavailable("broker unavailable")
 
 
+class FailingCreateOnceStateStore(MemoryStateStore):
+    def __init__(self, *, name: str) -> None:
+        super().__init__(name=name)
+        self.create_calls = 0
+
+    async def create(self, *args, **kwargs):
+        self.create_calls += 1
+        if self.create_calls == 1:
+            raise StateUnavailable("broker unavailable")
+        return await super().create(*args, **kwargs)
+
+
+async def _publish_service_advertisement(
+    beacon: BeaconService,
+    protocol: ServiceProtocol,
+    *,
+    service_id: str = "openhab-home",
+    session_id: str = "service-session",
+    advertisement_id: str | None = None,
+):
+    endpoint = service_address(service_id)
+    advertisement = await beacon.ensure_advertisement(
+        BeaconAdvertisementSpec(
+            feature_id=protocol.feature_id,
+            endpoint=endpoint,
+            session_id=session_id,
+            advertisement_id=advertisement_id,
+            payload=protocol.advertisement_payload(
+                service_id=service_id,
+                session_id=session_id,
+                backend_status=ServiceBackendStatus.AVAILABLE,
+            ).to_dict(),
+        )
+    )
+    await advertisement.publish()
+    return advertisement
+
+
 def test_service_protocol_payload_terms_and_view_keys() -> None:
     protocol = _protocol()
     payload = protocol.advertisement_payload(
@@ -101,11 +144,13 @@ def test_service_protocol_payload_terms_and_view_keys() -> None:
         allowedOperations=("ensureItems",),
     )
 
-    assert terms.to_dict()["clientEndpoint"] == "action_provider:provider-main"
+    terms_dict = terms.to_dict()
+    assert terms_dict["clientEndpoint"] == "action_provider:provider-main"
+    assert "serviceAdvertisementId" not in terms_dict
 
 
 @pytest.mark.asyncio
-async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> None:
+async def test_service_client_views_survive_beacon_loss_with_valid_contract() -> None:
     beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
     concord = ConcordService(
         ConcordCoordinator(
@@ -116,15 +161,10 @@ async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> N
     view_store = MemoryStateStore(name="views")
     protocol = _protocol()
     service_endpoint = service_address("openhab-home")
-    handle = await beacon.advertise(
-        protocol.feature_id,
-        service_endpoint,
-        "service-session",
-        payload=protocol.advertisement_payload(
-            service_id="openhab-home",
-            session_id="service-session",
-            backend_status=ServiceBackendStatus.AVAILABLE,
-        ).to_dict(),
+    advertisement = await _publish_service_advertisement(
+        beacon,
+        protocol,
+        advertisement_id="ad-1",
     )
 
     async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
@@ -213,19 +253,71 @@ async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> N
         assert current is not None
         assert current["state"] == "ON"
 
-        await beacon.withdraw(handle)
-        assert (
-            await replacement_client.read_view(
-                "openhab-home",
-                protocol.namespace,
-                view,
-            )
-            is None
+        await advertisement.aclose()
+        current = await replacement_client.read_view(
+            "openhab-home",
+            protocol.namespace,
+            view,
         )
+        assert current is not None
+        assert current["state"] == "ON"
 
     validity = await concord._validate(contract)
     assert validity.contract is not None
-    assert validity.contract.state == ContractState.CANCELLED
+    assert validity.status == ContractValidityStatus.VALID
+    assert validity.contract.state == ContractState.OPEN
+
+
+@pytest.mark.asyncio
+async def test_service_client_reuses_contract_across_advertisement_id_change() -> None:
+    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
+    )
+    view_store = MemoryStateStore(name="views")
+    protocol = _protocol()
+    service_endpoint = service_address("openhab-home")
+    first_advertisement = await _publish_service_advertisement(
+        beacon,
+        protocol,
+        advertisement_id="ad-1",
+    )
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        action_provider_address("provider-main")
+    ) as client_endpoint:
+        client = ServiceClient(
+            endpoint=client_endpoint,
+            beacon=beacon,
+            concord=concord,
+            state_for=lambda _name: view_store,
+        )
+        view = ServiceViewRef(
+            "deckr_openhab_service_view_v1",
+            service_view_key("openhab-home", "items", "Kitchen Light"),
+        )
+
+        await client.read_view("openhab-home", protocol.namespace, view)
+        contracts = await concord._find_contracts(protocol.use_profile)
+        assert len(contracts) == 1
+        contract = contracts[0]
+        await concord._attach(contract, service_endpoint, "service-session")
+
+        await first_advertisement.aclose()
+        await _publish_service_advertisement(
+            beacon,
+            protocol,
+            advertisement_id="ad-2",
+        )
+        await client.read_view("openhab-home", protocol.namespace, view)
+
+    contracts = await concord._find_contracts(protocol.use_profile)
+    assert [item.key for item in contracts] == [contract.key]
+    validity = await concord._validate(contract)
+    assert validity.status == ContractValidityStatus.VALID
 
 
 @pytest.mark.asyncio
@@ -290,6 +382,10 @@ async def test_generic_service_advertise_authorize_and_withdraw() -> None:
             body=body,
         )
 
+        assert await service.command_authorized(message, body)
+        assert service._advertiser is not None
+        await service._advertiser.aclose()
+        service._advertisement = None
         assert await service.command_authorized(message, body)
 
         rejected = ServiceCommandBody(
@@ -466,3 +562,32 @@ async def test_generic_service_refreshes_beacon_advertisement() -> None:
                         break
                     await anyio.sleep(0.01)
             tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_generic_service_withdraw_closes_advertiser_without_handle() -> None:
+    beacon = BeaconService(BeaconDiscovery(FailingCreateOnceStateStore(name="beacon")))
+    protocol = _protocol()
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        service_address("openhab-home")
+    ) as service_endpoint:
+        service = GenericService(
+            protocol=protocol,
+            service_id="openhab-home",
+            endpoint=service_endpoint,
+            beacon=beacon,
+            concord=None,
+            view_state=None,
+            advertisement_refresh_interval=0.01,
+        )
+
+        async with anyio.create_task_group() as tg:
+            service.start(tg)
+            await service.publish_status(ServiceBackendStatus.AVAILABLE)
+            assert service.advertisement is None
+            await service.withdraw()
+            await anyio.sleep(0.03)
+            tg.cancel_scope.cancel()
+
+    assert await beacon.find(protocol.feature_id) == ()

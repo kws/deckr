@@ -18,7 +18,19 @@ _LOW_LEVEL_ALWAYS = {
     "refresh_token",
 }
 _LOW_LEVEL_ON_CONCORD = {"_cancel", "_validate", "cancel", "validate"}
-_LOW_LEVEL_ON_BEACON = {"advertise", "refresh", "withdraw", "advertiser"}
+_LOW_LEVEL_ON_BEACON = {
+    "_advertise",
+    "_refresh",
+    "_withdraw",
+    "advertise",
+    "refresh",
+    "withdraw",
+    "advertiser",
+}
+_DIRECT_LIFECYCLE_CONSTRUCTORS = {
+    "BeaconAdvertisement",
+    "ConcordParticipantManager",
+}
 
 
 def test_production_code_uses_concord_lifecycle_apis() -> None:
@@ -85,5 +97,5 @@ def _direct_manager_construction(node: ast.AST) -> bool:
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "ConcordParticipantManager"
+        and node.func.id in _DIRECT_LIFECYCLE_CONSTRUCTORS
     )

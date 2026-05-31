@@ -21,8 +21,8 @@ from pydantic import (
 
 from deckr.beacon import (
     AdvertisementHandle,
+    BeaconAdvertisement,
     BeaconAdvertisementSpec,
-    BeaconAdvertiser,
     BeaconService,
     Candidate,
 )
@@ -328,7 +328,7 @@ class ServiceClient:
         self._concord = concord
         self._state_for = state_for
         self._task_group = task_group
-        self._leases: dict[tuple[str, str, str, str], _ServiceLease] = {}
+        self._leases: dict[tuple[str, str, str], _ServiceLease] = {}
         self._closed = False
 
     async def aclose(self) -> None:
@@ -484,24 +484,39 @@ class ServiceClient:
         try:
             service = await self._service_advertisement(service_id, service_namespace)
         except _ServiceUnavailable as exc:
-            if exc.code == "service_advertisement_missing":
-                await self._cancel_service_leases(service_id, service_namespace)
-            raise
+            cached = self._cached_service_lease(
+                service_id,
+                service_namespace,
+                operation=operation,
+            )
+            if cached is None:
+                raise
+            try:
+                await self._attach_or_refresh_token(cached)
+                return await self._valid_lease(cached, timeout=timeout)
+            except _ServiceUnavailable:
+                raise exc from None
         if operation is not None and operation not in service.supported_operations:
             raise _UnsupportedOperation
+        terms = service_use_terms(service, self._endpoint.endpoint)
         key = (
             service.service_id,
             service.service_namespace,
-            service.candidate.advertisement.advertisement_id,
             service.service_session_id,
         )
-        await self._cancel_stale_leases(key, service_id, service_namespace)
+        await self._cancel_stale_session_leases(key, service_id, service_namespace)
         last_error: _ServiceUnavailable | None = None
         for _attempt in range(2):
             lease = self._leases.get(key)
+            if lease is not None and lease.terms != terms:
+                self._leases.pop(key, None)
+                await self._cancel_lease(lease, reason="service terms changed")
+                lease = None
             if lease is None:
-                lease = await self._create_or_reuse_lease(service)
+                lease = await self._create_or_reuse_lease(service, terms)
                 self._leases[key] = lease
+            else:
+                lease.service = service
             await self._attach_or_refresh_token(lease)
             try:
                 return await self._valid_lease(lease, timeout=timeout)
@@ -523,6 +538,26 @@ class ServiceClient:
             "service_contract_unavailable",
             "Service-use contract is not available",
         )
+
+    def _cached_service_lease(
+        self,
+        service_id: str,
+        service_namespace: str,
+        *,
+        operation: str | None,
+    ) -> _ServiceLease | None:
+        leases = [
+            lease
+            for key, lease in self._leases.items()
+            if key[0] == service_id and key[1] == service_namespace
+        ]
+        if not leases:
+            return None
+        leases.sort(key=lambda lease: lease.service.service_session_id, reverse=True)
+        for lease in leases:
+            if operation is None or operation in lease.service.supported_operations:
+                return lease
+        raise _UnsupportedOperation
 
     async def _service_advertisement(
         self,
@@ -557,9 +592,9 @@ class ServiceClient:
         services.sort(key=_service_sort_key, reverse=True)
         return services[0]
 
-    async def _cancel_stale_leases(
+    async def _cancel_stale_session_leases(
         self,
-        current_key: tuple[str, str, str, str],
+        current_key: tuple[str, str, str],
         service_id: str,
         service_namespace: str,
     ) -> None:
@@ -571,21 +606,8 @@ class ServiceClient:
             self._leases.pop(key, None)
             await self._cancel_lease(
                 lease,
-                reason="service advertisement changed",
+                reason="service session changed",
             )
-
-    async def _cancel_service_leases(
-        self,
-        service_id: str,
-        service_namespace: str,
-    ) -> None:
-        for key, lease in list(self._leases.items()):
-            if key[0] == service_id and key[1] == service_namespace:
-                self._leases.pop(key, None)
-                await self._cancel_lease(
-                    lease,
-                    reason="service advertisement lost",
-                )
 
     async def _cancel_lease(self, lease: _ServiceLease, *, reason: str) -> None:
         try:
@@ -596,8 +618,8 @@ class ServiceClient:
     async def _create_or_reuse_lease(
         self,
         service: ServiceAdvertisement,
+        terms: ServiceUseTerms,
     ) -> _ServiceLease:
-        terms = service_use_terms(service, self._endpoint.endpoint)
         agreement = await self._concord.ensure_agreement(
             ConcordAgreementSpec(
                 profile=service.service_use_profile,
@@ -681,7 +703,7 @@ class GenericService:
         self._advertisement_refresh_interval = advertisement_refresh_interval
         self._refresh_interval = refresh_interval
         self._advertisement: AdvertisementHandle | None = None
-        self._advertiser: BeaconAdvertiser | None = None
+        self._advertiser: BeaconAdvertisement | None = None
         self._backend_status = ServiceBackendStatus.UNAVAILABLE
         self._backend_diagnostics: Mapping[str, Any] = {}
         self._view_revisions: dict[str, int] = {}
@@ -788,19 +810,12 @@ class GenericService:
         self._view_revisions.clear()
         if self._service_contract_manager is not None:
             await self._service_contract_manager.aclose()
-        if self._advertisement is not None and self._beacon is not None:
+        if self._advertiser is not None:
             try:
-                if self._advertiser is not None:
-                    await self._advertiser.aclose()
-                    self._advertiser = None
-                else:
-                    logger.debug(
-                        "Service Beacon advert object missing during withdraw; "
-                        "skipping low-level Beacon withdrawal and dropping cached "
-                        "handle",
-                    )
+                await self._advertiser.aclose()
             except (StateConflict, StateUnavailable):
                 logger.debug("Could not withdraw %s Beacon advertisement", self._log_label)
+            self._advertiser = None
         self._advertisement = None
         self._task_group = None
 
@@ -879,8 +894,6 @@ class GenericService:
         return {str(self.endpoint.endpoint): self.endpoint.session_id}
 
     def _matching_terms_record(self, record: Any) -> ServiceUseTerms | None:
-        if self._advertisement is None:
-            return None
         if record.state != ContractState.OPEN:
             return None
         try:

@@ -12,6 +12,7 @@ import anyio
 from deckr.beacon import (
     BEACON_ADVERTISEMENT_STORE_POLICY,
     DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+    BeaconAdvertisementSpec,
     BeaconDiscovery,
     BeaconService,
     beacon_advertisement_key,
@@ -157,13 +158,17 @@ async def _run_manager(args: argparse.Namespace) -> None:
                 device_id=device_id,
                 descriptor=descriptor,
             )
-            advertisement = await beacon.advertise(
-                HARDWARE_FEATURE_ID,
-                endpoint,
-                lane.session_id,
-                advertisement_id=manager_id,
-                payload=payload.to_dict(),
+            advertisement = await beacon.ensure_advertisement(
+                BeaconAdvertisementSpec(
+                    feature_id=HARDWARE_FEATURE_ID,
+                    endpoint=endpoint,
+                    session_id=lane.session_id,
+                    advertisement_id=manager_id,
+                    payload=payload.to_dict(),
+                ),
+                start_soon=tg.start_soon,
             )
+            await advertisement.publish()
 
             def accept_contract(contract, _record) -> bool:
                 return endpoint in contract.participants
@@ -196,7 +201,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
                     ),
                 )
             finally:
-                await beacon.withdraw(advertisement)
+                await advertisement.aclose()
                 tg.cancel_scope.cancel()
 
 
