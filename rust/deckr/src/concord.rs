@@ -158,6 +158,11 @@ impl ContractRecord {
             require_text(cancel_reason, "Concord contract field")?;
         }
         if let Some(terms) = &self.terms {
+            if !terms.is_object() {
+                return Err(Error::Invalid(
+                    "Concord contract terms must be a JSON object".to_string(),
+                ));
+            }
             let expected = canonical_json_hash_value(terms)?;
             if self.terms_hash.as_deref() != Some(expected.as_str()) {
                 return Err(Error::Invalid(
@@ -173,6 +178,9 @@ impl ContractRecord {
                     ));
                 }
             }
+        }
+        if let Some(supersedes) = &self.supersedes {
+            supersedes.validate()?;
         }
         Ok(())
     }
@@ -246,6 +254,18 @@ impl ParticipantTokenRecord {
                     "token observation generation must be greater than zero".to_string(),
                 ));
             }
+        }
+        Ok(())
+    }
+}
+
+impl ContractPointer {
+    pub fn validate(&self) -> Result<()> {
+        require_text(&self.contract_id, "contract id")?;
+        if self.generation == 0 {
+            return Err(Error::Invalid(
+                "generation must be greater than zero".to_string(),
+            ));
         }
         Ok(())
     }
@@ -432,7 +452,6 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
         created_by: Option<EndpointAddress>,
     ) -> Result<ContractHandle> {
         participants.sort();
-        participants.dedup();
         let terms_hash = terms.as_ref().map(canonical_json_hash_value).transpose()?;
         let record = ContractRecord {
             schema_id: CONCORD_CONTRACT_SCHEMA_ID.to_string(),

@@ -9,7 +9,9 @@ use deckr::concord::{
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
-use deckr::lanes::{headers_for, subject_for, DeckrMessage};
+use deckr::lanes::{
+    headers_for, message_is_deliverable_to, subject_for, DeckrMessage, HardwareMessageBody,
+};
 use deckr::profiles::hardware::{
     hardware_payload_from_advertisement, HardwareBeaconPayload, HardwareClaimTerms,
     HARDWARE_CLAIM_PROFILE_ID,
@@ -241,8 +243,51 @@ fn contract_fixtures_parse_and_enforce_profile_semantics() {
         "{CONTRACT_ROOT}/fixtures/invalid/hardware/control-input-missing-device-ref.v1.json"
     ))
     .unwrap();
-    let invalid_message = DeckrMessage::from_text(&invalid_message).unwrap();
-    assert!(invalid_message.hardware_body().is_err());
+    assert!(DeckrMessage::from_text(&invalid_message).is_err());
+}
+
+#[test]
+fn strict_records_reject_non_object_extension_payloads() {
+    let mut advertisement: Value = fixture("fixtures/valid/beacon/hardware-advertisement.v1.json");
+    advertisement["payload"] = json!("not-an-object");
+    assert!(AdvertisementRecord::from_value(advertisement).is_err());
+
+    let mut contract: Value = fixture("fixtures/valid/concord/hardware-claim-contract.v1.json");
+    contract["terms"] = json!("not-an-object");
+    assert!(ContractRecord::from_value(contract).is_err());
+}
+
+#[test]
+fn endpoint_delivery_honors_recipient_session() {
+    let command = DeckrMessage::hardware_command(
+        "main",
+        "controller-session",
+        "mirabox-main",
+        "manager-session",
+        "deck",
+        HardwareMessageBody::ControlCommand {
+            device_ref: deckr::lanes::DeviceRef {
+                manager_id: "mirabox-main".to_string(),
+                device_id: "deck".to_string(),
+                fingerprint: None,
+            },
+            control_id: Some("key-1".to_string()),
+            capability_id: "dev.deckr.controls.raster.v1".to_string(),
+            command_type: "setFrame".to_string(),
+            params: Default::default(),
+        },
+    )
+    .unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+
+    assert!(
+        message_is_deliverable_to(&command, &manager, "manager-session").unwrap(),
+        "matching endpoint session should receive direct command"
+    );
+    assert!(
+        !message_is_deliverable_to(&command, &manager, "stale-session").unwrap(),
+        "stale endpoint session must not receive direct command"
+    );
 }
 
 #[tokio::test]

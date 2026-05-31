@@ -2,6 +2,7 @@ pub mod beacon;
 pub mod canonical_json;
 pub mod concord;
 pub mod endpoint;
+pub mod hardware;
 pub mod keys;
 pub mod lanes;
 #[cfg(feature = "nats")]

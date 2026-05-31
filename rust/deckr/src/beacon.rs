@@ -95,6 +95,13 @@ impl AdvertisementRecord {
             require_text(key, "Beacon label key")?;
             require_text(value, "Beacon label value")?;
         }
+        if let Some(payload) = &self.payload {
+            if !payload.is_object() {
+                return Err(Error::Invalid(
+                    "Beacon advertisement payload must be a JSON object".to_string(),
+                ));
+            }
+        }
         Ok(())
     }
 }

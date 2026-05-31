@@ -5,7 +5,8 @@ use std::time::Duration;
 use async_nats::jetstream::kv::{Config as KvConfig, Operation, Store};
 use async_nats::jetstream::Context as JetStreamContext;
 use async_nats::{HeaderMap, Message, Subscriber};
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::future::{select, Either};
+use futures_util::{pin_mut, StreamExt, TryStreamExt};
 use serde_json::Value;
 
 use crate::beacon::{beacon_advertisement_store_policy, DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME};
@@ -13,9 +14,25 @@ use crate::concord::{
     concord_contract_store_policy, concord_token_store_policy, DEFAULT_CONCORD_CONTRACT_STORE_NAME,
     DEFAULT_CONCORD_TOKEN_STORE_NAME,
 };
+use crate::keys::concord_contracts_prefix;
 use crate::lanes::{headers_for, validate_subject_hint, DeckrMessage, HARDWARE_MESSAGES_LANE};
 use crate::state::{StateEntry, StateStore, StateStorePolicy};
 use crate::{Error, Result};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConcordStateChangeSource {
+    Contracts,
+    Tokens,
+}
+
+impl ConcordStateChangeSource {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Contracts => "contract watch",
+            Self::Tokens => "token watch",
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct NatsDeckrRuntime {
@@ -116,6 +133,22 @@ impl NatsDeckrRuntime {
             validate_nats_headers(headers, &envelope)?;
         }
         Ok(envelope)
+    }
+
+    pub async fn wait_for_concord_change(&self) -> Result<ConcordStateChangeSource> {
+        let contracts = self
+            .concord_contracts
+            .wait_for_change(concord_contracts_prefix());
+        let tokens = self
+            .concord_tokens
+            .wait_for_change(concord_contracts_prefix());
+        pin_mut!(contracts);
+        pin_mut!(tokens);
+
+        match select(contracts, tokens).await {
+            Either::Left((result, _)) => result.map(|()| ConcordStateChangeSource::Contracts),
+            Either::Right((result, _)) => result.map(|()| ConcordStateChangeSource::Tokens),
+        }
     }
 }
 

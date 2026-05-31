@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::endpoint::EndpointAddress;
+use crate::endpoint::{
+    EndpointAddress, ACTION_PROVIDER_FAMILY, CONTROLLER_FAMILY, HARDWARE_MANAGER_FAMILY,
+    SERVICE_FAMILY,
+};
 use crate::keys::encode_key_token;
 use crate::{Error, Result};
 
@@ -479,6 +482,47 @@ impl EntitySubject {
     pub fn manager_id(&self) -> Option<&str> {
         self.identifiers.get("managerId").map(String::as_str)
     }
+
+    pub fn validate(&self) -> Result<()> {
+        require_non_empty(&self.kind, "entity subject kind")?;
+        for (key, value) in &self.identifiers {
+            require_non_empty(key, "entity subject id field")?;
+            require_non_empty(value, "entity subject id value")?;
+        }
+        Ok(())
+    }
+}
+
+impl MessageTarget {
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Endpoint { endpoint } => {
+                EndpointAddress::parse(endpoint)?;
+            }
+            Self::Broadcast {
+                scope,
+                endpoint_family,
+                domain,
+                ..
+            } => {
+                require_non_empty(scope, "broadcast scope")?;
+                validate_endpoint_family(endpoint_family, "broadcast endpoint family")?;
+                if let Some(domain) = domain {
+                    require_non_empty(domain, "broadcast domain")?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn targets_endpoint(&self, endpoint: &EndpointAddress) -> Result<bool> {
+        Ok(match self {
+            Self::Endpoint { endpoint: target } => EndpointAddress::parse(target)? == *endpoint,
+            Self::Broadcast {
+                endpoint_family, ..
+            } => endpoint_family == endpoint.family(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -614,15 +658,20 @@ impl DeckrMessage {
     }
 
     pub fn to_text(&self) -> Result<String> {
+        self.validate()?;
         Ok(serde_json::to_string(self)?)
     }
 
     pub fn from_text(text: &str) -> Result<Self> {
-        Ok(serde_json::from_str(text)?)
+        let message: Self = serde_json::from_str(text)?;
+        message.validate()?;
+        Ok(message)
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        Ok(serde_json::from_slice(bytes)?)
+        let message: Self = serde_json::from_slice(bytes)?;
+        message.validate()?;
+        Ok(message)
     }
 
     pub fn hardware_body(&self) -> Result<HardwareMessageBody> {
@@ -650,6 +699,76 @@ impl DeckrMessage {
             }))
             .min();
         expires_at.is_some_and(|expires_at| expires_at <= now)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        require_non_empty(&self.message_id, "message id")?;
+        if self.protocol_version != DECKR_PROTOCOL_VERSION {
+            return Err(Error::Invalid(format!(
+                "protocolVersion must be {DECKR_PROTOCOL_VERSION}"
+            )));
+        }
+        require_non_empty(&self.schema_version, "schema version")?;
+        require_non_empty(&self.lane, "lane")?;
+        require_non_empty(&self.message_type, "message type")?;
+        EndpointAddress::parse(&self.sender)?;
+        require_non_empty(&self.sender_session_id, "sender session id")?;
+        self.recipient.validate()?;
+        if let Some(recipient_session_id) = &self.recipient_session_id {
+            require_non_empty(recipient_session_id, "recipient session id")?;
+            if !matches!(self.recipient, MessageTarget::Endpoint { .. }) {
+                return Err(Error::Invalid(
+                    "recipientSessionId is only valid for endpoint recipients".to_string(),
+                ));
+            }
+        }
+        self.subject.validate()?;
+        parse_datetime(&self.created_at)
+            .ok_or_else(|| Error::Invalid("createdAt must be an RFC 3339 datetime".to_string()))?;
+        if let Some(expires_at) = &self.expires_at {
+            parse_datetime(expires_at).ok_or_else(|| {
+                Error::Invalid("expiresAt must be an RFC 3339 datetime".to_string())
+            })?;
+        }
+        if !self.body.is_object() {
+            return Err(Error::Invalid(
+                "message body must be a JSON object".to_string(),
+            ));
+        }
+        if self.lane == HARDWARE_MESSAGES_LANE {
+            self.hardware_body()?;
+        }
+        Ok(())
+    }
+
+    pub fn is_deliverable_to(
+        &self,
+        endpoint: &EndpointAddress,
+        endpoint_session_id: &str,
+    ) -> Result<bool> {
+        message_is_deliverable_to(self, endpoint, endpoint_session_id)
+    }
+
+    pub fn is_directly_deliverable_to(
+        &self,
+        endpoint: &EndpointAddress,
+        endpoint_session_id: &str,
+    ) -> Result<bool> {
+        self.validate()?;
+        if self.is_expired() {
+            return Ok(false);
+        }
+        if self
+            .recipient_session_id
+            .as_deref()
+            .is_some_and(|session_id| session_id != endpoint_session_id)
+        {
+            return Ok(false);
+        }
+        let MessageTarget::Endpoint { endpoint: target } = &self.recipient else {
+            return Ok(false);
+        };
+        Ok(EndpointAddress::parse(target)? == *endpoint)
     }
 }
 
@@ -762,7 +881,7 @@ impl HardwareMessageBody {
     }
 
     pub fn from_message(message_type: &str, body: &Value) -> Result<Self> {
-        Ok(match message_type {
+        let parsed = match message_type {
             "deviceAvailable" => {
                 let body: DeviceDescriptorBody = serde_json::from_value(body.clone())?;
                 Self::DeviceAvailable {
@@ -785,7 +904,50 @@ impl HardwareMessageBody {
                     "unknown hardware message type {other}"
                 )))
             }
-        })
+        };
+        parsed.validate()?;
+        Ok(parsed)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::DeviceAvailable { descriptor } | Self::DeviceDescriptorChanged { descriptor } => {
+                descriptor.validate()
+            }
+            Self::DeviceUnavailable { device_ref, reason } => {
+                device_ref.validate()?;
+                if let Some(reason) = reason {
+                    require_non_empty(reason, "device unavailable reason")?;
+                }
+                Ok(())
+            }
+            Self::ControlInput {
+                device_ref,
+                control_id,
+                capability_id,
+                event_type,
+                ..
+            } => {
+                device_ref.validate()?;
+                require_non_empty(control_id, "control input target")?;
+                require_non_empty(capability_id, "control input target")?;
+                require_non_empty(event_type, "control input target")
+            }
+            Self::ControlCommand {
+                device_ref,
+                control_id,
+                capability_id,
+                command_type,
+                ..
+            } => {
+                device_ref.validate()?;
+                if let Some(control_id) = control_id {
+                    require_non_empty(control_id, "control command target")?;
+                }
+                require_non_empty(capability_id, "control command target")?;
+                require_non_empty(command_type, "control command target")
+            }
+        }
     }
 }
 
@@ -864,6 +1026,7 @@ pub fn load_fixture(path: &Path) -> Result<DeckrMessage> {
 }
 
 pub fn subject_for(message: &DeckrMessage) -> Result<String> {
+    message.validate()?;
     let sender = EndpointAddress::parse(&message.sender)?;
     Ok(format!(
         "{LANE_SUBJECT_PREFIX}.{}.{}.{}",
@@ -899,6 +1062,7 @@ pub fn headers_for(message: &DeckrMessage) -> BTreeMap<String, String> {
 }
 
 pub fn validate_headers(headers: &BTreeMap<String, String>, message: &DeckrMessage) -> Result<()> {
+    message.validate()?;
     let expected = headers_for(message);
     for (key, expected_value) in expected {
         if let Some(actual) = headers.get(&key) {
@@ -913,6 +1077,7 @@ pub fn validate_headers(headers: &BTreeMap<String, String>, message: &DeckrMessa
 }
 
 pub fn validate_subject_hint(subject: &str, message: &DeckrMessage) -> Result<()> {
+    message.validate()?;
     if !subject.starts_with(&format!("{LANE_SUBJECT_PREFIX}.")) {
         return Ok(());
     }
@@ -937,6 +1102,34 @@ pub fn validate_subject_hint(subject: &str, message: &DeckrMessage) -> Result<()
     Ok(())
 }
 
+pub fn message_targets_endpoint(
+    message: &DeckrMessage,
+    endpoint: &EndpointAddress,
+) -> Result<bool> {
+    message.validate()?;
+    message.recipient.targets_endpoint(endpoint)
+}
+
+pub fn message_is_deliverable_to(
+    message: &DeckrMessage,
+    endpoint: &EndpointAddress,
+    endpoint_session_id: &str,
+) -> Result<bool> {
+    message.validate()?;
+    require_non_empty(endpoint_session_id, "endpoint session id")?;
+    if message.is_expired() {
+        return Ok(false);
+    }
+    if message
+        .recipient_session_id
+        .as_deref()
+        .is_some_and(|session_id| session_id != endpoint_session_id)
+    {
+        return Ok(false);
+    }
+    message_targets_endpoint(message, endpoint)
+}
+
 fn recipient_header(message: &DeckrMessage) -> String {
     match &message.recipient {
         MessageTarget::Endpoint { endpoint } => endpoint.clone(),
@@ -955,6 +1148,19 @@ fn require_non_empty(value: &str, field_name: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+fn validate_endpoint_family(value: &str, field_name: &str) -> Result<()> {
+    require_non_empty(value, field_name)?;
+    if matches!(
+        value,
+        ACTION_PROVIDER_FAMILY | CONTROLLER_FAMILY | HARDWARE_MANAGER_FAMILY | SERVICE_FAMILY
+    ) {
+        return Ok(());
+    }
+    Err(Error::Invalid(format!(
+        "{field_name} must be a Deckr endpoint family"
+    )))
 }
 
 fn require_not_endpoint_address(value: &str, field_name: &str) -> Result<()> {
