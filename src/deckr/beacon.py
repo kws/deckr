@@ -382,7 +382,7 @@ class BeaconDiscovery:
             if selector is not None and not _selector_accepts(selector, candidate.advertisement):
                 continue
             candidates.append(candidate)
-        return tuple(sorted(candidates, key=lambda item: item.key))
+        return tuple(sorted(candidates, key=_candidate_newest_sort_key))
 
     async def validate(
         self,
@@ -873,6 +873,21 @@ def _candidate_from_entry(entry: StateEntry) -> Candidate | None:
         advertisement=advertisement,
         revision=entry.revision,
         observed_at=_now_utc(),
+    )
+
+
+def _candidate_newest_sort_key(candidate: Candidate) -> tuple[int, float, int, str]:
+    updated_at = candidate.advertisement.updated_at
+    updated_timestamp = (
+        updated_at.astimezone(UTC).timestamp()
+        if updated_at is not None
+        else float("-inf")
+    )
+    return (
+        -candidate.revision,
+        -updated_timestamp,
+        -candidate.advertisement.refresh_seq,
+        candidate.advertisement.advertisement_id,
     )
 
 

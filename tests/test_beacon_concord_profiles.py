@@ -356,6 +356,76 @@ async def test_beacon_managed_publish_serializes_concurrent_refreshes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_beacon_find_returns_newest_revision_first() -> None:
+    service = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    old = await service.ensure_advertisement(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="old-session",
+            advertisement_id="a-old",
+            payload=_hardware_payload(session_id="old-session").to_dict(),
+        )
+    )
+    new = await service.ensure_advertisement(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="new-session",
+            advertisement_id="z-new",
+            payload=_hardware_payload(session_id="new-session").to_dict(),
+        )
+    )
+
+    await old.publish()
+    await new.publish()
+
+    candidates = await service.find(HARDWARE_FEATURE_ID)
+
+    assert [candidate.advertisement.advertisement_id for candidate in candidates] == [
+        "z-new",
+        "a-old",
+    ]
+    assert [candidate.revision for candidate in candidates] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_beacon_find_treats_refresh_as_newest_write() -> None:
+    service = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    old = await service.ensure_advertisement(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="old-session",
+            advertisement_id="a-old",
+            payload=_hardware_payload(session_id="old-session").to_dict(),
+        )
+    )
+    new = await service.ensure_advertisement(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="new-session",
+            advertisement_id="z-new",
+            payload=_hardware_payload(session_id="new-session").to_dict(),
+        )
+    )
+
+    await old.publish()
+    await new.publish()
+    await old.publish(hints={"refreshed": "true"})
+
+    candidates = await service.find(HARDWARE_FEATURE_ID)
+
+    assert [candidate.advertisement.advertisement_id for candidate in candidates] == [
+        "a-old",
+        "z-new",
+    ]
+    assert [candidate.revision for candidate in candidates] == [3, 2]
+    assert candidates[0].advertisement.refresh_seq == 2
+
+
+@pytest.mark.asyncio
 async def test_beacon_managed_close_before_publish_prevents_heartbeat_advertisement() -> None:
     service = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
 
