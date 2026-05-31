@@ -380,6 +380,69 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
 
 
 @pytest.mark.asyncio
+async def test_service_use_manager_replaces_closed_cached_agreement() -> None:
+    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
+    )
+    protocol = _protocol()
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        service_address("openhab-home")
+    ) as service_endpoint, deckr.lane(SERVICES_LANE).register_endpoint(
+        action_provider_address("provider-main")
+    ) as client_endpoint:
+        advertiser = ServiceAdvertiser(
+            protocol=protocol,
+            service_id="openhab-home",
+            endpoint=service_endpoint,
+            beacon=beacon,
+        )
+        authorizer = ServiceUseAuthorizer(
+            protocol=protocol,
+            service_id="openhab-home",
+            endpoint=service_endpoint,
+            concord=concord,
+        )
+        await advertiser.publish(ServiceBackendStatus.AVAILABLE)
+        descriptor = await _descriptor(beacon, protocol)
+
+        async with anyio.create_task_group() as tg:
+            authorizer.start(tg)
+            leases = ServiceUseLeaseManager(
+                endpoint=client_endpoint,
+                concord=concord,
+                task_group=tg,
+            )
+            lease = await leases.ensure(
+                descriptor,
+                views={"items"},
+                timeout=1.0,
+            )
+            await lease.agreement.aclose()
+
+            replacement = await leases.ensure(
+                descriptor,
+                views={"items"},
+                timeout=1.0,
+            )
+
+            assert replacement is not lease
+            assert replacement.agreement is not lease.agreement
+            assert (await replacement.agreement.refresh()).status == (
+                ContractValidityStatus.VALID
+            )
+
+            await leases.aclose()
+            await authorizer.aclose()
+            await advertiser.withdraw()
+            tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("missing_participant", ["client", "service"])
 async def test_service_use_stale_contract_is_cancelled_and_superseded(
     missing_participant: str,

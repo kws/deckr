@@ -364,7 +364,10 @@ class ServiceUseLease:
         return self.agreement.contract
 
     async def refresh(self) -> None:
-        validity = await self.agreement.refresh()
+        try:
+            validity = await self.agreement.refresh()
+        except StateConflict as exc:
+            raise _service_use_conflict_unavailable(exc) from exc
         if validity.valid:
             return
         raise ServiceUnavailable(
@@ -510,15 +513,34 @@ class ServiceUseLeaseManager:
         self._log_label = log_label
         self._refresh_interval = refresh_interval
         self._leases: dict[tuple[str, ...], ServiceUseLease] = {}
+        self._lease_lock = anyio.Lock()
         self._closed = False
 
     async def aclose(self) -> None:
         self._closed = True
-        for lease in list(self._leases.values()):
+        async with self._lease_lock:
+            leases = list(self._leases.values())
+            self._leases.clear()
+        for lease in leases:
             await self._cancel_lease(lease, reason="service lease manager closed")
-        self._leases.clear()
 
     async def ensure(
+        self,
+        descriptor: ServiceDescriptor,
+        *,
+        operations: Collection[str] = (),
+        views: Collection[str] | Mapping[str, Collection[str]] = (),
+        timeout: float = 2.0,
+    ) -> ServiceUseLease:
+        async with self._lease_lock:
+            return await self._ensure_locked(
+                descriptor,
+                operations=operations,
+                views=views,
+                timeout=timeout,
+            )
+
+    async def _ensure_locked(
         self,
         descriptor: ServiceDescriptor,
         *,
@@ -571,6 +593,24 @@ class ServiceUseLeaseManager:
     ) -> ServiceUseLease | None:
         """Return a valid cached lease that already covers the requested scope."""
 
+        async with self._lease_lock:
+            return await self._cached_locked(
+                service_id=service_id,
+                namespace=namespace,
+                operations=operations,
+                views=views,
+                timeout=timeout,
+            )
+
+    async def _cached_locked(
+        self,
+        *,
+        service_id: str,
+        namespace: str,
+        operations: Collection[str] = (),
+        views: Collection[str] | Mapping[str, Collection[str]] = (),
+        timeout: float = 0.0,
+    ) -> ServiceUseLease | None:
         if self._closed:
             raise ServiceUnavailable(
                 "client_closed",
@@ -652,7 +692,10 @@ class ServiceUseLeaseManager:
     ) -> ServiceUseLease:
         deadline = anyio.current_time() + max(timeout, 0)
         while True:
-            validity = await lease.agreement.refresh()
+            try:
+                validity = await lease.agreement.refresh()
+            except StateConflict as exc:
+                raise _service_use_conflict_unavailable(exc) from exc
             if validity.valid:
                 return lease
             if validity.status != ContractValidityStatus.NOT_YET_FULFILLED:
@@ -1103,6 +1146,17 @@ def _stale_service_use_error(exc: ServiceUnavailable) -> bool:
     return exc.diagnostics.get("status") in {
         item.value for item in _STALE_SERVICE_USE_STATUSES
     }
+
+
+def _service_use_conflict_unavailable(exc: StateConflict) -> ServiceUnavailable:
+    return ServiceUnavailable(
+        f"contract_{ContractValidityStatus.INVALID_TOKEN.value}",
+        "Service-use contract could not be refreshed",
+        {
+            "status": ContractValidityStatus.INVALID_TOKEN.value,
+            "reason": str(exc),
+        },
+    )
 
 
 def _pending_service_use_error(exc: ServiceUnavailable) -> bool:
