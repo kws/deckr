@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import anyio
 import pytest
 from memory_lane_substrate import MemoryStateStore, memory_deckr
@@ -37,13 +40,17 @@ from deckr.services.messages import ServiceCommandBody
 from deckr.state import StateUnavailable
 
 
-def _protocol(service_id: str = "openhab-home") -> ServiceProtocol:
+def _protocol(
+    service_id: str = "openhab-home",
+    *,
+    operations: tuple[str, ...] = ("ensureItems", "refreshItem", "sendCommand"),
+) -> ServiceProtocol:
     return ServiceProtocol(
         namespace="dev.deckr.openhab.service",
         feature_id="dev.deckr.openhab.service",
         advertisement_profile="dev.deckr.openhab.service.advertisement.v1",
         use_profile="dev.deckr.openhab.service_use.v1",
-        operations=("ensureItems", "refreshItem", "sendCommand"),
+        operations=operations,
         view_families={
             "items": ServiceViewFamily(
                 storeName="deckr_openhab_service_view_v1",
@@ -123,6 +130,42 @@ async def _publish_service_advertisement(
     return advertisement
 
 
+async def _establish_view_lease(
+    client: ServiceClient,
+    concord: ConcordService,
+    protocol: ServiceProtocol,
+    service_endpoint,
+    view: ServiceViewRef,
+    *,
+    service_id: str = "openhab-home",
+    session_id: str = "service-session",
+):
+    result: dict[str, Mapping[str, Any] | None] = {}
+
+    async def read_view() -> None:
+        result["value"] = await client.read_view(service_id, protocol.namespace, view)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(read_view)
+        with anyio.fail_after(1):
+            while True:
+                contracts = [
+                    item
+                    for item in await concord._find_contracts(protocol.use_profile)
+                    if item.state == ContractState.OPEN
+                ]
+                if contracts:
+                    contract = contracts[-1]
+                    break
+                await anyio.sleep(0.01)
+        await concord._attach(contract, service_endpoint, session_id)
+        with anyio.fail_after(1):
+            while "value" not in result:
+                await anyio.sleep(0.01)
+        tg.cancel_scope.cancel()
+    return contract
+
+
 def test_service_protocol_payload_terms_and_view_keys() -> None:
     protocol = _protocol()
     payload = protocol.advertisement_payload(
@@ -191,12 +234,13 @@ async def test_service_client_views_survive_beacon_loss_with_valid_contract() ->
             service_view_key("openhab-home", "items", "Kitchen Light"),
         )
 
-        assert (
-            await client.read_view("openhab-home", protocol.namespace, view)
-            is None
+        contract = await _establish_view_lease(
+            client,
+            concord,
+            protocol,
+            service_endpoint,
+            view,
         )
-        contract = (await concord._find_contracts(protocol.use_profile))[0]
-        await concord._attach(contract, service_endpoint, "service-session")
 
         await view_store.put(
             view.key,
@@ -238,13 +282,12 @@ async def test_service_client_views_survive_beacon_loss_with_valid_contract() ->
             concord=concord,
             state_for=lambda _name: view_store,
         )
-        assert (
-            await replacement_client.read_view(
-                "openhab-home",
-                protocol.namespace,
-                view,
-            )
-            is None
+        contract = await _establish_view_lease(
+            replacement_client,
+            concord,
+            protocol,
+            service_endpoint,
+            view,
         )
         replacement_contracts = [
             item
@@ -252,9 +295,7 @@ async def test_service_client_views_survive_beacon_loss_with_valid_contract() ->
             if item.contract_id == contract.contract_id
         ]
         assert [item.generation for item in replacement_contracts] == [1, 2]
-        contract = replacement_contracts[1]
         assert contract.state == ContractState.OPEN
-        await concord._attach(contract, service_endpoint, "service-session")
         current = await replacement_client.read_view(
             "openhab-home",
             protocol.namespace,
@@ -264,6 +305,12 @@ async def test_service_client_views_survive_beacon_loss_with_valid_contract() ->
         assert current["state"] == "ON"
 
         await advertisement.aclose()
+        await _publish_service_advertisement(
+            beacon,
+            protocol,
+            session_id="replacement-service-session",
+            advertisement_id="ad-2",
+        )
         current = await replacement_client.read_view(
             "openhab-home",
             protocol.namespace,
@@ -310,11 +357,13 @@ async def test_service_client_reuses_contract_across_advertisement_id_change() -
             service_view_key("openhab-home", "items", "Kitchen Light"),
         )
 
-        await client.read_view("openhab-home", protocol.namespace, view)
-        contracts = await concord._find_contracts(protocol.use_profile)
-        assert len(contracts) == 1
-        contract = contracts[0]
-        await concord._attach(contract, service_endpoint, "service-session")
+        contract = await _establish_view_lease(
+            client,
+            concord,
+            protocol,
+            service_endpoint,
+            view,
+        )
 
         await first_advertisement.aclose()
         await _publish_service_advertisement(
@@ -359,12 +408,13 @@ async def test_service_client_reuses_valid_cached_lease_without_beacon_scan() ->
             service_view_key("openhab-home", "items", "Kitchen Light"),
         )
 
-        assert (
-            await client.read_view("openhab-home", protocol.namespace, view)
-            is None
+        await _establish_view_lease(
+            client,
+            concord,
+            protocol,
+            service_endpoint,
+            view,
         )
-        contract = (await concord._find_contracts(protocol.use_profile))[0]
-        await concord._attach(contract, service_endpoint, "service-session")
         await view_store.put(
             view.key,
             {
@@ -382,6 +432,135 @@ async def test_service_client_reuses_valid_cached_lease_without_beacon_scan() ->
     assert current is not None
     assert current["state"] == "ON"
     assert beacon_state.items_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_service_client_new_operation_does_not_cancel_existing_valid_lease() -> None:
+    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
+    )
+    view_store = MemoryStateStore(name="views")
+    initial_protocol = _protocol(operations=("ensureItems",))
+    expanded_protocol = _protocol(operations=("ensureItems", "sendCommand"))
+    service_endpoint = service_address("openhab-home")
+    first_advertisement = await _publish_service_advertisement(
+        beacon,
+        initial_protocol,
+        advertisement_id="ad-1",
+    )
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        action_provider_address("provider-main")
+    ) as client_endpoint:
+        client = ServiceClient(
+            endpoint=client_endpoint,
+            beacon=beacon,
+            concord=concord,
+            state_for=lambda _name: view_store,
+        )
+        view = ServiceViewRef(
+            "deckr_openhab_service_view_v1",
+            service_view_key("openhab-home", "items", "Kitchen Light"),
+        )
+        old_contract = await _establish_view_lease(
+            client,
+            concord,
+            initial_protocol,
+            service_endpoint,
+            view,
+        )
+
+        await first_advertisement.aclose()
+        await _publish_service_advertisement(
+            beacon,
+            expanded_protocol,
+            session_id="service-session-2",
+            advertisement_id="ad-2",
+        )
+        reply = await client.command(
+            "openhab-home",
+            expanded_protocol.namespace,
+            "sendCommand",
+            timeout=0.01,
+        )
+
+    assert reply.error is not None
+    assert reply.error.code == "service_contract_pending"
+    assert (await concord._validate(old_contract)).status == (
+        ContractValidityStatus.VALID
+    )
+
+
+@pytest.mark.asyncio
+async def test_service_client_pending_lease_rediscovery_waits_for_call_timeout() -> None:
+    beacon_state = CountingItemsStateStore(name="beacon")
+    beacon = BeaconService(BeaconDiscovery(beacon_state))
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
+    )
+    view_store = MemoryStateStore(name="views")
+    protocol = _protocol()
+    first_advertisement = await _publish_service_advertisement(
+        beacon,
+        protocol,
+        session_id="service-session-1",
+        advertisement_id="ad-1",
+    )
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        action_provider_address("provider-main")
+    ) as client_endpoint:
+        client = ServiceClient(
+            endpoint=client_endpoint,
+            beacon=beacon,
+            concord=concord,
+            state_for=lambda _name: view_store,
+        )
+        beacon_state.items_calls = 0
+        result: dict[str, str | None] = {}
+
+        async def call_service() -> None:
+            reply = await client.command(
+                "openhab-home",
+                protocol.namespace,
+                "sendCommand",
+                timeout=0.03,
+            )
+            result["code"] = reply.error.code if reply.error is not None else None
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(call_service)
+            with anyio.fail_after(1):
+                while not (await concord._find_contracts(protocol.use_profile)):
+                    await anyio.sleep(0.01)
+            await first_advertisement.aclose()
+            await _publish_service_advertisement(
+                beacon,
+                protocol,
+                session_id="service-session-2",
+                advertisement_id="ad-2",
+            )
+            assert beacon_state.items_calls == 1
+            with anyio.fail_after(1):
+                while "code" not in result:
+                    await anyio.sleep(0.01)
+            tg.cancel_scope.cancel()
+
+        assert result["code"] == "service_contract_pending"
+        await client.command(
+            "openhab-home",
+            protocol.namespace,
+            "sendCommand",
+            timeout=0.01,
+        )
+        assert beacon_state.items_calls >= 2
 
 
 @pytest.mark.asyncio
@@ -412,9 +591,13 @@ async def test_service_client_rediscover_before_rejecting_unknown_operation() ->
             "deckr_openhab_service_view_v1",
             service_view_key("openhab-home", "items", "Kitchen Light"),
         )
-        await client.read_view("openhab-home", protocol.namespace, view)
-        contract = (await concord._find_contracts(protocol.use_profile))[0]
-        await concord._attach(contract, service_endpoint, "service-session")
+        await _establish_view_lease(
+            client,
+            concord,
+            protocol,
+            service_endpoint,
+            view,
+        )
 
         beacon_state.items_calls = 0
         reply = await client.command(

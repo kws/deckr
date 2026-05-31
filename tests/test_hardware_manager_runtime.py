@@ -234,7 +234,9 @@ async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None
 
         assert len(runtime.live_claims) == 1
         assert runtime.live_claims[0].terms.claim_id == "claim-a"
-        assert (await concord._validate(contract)).status == ContractValidityStatus.VALID
+        assert (
+            await concord._validate(contract)
+        ).status == ContractValidityStatus.VALID
     finally:
         await runtime.stop()
         await endpoint_cm.__aexit__(None, None, None)
@@ -306,6 +308,84 @@ async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
             candidates[0].advertisement.payload
         )
         assert payload.devices["stream-deck-mini"].capacity.claimed_instances == 0
+    finally:
+        await runtime.stop()
+        await endpoint_cm.__aexit__(None, None, None)
+        await controller_cm.__aexit__(None, None, None)
+
+
+async def test_device_unavailable_cancels_live_claim_contract() -> None:
+    deckr, endpoint_cm, runtime = await _runtime()
+    controller_cm = deckr.lane("hardware_messages").register_endpoint(
+        controller_address("controller-main")
+    )
+    controller_endpoint = await controller_cm.__aenter__()
+    concord = _concord(deckr)
+    try:
+        await runtime.publish_advertisement()
+        await _add_device(runtime, _descriptor())
+        contract = await _claim(runtime, concord)
+        await concord._attach(
+            contract,
+            controller_endpoint.endpoint,
+            controller_endpoint.session_id,
+        )
+        await runtime.reconcile_claims(reason="test live")
+        assert (
+            await concord._validate(contract)
+        ).status == ContractValidityStatus.VALID
+
+        await runtime.handle_hardware_message(
+            hw_messages.device_unavailable_message(
+                manager_id="manager-main",
+                sender_session_id=runtime.endpoint.session_id,
+                device_id="stream-deck-mini",
+                reason="disconnected",
+            )
+        )
+
+        assert (await concord._validate(contract)).status == (
+            ContractValidityStatus.CANCELLED
+        )
+        assert runtime.live_claims == ()
+        candidates = await _beacon(deckr).find(HARDWARE_FEATURE_ID)
+        payload = HardwareBeaconPayload.model_validate(
+            candidates[0].advertisement.payload
+        )
+        assert "stream-deck-mini" not in payload.devices
+    finally:
+        await runtime.stop()
+        await endpoint_cm.__aexit__(None, None, None)
+        await controller_cm.__aexit__(None, None, None)
+
+
+async def test_replace_devices_cancels_live_claim_contract_for_removed_device() -> None:
+    deckr, endpoint_cm, runtime = await _runtime()
+    controller_cm = deckr.lane("hardware_messages").register_endpoint(
+        controller_address("controller-main")
+    )
+    controller_endpoint = await controller_cm.__aenter__()
+    concord = _concord(deckr)
+    try:
+        await runtime.publish_advertisement()
+        await _add_device(runtime, _descriptor())
+        contract = await _claim(runtime, concord)
+        await concord._attach(
+            contract,
+            controller_endpoint.endpoint,
+            controller_endpoint.session_id,
+        )
+        await runtime.reconcile_claims(reason="test live")
+        assert (
+            await concord._validate(contract)
+        ).status == ContractValidityStatus.VALID
+
+        await runtime.replace_devices({}, announce=True, removed_reason="removed")
+
+        assert (await concord._validate(contract)).status == (
+            ContractValidityStatus.CANCELLED
+        )
+        assert runtime.live_claims == ()
     finally:
         await runtime.stop()
         await endpoint_cm.__aexit__(None, None, None)

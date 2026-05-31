@@ -490,6 +490,12 @@ class ServiceClient:
             try:
                 return await self._valid_lease(cached, timeout=timeout)
             except _ServiceUnavailable as exc:
+                if _pending_service_use_error(exc):
+                    await self._drop_lease(
+                        cached,
+                        reason="service_use_acceptance_timeout",
+                    )
+                    raise
                 if not _stale_service_use_error(exc):
                     raise
                 await self._drop_lease(
@@ -517,9 +523,8 @@ class ServiceClient:
         key = (
             service.service_id,
             service.service_namespace,
-            service.service_session_id,
+            terms.service_use_id,
         )
-        await self._cancel_stale_session_leases(key, service_id, service_namespace)
         last_error: _ServiceUnavailable | None = None
         for _attempt in range(2):
             lease = self._leases.get(key)
@@ -535,6 +540,12 @@ class ServiceClient:
             try:
                 return await self._valid_lease(lease, timeout=timeout)
             except _ServiceUnavailable as exc:
+                if _pending_service_use_error(exc):
+                    await self._drop_lease(
+                        lease,
+                        reason="service_use_acceptance_timeout",
+                    )
+                    raise
                 if not _stale_service_use_error(exc):
                     raise
                 await self._drop_lease(
@@ -601,23 +612,6 @@ class ServiceClient:
             )
         services.sort(key=_service_sort_key, reverse=True)
         return services[0]
-
-    async def _cancel_stale_session_leases(
-        self,
-        current_key: tuple[str, str, str],
-        service_id: str,
-        service_namespace: str,
-    ) -> None:
-        for key, lease in list(self._leases.items()):
-            if key == current_key:
-                continue
-            if key[0] != service_id or key[1] != service_namespace:
-                continue
-            self._leases.pop(key, None)
-            await self._cancel_lease(
-                lease,
-                reason="service session changed",
-            )
 
     async def _cancel_lease(self, lease: _ServiceLease, *, reason: str) -> None:
         try:
@@ -1072,6 +1066,10 @@ def _stale_service_use_error(exc: _ServiceUnavailable) -> bool:
     return exc.diagnostics.get("status") in {
         item.value for item in _STALE_SERVICE_USE_STATUSES
     }
+
+
+def _pending_service_use_error(exc: _ServiceUnavailable) -> bool:
+    return exc.code == "service_contract_pending"
 
 
 def _service_sort_key(service: ServiceAdvertisement) -> tuple[datetime, int, str]:

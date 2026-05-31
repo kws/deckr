@@ -293,9 +293,17 @@ class NatsStateStore:
                             _KV_DELETE_OPERATION,
                             _KV_PURGE_OPERATION,
                         }:
+                            current = await self._get_entry(key)
+                            if current is not None:
+                                entries[key] = current
+                                continue
                             entries.pop(key, None)
                             continue
                         if _kv_entry_is_absent_marker(entry):
+                            current = await self._get_entry(key)
+                            if current is not None:
+                                entries[key] = current
+                                continue
                             entries.pop(key, None)
                             continue
                         if entry.value is not None:

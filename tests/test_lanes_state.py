@@ -411,6 +411,33 @@ async def test_nats_state_items_deletes_temporary_consumer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nats_state_items_exact_checks_absent_markers() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+    key = "advertisements.by_feature.dev_deckr_hardware.deck"
+    await store.put(key, {"owner": "manager", "refresh": 1})
+    assert fake_js.kv is not None
+    current = fake_js.kv._entries[key]
+    fake_js.kv.get_overrides[key] = current
+    fake_js.kv._entries[key] = _FakeKvEntry(
+        key=key,
+        value=b"",
+        revision=current.revision + 1,
+        headers={"Nats-Marker-Reason": "MaxAge"},
+    )
+
+    entries = await store.items("advertisements.")
+
+    assert [(entry.key, entry.value) for entry in entries] == [
+        (key, {"owner": "manager", "refresh": 1})
+    ]
+
+
+@pytest.mark.asyncio
 async def test_nats_state_creates_persistent_bucket_without_broker_ttl() -> None:
     fake_js = _FakeJs(existing=False)
     store = NatsStateStore(
@@ -891,11 +918,14 @@ class _FakeKv:
         self.fail_create: Exception | None = None
         self.keys_filters: object = None
         self.get_calls = 0
+        self.get_overrides: dict[str, _FakeKvEntry] = {}
 
     async def get(self, key: str) -> _FakeKvEntry:
         self.get_calls += 1
         if self.fail_get is not None:
             raise self.fail_get
+        if key in self.get_overrides:
+            return self.get_overrides[key]
         entry = self._entries.get(key)
         if entry is None:
             raise RuntimeError("missing")

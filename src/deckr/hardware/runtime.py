@@ -95,7 +95,9 @@ class HardwareManagerRuntime:
     labels: Mapping[str, str] | None = None
     command_handler: HardwareCommandHandler | None = None
     reset_handler: HardwareResetHandler | None = None
-    advertisement_refresh_seconds: float = DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS
+    advertisement_refresh_seconds: float = (
+        DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS
+    )
     claim_reconcile_seconds: float = DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS
     token_refresh_seconds: float = DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS
     watch_retry_seconds: float = DEFAULT_HARDWARE_WATCH_RETRY_SECONDS
@@ -117,7 +119,9 @@ class HardwareManagerRuntime:
 
     def __post_init__(self) -> None:
         if self.endpoint.endpoint.family != "hardware_manager":
-            raise ValueError("hardware manager runtime endpoint must be hardware_manager")
+            raise ValueError(
+                "hardware manager runtime endpoint must be hardware_manager"
+            )
         if self.endpoint.endpoint.endpoint_id != self.manager_id:
             raise ValueError("manager_id must match hardware_manager endpoint id")
         if self.advertisement_refresh_seconds <= 0:
@@ -181,12 +185,18 @@ class HardwareManagerRuntime:
     ) -> None:
         next_devices = dict(devices)
         previous = dict(self._devices)
+        removed_device_ids = sorted(set(previous) - set(next_devices))
         self._devices = next_devices
+        for device_id in removed_device_ids:
+            await self._cancel_claims_for_device(
+                device_id,
+                reason=f"hardware device {device_id} {removed_reason}",
+            )
         await self.publish_advertisement()
         await self.reconcile_claims(reason="device snapshot changed")
         if not announce:
             return
-        for device_id in sorted(set(previous) - set(next_devices)):
+        for device_id in removed_device_ids:
             await self.endpoint.publish(
                 hw_messages.device_unavailable_message(
                     manager_id=self.manager_id,
@@ -232,6 +242,10 @@ class HardwareManagerRuntime:
             return True
         if isinstance(event, hw_messages.DeviceUnavailableMessage):
             self._devices.pop(ref.device_id, None)
+            await self._cancel_claims_for_device(
+                ref.device_id,
+                reason=f"hardware device {ref.device_id} unavailable",
+            )
             await self.publish_advertisement()
             await self.endpoint.publish(message)
             await self.reconcile_claims(reason="device unavailable")
@@ -282,7 +296,8 @@ class HardwareManagerRuntime:
         body = hw_messages.hardware_body_from_message(envelope)
         if not isinstance(
             body,
-            hw_messages.ControlCommandMessage | hw_messages.CapabilityStateRequestMessage,
+            hw_messages.ControlCommandMessage
+            | hw_messages.CapabilityStateRequestMessage,
         ):
             return False
         if ref.device_id not in self._devices:
@@ -347,7 +362,9 @@ class HardwareManagerRuntime:
                 self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
                 self._advertisement_dirty = True
             except StateUnavailable:
-                logger.warning("Hardware Beacon advertisements unavailable; retrying later")
+                logger.warning(
+                    "Hardware Beacon advertisements unavailable; retrying later"
+                )
                 self._advertisement_dirty = True
 
     async def withdraw_advertisement(self) -> None:
@@ -409,7 +426,9 @@ class HardwareManagerRuntime:
                 manager_token=candidate.token,
                 controller_endpoint=candidate.terms.controller_endpoint,
                 controller_session_id=candidate.controller_session_id,
-                device_refs=tuple(device.device_ref for device in candidate.terms.devices),
+                device_refs=tuple(
+                    device.device_ref for device in candidate.terms.devices
+                ),
             )
             next_claims[candidate.contract.key] = live
             for device_id in live.device_ids:
@@ -502,6 +521,27 @@ class HardwareManagerRuntime:
     def _claim_contract_sort_key(self, contract: ContractHandle) -> tuple[int, str]:
         return (0 if contract.key in self._claims else 1, contract.key)
 
+    async def _cancel_claims_for_device(self, device_id: str, *, reason: str) -> None:
+        claims = [
+            claim for claim in self._claims.values() if device_id in claim.device_ids
+        ]
+        for claim in claims:
+            try:
+                cancelled = await self._claim_manager.cancel(
+                    claim.contract,
+                    reason=reason,
+                )
+            except (StateConflict, StateUnavailable):
+                logger.debug(
+                    "Could not cancel hardware claim %s for unavailable device %s",
+                    claim.contract.contract_id,
+                    device_id,
+                    exc_info=True,
+                )
+                continue
+            if cancelled:
+                await self._claim_manager.release(claim.contract.key)
+
     def _ordered_claim_candidates(
         self,
         candidates: Mapping[str, _ClaimCandidate],
@@ -532,7 +572,9 @@ class HardwareManagerRuntime:
             try:
                 await self.reset_handler(device_id)
             except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                logger.debug("Could not reset closed hardware device session %s", device_id)
+                logger.debug(
+                    "Could not reset closed hardware device session %s", device_id
+                )
 
     def _hardware_payload(self) -> HardwareBeaconPayload:
         claimed = set(self._claims_by_device)
@@ -562,7 +604,8 @@ class HardwareManagerRuntime:
     async def _reject_command(
         self,
         envelope: DeckrMessage,
-        body: hw_messages.ControlCommandMessage | hw_messages.CapabilityStateRequestMessage,
+        body: hw_messages.ControlCommandMessage
+        | hw_messages.CapabilityStateRequestMessage,
         *,
         reason: hw_messages.CommandRejectionReason,
     ) -> None:

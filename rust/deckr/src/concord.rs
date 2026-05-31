@@ -900,6 +900,12 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         self.managed.remove(contract_key);
     }
 
+    pub async fn cancel(&self, contract: &ContractHandle, reason: Option<String>) -> Result<bool> {
+        self.concord
+            .cancel(contract, &self.participant, reason)
+            .await
+    }
+
     pub async fn reconcile<F>(
         &mut self,
         mut accept_contract: F,
