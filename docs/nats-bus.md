@@ -206,11 +206,15 @@ and replies; it must not be treated as the inventory authority. If a claimed
 device disappears, the hardware manager cancels the matching Concord claim or
 stops maintaining its participant token.
 
-Service components use `deckr.services.GenericService` to advertise their
-package-owned service feature through managed `BeaconService.ensure_advertisement`
-lifecycles and maintain service
-use tokens through `ConcordParticipantLease`. After a service-use Concord
-contract is negotiated, service command and view authority follows Concord, not
+Service components use the explicit `deckr.services` service-profile helpers
+for each layer: `ServiceAdvertiser` publishes Beacon descriptors,
+`ServiceUseAuthorizer` maintains the service participant side of Concord
+service-use contracts, `ServiceCommandChannel` carries services-lane
+request/reply traffic, and `ServiceViewReader` / `ServiceViewWriter` apply
+current-state view fences. Client code performs Beacon lookup and descriptor
+selection explicitly, then opens authority through `ServiceUseLeaseManager` for
+the chosen descriptor and requested scope. After a service-use Concord contract
+is negotiated, service command and protected view authority follows Concord, not
 continued Beacon advertisement presence. A service may withdraw its Beacon
 advertisement when it cannot accept new service-use contracts; existing
 service-use contracts remain Concord-governed.
