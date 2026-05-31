@@ -119,6 +119,11 @@ Deckr’s target architecture is:
 Controllers, hardware managers, action provider runtimes, and protocol adapters
 are semantic roles, not different architectural kinds.
 
+Beacon is only candidate discovery. After participants negotiate a Concord
+contract, that contract's validity and withdrawal are governed by Concord
+contracts and participant tokens, not by continued Beacon advertisement
+presence.
+
 If you are looking for the design rules around discovery, lane ownership,
 lane substrate configuration, wire-safe schemas, component planning, and alpha
 policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).

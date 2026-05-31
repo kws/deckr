@@ -40,7 +40,8 @@ Concord services pass their own `StateStorePolicy` values.
 
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence
-for discovery and agreements lives in Beacon advertisements and Concord tokens.
+for discovery lives in Beacon advertisements. Live agreement authority lives in
+Concord contracts and participant tokens.
 
 ## Lane Subjects
 
@@ -119,7 +120,10 @@ candidates = await beacon.find("dev.deckr.hardware")
 Beacon answers "which endpoints currently advertise this feature?" It does not
 grant ownership, reserve anything, prove future success, or make a command safe.
 Consumers should treat results as candidates and establish any needed Concord
-agreement before relying on them.
+agreement before relying on them. After that agreement exists, Beacon
+advertisement changes do not withdraw or invalidate it. Advertisers may
+withdraw Beacon advertisements when they are not accepting new Concord
+negotiations; that affects only future discovery.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
 
@@ -190,16 +194,21 @@ The language-neutral profile rules are summarized in
 
 Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
-whether a claim or provider session is live. Python hardware managers use the
-shared `deckr.hardware.runtime.HardwareManagerRuntime` implementation to advertise
-hardware through managed `BeaconService.ensure_advertisement` lifecycles,
-maintain claim tokens through `ConcordParticipantManager`, and route input only
-for live claims.
+whether a claim or provider session is live. A missing Beacon advertisement is
+not a withdrawal of an existing claim or provider session. Python hardware
+managers use the shared `deckr.hardware.runtime.HardwareManagerRuntime`
+implementation to advertise hardware through managed
+`BeaconService.ensure_advertisement` lifecycles, maintain claim tokens through
+`ConcordParticipantManager`, and route input only for live claims.
 
 Service components use `deckr.services.GenericService` to advertise their
 package-owned service feature through managed `BeaconService.ensure_advertisement`
 lifecycles and maintain service
-use tokens through `ConcordParticipantLease`.
+use tokens through `ConcordParticipantLease`. After a service-use Concord
+contract is negotiated, service command and view authority follows Concord, not
+continued Beacon advertisement presence. A service may withdraw its Beacon
+advertisement when it cannot accept new service-use contracts; existing
+service-use contracts remain Concord-governed.
 
 ## Component Dependencies
 
@@ -216,7 +225,9 @@ endpoint = "service:sonos-home"
 The endpoint filter is optional. A missing candidate makes required dependencies
 unready and optional dependencies diagnostic-only. Dependency observation uses
 `BeaconService` semantic feature events and does not use lane subscription state
-or raw Beacon KV watches as an authority source.
+or raw Beacon KV watches as an authority source. Dependency readiness is not
+agreement withdrawal; existing Concord contracts must be validated through
+Concord.
 
 ## Store Configuration
 
@@ -317,7 +328,7 @@ If a runtime cannot find hardware, actions, or services:
 2. Check the advertisement endpoint and session id.
 3. Check whether the advertisement bucket TTL is expiring records.
 4. If a live agreement is expected, validate the Concord contract and every
-   participant token.
+   participant token; do not treat Beacon disappearance as withdrawal.
 5. For profile-specific behavior, validate the Beacon payload or Concord terms
    with `deckr.hardware.profiles` or `deckr.profiles`, depending on the profile.
 

@@ -130,7 +130,9 @@ Under Beacon/Concord, service packages advertise those namespaces with generic
 Beacon advertisements and, when needed, bind live service-specific agreements
 with generic Concord contracts. Deckr core validates the Beacon/Concord
 envelopes; the service package validates its payloads, terms, operations, and
-result/view schemas.
+result/view schemas. After a service-specific Concord agreement is negotiated,
+Beacon remains discovery input for future negotiations only; agreement validity
+and withdrawal are Concord concerns.
 
 Service packages should use their namespace as a Beacon `featureId` or inside
 their own profile payload. If a service needs retained views or durable domain

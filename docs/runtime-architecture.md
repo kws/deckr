@@ -653,6 +653,8 @@ objects, block `start(ctx)`, block endpoint registration, or stop a component.
 The component host observes dependencies continuously through `BeaconService`
 feature queries and semantic feature events. A running component can therefore
 be ready, unready, or unknown while its local lifecycle remains `running`.
+Dependency observations are readiness evidence only. They do not withdraw,
+invalidate, or cancel existing Concord agreements.
 
 Required dependencies with `unknown`, `degraded`, or `unsatisfied` conditions
 make the effective component readiness unready. Optional, preferred, and
@@ -780,7 +782,8 @@ component may expose no endpoints, and a running component with reachable
 endpoints may still report unready for its own local reasons or because a
 declared dependency is unavailable. Device, action, binding, page, service, and
 settings availability remain domain state. Shared discovery and agreement
-evidence is represented by Beacon and Concord.
+evidence is represented by Beacon and Concord: Beacon supplies discovery
+candidates, while Concord supplies live agreement authority.
 
 Python hardware managers use the shared `deckr.hardware.runtime`
 implementation for the manager side of that protocol. A manager advertises its
@@ -913,6 +916,8 @@ to understand component-specific settings.
   [`beacon-concord.md`](beacon-concord.md).
 - Concord is the shared live agreement protocol specified in
   [`beacon-concord.md`](beacon-concord.md).
+- After a Concord agreement is negotiated, Beacon no longer participates in that
+  agreement's lifecycle, validity, or withdrawal.
 - Runtime components use `BeaconService` and `ConcordService`; raw
   Beacon/Concord authority state watches belong only inside those core services
   and substrate internals.

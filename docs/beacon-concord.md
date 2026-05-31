@@ -36,6 +36,26 @@ Retired current-state authorities are not part of v1. Do not treat endpoint
 presence, action catalogs, hardware inventory, unilateral device claims, lease
 buckets, or discovery buckets as parallel authority for Beacon or Concord.
 
+## Discovery And Agreement Boundary
+
+Beacon is discovery only. A Beacon advertisement can make an endpoint a
+candidate for a new Concord negotiation, but it is not part of any existing
+Concord contract's validity after that contract is negotiated.
+
+An advertiser may withdraw or stop refreshing Beacon advertisements when it is
+not accepting new Concord negotiations. That affects only future discovery and
+negotiation. It does not invalidate, withdraw, cancel, degrade, or pause any
+already negotiated Concord contract.
+
+After a Concord contract exists, live authority and withdrawal are Concord
+concerns. A participant withdraws by cancelling the contract, stopping its own
+participant token, or allowing its participant token to expire. Profile-specific
+loss of authority, such as a disconnected claimed device or a stopped service,
+must be expressed through Concord cancellation, token loss, or profile-owned
+Concord validation failure. Missing, withdrawn, expired, replaced, or changed
+Beacon advertisements must not by themselves invalidate an existing Concord
+contract or stop live rendering, routing, commands, or view consumption.
+
 ## Shared Rules
 
 Endpoint addresses serialize as:
@@ -81,7 +101,8 @@ I advertise feature F at endpoint E. You may try me.
 Beacon does not prove endpoint liveness, health, authorization, resource
 availability, ownership, future success, or command safety. Consumers must treat
 Beacon results as candidates and establish any required Concord agreement before
-acting under live authority.
+acting under live authority. Once that agreement exists, continued Beacon
+advertisement presence is not live-use authority.
 
 Beacon advertisements use the schema
 `dev.deckr.beacon.advertisement.v1`. The NATS-backed store and key shape are
@@ -221,19 +242,28 @@ Beacon may discover a candidate device before a claim is created, but Beacon is
 not part of claim validity. Participants validate ownership through the Concord
 contract, participant tokens, endpoint, session, and device refs. Hardware
 single-owner and capacity enforcement are hardware-manager/profile policy over
-valid Concord claims.
+valid Concord claims. If a claimed device disconnects, the hardware manager
+must cancel/end the Concord claim or stop maintaining its participant token; a
+missing hardware Beacon advertisement alone is not a claim withdrawal.
 
 For `dev.deckr.profile.action_provider_session.v1`, the terms bind a
 controller endpoint to one action-provider runtime endpoint and the provider
 runtime session advertised through Beacon. Individual control bindings are
-controller-owned routing state. They remain usable only while the provider
-session contract is valid and the referenced provider advertisement/session
-remains acceptable to controller policy.
+controller-owned routing state. Once the controller and provider have negotiated
+the provider-session Concord contract, Beacon is no longer part of that
+contract's lifecycle or validity. Existing bindings remain usable while the
+provider-session contract is valid; Beacon may only discover candidates for new
+or successor negotiations.
 
 Service packages may use generic Beacon and Concord with package-owned feature
 ids, advertisement payload profiles, terms profiles, and private state. Deckr
 core does not define service-specific domain semantics such as Sonos zones,
-OpenHAB items, or package-owned view schemas.
+OpenHAB items, or package-owned view schemas. After a service-use Concord
+contract is negotiated, service command and view authority follows that Concord
+contract and its participant tokens, not continued Beacon advertisement
+presence. A service may withdraw its Beacon advertisement when it cannot accept
+new service-use contracts; existing service-use contracts remain governed only
+by Concord validity and participant tokens.
 
 ## Contract Artifacts And Conformance
 
