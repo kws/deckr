@@ -21,12 +21,13 @@ from pydantic import (
 
 from deckr.beacon import AdvertisementHandle, BeaconAdvertiser, BeaconService, Candidate
 from deckr.concord import (
-    ConcordParticipantLease,
+    ConcordAgreement,
+    ConcordAgreementSpec,
+    ConcordParticipantManager,
     ConcordService,
     ContractHandle,
     ContractState,
     ContractValidityStatus,
-    ParticipantHandle,
     canonical_json_hash,
 )
 from deckr.contracts.keys import encode_key_token
@@ -297,11 +298,13 @@ class ServiceAdvertisement:
 
 @dataclass(slots=True)
 class _ServiceLease:
-    contract: ContractHandle
+    agreement: ConcordAgreement
     service: ServiceAdvertisement
     terms: ServiceUseTerms
-    client_token: ParticipantHandle | None = None
-    client_lease: ConcordParticipantLease | None = None
+
+    @property
+    def contract(self) -> ContractHandle:
+        return self.agreement.contract
 
 
 class ServiceClient:
@@ -489,12 +492,33 @@ class ServiceClient:
             service.service_session_id,
         )
         await self._cancel_stale_leases(key, service_id, service_namespace)
-        lease = self._leases.get(key)
-        if lease is None:
-            lease = await self._create_or_reuse_lease(service)
-            self._leases[key] = lease
-        await self._attach_or_refresh_token(lease)
-        return await self._valid_lease(lease, timeout=timeout)
+        last_error: _ServiceUnavailable | None = None
+        for _attempt in range(2):
+            lease = self._leases.get(key)
+            if lease is None:
+                lease = await self._create_or_reuse_lease(service)
+                self._leases[key] = lease
+            await self._attach_or_refresh_token(lease)
+            try:
+                return await self._valid_lease(lease, timeout=timeout)
+            except _ServiceUnavailable as exc:
+                if not exc.code.startswith("contract_"):
+                    raise
+                status = exc.diagnostics.get("status")
+                if status not in {item.value for item in _STALE_SERVICE_USE_STATUSES}:
+                    raise
+                self._leases.pop(key, None)
+                await self._cancel_lease(
+                    lease,
+                    reason=f"service_use_{status}",
+                )
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise _ServiceUnavailable(
+            "service_contract_unavailable",
+            "Service-use contract is not available",
+        )
 
     async def _service_advertisement(
         self,
@@ -560,15 +584,8 @@ class ServiceClient:
                 )
 
     async def _cancel_lease(self, lease: _ServiceLease, *, reason: str) -> None:
-        if lease.client_lease is not None:
-            await lease.client_lease.aclose()
         try:
-            await self._concord.cancel(
-                lease.contract,
-                self._endpoint.endpoint,
-                reason=reason,
-                log_label="ServiceClient",
-            )
+            await lease.agreement.cancel(reason=reason)
         except (StateConflict, StateUnavailable):
             logger.debug("Could not cancel service-use contract")
 
@@ -577,101 +594,30 @@ class ServiceClient:
         service: ServiceAdvertisement,
     ) -> _ServiceLease:
         terms = service_use_terms(service, self._endpoint.endpoint)
-        terms_dict = terms.to_dict()
-        next_generation = 1
-        for contract in await self._concord.find_contracts(service.service_use_profile):
-            if contract.contract_id != terms.service_use_id:
-                continue
-            validity = await self._concord.validate(
-                contract,
+        agreement = await self._concord.ensure_agreement(
+            ConcordAgreementSpec(
+                profile=service.service_use_profile,
+                participants=(service.service_endpoint, self._endpoint.endpoint),
+                local_participant=self._endpoint.endpoint,
+                local_session_id=self._endpoint.session_id,
+                terms=terms.to_dict(),
+                stable_contract_id=terms.service_use_id,
                 current_sessions={
                     str(self._endpoint.endpoint): self._endpoint.session_id,
                     str(service.service_endpoint): service.service_session_id,
                 },
-                log_label="ServiceClient",
-                log_invalid=False,
-            )
-            record = validity.contract
-            if record is None or thaw_json(record.terms or {}) != terms_dict:
-                continue
-            next_generation = max(next_generation, record.generation + 1)
-            if record.state == ContractState.OPEN:
-                if _stale_service_use_contract(validity.status):
-                    await self._cancel_lease(
-                        _ServiceLease(
-                            contract=contract,
-                            service=service,
-                            terms=terms,
-                        ),
-                        reason=f"service_use_{validity.status.value}",
-                    )
-                    continue
-                return _ServiceLease(
-                    contract=contract,
-                    service=service,
-                    terms=terms,
-                )
-        try:
-            contract = await self._concord.create_contract(
-                (service.service_endpoint, self._endpoint.endpoint),
-                contract_id=terms.service_use_id,
-                generation=next_generation,
-                profile=service.service_use_profile,
-                terms=terms_dict,
-                created_by=self._endpoint.endpoint,
-            )
-        except StateConflict:
-            for contract in await self._concord.find_contracts(
-                service.service_use_profile
-            ):
-                validity = await self._concord.validate(
-                    contract,
-                    current_sessions={
-                        str(self._endpoint.endpoint): self._endpoint.session_id,
-                        str(service.service_endpoint): service.service_session_id,
-                    },
-                    log_label="ServiceClient",
-                    log_invalid=False,
-                )
-                record = validity.contract
-                if (
-                    record is not None
-                    and thaw_json(record.terms or {}) == terms_dict
-                    and record.state == ContractState.OPEN
-                ):
-                    if _stale_service_use_contract(validity.status):
-                        await self._cancel_lease(
-                            _ServiceLease(
-                                contract=contract,
-                                service=service,
-                                terms=terms,
-                            ),
-                            reason=f"service_use_{validity.status.value}",
-                        )
-                        continue
-                    return _ServiceLease(
-                        contract=contract,
-                        service=service,
-                        terms=terms,
-                    )
-            raise
-        return _ServiceLease(contract=contract, service=service, terms=terms)
-
-    async def _attach_or_refresh_token(self, lease: _ServiceLease) -> None:
-        if lease.client_lease is None:
-            lease.client_lease = self._concord.participant_lease(
-                contract=lease.contract,
-                participant=self._endpoint.endpoint,
-                session_id=self._endpoint.session_id,
                 refresh_interval=DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS,
                 log_label="ServiceClient",
-            )
-            if lease.client_token is not None:
-                lease.client_lease.adopt(lease.client_token)
-            if self._task_group is not None:
-                lease.client_lease.start(self._task_group)
+            ),
+            start_soon=(
+                self._task_group.start_soon if self._task_group is not None else None
+            ),
+        )
+        return _ServiceLease(agreement=agreement, service=service, terms=terms)
+
+    async def _attach_or_refresh_token(self, lease: _ServiceLease) -> None:
         try:
-            lease.client_token = await lease.client_lease.attach_or_refresh()
+            await lease.agreement.refresh()
         except StateConflict:
             logger.debug("Could not attach service-use client token", exc_info=True)
 
@@ -683,15 +629,7 @@ class ServiceClient:
     ) -> _ServiceLease:
         deadline = anyio.current_time() + max(timeout, 0)
         while True:
-            validity = await self._concord.validate(
-                lease.contract,
-                current_sessions={
-                    str(self._endpoint.endpoint): self._endpoint.session_id,
-                    str(lease.service.service_endpoint): (
-                        lease.service.service_session_id
-                    ),
-                },
-            )
+            validity = await lease.agreement.refresh()
             if validity.valid:
                 return lease
             if validity.status != ContractValidityStatus.NOT_YET_FULFILLED:
@@ -743,7 +681,19 @@ class GenericService:
         self._backend_status = ServiceBackendStatus.UNAVAILABLE
         self._backend_diagnostics: Mapping[str, Any] = {}
         self._view_revisions: dict[str, int] = {}
-        self._service_leases: dict[tuple[str, int], ConcordParticipantLease] = {}
+        self._service_contract_manager: ConcordParticipantManager | None = None
+        if concord is not None:
+            self._service_contract_manager = concord.participant_manager(
+                participant=endpoint.endpoint,
+                session_id=endpoint.session_id,
+                profile=protocol.use_profile,
+                refresh_interval=refresh_interval,
+                reconcile_interval=reconcile_interval,
+                cancel_terminal_statuses=_STALE_SERVICE_USE_STATUSES,
+                log_label=log_label,
+                accept_contract=self._accept_service_use_contract,
+                current_sessions=self._service_use_current_sessions,
+            )
         self._contracts_lock = anyio.Lock()
         self._task_group: anyio.abc.TaskGroup | None = None
 
@@ -765,6 +715,8 @@ class GenericService:
         task_group.start_soon(self.contract_reconcile_loop)
         if self._advertiser is not None:
             self._advertiser.start(task_group)
+        if self._service_contract_manager is not None:
+            self._service_contract_manager.start(task_group)
 
     async def publish_status(
         self,
@@ -849,9 +801,8 @@ class GenericService:
             for key, revision in list(self._view_revisions.items()):
                 await _delete_if_current(self._view_state, key, revision)
         self._view_revisions.clear()
-        for lease in self._service_leases.values():
-            await lease.aclose()
-        self._service_leases.clear()
+        if self._service_contract_manager is not None:
+            await self._service_contract_manager.aclose()
         if self._advertisement is not None and self._beacon is not None:
             try:
                 if self._advertiser is not None:
@@ -907,77 +858,42 @@ class GenericService:
             await anyio.sleep(self._reconcile_interval)
 
     async def reconcile_contracts(self) -> None:
-        if self._concord is None:
+        manager = self._service_contract_manager
+        if manager is None:
             return
         async with self._contracts_lock:
-            contracts = await self._concord.find_contracts(self.protocol.use_profile)
-            next_leases: dict[tuple[str, int], ConcordParticipantLease] = {}
-            for contract in contracts:
-                terms = await self.matching_terms(contract)
-                if terms is None:
-                    continue
-                validity = await self._concord.validate(
-                    contract,
-                    log_label=self._log_label,
-                    log_invalid=False,
-                )
-                if _stale_service_use_contract(validity.status):
-                    try:
-                        await self._concord.cancel(
-                            contract,
-                            self.endpoint.endpoint,
-                            reason=f"service_use_{validity.status.value}",
-                            log_label=self._log_label,
-                        )
-                    except (StateConflict, StateUnavailable):
-                        logger.debug(
-                            "Could not cancel stale %s service-use contract",
-                            self._log_label,
-                            exc_info=True,
-                        )
-                    continue
-                key = (contract.contract_id, contract.generation)
-                lease = self._service_leases.get(key)
-                if lease is None:
-                    lease = self._concord.participant_lease(
-                        contract=contract,
-                        participant=terms.service_endpoint,
-                        session_id=self.endpoint.session_id,
-                        refresh_interval=self._refresh_interval,
-                        log_label=self._log_label,
-                    )
-                    if self._task_group is not None:
-                        lease.start(self._task_group)
-                    existing = validity.tokens.get(str(terms.service_endpoint))
-                    if existing is not None and existing.session_id == (
-                        self.endpoint.session_id
-                    ):
-                        lease.adopt(existing)
-                try:
-                    await lease.attach_or_refresh()
-                    next_leases[key] = lease
-                except StateConflict:
-                    logger.debug(
-                        "Could not attach %s service token",
-                        self._log_label,
-                        exc_info=True,
-                    )
-            for key, lease in self._service_leases.items():
-                if key not in next_leases:
-                    await lease.aclose()
-            self._service_leases = next_leases
+            await manager.reconcile(reason=f"{self._log_label} service reconcile")
 
     async def matching_terms(
         self,
         contract: ContractHandle,
     ) -> ServiceUseTerms | None:
-        if self._concord is None or self._advertisement is None:
+        manager = self._service_contract_manager
+        if manager is None:
             return None
-        try:
-            record = await self._concord.contract_record(contract)
-        except ValueError:
+        managed = manager.managed_contract(contract)
+        if managed is None:
             return None
-        if record is None:
+        return self._matching_terms_record(managed.record)
+
+    async def _accept_service_use_contract(
+        self,
+        contract: ContractHandle,
+        record: Any,
+    ) -> bool:
+        return (
+            self.endpoint.endpoint in contract.participants
+            and self._matching_terms_record(record) is not None
+        )
+
+    def _service_use_current_sessions(
+        self,
+        _contract: ContractHandle,
+    ) -> Mapping[str, str]:
+        return {str(self.endpoint.endpoint): self.endpoint.session_id}
+
+    def _matching_terms_record(self, record: Any) -> ServiceUseTerms | None:
+        if self._advertisement is None:
             return None
         if record.state != ContractState.OPEN:
             return None
@@ -1006,20 +922,20 @@ class GenericService:
     ) -> bool:
         if body.service_namespace != self.protocol.namespace:
             return True
-        if self._concord is None:
+        manager = self._service_contract_manager
+        if manager is None:
             return False
         await self.reconcile_contracts()
-        contracts = await self._concord.find_contracts(self.protocol.use_profile)
-        for contract in contracts:
-            terms = await self.matching_terms(contract)
+        for managed in manager.managed_contracts:
+            terms = self._matching_terms_record(managed.record)
             if terms is None:
                 continue
             if terms.client_endpoint != message.sender:
                 continue
             if body.operation not in terms.allowed_operations:
                 continue
-            validity = await self._concord.validate(
-                contract,
+            validity = await manager.validate(
+                managed.contract,
                 current_sessions={
                     str(terms.service_endpoint): self.endpoint.session_id,
                     str(terms.client_endpoint): message.sender_session_id,
@@ -1120,16 +1036,22 @@ async def _delete_if_current(state: StateStore, key: str, revision: int) -> None
         logger.debug("Service view %s unavailable before cleanup", key, exc_info=True)
 
 
-def _stale_service_use_contract(
-    status: ContractValidityStatus,
-) -> bool:
-    return status in {
+_STALE_SERVICE_USE_STATUSES = frozenset(
+    {
+        ContractValidityStatus.CANCELLED,
+        ContractValidityStatus.MISSING_CONTRACT,
+        ContractValidityStatus.INVALID_CONTRACT,
         ContractValidityStatus.MISSING_TOKEN,
         ContractValidityStatus.INVALID_TOKEN,
         ContractValidityStatus.GENERATION_MISMATCH,
         ContractValidityStatus.SESSION_MISMATCH,
         ContractValidityStatus.TERMS_HASH_MISMATCH,
     }
+)
+
+
+def _stale_service_use_contract(status: ContractValidityStatus) -> bool:
+    return status in _STALE_SERVICE_USE_STATUSES
 
 
 def _service_sort_key(service: ServiceAdvertisement) -> tuple[datetime, int, str]:

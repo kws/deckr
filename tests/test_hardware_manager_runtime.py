@@ -109,7 +109,7 @@ async def _claim(
             ),
         ),
     )
-    return await concord.create_contract(
+    return await concord._create_contract(
         (controller_address(controller_id), hardware_manager_address("manager-main")),
         contract_id=contract_id,
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -159,14 +159,14 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         await runtime.publish_advertisement()
         await _add_device(runtime, _descriptor())
         contract = await _claim(runtime, concord)
-        await concord.attach(
+        await concord._attach(
             contract,
             controller_endpoint.endpoint,
             controller_endpoint.session_id,
         )
 
         await runtime.reconcile_claims(reason="test")
-        validity = await concord.validate(contract)
+        validity = await concord._validate(contract)
         assert validity.status == ContractValidityStatus.VALID
         assert len(runtime.live_claims) == 1
 
@@ -224,7 +224,7 @@ async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None
         await _add_device(runtime, _descriptor())
         await runtime.withdraw_advertisement()
         contract = await _claim(runtime, concord)
-        await concord.attach(
+        await concord._attach(
             contract,
             controller_endpoint.endpoint,
             controller_endpoint.session_id,
@@ -234,7 +234,7 @@ async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None
 
         assert len(runtime.live_claims) == 1
         assert runtime.live_claims[0].terms.claim_id == "claim-a"
-        assert (await concord.validate(contract)).status == ContractValidityStatus.VALID
+        assert (await concord._validate(contract)).status == ContractValidityStatus.VALID
     finally:
         await runtime.stop()
         await endpoint_cm.__aexit__(None, None, None)
@@ -288,7 +288,7 @@ async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
         await runtime.publish_advertisement()
         await _add_device(runtime, _descriptor())
         contract = await _claim(runtime, concord)
-        await concord.attach(
+        await concord._attach(
             contract,
             controller_endpoint.endpoint,
             controller_endpoint.session_id,
@@ -296,7 +296,7 @@ async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
         await runtime.reconcile_claims(reason="test live")
         assert len(runtime.live_claims) == 1
 
-        await concord.cancel(contract, controller_endpoint.endpoint, reason="test")
+        await concord._cancel(contract, controller_endpoint.endpoint, reason="test")
         await runtime.reconcile_claims(reason="test cancel")
         assert reset_devices == ["stream-deck-mini"]
         assert runtime.live_claims == ()
@@ -335,13 +335,13 @@ async def test_competing_claims_choose_existing_or_lowest_contract_key() -> None
             contract_id="claim-a",
             controller_id="controller-a",
         )
-        await concord.attach(claim_b, controller_b.endpoint, controller_b.session_id)
-        await concord.attach(claim_a, controller_a.endpoint, controller_a.session_id)
+        await concord._attach(claim_b, controller_b.endpoint, controller_b.session_id)
+        await concord._attach(claim_a, controller_a.endpoint, controller_a.session_id)
 
         await runtime.reconcile_claims(reason="test competing")
         assert [claim.terms.claim_id for claim in runtime.live_claims] == ["claim-a"]
-        assert (await concord.validate(claim_a)).status == ContractValidityStatus.VALID
-        assert (await concord.validate(claim_b)).status == (
+        assert (await concord._validate(claim_a)).status == ContractValidityStatus.VALID
+        assert (await concord._validate(claim_b)).status == (
             ContractValidityStatus.NOT_YET_FULFILLED
         )
     finally:

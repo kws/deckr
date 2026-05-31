@@ -124,8 +124,7 @@ class HardwareManagerRuntime:
         if self.watch_retry_seconds <= 0:
             raise ValueError("watch_retry_seconds must be greater than zero")
         self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
-        self._claim_manager = ConcordParticipantManager(
-            concord=self.concord,
+        self._claim_manager = self.concord.participant_manager(
             participant=self.endpoint.endpoint,
             session_id=self.endpoint.session_id,
             profile=HARDWARE_CLAIM_PROFILE_ID,

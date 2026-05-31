@@ -21,10 +21,10 @@ from deckr.concord import (
     CONCORD_TOKEN_STORE_POLICY,
     DEFAULT_CONCORD_CONTRACT_STORE_NAME,
     DEFAULT_CONCORD_TOKEN_STORE_NAME,
+    ConcordAgreement,
+    ConcordAgreementSpec,
     ConcordCoordinator,
     ConcordService,
-    ContractHandle,
-    ContractState,
     ContractValidityStatus,
     concord_participant_token_key,
 )
@@ -56,7 +56,7 @@ from deckr.hardware.profiles import (
     hardware_payload_from_advertisement,
 )
 from deckr.runtime import Deckr
-from deckr.state import StateConflict, StateStore
+from deckr.state import StateStore
 from deckr.substrates.nats import NatsSubstrate
 from deckr.substrates.supervised_nats import NatsServerSupervisor
 
@@ -164,12 +164,18 @@ async def _run_manager(args: argparse.Namespace) -> None:
                 advertisement_id=manager_id,
                 payload=payload.to_dict(),
             )
-            tg.start_soon(
-                _attach_manager_token,
-                concord,
-                endpoint,
-                lane.session_id,
+
+            def accept_contract(contract, _record) -> bool:
+                return endpoint in contract.participants
+
+            claim_manager = concord.participant_manager(
+                participant=endpoint,
+                session_id=lane.session_id,
+                profile=HARDWARE_CLAIM_PROFILE_ID,
+                log_label="NatsSmokeManager",
+                accept_contract=accept_contract,
             )
+            claim_manager.start(tg)
             try:
                 with anyio.fail_after(15):
                     request = await messages.receive()
@@ -219,20 +225,21 @@ async def _run_controller(args: argparse.Namespace) -> None:
                 managerEndpoint=manager,
                 devices=(HardwareClaimDevice(deviceRef=device_ref, instanceCount=1),),
             )
-            contract = await concord.create_contract(
-                (controller, manager),
-                contract_id=f"smoke-hardware-{args.run_id}",
-                profile=HARDWARE_CLAIM_PROFILE_ID,
-                terms=terms,
-                created_by=controller,
+            agreement = await concord.ensure_agreement(
+                ConcordAgreementSpec(
+                    profile=HARDWARE_CLAIM_PROFILE_ID,
+                    participants=(controller, manager),
+                    local_participant=controller,
+                    local_session_id=lane.session_id,
+                    terms=terms,
+                    current_sessions={
+                        str(controller): lane.session_id,
+                        str(manager): payload.session_id,
+                    },
+                    log_label="NatsSmokeController",
+                )
             )
-            await concord.attach(
-                contract,
-                controller,
-                lane.session_id,
-                token_id=f"controller-token-{args.run_id}",
-            )
-            await _wait_for_valid_contract(concord, contract)
+            await _wait_for_valid_contract(agreement)
             async with lane.subscribe() as controller_messages:
                 capability_ref = CapabilityRef(
                     deviceRef=device_ref,
@@ -267,26 +274,6 @@ async def _run_controller(args: argparse.Namespace) -> None:
                 raise RuntimeError("controller received a message not addressed to it")
 
 
-async def _attach_manager_token(
-    concord: ConcordService,
-    endpoint: EndpointAddress,
-    session_id: str,
-) -> None:
-    while True:
-        for handle in await concord.find_contracts(HARDWARE_CLAIM_PROFILE_ID):
-            if (
-                handle.state != ContractState.OPEN
-                or endpoint not in handle.participants
-            ):
-                continue
-            try:
-                await concord.attach(handle, endpoint, session_id)
-            except StateConflict:
-                pass
-            return
-        await anyio.sleep(0.1)
-
-
 async def _wait_for_hardware_advertisement(
     beacon: BeaconService,
     manager: EndpointAddress,
@@ -303,12 +290,11 @@ async def _wait_for_hardware_advertisement(
 
 
 async def _wait_for_valid_contract(
-    concord: ConcordService,
-    contract: ContractHandle,
+    agreement: ConcordAgreement,
 ) -> None:
     with anyio.fail_after(15):
         while True:
-            validity = await concord.validate(contract)
+            validity = await agreement.refresh()
             if validity.status == ContractValidityStatus.VALID:
                 return
             await anyio.sleep(0.1)

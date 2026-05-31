@@ -146,8 +146,8 @@ async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> N
             await client.read_view("openhab-home", protocol.namespace, view)
             is None
         )
-        contract = (await concord.find_contracts(protocol.use_profile))[0]
-        await concord.attach(contract, service_endpoint, "service-session")
+        contract = (await concord._find_contracts(protocol.use_profile))[0]
+        await concord._attach(contract, service_endpoint, "service-session")
 
         await view_store.put(
             view.key,
@@ -179,7 +179,7 @@ async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> N
         assert current["state"] == "ON"
 
         await client.aclose()
-        cancelled = await concord.validate(contract)
+        cancelled = await concord._validate(contract)
         assert cancelled.contract is not None
         assert cancelled.contract.state == ContractState.CANCELLED
 
@@ -199,13 +199,13 @@ async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> N
         )
         replacement_contracts = [
             item
-            for item in await concord.find_contracts(protocol.use_profile)
+            for item in await concord._find_contracts(protocol.use_profile)
             if item.contract_id == contract.contract_id
         ]
         assert [item.generation for item in replacement_contracts] == [1, 2]
         contract = replacement_contracts[1]
         assert contract.state == ContractState.OPEN
-        await concord.attach(contract, service_endpoint, "service-session")
+        await concord._attach(contract, service_endpoint, "service-session")
         current = await replacement_client.read_view(
             "openhab-home",
             protocol.namespace,
@@ -224,7 +224,7 @@ async def test_service_client_views_and_beacon_loss_cancel_owned_contract() -> N
             is None
         )
 
-    validity = await concord.validate(contract)
+    validity = await concord._validate(contract)
     assert validity.contract is not None
     assert validity.contract.state == ContractState.CANCELLED
 
@@ -264,14 +264,14 @@ async def test_generic_service_advertise_authorize_and_withdraw() -> None:
         )
         assert advertised is not None
         terms = service_use_terms(advertised, client_endpoint.endpoint)
-        contract = await concord.create_contract(
+        contract = await concord._create_contract(
             (service_endpoint.endpoint, client_endpoint.endpoint),
             contract_id=terms.service_use_id,
             profile=protocol.use_profile,
             terms=terms.to_dict(),
             created_by=client_endpoint.endpoint,
         )
-        await concord.attach(
+        await concord._attach(
             contract,
             client_endpoint.endpoint,
             client_endpoint.session_id,
@@ -349,19 +349,19 @@ async def test_generic_service_cancels_stale_service_use_contract(
         )
         assert advertised is not None
         terms = service_use_terms(advertised, client_endpoint.endpoint)
-        contract = await concord.create_contract(
+        contract = await concord._create_contract(
             (service_endpoint.endpoint, client_endpoint.endpoint),
             contract_id=terms.service_use_id,
             profile=protocol.use_profile,
             terms=terms.to_dict(),
             created_by=client_endpoint.endpoint,
         )
-        client_token = await concord.attach(
+        client_token = await concord._attach(
             contract,
             client_endpoint.endpoint,
             client_endpoint.session_id,
         )
-        service_token = await concord.attach(
+        service_token = await concord._attach(
             contract,
             service_endpoint.endpoint,
             service_endpoint.session_id,
@@ -373,7 +373,7 @@ async def test_generic_service_cancels_stale_service_use_contract(
         caplog.clear()
         await service.reconcile_contracts()
 
-    validity = await concord.validate(contract)
+    validity = await concord._validate(contract)
     assert validity.status == ContractValidityStatus.CANCELLED
     assert "Concord contract invalid" not in caplog.text
 

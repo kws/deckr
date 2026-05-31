@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -946,7 +946,7 @@ class ConcordParticipantLease:
             token = self._token
             if token is not None:
                 try:
-                    self._token = await self._service.refresh_token(
+                    self._token = await self._service._refresh_token(
                         token,
                         log_label=self._log_label,
                     )
@@ -969,7 +969,7 @@ class ConcordParticipantLease:
                         )
                     raise
             try:
-                self._token = await self._service.attach(
+                self._token = await self._service._attach(
                     self.contract,
                     self.participant,
                     self.session_id,
@@ -1019,8 +1019,264 @@ class ConcordService:
 
     def __init__(self, coordinator: ConcordCoordinator) -> None:
         self._coordinator = coordinator
+        self._agreements: dict[tuple[Any, ...], ConcordAgreement] = {}
+        self._agreement_lock = anyio.Lock()
 
-    async def create_contract(
+    async def ensure_agreement(
+        self,
+        spec: ConcordAgreementSpec,
+        *,
+        start_soon: Callable[..., object] | None = None,
+    ) -> ConcordAgreement:
+        """Create, reuse, or supersede an owner-side agreement.
+
+        This method is the production lifecycle entry point for a participant
+        that owns the contract. It validates before attaching so a generation
+        with lost participant authority is cancelled and superseded instead of
+        receiving a replacement token.
+        """
+
+        async with self._agreement_lock:
+            return await self._ensure_agreement_locked(spec, start_soon=start_soon)
+
+    async def _ensure_agreement_locked(
+        self,
+        spec: ConcordAgreementSpec,
+        *,
+        start_soon: Callable[..., object] | None = None,
+    ) -> ConcordAgreement:
+        cache_key = _agreement_cache_key(spec)
+        if cache_key is not None:
+            cached = self._agreements.get(cache_key)
+            if cached is not None and not cached.closed:
+                validity = await cached.refresh()
+                if not _agreement_successor_status(validity.status):
+                    return cached
+                await self._cancel_agreement(
+                    cached,
+                    reason=f"concord_agreement_{validity.status.value}",
+                )
+                self._agreements.pop(cache_key, None)
+
+        while True:
+            contract, validity = await self._select_or_create_agreement_contract(spec)
+            agreement = self._agreement_from_contract(spec, contract, validity)
+            if start_soon is not None:
+                agreement._lease.start_soon(start_soon)  # noqa: SLF001
+            validity = await agreement.refresh()
+            if _agreement_successor_status(validity.status):
+                await self._cancel_agreement(
+                    agreement,
+                    reason=f"concord_agreement_{validity.status.value}",
+                )
+                if cache_key is not None:
+                    self._agreements.pop(cache_key, None)
+                continue
+            if cache_key is not None:
+                self._agreements[cache_key] = agreement
+            return agreement
+
+    def participant_manager(
+        self,
+        *,
+        participant: str | EndpointAddress,
+        session_id: str,
+        accept_contract: ConcordContractPredicate,
+        current_sessions: ConcordCurrentSessions | None = None,
+        prepare_reconcile: ConcordPrepareReconcile | None = None,
+        contract_sort_key: ConcordContractSortKey | None = None,
+        profile: str | None = None,
+        refresh_interval: float = 5.0,
+        reconcile_interval: float = 1.0,
+        cancel_terminal_statuses: Collection[ContractValidityStatus] | None = None,
+        log_label: str = "Concord",
+    ) -> ConcordParticipantManager:
+        return ConcordParticipantManager(
+            concord=self,
+            participant=participant,
+            session_id=session_id,
+            accept_contract=accept_contract,
+            current_sessions=current_sessions,
+            prepare_reconcile=prepare_reconcile,
+            contract_sort_key=contract_sort_key,
+            profile=profile,
+            refresh_interval=refresh_interval,
+            reconcile_interval=reconcile_interval,
+            cancel_terminal_statuses=cancel_terminal_statuses,
+            log_label=log_label,
+        )
+
+    async def _select_or_create_agreement_contract(
+        self,
+        spec: ConcordAgreementSpec,
+    ) -> tuple[ContractHandle, ContractValidity]:
+        current_sessions = await _agreement_current_sessions(spec)
+        stale: list[tuple[ContractHandle, ContractValidity]] = []
+        next_generation = 1
+        if spec.stable_contract_id is not None:
+            for contract in await self._find_contracts(spec.profile):
+                if contract.contract_id != spec.stable_contract_id:
+                    continue
+                record = await self._contract_record(contract)
+                if record is None:
+                    continue
+                next_generation = max(next_generation, record.generation + 1)
+                if not _agreement_record_matches_spec(record, spec):
+                    continue
+                if record.state != ContractState.OPEN:
+                    continue
+                validity = await self._validate(
+                    contract,
+                    current_sessions=current_sessions,
+                    log_label=spec.log_label,
+                    log_invalid=False,
+                )
+                if _agreement_successor_status(validity.status):
+                    stale.append((contract, validity))
+                    continue
+                return contract, validity
+
+        for contract, validity in stale:
+            await self._cancel(
+                contract,
+                spec.local_participant,
+                reason=f"concord_agreement_{validity.status.value}",
+                log_label=spec.log_label,
+            )
+
+        supersedes = (
+            ContractPointer(
+                contractId=spec.stable_contract_id,
+                generation=next_generation - 1,
+            )
+            if spec.stable_contract_id is not None and next_generation > 1
+            else None
+        )
+        try:
+            contract = await self._create_contract(
+                spec.participants,
+                contract_id=spec.stable_contract_id,
+                generation=next_generation,
+                profile=spec.profile,
+                terms=spec.terms,
+                created_by=spec.created_by,
+                supersedes=supersedes,
+                log_label=spec.log_label,
+            )
+        except StateConflict:
+            if spec.stable_contract_id is None:
+                raise
+            return await self._select_or_create_agreement_contract(spec)
+        validity = await self._validate(
+            contract,
+            current_sessions=current_sessions,
+            log_label=spec.log_label,
+            log_invalid=False,
+        )
+        return contract, validity
+
+    def _agreement_from_contract(
+        self,
+        spec: ConcordAgreementSpec,
+        contract: ContractHandle,
+        validity: ContractValidity,
+    ) -> ConcordAgreement:
+        lease = self._participant_lease(
+            contract=contract,
+            participant=spec.local_participant,
+            session_id=spec.local_session_id,
+            refresh_interval=spec.refresh_interval,
+            log_label=spec.log_label,
+        )
+        existing = validity.tokens.get(str(spec.local_participant))
+        if existing is not None and existing.session_id == spec.local_session_id:
+            lease.adopt(existing)
+        return ConcordAgreement(
+            self,
+            spec=spec,
+            contract=contract,
+            lease=lease,
+            validity=validity,
+        )
+
+    async def _refresh_agreement(
+        self,
+        agreement: ConcordAgreement,
+    ) -> ContractValidity:
+        if agreement.closed:
+            raise StateConflict("Concord agreement is closed")
+        spec = agreement.spec
+        current_sessions = await _agreement_current_sessions(spec)
+        validity = await self._validate(
+            agreement.contract,
+            current_sessions=current_sessions,
+            log_label=spec.log_label,
+        )
+        agreement._validity = validity  # noqa: SLF001
+        if validity.status == ContractValidityStatus.UNAVAILABLE:
+            return validity
+        if _agreement_successor_status(validity.status):
+            await agreement._lease.aclose()  # noqa: SLF001
+            return validity
+        existing = validity.tokens.get(str(spec.local_participant))
+        if agreement.local_token is None and existing is not None:
+            if existing.session_id != spec.local_session_id:
+                validity = ContractValidity(
+                    ContractValidityStatus.SESSION_MISMATCH,
+                    contract=validity.contract,
+                    tokens=validity.tokens,
+                    reason=str(spec.local_participant),
+                )
+                agreement._validity = validity  # noqa: SLF001
+                await agreement._lease.aclose()  # noqa: SLF001
+                return validity
+            agreement._lease.adopt(existing)  # noqa: SLF001
+        try:
+            await agreement._lease.attach_or_refresh()  # noqa: SLF001
+        except StateConflict:
+            validity = await self._validate(
+                agreement.contract,
+                current_sessions=current_sessions,
+                log_label=spec.log_label,
+            )
+            agreement._validity = validity  # noqa: SLF001
+            if _agreement_successor_status(validity.status):
+                await agreement._lease.aclose()  # noqa: SLF001
+            raise
+        validity = await self._validate(
+            agreement.contract,
+            current_sessions=current_sessions,
+            log_label=spec.log_label,
+        )
+        agreement._validity = validity  # noqa: SLF001
+        return validity
+
+    async def _cancel_agreement(
+        self,
+        agreement: ConcordAgreement,
+        *,
+        reason: str | None,
+    ) -> bool:
+        await agreement.aclose()
+        cancelled = await self._cancel(
+            agreement.contract,
+            agreement.spec.local_participant,
+            reason=reason,
+            log_label=agreement.spec.log_label,
+        )
+        cache_key = _agreement_cache_key(agreement.spec)
+        if cache_key is not None and self._agreements.get(cache_key) is agreement:
+            self._agreements.pop(cache_key, None)
+        validity = await self._validate(
+            agreement.contract,
+            current_sessions=await _agreement_current_sessions(agreement.spec),
+            log_label=agreement.spec.log_label,
+            log_invalid=False,
+        )
+        agreement._validity = validity  # noqa: SLF001
+        return cancelled
+
+    async def _create_contract(
         self,
         participants: tuple[str | EndpointAddress, ...] | list[str | EndpointAddress],
         *,
@@ -1061,16 +1317,16 @@ class ConcordService:
     ) -> ContractHandle | None:
         return await self._coordinator.get_contract(pointer)
 
-    async def contract_record(self, contract: ContractHandle) -> ContractRecord | None:
+    async def _contract_record(self, contract: ContractHandle) -> ContractRecord | None:
         return await self._coordinator.contract_record(contract)
 
-    async def find_contracts(
+    async def _find_contracts(
         self,
         profile: str | None = None,
     ) -> tuple[ContractHandle, ...]:
         return await self._coordinator.find_contracts(profile)
 
-    async def attach(
+    async def _attach(
         self,
         contract: ContractHandle,
         participant: str | EndpointAddress,
@@ -1105,7 +1361,7 @@ class ConcordService:
         )
         return token
 
-    async def refresh_token(
+    async def _refresh_token(
         self,
         handle: ParticipantHandle,
         *,
@@ -1127,7 +1383,7 @@ class ConcordService:
         )
         return refreshed
 
-    async def cancel(
+    async def _cancel(
         self,
         contract: ContractHandle,
         participant: str | EndpointAddress,
@@ -1155,7 +1411,7 @@ class ConcordService:
             )
         return cancelled
 
-    async def validate(
+    async def _validate(
         self,
         contract: ContractHandle,
         *,
@@ -1187,7 +1443,7 @@ class ConcordService:
             )
         return validity
 
-    def participant_lease(
+    def _participant_lease(
         self,
         *,
         contract: ContractHandle,
@@ -1316,6 +1572,143 @@ ConcordCurrentSessions = Callable[
 ]
 ConcordPrepareReconcile = Callable[[], None | Awaitable[None]]
 ConcordContractSortKey = Callable[[ContractHandle], Any]
+ConcordSessionEvidence = (
+    Mapping[str | EndpointAddress, str]
+    | Callable[
+        [],
+        Mapping[str | EndpointAddress, str]
+        | Awaitable[Mapping[str | EndpointAddress, str]],
+    ]
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ConcordAgreementSpec:
+    """Owner-side Concord agreement request.
+
+    A stable contract id is used for contracts whose identity is durable across
+    generations, such as service-use agreements. Omit it for one-shot claims or
+    sessions that should receive a fresh contract id when superseded.
+    """
+
+    profile: str | None
+    participants: tuple[str | EndpointAddress, ...] | list[str | EndpointAddress]
+    local_participant: str | EndpointAddress
+    local_session_id: str
+    terms: Mapping[str, Any] | DeckrModel | None = None
+    stable_contract_id: str | None = None
+    current_sessions: ConcordSessionEvidence | None = None
+    refresh_interval: float = 5.0
+    log_label: str = "Concord"
+    created_by: str | EndpointAddress | None = None
+
+    def __post_init__(self) -> None:
+        participants = tuple(
+            sorted(
+                (parse_endpoint_address(item) for item in self.participants),
+                key=str,
+            )
+        )
+        if not participants:
+            raise ValueError("Concord agreements require at least one participant")
+        local_participant = parse_endpoint_address(self.local_participant)
+        if local_participant not in participants:
+            raise ValueError("local_participant must be named by participants")
+        if self.refresh_interval <= 0:
+            raise ValueError("refresh_interval must be greater than zero")
+        if self.profile is not None:
+            _require_text(self.profile, field_name="Concord agreement profile")
+        stable_contract_id = self.stable_contract_id
+        if stable_contract_id is not None:
+            stable_contract_id = _require_text(
+                stable_contract_id,
+                field_name="Concord agreement contract id",
+            )
+        created_by = (
+            parse_endpoint_address(self.created_by)
+            if self.created_by is not None
+            else local_participant
+        )
+        terms = (
+            self.terms.model_dump(by_alias=True, exclude_none=True, mode="json")
+            if isinstance(self.terms, DeckrModel)
+            else self.terms
+        )
+        object.__setattr__(self, "participants", participants)
+        object.__setattr__(self, "local_participant", local_participant)
+        object.__setattr__(
+            self,
+            "local_session_id",
+            _require_text(
+                self.local_session_id,
+                field_name="Concord agreement session id",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "terms",
+            freeze_json(terms) if terms is not None else None,
+        )
+        object.__setattr__(self, "stable_contract_id", stable_contract_id)
+        object.__setattr__(self, "created_by", created_by)
+
+
+class ConcordAgreement:
+    """Core-owned owner-side Concord agreement handle."""
+
+    def __init__(
+        self,
+        service: ConcordService,
+        *,
+        spec: ConcordAgreementSpec,
+        contract: ContractHandle,
+        lease: ConcordParticipantLease,
+        validity: ContractValidity,
+    ) -> None:
+        self._service = service
+        self.spec = spec
+        self.contract = contract
+        self._lease = lease
+        self._validity = validity
+        self._closed = False
+
+    @property
+    def contract_id(self) -> str:
+        return self.contract.contract_id
+
+    @property
+    def generation(self) -> int:
+        return self.contract.generation
+
+    @property
+    def profile(self) -> str | None:
+        return self.contract.profile
+
+    @property
+    def validity(self) -> ContractValidity:
+        return self._validity
+
+    @property
+    def valid(self) -> bool:
+        return self._validity.valid
+
+    @property
+    def local_token(self) -> ParticipantHandle | None:
+        return self._lease.token
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    async def refresh(self) -> ContractValidity:
+        return await self._service._refresh_agreement(self)  # noqa: SLF001
+
+    async def cancel(self, reason: str | None = None) -> bool:
+        return await self._service._cancel_agreement(self, reason=reason)  # noqa: SLF001
+
+    async def aclose(self) -> None:
+        self._closed = True
+        await self._lease.aclose()
 
 
 class ConcordParticipantManager:
@@ -1334,6 +1727,7 @@ class ConcordParticipantManager:
         profile: str | None = None,
         refresh_interval: float = 5.0,
         reconcile_interval: float = 1.0,
+        cancel_terminal_statuses: Collection[ContractValidityStatus] | None = None,
         log_label: str = "Concord",
     ) -> None:
         if refresh_interval <= 0:
@@ -1350,6 +1744,7 @@ class ConcordParticipantManager:
         self._contract_sort_key = contract_sort_key
         self._refresh_interval = refresh_interval
         self._reconcile_interval = reconcile_interval
+        self._cancel_terminal_statuses = frozenset(cancel_terminal_statuses or ())
         self._log_label = log_label
         self._managed: dict[str, ConcordManagedContract] = {}
         self._leases: dict[str, ConcordParticipantLease] = {}
@@ -1407,10 +1802,26 @@ class ConcordParticipantManager:
         *,
         reason: str | None = None,
     ) -> bool:
-        return await self._concord.cancel(
+        return await self._concord._cancel(
             contract,
             self.participant,
             reason=reason,
+            log_label=self._log_label,
+        )
+
+    async def validate(
+        self,
+        contract: ContractHandle,
+        *,
+        current_sessions: Mapping[str, str] | None = None,
+    ) -> ContractValidity:
+        sessions: dict[str, str] = {}
+        if current_sessions is not None:
+            sessions.update(current_sessions)
+        sessions[str(self.participant)] = self.session_id
+        return await self._concord._validate(
+            contract,
+            current_sessions=sessions,
             log_label=self._log_label,
         )
 
@@ -1463,7 +1874,7 @@ class ConcordParticipantManager:
         async with self._lock:
             if self._closed:
                 return ()
-            contracts = await self._concord.find_contracts(self.profile)
+            contracts = await self._concord._find_contracts(self.profile)
             if self._prepare_reconcile is not None:
                 await _maybe_await(self._prepare_reconcile())
             if self._contract_sort_key is not None:
@@ -1502,7 +1913,7 @@ class ConcordParticipantManager:
             return None
 
         try:
-            record = await self._concord.contract_record(contract)
+            record = await self._concord._contract_record(contract)
         except ValueError:
             await self._release_locked(
                 contract.key,
@@ -1533,7 +1944,7 @@ class ConcordParticipantManager:
             return None
 
         sessions = await self._current_sessions_for(contract)
-        validity = await self._concord.validate(
+        validity = await self._concord._validate(
             contract,
             current_sessions=sessions,
             log_label=self._log_label,
@@ -1542,6 +1953,19 @@ class ConcordParticipantManager:
 
         existing = validity.tokens.get(str(self.participant))
         if _terminal_managed_status(validity.status):
+            if validity.status in self._cancel_terminal_statuses:
+                try:
+                    await self.cancel(
+                        contract,
+                        reason=f"concord_managed_{validity.status.value}",
+                    )
+                except (StateConflict, StateUnavailable, ValueError):
+                    logger.debug(
+                        "%s could not cancel terminal Concord contract %s",
+                        self._log_label,
+                        contract.contract_id,
+                        exc_info=True,
+                    )
             await self._publish_terminal_locked(
                 contract,
                 record=record,
@@ -1554,7 +1978,7 @@ class ConcordParticipantManager:
 
         lease = self._leases.get(contract.key)
         if lease is None:
-            lease = self._concord.participant_lease(
+            lease = self._concord._participant_lease(
                 contract=contract,
                 participant=self.participant,
                 session_id=self.session_id,
@@ -1590,7 +2014,7 @@ class ConcordParticipantManager:
         try:
             token = await lease.attach_or_refresh()
         except StateConflict:
-            validity = await self._concord.validate(
+            validity = await self._concord._validate(
                 contract,
                 current_sessions=sessions,
                 log_label=self._log_label,
@@ -1607,7 +2031,7 @@ class ConcordParticipantManager:
                 await self._release_locked(contract.key, reason=validity.status.value)
             return None
 
-        validity = await self._concord.validate(
+        validity = await self._concord._validate(
             contract,
             current_sessions=sessions,
             log_label=self._log_label,
@@ -1716,6 +2140,60 @@ async def _maybe_await(value: Any) -> Any:
     if hasattr(value, "__await__"):
         return await value
     return value
+
+
+def _agreement_cache_key(spec: ConcordAgreementSpec) -> tuple[Any, ...] | None:
+    if spec.stable_contract_id is None:
+        return None
+    return (
+        spec.stable_contract_id,
+        spec.profile,
+        tuple(str(item) for item in spec.participants),
+        str(spec.local_participant),
+        spec.local_session_id,
+        canonical_json_hash(spec.terms) if spec.terms is not None else None,
+    )
+
+
+async def _agreement_current_sessions(
+    spec: ConcordAgreementSpec,
+) -> dict[str, str]:
+    sessions: dict[str, str] = {}
+    evidence = spec.current_sessions
+    if evidence is not None:
+        raw = evidence() if callable(evidence) else evidence
+        current = await _maybe_await(raw)
+        sessions.update({str(key): value for key, value in current.items()})
+    sessions[str(spec.local_participant)] = spec.local_session_id
+    return sessions
+
+
+def _agreement_record_matches_spec(
+    record: ContractRecord,
+    spec: ConcordAgreementSpec,
+) -> bool:
+    if record.profile != spec.profile:
+        return False
+    if tuple(record.participants) != tuple(spec.participants):
+        return False
+    if record.terms is None:
+        return spec.terms is None
+    if spec.terms is None:
+        return False
+    return thaw_json(record.terms) == thaw_json(spec.terms)
+
+
+def _agreement_successor_status(status: ContractValidityStatus) -> bool:
+    return status in {
+        ContractValidityStatus.CANCELLED,
+        ContractValidityStatus.MISSING_CONTRACT,
+        ContractValidityStatus.INVALID_CONTRACT,
+        ContractValidityStatus.INVALID_TOKEN,
+        ContractValidityStatus.MISSING_TOKEN,
+        ContractValidityStatus.GENERATION_MISMATCH,
+        ContractValidityStatus.SESSION_MISMATCH,
+        ContractValidityStatus.TERMS_HASH_MISMATCH,
+    }
 
 
 def _terminal_managed_status(status: ContractValidityStatus) -> bool:
@@ -1960,13 +2438,14 @@ __all__ = [
     "ContractState",
     "ContractValidity",
     "ContractValidityStatus",
+    "ConcordAgreement",
+    "ConcordAgreementSpec",
     "ConcordCoordinator",
     "ConcordContractEvent",
     "ConcordEventType",
     "ConcordManagedContract",
     "ConcordManagedContractEvent",
     "ConcordManagedContractEventType",
-    "ConcordParticipantLease",
     "ConcordParticipantManager",
     "ConcordService",
     "ParticipantHandle",
