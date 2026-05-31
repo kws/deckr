@@ -22,14 +22,10 @@ from deckr.contracts.messages import (
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 from deckr.hardware.descriptors import (
     CapabilityRef,
-    DeviceDescriptor,
     DeviceRef,
     DeviceSourceReference,
 )
 
-DEVICE_AVAILABLE = "deviceAvailable"
-DEVICE_DESCRIPTOR_CHANGED = "deviceDescriptorChanged"
-DEVICE_UNAVAILABLE = "deviceUnavailable"
 CONTROL_INPUT = "controlInput"
 CONTROL_COMMAND = "controlCommand"
 
@@ -75,26 +71,6 @@ def _require_non_negative(value: int | None, *, field_name: str) -> int | None:
     if value is not None and value < 0:
         raise ValueError(f"{field_name} must be non-negative")
     return value
-
-
-class DeviceAvailableMessage(DeckrModel):
-    descriptor: DeviceDescriptor
-
-
-class DeviceDescriptorChangedMessage(DeckrModel):
-    descriptor: DeviceDescriptor
-
-
-class DeviceUnavailableMessage(DeckrModel):
-    device_ref: DeviceRef = Field(alias="deviceRef")
-    reason: str | None = None
-
-    @field_validator("reason")
-    @classmethod
-    def _validate_reason(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return _require_non_empty(value, field_name="reason")
 
 
 class ControlInputMessage(DeckrModel):
@@ -329,11 +305,9 @@ class CommandReplyMessage(DeckrModel):
     def _serialize_result(self, value: Any) -> Any:
         return thaw_json(value)
 
+
 HardwareMessageBody = (
-    DeviceAvailableMessage
-    | DeviceDescriptorChangedMessage
-    | DeviceUnavailableMessage
-    | ControlInputMessage
+    ControlInputMessage
     | ControlCommandMessage
     | CapabilityStateChangedMessage
     | CapabilityStateRequestMessage
@@ -344,9 +318,6 @@ HardwareMessageBody = (
 )
 
 HARDWARE_BODY_BY_MESSAGE_TYPE: dict[str, type[HardwareMessageBody]] = {
-    DEVICE_AVAILABLE: DeviceAvailableMessage,
-    DEVICE_DESCRIPTOR_CHANGED: DeviceDescriptorChangedMessage,
-    DEVICE_UNAVAILABLE: DeviceUnavailableMessage,
     CONTROL_INPUT: ControlInputMessage,
     CONTROL_COMMAND: ControlCommandMessage,
     CAPABILITY_STATE_CHANGED: CapabilityStateChangedMessage,
@@ -388,7 +359,9 @@ def hardware_subject_for_capability(ref: CapabilityRef) -> EntitySubject:
     )
 
 
-def hardware_capability_ref_from_subject(subject: EntitySubject) -> CapabilityRef | None:
+def hardware_capability_ref_from_subject(
+    subject: EntitySubject,
+) -> CapabilityRef | None:
     if subject.kind != "hardware_capability":
         return None
     ids = subject.identifiers
@@ -446,25 +419,11 @@ def hardware_device_ref_from_message(message: DeckrMessage) -> DeviceRef | None:
         COMMAND_REPLY,
         CONTROL_INPUT,
         CONTROL_COMMAND,
-        DEVICE_UNAVAILABLE,
     }:
         body = HARDWARE_BODY_BY_MESSAGE_TYPE[message.message_type].model_validate(
             thaw_json(dict(message.body))
         )
         return body.device_ref
-    if message.message_type in {DEVICE_AVAILABLE, DEVICE_DESCRIPTOR_CHANGED}:
-        body = HARDWARE_BODY_BY_MESSAGE_TYPE[message.message_type].model_validate(
-            thaw_json(dict(message.body))
-        )
-        manager_id = message.subject.identifiers.get("managerId")
-        if manager_id is None:
-            return None
-        descriptor = body.descriptor
-        return DeviceRef(
-            managerId=manager_id,
-            deviceId=descriptor.device_id,
-            fingerprint=descriptor.fingerprint,
-        )
     return None
 
 
@@ -497,44 +456,6 @@ def hardware_message(
         body=hardware_body_to_dict(parsed_body),
         inReplyTo=in_reply_to,
         causationId=causation_id,
-    )
-
-
-def device_available_message(
-    *,
-    manager_id: str,
-    sender_session_id: str,
-    descriptor: DeviceDescriptor,
-) -> DeckrMessage:
-    body = DeviceAvailableMessage(descriptor=descriptor)
-    return hardware_message(
-        sender=hardware_manager_address(manager_id),
-        sender_session_id=sender_session_id,
-        recipient=controllers_broadcast(),
-        message_type=DEVICE_AVAILABLE,
-        body=body,
-        subject=hardware_subject_for_device(
-            DeviceRef(managerId=manager_id, deviceId=descriptor.device_id),
-        ),
-    )
-
-
-def device_descriptor_changed_message(
-    *,
-    manager_id: str,
-    sender_session_id: str,
-    descriptor: DeviceDescriptor,
-) -> DeckrMessage:
-    body = DeviceDescriptorChangedMessage(descriptor=descriptor)
-    return hardware_message(
-        sender=hardware_manager_address(manager_id),
-        sender_session_id=sender_session_id,
-        recipient=controllers_broadcast(),
-        message_type=DEVICE_DESCRIPTOR_CHANGED,
-        body=body,
-        subject=hardware_subject_for_device(
-            DeviceRef(managerId=manager_id, deviceId=descriptor.device_id),
-        ),
     )
 
 
@@ -580,30 +501,6 @@ def control_input_message(
                 capabilityId=capability_id,
             )
         ),
-    )
-
-
-def device_unavailable_message(
-    *,
-    manager_id: str,
-    sender_session_id: str,
-    device_id: str,
-    fingerprint: str | None = None,
-    reason: str | None = None,
-) -> DeckrMessage:
-    device_ref = DeviceRef(
-        managerId=manager_id,
-        deviceId=device_id,
-        fingerprint=fingerprint,
-    )
-    body = DeviceUnavailableMessage(deviceRef=device_ref, reason=reason)
-    return hardware_message(
-        sender=hardware_manager_address(manager_id),
-        sender_session_id=sender_session_id,
-        recipient=controllers_broadcast(),
-        message_type=DEVICE_UNAVAILABLE,
-        body=body,
-        subject=hardware_subject_for_device(device_ref),
     )
 
 
@@ -751,12 +648,6 @@ __all__ = [
     "CommandReplyMessage",
     "ControlCommandMessage",
     "ControlInputMessage",
-    "DEVICE_AVAILABLE",
-    "DEVICE_DESCRIPTOR_CHANGED",
-    "DEVICE_UNAVAILABLE",
-    "DeviceAvailableMessage",
-    "DeviceDescriptorChangedMessage",
-    "DeviceUnavailableMessage",
     "HARDWARE_BODY_BY_MESSAGE_TYPE",
     "HARDWARE_MESSAGE_TYPE_BY_BODY",
     "HardwareMessageBody",
@@ -764,9 +655,6 @@ __all__ = [
     "control_command_for_capability",
     "control_command_message",
     "control_input_message",
-    "device_available_message",
-    "device_descriptor_changed_message",
-    "device_unavailable_message",
     "hardware_body_from_message",
     "hardware_body_to_dict",
     "hardware_capability_ref_from_subject",

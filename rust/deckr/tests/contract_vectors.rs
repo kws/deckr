@@ -258,6 +258,14 @@ fn strict_records_reject_non_object_extension_payloads() {
 }
 
 #[test]
+fn hardware_body_rejects_inventory_message_types() {
+    for suffix in ["Available", "DescriptorChanged", "Unavailable"] {
+        let message_type = format!("device{suffix}");
+        assert!(HardwareMessageBody::from_message(&message_type, &json!({})).is_err());
+    }
+}
+
+#[test]
 fn endpoint_delivery_honors_recipient_session() {
     let command = DeckrMessage::hardware_command(
         "main",

@@ -774,16 +774,6 @@ impl DeckrMessage {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum HardwareMessageBody {
-    DeviceAvailable {
-        descriptor: DeviceDescriptor,
-    },
-    DeviceDescriptorChanged {
-        descriptor: DeviceDescriptor,
-    },
-    DeviceUnavailable {
-        device_ref: DeviceRef,
-        reason: Option<String>,
-    },
     ControlInput {
         device_ref: DeviceRef,
         control_id: String,
@@ -803,9 +793,6 @@ pub enum HardwareMessageBody {
 impl HardwareMessageBody {
     pub fn message_type(&self) -> &'static str {
         match self {
-            Self::DeviceAvailable { .. } => "deviceAvailable",
-            Self::DeviceDescriptorChanged { .. } => "deviceDescriptorChanged",
-            Self::DeviceUnavailable { .. } => "deviceUnavailable",
             Self::ControlInput { .. } => "controlInput",
             Self::ControlCommand { .. } => "controlCommand",
         }
@@ -815,9 +802,6 @@ impl HardwareMessageBody {
         match self {
             Self::ControlInput { control_id, .. } => Some(control_id),
             Self::ControlCommand { control_id, .. } => control_id.as_deref(),
-            Self::DeviceAvailable { .. }
-            | Self::DeviceDescriptorChanged { .. }
-            | Self::DeviceUnavailable { .. } => None,
         }
     }
 
@@ -825,9 +809,6 @@ impl HardwareMessageBody {
         match self {
             Self::ControlInput { capability_id, .. }
             | Self::ControlCommand { capability_id, .. } => Some(capability_id),
-            Self::DeviceAvailable { .. }
-            | Self::DeviceDescriptorChanged { .. }
-            | Self::DeviceUnavailable { .. } => None,
         }
     }
 
@@ -837,15 +818,6 @@ impl HardwareMessageBody {
 
     pub fn to_value(&self) -> Result<Value> {
         Ok(match self {
-            Self::DeviceAvailable { descriptor } => json!({ "descriptor": descriptor }),
-            Self::DeviceDescriptorChanged { descriptor } => json!({ "descriptor": descriptor }),
-            Self::DeviceUnavailable { device_ref, reason } => {
-                let mut value = json!({ "deviceRef": device_ref });
-                if let Some(reason) = reason {
-                    value["reason"] = json!(reason);
-                }
-                value
-            }
             Self::ControlInput {
                 device_ref,
                 control_id,
@@ -881,22 +853,7 @@ impl HardwareMessageBody {
     }
 
     pub fn from_message(message_type: &str, body: &Value) -> Result<Self> {
-        let parsed = match message_type {
-            "deviceAvailable" => {
-                let body: DeviceDescriptorBody = serde_json::from_value(body.clone())?;
-                Self::DeviceAvailable {
-                    descriptor: body.descriptor,
-                }
-            }
-            "deviceDescriptorChanged" => {
-                let body: DeviceDescriptorBody = serde_json::from_value(body.clone())?;
-                Self::DeviceDescriptorChanged {
-                    descriptor: body.descriptor,
-                }
-            }
-            "deviceUnavailable" => {
-                serde_json::from_value::<DeviceUnavailableBody>(body.clone())?.into()
-            }
+        let parsed: Self = match message_type {
             "controlInput" => serde_json::from_value::<ControlInputBody>(body.clone())?.into(),
             "controlCommand" => serde_json::from_value::<ControlCommandBody>(body.clone())?.into(),
             other => {
@@ -911,16 +868,6 @@ impl HardwareMessageBody {
 
     pub fn validate(&self) -> Result<()> {
         match self {
-            Self::DeviceAvailable { descriptor } | Self::DeviceDescriptorChanged { descriptor } => {
-                descriptor.validate()
-            }
-            Self::DeviceUnavailable { device_ref, reason } => {
-                device_ref.validate()?;
-                if let Some(reason) = reason {
-                    require_non_empty(reason, "device unavailable reason")?;
-                }
-                Ok(())
-            }
             Self::ControlInput {
                 device_ref,
                 control_id,
@@ -947,27 +894,6 @@ impl HardwareMessageBody {
                 require_non_empty(capability_id, "control command target")?;
                 require_non_empty(command_type, "control command target")
             }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DeviceDescriptorBody {
-    descriptor: DeviceDescriptor,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeviceUnavailableBody {
-    device_ref: DeviceRef,
-    reason: Option<String>,
-}
-
-impl From<DeviceUnavailableBody> for HardwareMessageBody {
-    fn from(body: DeviceUnavailableBody) -> Self {
-        Self::DeviceUnavailable {
-            device_ref: body.device_ref,
-            reason: body.reason,
         }
     }
 }

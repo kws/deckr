@@ -77,13 +77,7 @@ async def _runtime(
 
 
 async def _add_device(runtime: HardwareManagerRuntime, descriptor: DeviceDescriptor):
-    await runtime.handle_hardware_message(
-        hw_messages.device_available_message(
-            manager_id="manager-main",
-            sender_session_id=runtime.endpoint.session_id,
-            descriptor=descriptor,
-        )
-    )
+    await runtime.set_device(descriptor)
 
 
 async def _claim(
@@ -314,7 +308,7 @@ async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
         await controller_cm.__aexit__(None, None, None)
 
 
-async def test_device_unavailable_cancels_live_claim_contract() -> None:
+async def test_remove_device_cancels_live_claim_contract_without_lane_event() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
     controller_cm = deckr.lane("hardware_messages").register_endpoint(
         controller_address("controller-main")
@@ -335,14 +329,11 @@ async def test_device_unavailable_cancels_live_claim_contract() -> None:
             await concord._validate(contract)
         ).status == ContractValidityStatus.VALID
 
-        await runtime.handle_hardware_message(
-            hw_messages.device_unavailable_message(
-                manager_id="manager-main",
-                sender_session_id=runtime.endpoint.session_id,
-                device_id="stream-deck-mini",
-                reason="disconnected",
-            )
-        )
+        async with controller_endpoint.subscribe() as stream:
+            await runtime.remove_device("stream-deck-mini", reason="disconnected")
+            with anyio.move_on_after(0.05) as scope:
+                await stream.receive()
+            assert scope.cancel_called
 
         assert (await concord._validate(contract)).status == (
             ContractValidityStatus.CANCELLED
@@ -380,7 +371,7 @@ async def test_replace_devices_cancels_live_claim_contract_for_removed_device() 
             await concord._validate(contract)
         ).status == ContractValidityStatus.VALID
 
-        await runtime.replace_devices({}, announce=True, removed_reason="removed")
+        await runtime.replace_devices({}, removed_reason="removed")
 
         assert (await concord._validate(contract)).status == (
             ContractValidityStatus.CANCELLED

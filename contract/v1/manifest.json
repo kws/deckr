@@ -118,15 +118,6 @@
       "valid": true
     },
     {
-      "description": "Valid deviceAvailable hardware message",
-      "id": "dev.deckr.fixture.hardware.device_available.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/hardware/device-available.v1.json",
-      "schemaPath": "schemas/hardware/hardware-messages.v1.schema.json",
-      "title": "Valid deviceAvailable hardware message",
-      "valid": true
-    },
-    {
       "description": "Valid Deckr action provider session Concord terms",
       "id": "dev.deckr.fixture.profile.action_provider_session.valid.v1",
       "kind": "fixture",

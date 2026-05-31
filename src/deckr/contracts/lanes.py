@@ -182,9 +182,6 @@ HARDWARE_MESSAGE_TYPES = frozenset(
         "commandReply",
         "controlCommand",
         "controlInput",
-        "deviceAvailable",
-        "deviceDescriptorChanged",
-        "deviceUnavailable",
     }
 )
 
@@ -309,9 +306,6 @@ HARDWARE_MESSAGES_DELIVERY = replace(
                 {
                     "capabilityStateChanged",
                     "controlInput",
-                    "deviceAvailable",
-                    "deviceDescriptorChanged",
-                    "deviceUnavailable",
                 }
             ),
             idempotency=(

@@ -246,6 +246,15 @@ valid Concord claims. If a claimed device disconnects, the hardware manager
 must cancel/end the Concord claim or stop maintaining its participant token; a
 missing hardware Beacon advertisement alone is not a claim withdrawal.
 
+The hardware Beacon profile is the only public device-inventory publication
+surface. Hardware lane messages can carry input, commands, capability state, and
+replies, but they do not announce inventory lifecycle or override Beacon and
+Concord authority.
+
+Claimed device descriptors are expected to remain stable for v1. Material
+descriptor changes are represented by claim cancellation or token loss plus a
+new Beacon candidate, not by hardware lane lifecycle messages.
+
 For `dev.deckr.profile.action_provider_session.v1`, the terms bind a
 controller endpoint to one action-provider runtime endpoint and the provider
 runtime session advertised through Beacon. Individual control bindings are

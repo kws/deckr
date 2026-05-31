@@ -59,7 +59,6 @@ from deckr.hardware.descriptors import (
 from deckr.hardware.messages import (
     HARDWARE_MESSAGES_SCHEMA_ID,
     control_input_message,
-    device_available_message,
     hardware_message_schema,
 )
 from deckr.hardware.profiles import (
@@ -270,14 +269,6 @@ def _fixtures() -> list[dict[str, Any]]:
         ),
         message_id="fixture-action-settings-request",
     )
-    hardware_available = _stable_wire_message(
-        device_available_message(
-            manager_id="mirabox-main",
-            sender_session_id="manager-session",
-            descriptor=descriptor,
-        ),
-        message_id="fixture-hardware-device-available",
-    )
     hardware_input = _stable_wire_message(
         control_input_message(
             manager_id="mirabox-main",
@@ -372,13 +363,6 @@ def _fixtures() -> list[dict[str, Any]]:
             title="Valid settingsRequest action message",
             schema_path="schemas/actions/actions.v1.schema.json",
             payload=settings_request,
-        ),
-        _fixture(
-            artifact_id="dev.deckr.fixture.hardware.device_available.valid.v1",
-            path="fixtures/valid/hardware/device-available.v1.json",
-            title="Valid deviceAvailable hardware message",
-            schema_path="schemas/hardware/hardware-messages.v1.schema.json",
-            payload=hardware_available,
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.hardware.control_input.valid.v1",
@@ -495,7 +479,9 @@ def _fixtures() -> list[dict[str, Any]]:
             title="Invalid Concord participant token missing participant",
             schema_path="schemas/concord/participant-token.v1.schema.json",
             payload={
-                key: value for key, value in hardware_claim_token.items() if key != "participant"
+                key: value
+                for key, value in hardware_claim_token.items()
+                if key != "participant"
             },
             valid=False,
         ),
@@ -505,7 +491,9 @@ def _fixtures() -> list[dict[str, Any]]:
             title="Invalid hardware profile payload missing managerId",
             schema_path="schemas/profiles/hardware.v1.schema.json",
             payload={
-                key: value for key, value in hardware_payload.to_dict().items() if key != "managerId"
+                key: value
+                for key, value in hardware_payload.to_dict().items()
+                if key != "managerId"
             },
             valid=False,
         ),
@@ -609,7 +597,9 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
             "schema": "dev.deckr.vector.concord_terms_hash.v1",
             "cases": [
                 _terms_hash_case("hardware_claim", hardware_claim_terms),
-                _terms_hash_case("action_provider_session", action_provider_session_terms),
+                _terms_hash_case(
+                    "action_provider_session", action_provider_session_terms
+                ),
             ],
         },
     )
@@ -819,7 +809,9 @@ def _terms_hash_case(
     }
 
 
-def _model_schema(model: type[BaseModel], *, schema_id: str, title: str) -> dict[str, Any]:
+def _model_schema(
+    model: type[BaseModel], *, schema_id: str, title: str
+) -> dict[str, Any]:
     schema = model.model_json_schema(by_alias=True, ref_template="#/$defs/{model}")
     schema["$schema"] = JSON_SCHEMA_URI
     schema["$id"] = schema_id
@@ -853,7 +845,7 @@ def _render_index(manifest: Mapping[str, Any]) -> str:
             "<tr>"
             f"<td>{html.escape(artifact['kind'])}</td>"
             f"<td>{html.escape(artifact['id'])}</td>"
-            f"<td><a href=\"{html.escape(artifact['path'])}\">{html.escape(artifact['path'])}</a></td>"
+            f'<td><a href="{html.escape(artifact["path"])}">{html.escape(artifact["path"])}</a></td>'
             f"<td>{html.escape(artifact['title'])}</td>"
             "</tr>"
         )

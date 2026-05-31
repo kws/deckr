@@ -795,6 +795,11 @@ only by maintaining a
 input or controller commands only while that contract remains valid. The removed
 inventory, endpoint-presence, and unilateral device-claim current-state records
 are not part of the v1 hardware-manager path.
+The `hardware_messages` lane carries control input, controller commands,
+capability state, and replies; it is not an authority for device inventory
+lifecycle. A disappeared claimed device must be reflected by cancelling the
+matching Concord claim or by no longer maintaining the manager participant
+token, not by a lane notification.
 
 Components may report readiness through `RunContext.status` or the convenience
 reporting helpers. The component manager combines component-reported local

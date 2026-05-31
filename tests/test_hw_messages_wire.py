@@ -4,51 +4,16 @@ import importlib
 import sys
 
 import pytest
-from descriptor_fixtures import descriptor_payloads
 from pydantic import ValidationError
 
 from deckr.hardware import messages as hw_messages
-from deckr.hardware.descriptors import CapabilityRef, DeviceDescriptor, DeviceRef
+from deckr.hardware.descriptors import CapabilityRef, DeviceRef
 
 
 def test_legacy_hardware_events_module_is_not_importable():
     sys.modules.pop("deckr.hardware.events", None)
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("deckr.hardware.events")
-
-
-def _descriptor() -> DeviceDescriptor:
-    return DeviceDescriptor.model_validate(
-        descriptor_payloads()["stream_deck_bitmap_grid"]
-    )
-
-
-def test_device_available_serializes_descriptor_inside_deckr_envelope():
-    descriptor = _descriptor()
-    message = hw_messages.device_available_message(
-        manager_id="manager-main",
-        sender_session_id="manager-session",
-        descriptor=descriptor,
-    )
-    wire = message.to_dict()
-
-    assert wire["lane"] == "hardware_messages"
-    assert wire["messageType"] == "deviceAvailable"
-    assert wire["sender"] == "hardware_manager:manager-main"
-    assert wire["senderSessionId"] == "manager-session"
-    assert wire["recipient"]["targetType"] == "broadcast"
-    assert wire["subject"]["identifiers"] == {
-        "managerId": "manager-main",
-        "deviceId": descriptor.device_id,
-    }
-    assert wire["body"]["descriptor"]["fingerprint"] == descriptor.fingerprint
-    assert "hid" not in wire["body"]["descriptor"]
-    assert "slots" not in wire["body"]["descriptor"]
-    assert wire["body"]["descriptor"]["controls"][0]["inputCapabilities"]
-
-    parsed = hw_messages.hardware_body_from_message(type(message).from_dict(wire))
-    assert isinstance(parsed, hw_messages.DeviceAvailableMessage)
-    assert parsed.descriptor == descriptor
 
 
 def test_control_input_targets_exact_capability():
@@ -203,8 +168,10 @@ def test_hardware_message_rejects_mismatched_body_instance():
     with pytest.raises(TypeError, match="requires body type ControlInputMessage"):
         hw_messages.hardware_body_for_type(
             hw_messages.CONTROL_INPUT,
-            hw_messages.DeviceUnavailableMessage(
+            hw_messages.ControlCommandMessage(
                 deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+                capabilityId="raster.bitmap",
+                commandType="clear",
             ),
         )
 
@@ -216,8 +183,10 @@ def test_hardware_message_builder_validates_message_type_body_pair():
             sender_session_id="manager-session",
             recipient="controller:main",
             message_type=hw_messages.CONTROL_INPUT,
-            body=hw_messages.DeviceUnavailableMessage(
+            body=hw_messages.ControlCommandMessage(
                 deviceRef=DeviceRef(managerId="manager-main", deviceId="deck"),
+                capabilityId="raster.bitmap",
+                commandType="clear",
             ),
             subject=hw_messages.hardware_subject_for_device(
                 DeviceRef(managerId="manager-main", deviceId="deck")
@@ -284,9 +253,22 @@ def test_hardware_message_schema_exports_typed_bodies():
     assert variant_properties["lane"]["const"] == "hardware_messages"
     assert variant_properties["body"]["$ref"] == "#/$defs/ControlInputMessage"
     assert schema["$defs"]["ControlInputMessage"]["additionalProperties"] is False
+    message_types = {
+        variant["allOf"][1]["properties"]["messageType"]["const"]
+        for variant in schema["oneOf"]
+    }
+    removed_suffixes = ("Available", "DescriptorChanged", "Unavailable")
+    assert not ({f"device{suffix}" for suffix in removed_suffixes} & message_types)
+    assert not (
+        {f"Device{suffix}Message" for suffix in removed_suffixes} & set(schema["$defs"])
+    )
 
 
 def test_old_slot_and_gesture_wire_names_are_absent():
+    removed_inventory_types = {
+        f"device{suffix}"
+        for suffix in ("Available", "DescriptorChanged", "Unavailable")
+    }
     old_names = {
         "HardwareDevice",
         "HardwareSlot",
@@ -311,7 +293,15 @@ def test_old_slot_and_gesture_wire_names_are_absent():
         "SLEEP_SCREEN",
         "WAKE_SCREEN",
         "HardwareTransportMessage",
+        "DEVICE_AVAILABLE",
+        "DEVICE_DESCRIPTOR_CHANGED",
+        "DEVICE_UNAVAILABLE",
+        "device_available_message",
+        "device_descriptor_changed_message",
+        "device_unavailable_message",
     }
+    for suffix in ("Available", "DescriptorChanged", "Unavailable"):
+        old_names.add(f"Device{suffix}Message")
 
     for name in old_names:
         assert not hasattr(hw_messages, name), name
@@ -326,4 +316,5 @@ def test_old_slot_and_gesture_wire_names_are_absent():
             "clearSlot",
             "sleepScreen",
             "wakeScreen",
+            *removed_inventory_types,
         }

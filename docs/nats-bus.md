@@ -200,6 +200,11 @@ managers use the shared `deckr.hardware.runtime.HardwareManagerRuntime`
 implementation to advertise hardware through managed
 `BeaconService.ensure_advertisement` lifecycles, maintain claim tokens through
 `ConcordParticipantManager`, and route input only for live claims.
+Hardware device inventory is published through the hardware Beacon profile only.
+The `hardware_messages` lane is for control input, commands, capability state,
+and replies; it must not be treated as the inventory authority. If a claimed
+device disappears, the hardware manager cancels the matching Concord claim or
+stops maintaining its participant token.
 
 Service components use `deckr.services.GenericService` to advertise their
 package-owned service feature through managed `BeaconService.ensure_advertisement`

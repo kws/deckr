@@ -158,6 +158,25 @@ class HardwareManagerRuntime:
     def live_claims(self) -> tuple[LiveHardwareClaim, ...]:
         return tuple(self._claims[key] for key in sorted(self._claims))
 
+    async def set_device(self, descriptor: DeviceDescriptor) -> None:
+        self._devices[descriptor.device_id] = descriptor
+        await self.publish_advertisement()
+        await self.reconcile_claims(reason="device inventory changed")
+
+    async def remove_device(
+        self,
+        device_id: str,
+        reason: str = "removed",
+    ) -> None:
+        self._devices.pop(device_id, None)
+        self._claims_by_device.pop(device_id, None)
+        await self._cancel_claims_for_device(
+            device_id,
+            reason=f"hardware device {device_id} {reason}",
+        )
+        await self.publish_advertisement()
+        await self.reconcile_claims(reason="device inventory changed")
+
     async def start(self, task_group: anyio.abc.TaskGroup) -> None:
         self._task_group = task_group
         await self.publish_advertisement()
@@ -180,7 +199,6 @@ class HardwareManagerRuntime:
         self,
         devices: Mapping[str, DeviceDescriptor],
         *,
-        announce: bool = False,
         removed_reason: str = "removed",
     ) -> None:
         next_devices = dict(devices)
@@ -188,68 +206,20 @@ class HardwareManagerRuntime:
         removed_device_ids = sorted(set(previous) - set(next_devices))
         self._devices = next_devices
         for device_id in removed_device_ids:
+            self._claims_by_device.pop(device_id, None)
+        for device_id in removed_device_ids:
             await self._cancel_claims_for_device(
                 device_id,
                 reason=f"hardware device {device_id} {removed_reason}",
             )
         await self.publish_advertisement()
         await self.reconcile_claims(reason="device snapshot changed")
-        if not announce:
-            return
-        for device_id in removed_device_ids:
-            await self.endpoint.publish(
-                hw_messages.device_unavailable_message(
-                    manager_id=self.manager_id,
-                    sender_session_id=self.endpoint.session_id,
-                    device_id=device_id,
-                    reason=removed_reason,
-                )
-            )
-        for device_id, descriptor in sorted(next_devices.items()):
-            if device_id not in previous:
-                await self.endpoint.publish(
-                    hw_messages.device_available_message(
-                        manager_id=self.manager_id,
-                        sender_session_id=self.endpoint.session_id,
-                        descriptor=descriptor,
-                    )
-                )
-            elif previous[device_id] != descriptor:
-                await self.endpoint.publish(
-                    hw_messages.device_descriptor_changed_message(
-                        manager_id=self.manager_id,
-                        sender_session_id=self.endpoint.session_id,
-                        descriptor=descriptor,
-                    )
-                )
 
     async def handle_hardware_message(self, message: DeckrMessage) -> bool:
         event = hw_messages.hardware_body_from_message(message)
         ref = hw_messages.hardware_device_ref_from_message(message)
         if ref is None or ref.manager_id != self.manager_id:
             return False
-        if isinstance(event, hw_messages.DeviceAvailableMessage):
-            self._devices[ref.device_id] = event.descriptor
-            await self.publish_advertisement()
-            await self.endpoint.publish(message)
-            await self.reconcile_claims(reason="device available")
-            return True
-        if isinstance(event, hw_messages.DeviceDescriptorChangedMessage):
-            self._devices[ref.device_id] = event.descriptor
-            await self.publish_advertisement()
-            await self.endpoint.publish(message)
-            await self.reconcile_claims(reason="device descriptor changed")
-            return True
-        if isinstance(event, hw_messages.DeviceUnavailableMessage):
-            self._devices.pop(ref.device_id, None)
-            await self._cancel_claims_for_device(
-                ref.device_id,
-                reason=f"hardware device {ref.device_id} unavailable",
-            )
-            await self.publish_advertisement()
-            await self.endpoint.publish(message)
-            await self.reconcile_claims(reason="device unavailable")
-            return True
         if not isinstance(
             event,
             hw_messages.ControlInputMessage | hw_messages.CapabilityStateChangedMessage,
