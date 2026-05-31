@@ -36,6 +36,15 @@ BEACON_ADVERTISEMENT_STORE_POLICY = StateStorePolicy(
 logger = logging.getLogger(__name__)
 
 
+def _single_exception_from_group(exc: BaseExceptionGroup) -> BaseException | None:
+    if len(exc.exceptions) != 1:
+        return None
+    child = exc.exceptions[0]
+    if isinstance(child, BaseExceptionGroup):
+        return _single_exception_from_group(child)
+    return child
+
+
 def _beacon_lifecycle_log_level(feature_id: str) -> int:
     if feature_id == "dev.deckr.hardware":
         return logging.INFO
@@ -734,12 +743,29 @@ class BeaconService:
             finally:
                 await send.aclose()
 
-        async with receive, send, anyio.create_task_group() as task_group:
-            task_group.start_soon(run)
-            try:
-                yield receive
-            finally:
-                task_group.cancel_scope.cancel()
+        caller_exception: BaseException | None = None
+        try:
+            async with receive, send, anyio.create_task_group() as task_group:
+                task_group.start_soon(run)
+                try:
+                    yield receive
+                except BaseException as exc:
+                    caller_exception = exc
+                finally:
+                    task_group.cancel_scope.cancel()
+        except BaseExceptionGroup as exc:
+            unwrapped = _single_exception_from_group(exc)
+            if caller_exception is not None and not isinstance(
+                caller_exception, anyio.EndOfStream
+            ):
+                raise caller_exception from None
+            if unwrapped is not None:
+                raise unwrapped from exc
+            if caller_exception is not None:
+                raise caller_exception from None
+            raise
+        if caller_exception is not None:
+            raise caller_exception
 
 
 def _advertisement_handle(

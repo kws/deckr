@@ -582,12 +582,30 @@ class ServiceClient:
         for contract in await self._concord.find_contracts(service.service_use_profile):
             if contract.contract_id != terms.service_use_id:
                 continue
-            validity = await self._concord.validate(contract)
+            validity = await self._concord.validate(
+                contract,
+                current_sessions={
+                    str(self._endpoint.endpoint): self._endpoint.session_id,
+                    str(service.service_endpoint): service.service_session_id,
+                },
+                log_label="ServiceClient",
+                log_invalid=False,
+            )
             record = validity.contract
             if record is None or thaw_json(record.terms or {}) != terms_dict:
                 continue
             next_generation = max(next_generation, record.generation + 1)
             if record.state == ContractState.OPEN:
+                if _stale_service_use_contract(validity.status):
+                    await self._cancel_lease(
+                        _ServiceLease(
+                            contract=contract,
+                            service=service,
+                            terms=terms,
+                        ),
+                        reason=f"service_use_{validity.status.value}",
+                    )
+                    continue
                 return _ServiceLease(
                     contract=contract,
                     service=service,
@@ -606,13 +624,31 @@ class ServiceClient:
             for contract in await self._concord.find_contracts(
                 service.service_use_profile
             ):
-                validity = await self._concord.validate(contract)
+                validity = await self._concord.validate(
+                    contract,
+                    current_sessions={
+                        str(self._endpoint.endpoint): self._endpoint.session_id,
+                        str(service.service_endpoint): service.service_session_id,
+                    },
+                    log_label="ServiceClient",
+                    log_invalid=False,
+                )
                 record = validity.contract
                 if (
                     record is not None
                     and thaw_json(record.terms or {}) == terms_dict
                     and record.state == ContractState.OPEN
                 ):
+                    if _stale_service_use_contract(validity.status):
+                        await self._cancel_lease(
+                            _ServiceLease(
+                                contract=contract,
+                                service=service,
+                                terms=terms,
+                            ),
+                            reason=f"service_use_{validity.status.value}",
+                        )
+                        continue
                     return _ServiceLease(
                         contract=contract,
                         service=service,
@@ -858,7 +894,16 @@ class GenericService:
         if self._concord is None:
             return
         while True:
-            await self.reconcile_contracts()
+            try:
+                await self.reconcile_contracts()
+            except StateUnavailable:
+                logger.warning(
+                    "Service contracts unavailable; reconciliation will retry "
+                    "service=%s namespace=%s",
+                    self.service_id,
+                    self.protocol.namespace,
+                    exc_info=True,
+                )
             await anyio.sleep(self._reconcile_interval)
 
     async def reconcile_contracts(self) -> None:
@@ -870,6 +915,26 @@ class GenericService:
             for contract in contracts:
                 terms = await self.matching_terms(contract)
                 if terms is None:
+                    continue
+                validity = await self._concord.validate(
+                    contract,
+                    log_label=self._log_label,
+                    log_invalid=False,
+                )
+                if _stale_service_use_contract(validity.status):
+                    try:
+                        await self._concord.cancel(
+                            contract,
+                            self.endpoint.endpoint,
+                            reason=f"service_use_{validity.status.value}",
+                            log_label=self._log_label,
+                        )
+                    except (StateConflict, StateUnavailable):
+                        logger.debug(
+                            "Could not cancel stale %s service-use contract",
+                            self._log_label,
+                            exc_info=True,
+                        )
                     continue
                 key = (contract.contract_id, contract.generation)
                 lease = self._service_leases.get(key)
@@ -883,7 +948,6 @@ class GenericService:
                     )
                     if self._task_group is not None:
                         lease.start(self._task_group)
-                    validity = await self._concord.validate(contract)
                     existing = validity.tokens.get(str(terms.service_endpoint))
                     if existing is not None and existing.session_id == (
                         self.endpoint.session_id
@@ -909,8 +973,10 @@ class GenericService:
     ) -> ServiceUseTerms | None:
         if self._concord is None or self._advertisement is None:
             return None
-        validity = await self._concord.validate(contract)
-        record = validity.contract
+        try:
+            record = await self._concord.contract_record(contract)
+        except ValueError:
+            return None
         if record is None:
             return None
         if record.state != ContractState.OPEN:
@@ -1050,6 +1116,20 @@ async def _delete_if_current(state: StateStore, key: str, revision: int) -> None
         await state.delete(key, revision=revision)
     except StateConflict:
         logger.debug("Service view %s changed before cleanup", key)
+    except StateUnavailable:
+        logger.debug("Service view %s unavailable before cleanup", key, exc_info=True)
+
+
+def _stale_service_use_contract(
+    status: ContractValidityStatus,
+) -> bool:
+    return status in {
+        ContractValidityStatus.MISSING_TOKEN,
+        ContractValidityStatus.INVALID_TOKEN,
+        ContractValidityStatus.GENERATION_MISMATCH,
+        ContractValidityStatus.SESSION_MISMATCH,
+        ContractValidityStatus.TERMS_HASH_MISMATCH,
+    }
 
 
 def _service_sort_key(service: ServiceAdvertisement) -> tuple[datetime, int, str]:

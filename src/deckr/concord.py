@@ -42,6 +42,15 @@ CONCORD_TOKEN_STORE_POLICY = StateStorePolicy(
 logger = logging.getLogger(__name__)
 
 
+def _single_exception_from_group(exc: BaseExceptionGroup) -> BaseException | None:
+    if len(exc.exceptions) != 1:
+        return None
+    child = exc.exceptions[0]
+    if isinstance(child, BaseExceptionGroup):
+        return _single_exception_from_group(child)
+    return child
+
+
 def _contract_lifecycle_log_level(profile: str | None) -> int:
     if _is_chattery_contract_profile(profile):
         return logging.DEBUG
@@ -52,6 +61,18 @@ def _contract_pending_log_level(profile: str | None) -> int:
     if _is_chattery_contract_profile(profile):
         return logging.DEBUG
     return logging.INFO
+
+
+def _contract_invalid_log_level(
+    profile: str | None,
+    status: ContractValidityStatus | None,
+) -> int:
+    if (
+        status == ContractValidityStatus.MISSING_TOKEN
+        and _is_chattery_contract_profile(profile)
+    ):
+        return logging.DEBUG
+    return logging.WARNING
 
 
 def _is_chattery_contract_profile(profile: str | None) -> bool:
@@ -1140,19 +1161,21 @@ class ConcordService:
         *,
         current_sessions: Mapping[str, str] | None = None,
         log_label: str = "Concord",
+        log_invalid: bool = True,
     ) -> ContractValidity:
         validity = await self._coordinator.validate(
             contract,
             current_sessions=current_sessions,
         )
-        if validity.status in {
+        if log_invalid and validity.status in {
             ContractValidityStatus.MISSING_TOKEN,
             ContractValidityStatus.INVALID_TOKEN,
             ContractValidityStatus.GENERATION_MISMATCH,
             ContractValidityStatus.SESSION_MISMATCH,
             ContractValidityStatus.TERMS_HASH_MISMATCH,
         }:
-            logger.warning(
+            logger.log(
+                _contract_invalid_log_level(contract.profile, validity.status),
                 "%s Concord contract invalid profile=%s contract=%s generation=%s "
                 "status=%s reason=%s",
                 log_label,
@@ -1257,13 +1280,30 @@ class ConcordService:
                         continue
                     await publish_validity(contract, change)
 
-        async with receive, send, anyio.create_task_group() as task_group:
-            task_group.start_soon(contract_loop)
-            task_group.start_soon(token_loop)
-            try:
-                yield receive
-            finally:
-                task_group.cancel_scope.cancel()
+        caller_exception: BaseException | None = None
+        try:
+            async with receive, send, anyio.create_task_group() as task_group:
+                task_group.start_soon(contract_loop)
+                task_group.start_soon(token_loop)
+                try:
+                    yield receive
+                except BaseException as exc:
+                    caller_exception = exc
+                finally:
+                    task_group.cancel_scope.cancel()
+        except BaseExceptionGroup as exc:
+            unwrapped = _single_exception_from_group(exc)
+            if caller_exception is not None and not isinstance(
+                caller_exception, anyio.EndOfStream
+            ):
+                raise caller_exception from None
+            if unwrapped is not None:
+                raise unwrapped from exc
+            if caller_exception is not None:
+                raise caller_exception from None
+            raise
+        if caller_exception is not None:
+            raise caller_exception
 
 
 ConcordContractPredicate = Callable[
@@ -1873,7 +1913,9 @@ def _log_concord_event(event: ConcordContractEvent) -> None:
         )
         return
     if event.event_type == ConcordEventType.TOKEN_EXPIRED:
-        logger.warning(
+        event_status = event.validity.status if event.validity is not None else None
+        logger.log(
+            _contract_invalid_log_level(event.profile, event_status),
             "Concord participant token expired profile=%s contract=%s generation=%s "
             "participant=%s status=%s reason=%s revision=%s",
             event.profile,
@@ -1885,11 +1927,11 @@ def _log_concord_event(event: ConcordContractEvent) -> None:
             contract.revision,
         )
         return
-    level = (
-        _contract_pending_log_level(event.profile)
-        if event.event_type == ConcordEventType.PENDING
-        else logging.WARNING
-    )
+    if event.event_type == ConcordEventType.PENDING:
+        level = _contract_pending_log_level(event.profile)
+    else:
+        event_status = event.validity.status if event.validity is not None else None
+        level = _contract_invalid_log_level(event.profile, event_status)
     logger.log(
         level,
         "Concord contract %s profile=%s contract=%s generation=%s status=%s "

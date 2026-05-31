@@ -6,7 +6,12 @@ from memory_lane_substrate import MemoryStateStore, memory_deckr
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import BeaconDiscovery, BeaconService, CandidateStatus
-from deckr.concord import ConcordCoordinator, ConcordService, ContractState
+from deckr.concord import (
+    ConcordCoordinator,
+    ConcordService,
+    ContractState,
+    ContractValidityStatus,
+)
 from deckr.contracts.messages import SERVICES_LANE, entity_subject, service_address
 from deckr.services import (
     GenericService,
@@ -24,6 +29,7 @@ from deckr.services import (
     service_view_prefix,
 )
 from deckr.services.messages import ServiceCommandBody
+from deckr.state import StateUnavailable
 
 
 def _protocol(service_id: str = "openhab-home") -> ServiceProtocol:
@@ -40,6 +46,28 @@ def _protocol(service_id: str = "openhab-home") -> ServiceProtocol:
             )
         },
     )
+
+
+class FailingItemsStateStore(MemoryStateStore):
+    def __init__(self, *, name: str) -> None:
+        super().__init__(name=name)
+        self.items_calls = 0
+
+    async def items(self, prefix: str = ""):
+        self.items_calls += 1
+        if self.items_calls == 1:
+            raise StateUnavailable("broker unavailable")
+        return await super().items(prefix)
+
+
+class FailingDeleteStateStore(MemoryStateStore):
+    def __init__(self, *, name: str) -> None:
+        super().__init__(name=name)
+        self.delete_calls = 0
+
+    async def delete(self, key: str, *, revision: int | None = None) -> None:
+        self.delete_calls += 1
+        raise StateUnavailable("broker unavailable")
 
 
 def test_service_protocol_payload_terms_and_view_keys() -> None:
@@ -281,6 +309,131 @@ async def test_generic_service_advertise_authorize_and_withdraw() -> None:
         await service.withdraw()
         assert await beacon.validate(candidate) == CandidateStatus.MISSING
         assert await view_store.get(key) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_participant", ["client", "service"])
+async def test_generic_service_cancels_stale_service_use_contract(
+    caplog,
+    missing_participant: str,
+) -> None:
+    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    token_store = MemoryStateStore(name="tokens")
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            token_store,
+        )
+    )
+    protocol = _protocol()
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        service_address("openhab-home")
+    ) as service_endpoint, deckr.lane(SERVICES_LANE).register_endpoint(
+        action_provider_address("provider-main")
+    ) as client_endpoint:
+        service = GenericService(
+            protocol=protocol,
+            service_id="openhab-home",
+            endpoint=service_endpoint,
+            beacon=beacon,
+            concord=concord,
+            view_state=None,
+            log_label="test-service",
+        )
+        await service.publish_status(ServiceBackendStatus.AVAILABLE)
+        candidate = (await beacon.find(protocol.feature_id))[0]
+        advertised = service_advertisement_from_candidate(
+            candidate,
+            protocol.namespace,
+        )
+        assert advertised is not None
+        terms = service_use_terms(advertised, client_endpoint.endpoint)
+        contract = await concord.create_contract(
+            (service_endpoint.endpoint, client_endpoint.endpoint),
+            contract_id=terms.service_use_id,
+            profile=protocol.use_profile,
+            terms=terms.to_dict(),
+            created_by=client_endpoint.endpoint,
+        )
+        client_token = await concord.attach(
+            contract,
+            client_endpoint.endpoint,
+            client_endpoint.session_id,
+        )
+        service_token = await concord.attach(
+            contract,
+            service_endpoint.endpoint,
+            service_endpoint.session_id,
+        )
+        token = client_token if missing_participant == "client" else service_token
+        await token_store.delete(token.key, revision=token.revision)
+
+        caplog.set_level("INFO", logger="deckr.concord")
+        caplog.clear()
+        await service.reconcile_contracts()
+
+    validity = await concord.validate(contract)
+    assert validity.status == ContractValidityStatus.CANCELLED
+    assert "Concord contract invalid" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_generic_service_reconcile_loop_retries_state_unavailable() -> None:
+    contract_state = FailingItemsStateStore(name="contracts")
+    concord = ConcordService(
+        ConcordCoordinator(
+            contract_state,
+            MemoryStateStore(name="tokens"),
+        )
+    )
+    protocol = _protocol()
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        service_address("openhab-home")
+    ) as service_endpoint:
+        service = GenericService(
+            protocol=protocol,
+            service_id="openhab-home",
+            endpoint=service_endpoint,
+            beacon=None,
+            concord=concord,
+            view_state=None,
+            reconcile_interval=0.01,
+        )
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(service.contract_reconcile_loop)
+            with anyio.fail_after(1):
+                while contract_state.items_calls < 2:
+                    await anyio.sleep(0.01)
+            tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_generic_service_withdraw_ignores_unavailable_view_cleanup() -> None:
+    view_store = FailingDeleteStateStore(name="views")
+    protocol = _protocol()
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        service_address("openhab-home")
+    ) as service_endpoint:
+        service = GenericService(
+            protocol=protocol,
+            service_id="openhab-home",
+            endpoint=service_endpoint,
+            beacon=None,
+            concord=None,
+            view_state=view_store,
+        )
+        await service.put_view(
+            service_view_key("openhab-home", "items", "Kitchen Light"),
+            {"item": "Kitchen Light"},
+        )
+
+        await service.withdraw()
+
+    assert view_store.delete_calls == 1
 
 
 @pytest.mark.asyncio

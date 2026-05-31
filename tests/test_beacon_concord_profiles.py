@@ -27,7 +27,11 @@ from deckr.concord import (
     ParticipantTokenRecord,
     canonical_json_hash,
 )
-from deckr.contracts.messages import controller_address, hardware_manager_address
+from deckr.contracts.messages import (
+    controller_address,
+    hardware_manager_address,
+    service_address,
+)
 from deckr.hardware.descriptors import DeviceDescriptor, DeviceRef
 from deckr.hardware.profiles import (
     HARDWARE_CLAIM_PROFILE_ID,
@@ -48,7 +52,7 @@ from deckr.profiles import (
     actions_payload_from_advertisement,
     profile_terms_hash,
 )
-from deckr.state import StateConflict
+from deckr.state import StateConflict, StateUnavailable
 
 
 async def _receive(stream):
@@ -104,6 +108,20 @@ class RacingUpdateStateStore:
 
     def watch(self, *args, **kwargs):
         return self._inner.watch(*args, **kwargs)
+
+
+class UnavailableWatch:
+    async def __aenter__(self):
+        raise StateUnavailable("watch unavailable")
+
+    async def __aexit__(self, *args):
+        return None
+
+
+class FailingWatchStateStore(MemoryStateStore):
+    def watch(self, prefix: str = ""):
+        del prefix
+        return UnavailableWatch()
 
 
 def _descriptor() -> DeviceDescriptor:
@@ -262,6 +280,26 @@ async def test_beacon_service_advertiser_emits_semantic_events_and_logs(caplog) 
 
     assert "TestHardware Beacon advertisement announced" in caplog.text
     assert "Beacon advertisement withdrawn" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_beacon_service_feature_watch_preserves_caller_state_unavailable() -> None:
+    state = MemoryStateStore(name="beacon")
+    service = BeaconService(BeaconDiscovery(state, default_ttl_seconds=30))
+
+    with pytest.raises(StateUnavailable, match="broker unavailable"):
+        async with service.watch_feature(HARDWARE_FEATURE_ID):
+            raise StateUnavailable("broker unavailable")
+
+
+@pytest.mark.asyncio
+async def test_beacon_service_feature_watch_preserves_source_state_unavailable() -> None:
+    state = FailingWatchStateStore(name="beacon")
+    service = BeaconService(BeaconDiscovery(state, default_ttl_seconds=30))
+
+    with pytest.raises(StateUnavailable, match="watch unavailable"):
+        async with service.watch_feature(HARDWARE_FEATURE_ID) as events:
+            await events.receive()
 
 
 @pytest.mark.asyncio
@@ -695,6 +733,53 @@ async def test_concord_watch_can_suppress_lifecycle_logging(caplog) -> None:
     assert event.contract is not None
     assert event.contract.contract_id == contract.contract_id
     assert "Concord contract pending" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_concord_service_watch_preserves_caller_state_unavailable() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+
+    with pytest.raises(StateUnavailable, match="broker unavailable"):
+        async with service.watch_contracts():
+            raise StateUnavailable("broker unavailable")
+
+
+@pytest.mark.asyncio
+async def test_concord_service_watch_preserves_source_state_unavailable() -> None:
+    contract_state = FailingWatchStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+
+    with pytest.raises(StateUnavailable, match="watch unavailable"):
+        async with service.watch_contracts() as events:
+            await events.receive()
+
+
+@pytest.mark.asyncio
+async def test_concord_service_use_missing_token_logs_below_info(caplog) -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    service_endpoint = service_address("openhab-home")
+    client = action_provider_address("python-dev.deckr.openhab")
+    contract = await service.create_contract(
+        (service_endpoint, client),
+        contract_id="service-use:openhab",
+        profile="dev.deckr.openhab.service_use.v1",
+        created_by=client,
+    )
+    await service.attach(contract, service_endpoint, "service-session")
+    client_token = await service.attach(contract, client, "client-session")
+    await token_state.delete(client_token.key, revision=client_token.revision)
+
+    caplog.set_level("INFO", logger="deckr.concord")
+    caplog.clear()
+    validity = await service.validate(contract)
+
+    assert validity.status == ContractValidityStatus.MISSING_TOKEN
+    assert "Concord contract invalid" not in caplog.text
 
 
 @pytest.mark.asyncio
