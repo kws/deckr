@@ -196,6 +196,10 @@ def concord_contracts_prefix() -> str:
     return "contracts."
 
 
+def concord_contract_id_prefix(*, contract_id: str) -> str:
+    return ".".join(("contracts", encode_key_token(contract_id), ""))
+
+
 def canonical_json_bytes(value: Mapping[str, Any] | DeckrModel) -> bytes:
     if isinstance(value, DeckrModel):
         payload = value.model_dump(by_alias=True, exclude_none=True, mode="json")
@@ -596,11 +600,29 @@ class ConcordCoordinator:
             return None
         return record
 
-    async def find_contracts(self, profile: str | None = None) -> tuple[ContractHandle, ...]:
+    async def find_contracts(
+        self,
+        profile: str | None = None,
+        *,
+        contract_id: str | None = None,
+    ) -> tuple[ContractHandle, ...]:
+        prefix = (
+            concord_contracts_prefix()
+            if contract_id is None
+            else concord_contract_id_prefix(
+                contract_id=_require_text(
+                    contract_id,
+                    field_name="Concord contract id",
+                )
+            )
+        )
         contracts: list[ContractHandle] = []
-        for entry in await self._contract_state.items(concord_contracts_prefix()):
+        for entry in await self._contract_state.items(prefix):
             parsed = parse_concord_contract_key(entry.key)
             if parsed is None:
+                continue
+            parsed_contract_id, generation = parsed
+            if contract_id is not None and parsed_contract_id != contract_id:
                 continue
             try:
                 record = ContractRecord.model_validate(entry.value)
@@ -608,8 +630,10 @@ class ConcordCoordinator:
                 continue
             if profile is not None and record.profile != profile:
                 continue
-            contract_id, generation = parsed
-            if record.contract_id != contract_id or record.generation != generation:
+            if (
+                record.contract_id != parsed_contract_id
+                or record.generation != generation
+            ):
                 continue
             contracts.append(_contract_handle(entry.key, record, entry.revision))
         return tuple(sorted(contracts, key=lambda contract: contract.key))
@@ -1114,9 +1138,10 @@ class ConcordService:
         stale: list[tuple[ContractHandle, ContractValidity]] = []
         next_generation = 1
         if spec.stable_contract_id is not None:
-            for contract in await self._find_contracts(spec.profile):
-                if contract.contract_id != spec.stable_contract_id:
-                    continue
+            for contract in await self._find_contracts(
+                spec.profile,
+                contract_id=spec.stable_contract_id,
+            ):
                 record = await self._contract_record(contract)
                 if record is None:
                     continue
@@ -1219,7 +1244,7 @@ class ConcordService:
             await agreement._lease.aclose()  # noqa: SLF001
             return validity
         existing = validity.tokens.get(str(spec.local_participant))
-        if agreement.local_token is None and existing is not None:
+        if existing is not None:
             if existing.session_id != spec.local_session_id:
                 validity = ContractValidity(
                     ContractValidityStatus.SESSION_MISMATCH,
@@ -1231,6 +1256,8 @@ class ConcordService:
                 await agreement._lease.aclose()  # noqa: SLF001
                 return validity
             agreement._lease.adopt(existing)  # noqa: SLF001
+        if agreement.local_token is not None:
+            return validity
         try:
             await agreement._lease.attach_or_refresh()  # noqa: SLF001
         except StateConflict:
@@ -1323,8 +1350,13 @@ class ConcordService:
     async def _find_contracts(
         self,
         profile: str | None = None,
+        *,
+        contract_id: str | None = None,
     ) -> tuple[ContractHandle, ...]:
-        return await self._coordinator.find_contracts(profile)
+        return await self._coordinator.find_contracts(
+            profile,
+            contract_id=contract_id,
+        )
 
     async def _attach(
         self,
@@ -1749,6 +1781,8 @@ class ConcordParticipantManager:
         self._managed: dict[str, ConcordManagedContract] = {}
         self._leases: dict[str, ConcordParticipantLease] = {}
         self._last_status: dict[str, ContractValidityStatus] = {}
+        self._contract_index: dict[str, ContractHandle] = {}
+        self._contract_index_ready = False
         self._subscribers: set[anyio.abc.ObjectSendStream[ConcordManagedContractEvent]] = (
             set()
         )
@@ -1795,6 +1829,8 @@ class ConcordParticipantManager:
             self._leases.clear()
             self._managed.clear()
             self._last_status.clear()
+            self._contract_index.clear()
+            self._contract_index_ready = False
 
     async def cancel(
         self,
@@ -1842,13 +1878,21 @@ class ConcordParticipantManager:
                     self.profile,
                     log_events=False,
                 ) as stream:
+                    await self.reconcile(
+                        reason="contract watch warmup",
+                        rebuild_index=True,
+                    )
                     async for event in stream:
                         if self._closed:
                             return
+                        await self._update_contract_index(event)
                         await self.reconcile(
                             reason=f"contract watch {event.event_type.value}"
                         )
             except StateUnavailable:
+                async with self._lock:
+                    self._contract_index_ready = False
+                    self._contract_index.clear()
                 await anyio.sleep(self._reconcile_interval)
 
     async def reconcile_loop(self) -> None:
@@ -1870,11 +1914,14 @@ class ConcordParticipantManager:
         self,
         *,
         reason: str = "manual reconcile",
+        rebuild_index: bool = False,
     ) -> tuple[ConcordManagedContract, ...]:
         async with self._lock:
             if self._closed:
                 return ()
-            contracts = await self._concord._find_contracts(self.profile)
+            contracts = await self._reconcile_contract_candidates_locked(
+                rebuild_index=rebuild_index,
+            )
             if self._prepare_reconcile is not None:
                 await _maybe_await(self._prepare_reconcile())
             if self._contract_sort_key is not None:
@@ -1902,6 +1949,32 @@ class ConcordParticipantManager:
             self._leases = next_leases
             return self.managed_contracts
 
+    async def _reconcile_contract_candidates_locked(
+        self,
+        *,
+        rebuild_index: bool,
+    ) -> tuple[ContractHandle, ...]:
+        if rebuild_index:
+            contracts = await self._concord._find_contracts(self.profile)
+            self._contract_index = {contract.key: contract for contract in contracts}
+            self._contract_index_ready = True
+            return contracts
+        if self._contract_index_ready:
+            return tuple(
+                self._contract_index[key] for key in sorted(self._contract_index)
+            )
+        return await self._concord._find_contracts(self.profile)
+
+    async def _update_contract_index(self, event: ConcordContractEvent) -> None:
+        contract = event.contract
+        if contract is None:
+            return
+        if self.profile is not None and contract.profile != self.profile:
+            return
+        async with self._lock:
+            if self._contract_index_ready:
+                self._contract_index[contract.key] = contract
+
     async def _reconcile_contract_locked(
         self,
         contract: ContractHandle,
@@ -1915,16 +1988,22 @@ class ConcordParticipantManager:
         try:
             record = await self._concord._contract_record(contract)
         except ValueError:
+            self._contract_index.pop(contract.key, None)
             await self._release_locked(
                 contract.key,
                 reason=ContractValidityStatus.INVALID_CONTRACT.value,
             )
             return None
         if record is None:
+            self._contract_index.pop(contract.key, None)
             await self._release_locked(
                 contract.key,
                 reason=ContractValidityStatus.MISSING_CONTRACT.value,
             )
+            return None
+        if self.profile is not None and record.profile != self.profile:
+            self._contract_index.pop(contract.key, None)
+            await self._release_locked(contract.key, reason="profile_mismatch")
             return None
 
         if record.state == ContractState.CANCELLED:
@@ -1989,7 +2068,7 @@ class ConcordParticipantManager:
                 lease.start_soon(self._start_soon)
             self._leases[contract.key] = lease
 
-        if lease.token is None and existing is not None:
+        if existing is not None:
             if existing.session_id != self.session_id:
                 validity = ContractValidity(
                     ContractValidityStatus.SESSION_MISMATCH,
@@ -2011,32 +2090,34 @@ class ConcordParticipantManager:
                 return None
             lease.adopt(existing)
 
-        try:
-            token = await lease.attach_or_refresh()
-        except StateConflict:
+        token = lease.token
+        if token is None:
+            try:
+                token = await lease.attach_or_refresh()
+            except StateConflict:
+                validity = await self._concord._validate(
+                    contract,
+                    current_sessions=sessions,
+                    log_label=self._log_label,
+                )
+                record = validity.contract or record
+                await self._publish_terminal_locked(
+                    contract,
+                    record=record,
+                    validity=validity,
+                    token=None,
+                    reason=reason,
+                )
+                if _terminal_managed_status(validity.status):
+                    await self._release_locked(contract.key, reason=validity.status.value)
+                return None
+
             validity = await self._concord._validate(
                 contract,
                 current_sessions=sessions,
                 log_label=self._log_label,
             )
             record = validity.contract or record
-            await self._publish_terminal_locked(
-                contract,
-                record=record,
-                validity=validity,
-                token=None,
-                reason=reason,
-            )
-            if _terminal_managed_status(validity.status):
-                await self._release_locked(contract.key, reason=validity.status.value)
-            return None
-
-        validity = await self._concord._validate(
-            contract,
-            current_sessions=sessions,
-            log_label=self._log_label,
-        )
-        record = validity.contract or record
         managed = ConcordManagedContract(
             contract=contract,
             record=record,
@@ -2453,6 +2534,7 @@ __all__ = [
     "TokenObservation",
     "canonical_json_bytes",
     "canonical_json_hash",
+    "concord_contract_id_prefix",
     "concord_contract_key",
     "concord_contract_prefix",
     "concord_contracts_prefix",

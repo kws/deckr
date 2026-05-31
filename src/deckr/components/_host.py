@@ -14,7 +14,9 @@ from deckr.beacon import (
     BEACON_ADVERTISEMENT_STORE_POLICY,
     DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
     BeaconDiscovery,
+    BeaconFeatureEventType,
     BeaconService,
+    Candidate,
 )
 from deckr.components._defs import Component
 from deckr.components._runner import ComponentManager
@@ -1529,6 +1531,9 @@ async def _run_dependency_observer(
             for dependency in spec.dependencies.values()
         }
     )
+    feature_snapshots: dict[str, dict[str, Candidate] | None] = {
+        feature_id: {} for feature_id in feature_ids
+    }
     send, receive = anyio.create_memory_object_stream[object](max_buffer_size=1)
 
     async def notify() -> None:
@@ -1541,9 +1546,27 @@ async def _run_dependency_observer(
         while True:
             try:
                 async with beacon.watch_feature(feature_id) as changes:
-                    async for _change in changes:
+                    feature_snapshots[feature_id] = {}
+                    await notify()
+                    async for event in changes:
+                        snapshot = feature_snapshots.get(feature_id)
+                        if snapshot is None:
+                            snapshot = {}
+                            feature_snapshots[feature_id] = snapshot
+                        if (
+                            event.event_type
+                            in {
+                                BeaconFeatureEventType.ADVERTISED,
+                                BeaconFeatureEventType.UPDATED,
+                            }
+                            and event.candidate is not None
+                        ):
+                            snapshot[event.key] = event.candidate
+                        else:
+                            snapshot.pop(event.key, None)
                         await notify()
             except StateUnavailable:
+                feature_snapshots[feature_id] = None
                 await notify()
                 await anyio.sleep(1.0)
 
@@ -1553,7 +1576,7 @@ async def _run_dependency_observer(
         while True:
             await _evaluate_dependency_readiness(
                 specs,
-                beacon=beacon,
+                feature_snapshots=feature_snapshots,
                 component_manager=component_manager,
             )
             with anyio.move_on_after(0.25) as scope:
@@ -1565,7 +1588,7 @@ async def _run_dependency_observer(
 async def _evaluate_dependency_readiness(
     specs: Sequence[ComponentInstanceSpec],
     *,
-    beacon: BeaconService,
+    feature_snapshots: Mapping[str, Mapping[str, Candidate] | None],
     component_manager: ComponentManager,
 ) -> None:
     for spec in specs:
@@ -1573,7 +1596,7 @@ async def _evaluate_dependency_readiness(
         for dependency in spec.dependencies.values():
             conditions[dependency.name] = await _dependency_condition(
                 dependency,
-                beacon=beacon,
+                feature_snapshots=feature_snapshots,
             )
         readiness, reasons, diagnostics = dependency_effective_readiness(conditions)
         await component_manager.report_component_dependency_readiness(
@@ -1587,18 +1610,10 @@ async def _evaluate_dependency_readiness(
 async def _dependency_condition(
     dependency: ComponentDependency,
     *,
-    beacon: BeaconService,
+    feature_snapshots: Mapping[str, Mapping[str, Candidate] | None],
 ) -> DependencyCondition:
-    try:
-        candidates = await beacon.find(
-            dependency.feature_id,
-            selector=(
-                None
-                if dependency.endpoint is None
-                else lambda advertisement: advertisement.endpoint == dependency.endpoint
-            ),
-        )
-    except StateUnavailable:
+    snapshot = feature_snapshots.get(dependency.feature_id)
+    if snapshot is None:
         return DependencyCondition(
             name=dependency.name,
             kind=dependency.kind,
@@ -1606,6 +1621,17 @@ async def _dependency_condition(
             state=DependencyConditionState.UNKNOWN,
             reason="state_unavailable",
         )
+    candidates = tuple(
+        sorted(
+            (
+                candidate
+                for candidate in snapshot.values()
+                if dependency.endpoint is None
+                or candidate.advertisement.endpoint == dependency.endpoint
+            ),
+            key=lambda candidate: candidate.key,
+        )
+    )
     diagnostics = {
         "featureId": dependency.feature_id,
         **(

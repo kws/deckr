@@ -65,6 +65,16 @@ class FailingItemsStateStore(MemoryStateStore):
         return await super().items(prefix)
 
 
+class CountingItemsStateStore(MemoryStateStore):
+    def __init__(self, *, name: str) -> None:
+        super().__init__(name=name)
+        self.items_calls = 0
+
+    async def items(self, prefix: str = ""):
+        self.items_calls += 1
+        return await super().items(prefix)
+
+
 class FailingDeleteStateStore(MemoryStateStore):
     def __init__(self, *, name: str) -> None:
         super().__init__(name=name)
@@ -318,6 +328,105 @@ async def test_service_client_reuses_contract_across_advertisement_id_change() -
     assert [item.key for item in contracts] == [contract.key]
     validity = await concord._validate(contract)
     assert validity.status == ContractValidityStatus.VALID
+
+
+@pytest.mark.asyncio
+async def test_service_client_reuses_valid_cached_lease_without_beacon_scan() -> None:
+    beacon_state = CountingItemsStateStore(name="beacon")
+    beacon = BeaconService(BeaconDiscovery(beacon_state))
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
+    )
+    view_store = MemoryStateStore(name="views")
+    protocol = _protocol()
+    service_endpoint = service_address("openhab-home")
+    await _publish_service_advertisement(beacon, protocol)
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        action_provider_address("provider-main")
+    ) as client_endpoint:
+        client = ServiceClient(
+            endpoint=client_endpoint,
+            beacon=beacon,
+            concord=concord,
+            state_for=lambda _name: view_store,
+        )
+        view = ServiceViewRef(
+            "deckr_openhab_service_view_v1",
+            service_view_key("openhab-home", "items", "Kitchen Light"),
+        )
+
+        assert (
+            await client.read_view("openhab-home", protocol.namespace, view)
+            is None
+        )
+        contract = (await concord._find_contracts(protocol.use_profile))[0]
+        await concord._attach(contract, service_endpoint, "service-session")
+        await view_store.put(
+            view.key,
+            {
+                "serviceId": "openhab-home",
+                "serviceNamespace": protocol.namespace,
+                "sessionId": "service-session",
+                "item": "Kitchen Light",
+                "state": "ON",
+            },
+        )
+
+        beacon_state.items_calls = 0
+        current = await client.read_view("openhab-home", protocol.namespace, view)
+
+    assert current is not None
+    assert current["state"] == "ON"
+    assert beacon_state.items_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_service_client_rediscover_before_rejecting_unknown_operation() -> None:
+    beacon_state = CountingItemsStateStore(name="beacon")
+    beacon = BeaconService(BeaconDiscovery(beacon_state))
+    concord = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
+    )
+    view_store = MemoryStateStore(name="views")
+    protocol = _protocol()
+    service_endpoint = service_address("openhab-home")
+    await _publish_service_advertisement(beacon, protocol)
+
+    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
+        action_provider_address("provider-main")
+    ) as client_endpoint:
+        client = ServiceClient(
+            endpoint=client_endpoint,
+            beacon=beacon,
+            concord=concord,
+            state_for=lambda _name: view_store,
+        )
+        view = ServiceViewRef(
+            "deckr_openhab_service_view_v1",
+            service_view_key("openhab-home", "items", "Kitchen Light"),
+        )
+        await client.read_view("openhab-home", protocol.namespace, view)
+        contract = (await concord._find_contracts(protocol.use_profile))[0]
+        await concord._attach(contract, service_endpoint, "service-session")
+
+        beacon_state.items_calls = 0
+        reply = await client.command(
+            "openhab-home",
+            protocol.namespace,
+            "missingOperation",
+            timeout=0.01,
+        )
+
+    assert reply.error is not None
+    assert reply.error.code == "unsupported_operation"
+    assert beacon_state.items_calls == 1
 
 
 @pytest.mark.asyncio

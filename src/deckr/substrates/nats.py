@@ -367,9 +367,6 @@ class NatsStateStore:
         self._validate_ttl(ttl)
         kv = await self._available_kv()
         normalized = state_value(value)
-        current = await self._get_entry(key)
-        if current is None or current.revision != revision:
-            raise StateConflict(f"State key {key!r} revision changed")
         try:
             new_revision = await kv.update(
                 key,
@@ -377,18 +374,13 @@ class NatsStateStore:
                 last=revision,
             )
         except Exception as exc:
-            if _is_revision_conflict(exc):
+            if _is_revision_conflict(exc) or _is_key_missing(exc):
                 raise StateConflict(f"State key {key!r} revision changed") from exc
             raise StateUnavailable(f"Could not update state key {key!r}") from exc
         return StateEntry(key=key, value=normalized, revision=int(new_revision))
 
     async def delete(self, key: str, *, revision: int | None = None) -> None:
         kv = await self._available_kv()
-        current = await self._get_entry(key)
-        if current is None:
-            return
-        if revision is not None and current.revision != revision:
-            raise StateConflict(f"State key {key!r} revision changed")
         try:
             if revision is None:
                 await kv.delete(key)

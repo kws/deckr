@@ -11,6 +11,7 @@ from deckr.beacon import (
     BEACON_ADVERTISEMENT_STORE_POLICY,
     DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
     BeaconDiscovery,
+    BeaconService,
 )
 from deckr.components import (
     BaseComponent,
@@ -578,7 +579,14 @@ async def test_start_components_passes_current_state_and_endpoints() -> None:
 
 
 @pytest.mark.asyncio
-async def test_required_service_dependency_controls_effective_readiness() -> None:
+async def test_required_service_dependency_controls_effective_readiness(
+    monkeypatch,
+) -> None:
+    async def forbidden_find(self, *args, **kwargs):
+        del self, args, kwargs
+        raise AssertionError("dependency observer should use watch snapshots")
+
+    monkeypatch.setattr(BeaconService, "find", forbidden_find)
     definition = ComponentDefinition(
         manifest=ComponentManifest(component_id="com.example.worker"),
         factory=lambda context: _ReadyComponent(name=context.runtime_name),

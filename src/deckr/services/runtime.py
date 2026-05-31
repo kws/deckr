@@ -481,6 +481,22 @@ class ServiceClient:
         operation: str | None,
         timeout: float,
     ) -> _ServiceLease:
+        cached = self._cached_service_lease(
+            service_id,
+            service_namespace,
+            operation=operation,
+        )
+        if cached is not None:
+            try:
+                return await self._valid_lease(cached, timeout=timeout)
+            except _ServiceUnavailable as exc:
+                if not _stale_service_use_error(exc):
+                    raise
+                await self._drop_lease(
+                    cached,
+                    reason=f"service_use_{exc.diagnostics.get('status')}",
+                )
+
         try:
             service = await self._service_advertisement(service_id, service_namespace)
         except _ServiceUnavailable as exc:
@@ -492,7 +508,6 @@ class ServiceClient:
             if cached is None:
                 raise
             try:
-                await self._attach_or_refresh_token(cached)
                 return await self._valid_lease(cached, timeout=timeout)
             except _ServiceUnavailable:
                 raise exc from None
@@ -517,19 +532,14 @@ class ServiceClient:
                 self._leases[key] = lease
             else:
                 lease.service = service
-            await self._attach_or_refresh_token(lease)
             try:
                 return await self._valid_lease(lease, timeout=timeout)
             except _ServiceUnavailable as exc:
-                if not exc.code.startswith("contract_"):
+                if not _stale_service_use_error(exc):
                     raise
-                status = exc.diagnostics.get("status")
-                if status not in {item.value for item in _STALE_SERVICE_USE_STATUSES}:
-                    raise
-                self._leases.pop(key, None)
-                await self._cancel_lease(
+                await self._drop_lease(
                     lease,
-                    reason=f"service_use_{status}",
+                    reason=f"service_use_{exc.diagnostics.get('status')}",
                 )
                 last_error = exc
         if last_error is not None:
@@ -557,7 +567,7 @@ class ServiceClient:
         for lease in leases:
             if operation is None or operation in lease.service.supported_operations:
                 return lease
-        raise _UnsupportedOperation
+        return None
 
     async def _service_advertisement(
         self,
@@ -614,6 +624,12 @@ class ServiceClient:
             await lease.agreement.cancel(reason=reason)
         except (StateConflict, StateUnavailable):
             logger.debug("Could not cancel service-use contract")
+
+    async def _drop_lease(self, lease: _ServiceLease, *, reason: str) -> None:
+        for key, current in list(self._leases.items()):
+            if current is lease:
+                self._leases.pop(key, None)
+        await self._cancel_lease(lease, reason=reason)
 
     async def _create_or_reuse_lease(
         self,
@@ -1048,6 +1064,14 @@ _STALE_SERVICE_USE_STATUSES = frozenset(
 
 def _stale_service_use_contract(status: ContractValidityStatus) -> bool:
     return status in _STALE_SERVICE_USE_STATUSES
+
+
+def _stale_service_use_error(exc: _ServiceUnavailable) -> bool:
+    if not exc.code.startswith("contract_"):
+        return False
+    return exc.diagnostics.get("status") in {
+        item.value for item in _STALE_SERVICE_USE_STATUSES
+    }
 
 
 def _service_sort_key(service: ServiceAdvertisement) -> tuple[datetime, int, str]:

@@ -643,6 +643,29 @@ async def test_nats_state_update_rejects_broker_expired_token_refresh() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nats_state_revision_writes_do_not_pre_read_exact_key() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+    key = "contracts.main.1.participants.controller"
+    created = await store.create(key, {"owner": "controller"})
+    assert fake_js.kv is not None
+
+    fake_js.kv.get_calls = 0
+    updated = await store.update(
+        key,
+        {"owner": "controller", "refresh": 1},
+        revision=created.revision,
+    )
+    await store.delete(key, revision=updated.revision)
+
+    assert fake_js.kv.get_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_nats_state_watch_maps_delete_and_max_age_marker(caplog) -> None:
     caplog.set_level(logging.INFO, logger="deckr.substrates.nats")
     fake_js = _FakeJs()
@@ -867,8 +890,10 @@ class _FakeKv:
         self.fail_get: Exception | None = None
         self.fail_create: Exception | None = None
         self.keys_filters: object = None
+        self.get_calls = 0
 
     async def get(self, key: str) -> _FakeKvEntry:
+        self.get_calls += 1
         if self.fail_get is not None:
             raise self.fail_get
         entry = self._entries.get(key)

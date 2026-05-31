@@ -125,6 +125,16 @@ class FailingWatchStateStore(MemoryStateStore):
         return UnavailableWatch()
 
 
+class CountingItemsStateStore(MemoryStateStore):
+    def __init__(self, *, name: str) -> None:
+        super().__init__(name=name)
+        self.items_prefixes: list[str] = []
+
+    async def items(self, prefix: str = ""):
+        self.items_prefixes.append(prefix)
+        return await super().items(prefix)
+
+
 def _descriptor() -> DeviceDescriptor:
     return DeviceDescriptor.model_validate(stream_deck_bitmap_grid())
 
@@ -556,7 +566,7 @@ async def test_concord_participant_lease_closes_after_cancelled_contract() -> No
 
 
 @pytest.mark.asyncio
-async def test_concord_participant_manager_attaches_adopts_refreshes_and_filters() -> None:
+async def test_concord_participant_manager_attaches_adopts_and_filters() -> None:
     contract_state = MemoryStateStore(name="contracts")
     token_state = MemoryStateStore(name="tokens")
     service = ConcordService(ConcordCoordinator(contract_state, token_state))
@@ -602,7 +612,57 @@ async def test_concord_participant_manager_attaches_adopts_refreshes_and_filters
 
     assert adopted[0].token is not None
     assert adopted[0].token.token_id == managed[0].token.token_id
-    assert adopted[0].token.refresh_seq == 2
+    assert adopted[0].token.refresh_seq == 1
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -> None:
+    contract_state = CountingItemsStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(
+        ConcordCoordinator(contract_state, token_state, token_ttl_seconds=30)
+    )
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    lifecycle = service.participant_manager(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        refresh_interval=30.0,
+        reconcile_interval=0.05,
+        accept_contract=lambda _contract, _record: True,
+    )
+
+    async with anyio.create_task_group() as task_group:
+        lifecycle.start(task_group)
+        with anyio.fail_after(1):
+            while True:
+                managed = lifecycle.managed_contract(contract)
+                if managed is not None and managed.token is not None:
+                    break
+                await anyio.sleep(0.01)
+
+        assert contract_state.items_prefixes
+        contract_state.items_prefixes.clear()
+        refresh_seq = managed.token.refresh_seq
+
+        await lifecycle.reconcile(reason="steady reconcile")
+        await lifecycle.reconcile(reason="steady reconcile again")
+        task_group.cancel_scope.cancel()
+
+    managed = lifecycle.managed_contract(contract)
+    assert managed is not None
+    assert managed.token is not None
+    assert managed.token.refresh_seq == refresh_seq
+    assert contract_state.items_prefixes == []
 
 
 @pytest.mark.asyncio
@@ -1074,11 +1134,52 @@ async def test_concord_find_and_watch_contracts() -> None:
 
     assert await concord.find_contracts() == (contract, other)
     assert await concord.find_contracts(HARDWARE_CLAIM_PROFILE_ID) == (contract,)
+    assert await concord.find_contracts(contract_id="hardware-contract-1") == (contract,)
+    assert await concord.find_contracts(contract_id="missing") == ()
 
     async with concord.watch_contracts() as changes:
         await concord.cancel(contract, controller, reason="done")
         change = await _receive(changes)
     assert change.key == contract.key
+
+
+@pytest.mark.asyncio
+async def test_concord_stable_agreement_lookup_uses_contract_id_prefix() -> None:
+    contract_state = CountingItemsStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    service_endpoint = service_address("openhab-home")
+    client = action_provider_address("python-dev.deckr.openhab")
+    for index in range(5):
+        await service._create_contract(
+            (service_endpoint, client),
+            contract_id=f"unrelated-{index}",
+            profile="dev.deckr.openhab.service_use.v1",
+            created_by=client,
+        )
+    contract = await service._create_contract(
+        (service_endpoint, client),
+        contract_id="service-use-openhab",
+        profile="dev.deckr.openhab.service_use.v1",
+        created_by=client,
+    )
+    spec = ConcordAgreementSpec(
+        profile="dev.deckr.openhab.service_use.v1",
+        participants=(service_endpoint, client),
+        local_participant=client,
+        local_session_id="client-session",
+        stable_contract_id="service-use-openhab",
+        current_sessions={
+            str(service_endpoint): "service-session",
+            str(client): "client-session",
+        },
+    )
+    contract_state.items_prefixes.clear()
+
+    agreement = await service.ensure_agreement(spec)
+
+    assert agreement.contract.key == contract.key
+    assert contract_state.items_prefixes == ["contracts.service-use-openhab."]
 
 
 @pytest.mark.asyncio
