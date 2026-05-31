@@ -784,8 +784,9 @@ evidence is represented by Beacon and Concord.
 
 Python hardware managers use the shared `deckr.hardware.runtime`
 implementation for the manager side of that protocol. A manager advertises its
-current devices through the `dev.deckr.hardware` Beacon feature with
-`BeaconAdvertiser`, accepts controller ownership only by maintaining a
+current devices through the `dev.deckr.hardware` Beacon feature using managed
+`BeaconService.ensure_advertisement` lifecycles, accepts controller ownership
+only by maintaining a
 `ConcordParticipantLease` on a matching
 `dev.deckr.profile.hardware_claim.v1` Concord contract, and routes hardware
 input or controller commands only while that contract remains valid. The removed
@@ -964,6 +965,12 @@ to understand component-specific settings.
 - Replaceability alone is not a reason to introduce a new generic runtime layer.
 - Do not add shims, aliases, compatibility wrappers, or dual abstractions.
 - Do not preserve broken abstractions for migration purposes.
+
+Cross-runtime note:
+`deckr-adapter-elgato-node` and the Rust hardware managers are still behind on
+the new managed Beacon/Concord lifecycle model. They are tracked as follow-up work
+and should be updated to consume `BeaconService`/`ConcordService` APIs in the
+same ownership style as the Python reference before claiming Beacon/Concord parity.
 
 If the implementation drifts from this model, fix the implementation. Do not
 soften the architecture to accommodate accidental complexity.

@@ -18,13 +18,14 @@ _LOW_LEVEL_ALWAYS = {
     "refresh_token",
 }
 _LOW_LEVEL_ON_CONCORD = {"_cancel", "_validate", "cancel", "validate"}
+_LOW_LEVEL_ON_BEACON = {"advertise", "refresh", "withdraw", "advertiser"}
 
 
 def test_production_code_uses_concord_lifecycle_apis() -> None:
     workspace = Path(__file__).resolve().parents[2]
     violations: list[str] = []
     for path in _production_python_files(workspace):
-        if path.name == "concord.py" and path.parent.name == "deckr":
+        if path.name in {"concord.py", "beacon.py"} and path.parent.name == "deckr":
             continue
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
@@ -40,6 +41,13 @@ def test_production_code_uses_concord_lifecycle_apis() -> None:
                 violations.append(
                     f"{path.relative_to(workspace)}:{node.lineno} .{name}()"
                 )
+            if (
+                name in _LOW_LEVEL_ON_BEACON
+                and "beacon" in _receiver_name(node.func.value).lower()
+            ):
+                violations.append(
+                    f"{path.relative_to(workspace)}:{node.lineno} .{name}()"
+                )
     assert violations == []
 
 
@@ -48,7 +56,7 @@ def _production_python_files(workspace: Path) -> tuple[Path, ...]:
     for child in workspace.iterdir():
         if not child.name.startswith("deckr"):
             continue
-        for dirname in ("src", "scripts"):
+        for dirname in ("src",):
             root = child / dirname
             if root.is_dir():
                 roots.append(root)

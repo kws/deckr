@@ -96,7 +96,6 @@ def test_service_protocol_payload_terms_and_view_keys() -> None:
         serviceId="openhab-home",
         serviceEndpoint=service_address("openhab-home"),
         serviceNamespace=protocol.namespace,
-        serviceAdvertisementId="ad-1",
         serviceSessionId="service-session",
         clientEndpoint=action_provider_address("provider-main"),
         allowedOperations=("ensureItems",),

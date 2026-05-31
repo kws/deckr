@@ -103,13 +103,16 @@ beacon = BeaconService(
         )
     )
 )
-advertiser = beacon.advertiser(
-    feature_id="dev.deckr.hardware",
-    endpoint="hardware_manager:mirabox-main",
-    session_id="manager-session",
-    payload=payload,
+advertisement = await beacon.ensure_advertisement(
+    BeaconAdvertisementSpec(
+        feature_id="dev.deckr.hardware",
+        endpoint="hardware_manager:mirabox-main",
+        session_id="manager-session",
+        payload=payload,
+        refresh_interval=5.0,
+    )
 )
-handle = await advertiser.publish()
+handle = await advertisement.publish()
 candidates = await beacon.find("dev.deckr.hardware")
 ```
 
@@ -119,6 +122,11 @@ Consumers should treat results as candidates and establish any needed Concord
 agreement before relying on them.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
+
+Cross-runtime status:
+`deckr-adapter-elgato-node` and the Rust manager implementations are still behind
+the managed Beacon/Concord lifecycle contracts used by the Python runtime, so they are
+not yet considered parity-complete for this contract profile.
 
 ## Concord Stores
 
@@ -184,11 +192,13 @@ Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
 whether a claim or provider session is live. Python hardware managers use the
 shared `deckr.hardware.runtime.HardwareManagerRuntime` implementation to advertise
-hardware through `BeaconAdvertiser`, maintain claim tokens through
-`ConcordParticipantManager`, and route input only for live claims.
+hardware through managed `BeaconService.ensure_advertisement` lifecycles,
+maintain claim tokens through `ConcordParticipantManager`, and route input only
+for live claims.
 
 Service components use `deckr.services.GenericService` to advertise their
-package-owned service feature through `BeaconAdvertiser` and maintain service
+package-owned service feature through managed `BeaconService.ensure_advertisement`
+lifecycles and maintain service
 use tokens through `ConcordParticipantLease`.
 
 ## Component Dependencies

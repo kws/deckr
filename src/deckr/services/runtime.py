@@ -19,7 +19,13 @@ from pydantic import (
     model_validator,
 )
 
-from deckr.beacon import AdvertisementHandle, BeaconAdvertiser, BeaconService, Candidate
+from deckr.beacon import (
+    AdvertisementHandle,
+    BeaconAdvertisementSpec,
+    BeaconAdvertiser,
+    BeaconService,
+    Candidate,
+)
 from deckr.concord import (
     ConcordAgreement,
     ConcordAgreementSpec,
@@ -249,7 +255,6 @@ class ServiceUseTerms(DeckrModel):
     service_id: str = Field(alias="serviceId")
     service_endpoint: EndpointAddress = Field(alias="serviceEndpoint")
     service_namespace: str = Field(alias="serviceNamespace")
-    service_advertisement_id: str = Field(alias="serviceAdvertisementId")
     service_session_id: str = Field(alias="serviceSessionId")
     client_endpoint: EndpointAddress = Field(alias="clientEndpoint")
     allowed_operations: tuple[str, ...] = Field(alias="allowedOperations")
@@ -259,7 +264,6 @@ class ServiceUseTerms(DeckrModel):
         "service_use_id",
         "service_id",
         "service_namespace",
-        "service_advertisement_id",
         "service_session_id",
     )
     @classmethod
@@ -734,48 +738,29 @@ class GenericService:
             backend_status=self._backend_status,
             diagnostics=self._backend_diagnostics,
         )
+        payload_dict = payload.to_dict()
         try:
-            if self._advertiser is None:
-                self._advertiser = self._beacon.advertiser(
-                    feature_id=self.protocol.feature_id,
-                    endpoint=self.endpoint.endpoint,
-                    session_id=self.endpoint.session_id,
-                    payload=payload.to_dict(),
-                    operations=self.protocol.operations,
-                    refresh_interval=self._advertisement_refresh_interval,
-                    log_label=self._log_label,
+            if self._advertiser is None or self._advertiser.closed:
+                self._advertiser = await self._beacon.ensure_advertisement(
+                    BeaconAdvertisementSpec(
+                        feature_id=self.protocol.feature_id,
+                        endpoint=self.endpoint.endpoint,
+                        session_id=self.endpoint.session_id,
+                        payload=payload_dict,
+                        operations=self.protocol.operations,
+                        labels=None,
+                        refresh_interval=self._advertisement_refresh_interval,
+                        log_label=self._log_label,
+                    ),
+                    start_soon=(
+                        self._task_group.start_soon
+                        if self._task_group is not None
+                        else None
+                    ),
                 )
-                if self._task_group is not None:
-                    self._advertiser.start(self._task_group)
             self._advertisement = await self._advertiser.publish(
-                payload=payload.to_dict(),
-                operations=self.protocol.operations,
+                payload=payload_dict,
             )
-        except StateConflict:
-            self._advertisement = None
-            self._advertiser = None
-            try:
-                self._advertiser = self._beacon.advertiser(
-                    feature_id=self.protocol.feature_id,
-                    endpoint=self.endpoint.endpoint,
-                    session_id=self.endpoint.session_id,
-                    payload=payload.to_dict(),
-                    operations=self.protocol.operations,
-                    refresh_interval=self._advertisement_refresh_interval,
-                    log_label=self._log_label,
-                )
-                if self._task_group is not None:
-                    self._advertiser.start(self._task_group)
-                self._advertisement = await self._advertiser.publish(
-                    payload=payload.to_dict(),
-                    operations=self.protocol.operations,
-                )
-            except (StateConflict, StateUnavailable):
-                logger.warning(
-                    "Could not publish %s Beacon advertisement",
-                    self._log_label,
-                    exc_info=True,
-                )
         except StateUnavailable:
             logger.warning(
                 "Could not publish %s Beacon advertisement",
@@ -806,16 +791,17 @@ class GenericService:
         if self._advertisement is not None and self._beacon is not None:
             try:
                 if self._advertiser is not None:
-                    await self._advertiser.withdraw()
+                    await self._advertiser.aclose()
+                    self._advertiser = None
                 else:
-                    await self._beacon.withdraw(
-                        self._advertisement,
-                        log_label=self._log_label,
+                    logger.debug(
+                        "Service Beacon advert object missing during withdraw; "
+                        "skipping low-level Beacon withdrawal and dropping cached "
+                        "handle",
                     )
             except (StateConflict, StateUnavailable):
                 logger.debug("Could not withdraw %s Beacon advertisement", self._log_label)
         self._advertisement = None
-        self._advertiser = None
         self._task_group = None
 
     async def advertisement_refresh_loop(self) -> None:
@@ -910,8 +896,6 @@ class GenericService:
         if terms.service_endpoint != self.endpoint.endpoint:
             return None
         if terms.service_session_id != self.endpoint.session_id:
-            return None
-        if terms.service_advertisement_id != self._advertisement.advertisement_id:
             return None
         return terms
 
@@ -1013,7 +997,6 @@ def service_use_terms(
         "serviceId": service.service_id,
         "serviceEndpoint": str(service.service_endpoint),
         "serviceNamespace": service.service_namespace,
-        "serviceAdvertisementId": service.candidate.advertisement.advertisement_id,
         "serviceSessionId": service.service_session_id,
         "clientEndpoint": str(client_endpoint),
         "allowedOperations": operations,

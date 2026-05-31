@@ -10,7 +10,12 @@ from typing import Any, Protocol
 import anyio
 
 import deckr.hardware.messages as hw_messages
-from deckr.beacon import AdvertisementHandle, BeaconAdvertiser, BeaconService
+from deckr.beacon import (
+    AdvertisementHandle,
+    BeaconAdvertisementSpec,
+    BeaconAdvertiser,
+    BeaconService,
+)
 from deckr.concord import (
     ConcordParticipantManager,
     ConcordService,
@@ -309,26 +314,34 @@ class HardwareManagerRuntime:
         async with self._advertisement_lock:
             payload = self._hardware_payload()
             try:
-                if self._advertiser is None:
-                    self._advertiser = self.beacon.advertiser(
-                        feature_id=HARDWARE_FEATURE_ID,
-                        endpoint=self.endpoint.endpoint,
-                        session_id=self.endpoint.session_id,
-                        advertisement_id=self._advertisement_id,
-                        labels=payload.labels,
-                        payload=payload.to_dict(),
-                        refresh_interval=self.advertisement_refresh_seconds,
-                        log_label="Hardware",
+                if self._advertiser is None or self._advertiser.closed:
+                    self._advertiser = await self.beacon.ensure_advertisement(
+                        BeaconAdvertisementSpec(
+                            feature_id=HARDWARE_FEATURE_ID,
+                            endpoint=self.endpoint.endpoint,
+                            session_id=self.endpoint.session_id,
+                            advertisement_id=self._advertisement_id,
+                            labels=payload.labels,
+                            payload=payload.to_dict(),
+                            refresh_interval=self.advertisement_refresh_seconds,
+                            log_label="Hardware",
+                        ),
+                        start_soon=(
+                            self._task_group.start_soon
+                            if self._task_group is not None
+                            else None
+                        ),
                     )
-                    if self._task_group is not None:
-                        self._advertiser.start(self._task_group)
                 self._advertisement = await self._advertiser.publish(
                     labels=payload.labels,
                     payload=payload.to_dict(),
                 )
                 self._advertisement_dirty = False
             except StateConflict:
-                logger.info("Hardware Beacon advertisement changed; creating a fresh one")
+                logger.info(
+                    "Hardware Beacon advertisement changed; creating a fresh one",
+                    exc_info=True,
+                )
                 self._advertisement = None
                 self._advertiser = None
                 self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
@@ -346,9 +359,13 @@ class HardwareManagerRuntime:
                 return
             try:
                 if self._advertiser is not None:
-                    await self._advertiser.withdraw()
+                    await self._advertiser.aclose()
                 else:
-                    await self.beacon.withdraw(advertisement, log_label="Hardware")
+                    logger.debug(
+                        "Hardware Beacon advert object missing during withdraw; "
+                        "skipping low-level Beacon withdrawal and dropping cached "
+                        "handle",
+                    )
             except (StateConflict, StateUnavailable):
                 logger.debug("Could not withdraw hardware Beacon advertisement")
             self._advertiser = None
