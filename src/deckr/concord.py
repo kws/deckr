@@ -9,6 +9,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from time import monotonic
 from typing import Any, Literal
 
 import anyio
@@ -37,6 +38,7 @@ DEFAULT_CONCORD_CONTRACT_STORE_NAME = "deckr_concord_contract_v1"
 DEFAULT_CONCORD_TOKEN_STORE_NAME = "deckr_concord_token_v1"
 DEFAULT_CONCORD_MAINTENANCE_STORE_NAME = "deckr_concord_maintenance_v1"
 DEFAULT_CONCORD_TOKEN_TTL_SECONDS = 30
+DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS = 15.0
 DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS = 900
 DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS = 3600
 DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS = 60
@@ -905,6 +907,29 @@ class ConcordCoordinator:
             return _participant_handle(handle.key, latest, latest_entry.revision)
         return _participant_handle(handle.key, refreshed, entry.revision)
 
+    async def validate_participant_handle(
+        self,
+        handle: ParticipantHandle,
+    ) -> ParticipantHandle:
+        contract_entry = await self._contract_state.get(
+            concord_contract_key(
+                contract_id=handle.contract_id,
+                generation=handle.generation,
+            )
+        )
+        if contract_entry is None:
+            raise StateConflict("Concord contract is missing")
+        contract = ContractRecord.model_validate(contract_entry.value)
+        if contract.state == ContractState.CANCELLED:
+            raise StateConflict("Concord contract is cancelled")
+        token_entry = await self._token_state.get(handle.key)
+        if token_entry is None:
+            raise StateConflict("Concord participant token is missing")
+        token = ParticipantTokenRecord.model_validate(token_entry.value)
+        if not _token_matches_handle(token, handle):
+            raise StateConflict("Concord participant token changed owner")
+        return _participant_handle(handle.key, token, token_entry.revision)
+
     async def cancel(
         self,
         contract: ContractHandle,
@@ -1080,7 +1105,7 @@ class ConcordParticipantLease:
         contract: ContractHandle,
         participant: str | EndpointAddress,
         session_id: str,
-        refresh_interval: float = 5.0,
+        refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
         log_label: str = "Concord",
     ) -> None:
         if refresh_interval <= 0:
@@ -1092,6 +1117,7 @@ class ConcordParticipantLease:
         self._refresh_interval = refresh_interval
         self._log_label = log_label
         self._token: ParticipantHandle | None = None
+        self._last_refresh_at: float | None = None
         self._lock = anyio.Lock()
         self._started = False
         self._closed = False
@@ -1111,6 +1137,8 @@ class ConcordParticipantLease:
 
     async def aclose(self) -> None:
         self._closed = True
+        self._token = None
+        self._last_refresh_at = None
 
     def adopt(self, token: ParticipantHandle) -> None:
         if token.contract_id != self.contract.contract_id:
@@ -1121,7 +1149,10 @@ class ConcordParticipantLease:
             raise ValueError("participant token belongs to a different participant")
         if token.session_id != self.session_id:
             raise ValueError("participant token belongs to a different session")
+        if self._token == token:
+            return
         self._token = token
+        self._last_refresh_at = monotonic()
 
     async def attach_or_refresh(self) -> ParticipantHandle:
         async with self._lock:
@@ -1130,13 +1161,21 @@ class ConcordParticipantLease:
             token = self._token
             if token is not None:
                 try:
+                    self.adopt(await self._service._validate_participant_token(token))
+                    token = self._token
+                    if token is None:
+                        raise StateConflict("Concord participant token is missing")
+                    if not self._token_refresh_due():
+                        return token
                     self._token = await self._service._refresh_token(
                         token,
                         log_label=self._log_label,
                     )
+                    self._last_refresh_at = monotonic()
                     return self._token
                 except StateConflict as exc:
                     self._token = None
+                    self._last_refresh_at = None
                     if _is_terminal_participant_conflict(exc):
                         self._closed = True
                     else:
@@ -1159,11 +1198,18 @@ class ConcordParticipantLease:
                     self.session_id,
                     log_label=self._log_label,
                 )
+                self._last_refresh_at = monotonic()
             except StateConflict as exc:
                 if _is_terminal_participant_conflict(exc):
                     self._closed = True
                 raise
             return self._token
+
+    def _token_refresh_due(self) -> bool:
+        return (
+            self._last_refresh_at is None
+            or monotonic() - self._last_refresh_at >= self._refresh_interval
+        )
 
     async def heartbeat_loop(self) -> None:
         while not self._closed:
@@ -1270,7 +1316,7 @@ class ConcordService:
         prepare_reconcile: ConcordPrepareReconcile | None = None,
         contract_sort_key: ConcordContractSortKey | None = None,
         profile: str | None = None,
-        refresh_interval: float = 5.0,
+        refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
         reconcile_interval: float = DEFAULT_STATE_RECONCILE_SECONDS,
         cancel_terminal_statuses: Collection[ContractValidityStatus] | None = None,
         log_label: str = "Concord",
@@ -1442,8 +1488,6 @@ class ConcordService:
                 await agreement._lease.aclose()  # noqa: SLF001
                 return validity
             agreement._lease.adopt(existing)  # noqa: SLF001
-        if agreement.local_token is not None:
-            return validity
         try:
             await agreement._lease.attach_or_refresh()  # noqa: SLF001
         except StateConflict:
@@ -1725,6 +1769,12 @@ class ConcordService:
         )
         return refreshed
 
+    async def _validate_participant_token(
+        self,
+        handle: ParticipantHandle,
+    ) -> ParticipantHandle:
+        return await self._coordinator.validate_participant_handle(handle)
+
     async def _cancel(
         self,
         contract: ContractHandle,
@@ -1791,7 +1841,7 @@ class ConcordService:
         contract: ContractHandle,
         participant: str | EndpointAddress,
         session_id: str,
-        refresh_interval: float = 5.0,
+        refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
         log_label: str = "Concord",
     ) -> ConcordParticipantLease:
         return ConcordParticipantLease(
@@ -2461,7 +2511,7 @@ class ConcordAgreementSpec:
     terms: Mapping[str, Any] | DeckrModel | None = None
     stable_contract_id: str | None = None
     current_sessions: ConcordSessionEvidence | None = None
-    refresh_interval: float = 5.0
+    refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
     log_label: str = "Concord"
     created_by: str | EndpointAddress | None = None
 
@@ -2588,7 +2638,7 @@ class ConcordParticipantManager:
         prepare_reconcile: ConcordPrepareReconcile | None = None,
         contract_sort_key: ConcordContractSortKey | None = None,
         profile: str | None = None,
-        refresh_interval: float = 5.0,
+        refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
         reconcile_interval: float = DEFAULT_STATE_RECONCILE_SECONDS,
         notification_batch_interval: float = DEFAULT_STATE_NOTIFICATION_BATCH_SECONDS,
         cancel_terminal_statuses: Collection[ContractValidityStatus] | None = None,
@@ -2970,34 +3020,32 @@ class ConcordParticipantManager:
                 return None
             lease.adopt(existing)
 
-        token = lease.token
-        if token is None:
-            try:
-                token = await lease.attach_or_refresh()
-            except StateConflict:
-                validity = await self._concord._validate(
-                    contract,
-                    current_sessions=sessions,
-                    log_label=self._log_label,
-                )
-                record = validity.contract or record
-                await self._publish_terminal_locked(
-                    contract,
-                    record=record,
-                    validity=validity,
-                    token=None,
-                    reason=reason,
-                )
-                if _terminal_managed_status(validity.status):
-                    await self._release_locked(contract.key, reason=validity.status.value)
-                return None
-
+        try:
+            token = await lease.attach_or_refresh()
+        except StateConflict:
             validity = await self._concord._validate(
                 contract,
                 current_sessions=sessions,
                 log_label=self._log_label,
             )
             record = validity.contract or record
+            await self._publish_terminal_locked(
+                contract,
+                record=record,
+                validity=validity,
+                token=None,
+                reason=reason,
+            )
+            if _terminal_managed_status(validity.status):
+                await self._release_locked(contract.key, reason=validity.status.value)
+            return None
+
+        validity = await self._concord._validate(
+            contract,
+            current_sessions=sessions,
+            log_label=self._log_label,
+        )
+        record = validity.contract or record
         managed = ConcordManagedContract(
             contract=contract,
             record=record,
@@ -3672,6 +3720,7 @@ __all__ = [
     "DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS",
     "DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS",
     "DEFAULT_CONCORD_TOKEN_STORE_NAME",
+    "DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS",
     "DEFAULT_CONCORD_TOKEN_TTL_SECONDS",
     "ContractHandle",
     "ContractPointer",

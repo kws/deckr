@@ -17,6 +17,7 @@ from deckr.beacon import (
     BeaconService,
 )
 from deckr.concord import (
+    DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
     ConcordParticipantManager,
     ConcordService,
     ContractHandle,
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS = 5.0
 DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS = DEFAULT_STATE_RECONCILE_SECONDS
-DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS = 5.0
+DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
 DEFAULT_HARDWARE_WATCH_RETRY_SECONDS = 1.0
 
 HardwareCommandHandler = Callable[[DeckrMessage], Awaitable[bool | None]]

@@ -186,6 +186,12 @@ match the local handle, incrementing `refreshSeq`, and revision-guarded
 `update(tokenKey, tokenRecord)`. If the contract is cancelled, the token is
 missing, or the token has changed owner/session/token id/terms hash, the
 participant no longer maintains authority for that contract generation.
+The default participant-token TTL is 30 seconds. The default local Concord token
+refresh interval is 15 seconds; lease implementations may validate/adopt the
+current token more often, but they should not write a token refresh until a
+token must be attached or the refresh interval is due. If reconciliation
+observes fresher same-session token details, the local lease adopts them without
+immediately writing again.
 
 Once a participant has successfully attached a token for a contract generation,
 loss of that token means loss of authority for that generation. The participant

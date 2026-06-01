@@ -38,6 +38,11 @@ follow the same protocol semantics in [`beacon-concord.md`](beacon-concord.md).
 Retired shared coordination buckets are not part of the v1 surface. Opening a
 store without an explicit policy creates a persistent generic store. Beacon and
 Concord services pass their own `StateStorePolicy` values.
+Concord participant-token TTL defaults to 30 seconds. Runtime participants may
+call their lease heartbeat more often, but the shared lease policy refreshes the
+token write only when a token must be attached or the default 15-second Concord
+token refresh interval is due. If reconciliation observes fresher same-session
+token details, the local lease adopts them without immediately writing again.
 
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence

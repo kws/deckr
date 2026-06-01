@@ -646,6 +646,79 @@ async def test_concord_participant_lease_closes_after_cancelled_contract() -> No
 
 
 @pytest.mark.asyncio
+async def test_concord_participant_lease_rate_limits_token_writes() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    lease = service._participant_lease(
+        contract=contract,
+        participant=controller,
+        session_id="controller-session",
+        refresh_interval=0.05,
+    )
+
+    first = await lease.attach_or_refresh()
+    repeated = await lease.attach_or_refresh()
+    repeated_entry = await token_state.get(first.key)
+
+    assert repeated.refresh_seq == first.refresh_seq
+    assert repeated.revision == first.revision
+    assert repeated_entry is not None
+    assert repeated_entry.revision == first.revision
+
+    await anyio.sleep(0.06)
+    refreshed = await lease.attach_or_refresh()
+
+    assert refreshed.refresh_seq == first.refresh_seq + 1
+    assert refreshed.revision != first.revision
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_lease_adopts_without_immediate_refresh() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    manager_token = await service._attach(contract, manager, "manager-session")
+    lease = service._participant_lease(
+        contract=contract,
+        participant=manager,
+        session_id="manager-session",
+        refresh_interval=0.01,
+    )
+
+    lease.adopt(manager_token)
+    adopted = await lease.attach_or_refresh()
+
+    assert adopted.refresh_seq == manager_token.refresh_seq
+    assert adopted.revision == manager_token.revision
+
+    await anyio.sleep(0.02)
+    refreshed = await lease.attach_or_refresh()
+
+    assert refreshed.refresh_seq == manager_token.refresh_seq + 1
+    assert refreshed.revision != manager_token.revision
+
+
+@pytest.mark.asyncio
 async def test_concord_participant_manager_attaches_adopts_and_filters() -> None:
     contract_state = MemoryStateStore(name="contracts")
     token_state = MemoryStateStore(name="tokens")
@@ -1371,9 +1444,13 @@ async def test_concord_service_lease_events_and_logs(caplog) -> None:
             contract=contract,
             participant=controller,
             session_id="controller-session",
+            refresh_interval=0.01,
             log_label="TestConcord",
         )
         controller_token = await controller_lease.attach_or_refresh()
+        repeated_controller_token = await controller_lease.attach_or_refresh()
+        assert repeated_controller_token.refresh_seq == 1
+        await anyio.sleep(0.02)
         refreshed_controller_token = await controller_lease.attach_or_refresh()
         assert refreshed_controller_token.refresh_seq == 2
 
@@ -1394,7 +1471,7 @@ async def test_concord_service_lease_events_and_logs(caplog) -> None:
             log_label="TestConcord",
         )
         adopted_manager_lease.adopt(valid.validity.tokens[str(manager)])
-        assert (await adopted_manager_lease.attach_or_refresh()).refresh_seq == 2
+        assert (await adopted_manager_lease.attach_or_refresh()).refresh_seq == 1
 
         await token_state.expire(controller_token.key)
         expired = await _receive_event_type(events, ConcordEventType.TOKEN_EXPIRED)
