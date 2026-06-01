@@ -1017,7 +1017,11 @@ export class ConcordService {
     acceptContract: (contract: ContractHandle, record: ContractRecord) => boolean | Promise<boolean>;
     currentSessions?: (contract: ContractHandle) => Record<string, string> | Promise<Record<string, string>>;
     profile?: string;
+    refreshIntervalSeconds?: number;
+    reconcileIntervalSeconds?: number;
+    contractSortKey?: (contract: ContractHandle) => string | number | [number, string];
     cancelTerminalStatuses?: ContractValidityStatus[];
+    onError?: (error: unknown) => void;
   }): ConcordParticipantManager {
     return new ConcordParticipantManager({ concord: this, ...options });
   }
@@ -1039,6 +1043,10 @@ export class ConcordService {
 
   async findContracts(profile?: string, options: { contractId?: string } = {}): Promise<ContractHandle[]> {
     return this.coordinator.findContracts(profile, options);
+  }
+
+  watchContracts(): AsyncIterable<StateChange> {
+    return this.coordinator.watchContracts();
   }
 
   async cancelContract(
@@ -1184,8 +1192,17 @@ export class ConcordParticipantManager {
   private readonly acceptContract: (contract: ContractHandle, record: ContractRecord) => boolean | Promise<boolean>;
   private readonly currentSessions?: (contract: ContractHandle) => Record<string, string> | Promise<Record<string, string>>;
   private readonly cancelTerminalStatuses: Set<ContractValidityStatus>;
+  private readonly refreshIntervalSeconds: number;
+  private readonly reconcileIntervalSeconds: number;
+  private readonly contractSortKey?: (contract: ContractHandle) => string | number | [number, string];
+  private readonly onError?: (error: unknown) => void;
   private managed = new Map<string, ConcordManagedContract>();
   private leases = new Map<string, ConcordParticipantLease>();
+  private timers = new Set<ReturnType<typeof setInterval>>();
+  private closed = false;
+  private reconcileRunning = false;
+  private refreshRunning = false;
+  private watchAbort: AbortController | null = null;
 
   constructor(options: {
     concord: ConcordService;
@@ -1194,7 +1211,11 @@ export class ConcordParticipantManager {
     acceptContract: (contract: ContractHandle, record: ContractRecord) => boolean | Promise<boolean>;
     currentSessions?: (contract: ContractHandle) => Record<string, string> | Promise<Record<string, string>>;
     profile?: string;
+    refreshIntervalSeconds?: number;
+    reconcileIntervalSeconds?: number;
+    contractSortKey?: (contract: ContractHandle) => string | number | [number, string];
     cancelTerminalStatuses?: ContractValidityStatus[];
+    onError?: (error: unknown) => void;
   }) {
     this.concord = options.concord;
     this.participant = endpointAddress(options.participant);
@@ -1203,6 +1224,10 @@ export class ConcordParticipantManager {
     this.currentSessions = options.currentSessions;
     this.profile = options.profile;
     this.cancelTerminalStatuses = new Set(options.cancelTerminalStatuses ?? []);
+    this.refreshIntervalSeconds = positiveInterval(options.refreshIntervalSeconds ?? 5, "refreshIntervalSeconds");
+    this.reconcileIntervalSeconds = positiveInterval(options.reconcileIntervalSeconds ?? 300, "reconcileIntervalSeconds");
+    this.contractSortKey = options.contractSortKey;
+    this.onError = options.onError;
   }
 
   managedContracts(): ConcordManagedContract[] {
@@ -1215,10 +1240,42 @@ export class ConcordParticipantManager {
     return this.managed.get(contract.key) ?? null;
   }
 
+  start(): void {
+    if (this.closed || this.timers.size > 0 || this.watchAbort !== null) {
+      return;
+    }
+    this.scheduleReconcile();
+    this.startTimer(this.reconcileIntervalSeconds, () => this.scheduleReconcile());
+    this.startTimer(this.refreshIntervalSeconds, () => this.scheduleRefresh());
+    this.startWatchLoop();
+  }
+
+  async aclose(): Promise<void> {
+    this.closed = true;
+    for (const timer of this.timers) {
+      clearInterval(timer);
+    }
+    this.timers.clear();
+    this.watchAbort?.abort();
+    this.watchAbort = null;
+    for (const lease of this.leases.values()) {
+      await lease.close();
+    }
+    this.managed.clear();
+    this.leases.clear();
+  }
+
+  async release(contract: ContractHandle | string): Promise<void> {
+    await this.releaseInternal(typeof contract === "string" ? contract : contract.key);
+  }
+
   async reconcile(): Promise<ConcordManagedContract[]> {
+    if (this.closed) {
+      return [];
+    }
     const nextManaged = new Map<string, ConcordManagedContract>();
     const nextLeases = new Map<string, ConcordParticipantLease>();
-    for (const contract of await this.concord.findContracts(this.profile)) {
+    for (const contract of this.sortedContracts(await this.concord.findContracts(this.profile))) {
       const managed = await this.reconcileContract(contract);
       if (managed === null) {
         continue;
@@ -1251,26 +1308,112 @@ export class ConcordParticipantManager {
     return this.concord.cancelContract(contract, this.participant, options);
   }
 
+  private startTimer(seconds: number, callback: () => void): void {
+    const timer = setInterval(callback, seconds * 1000);
+    timer.unref?.();
+    this.timers.add(timer);
+  }
+
+  private scheduleReconcile(): void {
+    if (this.closed || this.reconcileRunning) {
+      return;
+    }
+    this.reconcileRunning = true;
+    void this.reconcile()
+      .catch((error: unknown) => this.reportError(error))
+      .finally(() => {
+        this.reconcileRunning = false;
+      });
+  }
+
+  private scheduleRefresh(): void {
+    if (this.closed || this.refreshRunning) {
+      return;
+    }
+    this.refreshRunning = true;
+    void this.refreshTokens()
+      .catch((error: unknown) => this.reportError(error))
+      .finally(() => {
+        this.refreshRunning = false;
+      });
+  }
+
+  private async refreshTokens(): Promise<void> {
+    for (const [key, lease] of [...this.leases]) {
+      if (this.closed) {
+        return;
+      }
+      try {
+        const token = await lease.attachOrRefresh();
+        const managed = this.managed.get(key);
+        if (managed !== undefined) {
+          this.managed.set(key, { ...managed, token });
+        }
+      } catch {
+        await this.releaseInternal(key);
+      }
+    }
+  }
+
+  private startWatchLoop(): void {
+    const abort = new AbortController();
+    this.watchAbort = abort;
+    void this.watchLoop(abort.signal).catch((error: unknown) => {
+      if (!abort.signal.aborted) {
+        this.reportError(error);
+      }
+    });
+  }
+
+  private async watchLoop(signal: AbortSignal): Promise<void> {
+    while (!this.closed && !signal.aborted) {
+      try {
+        for await (const _change of this.concord.watchContracts()) {
+          if (this.closed || signal.aborted) {
+            return;
+          }
+          this.scheduleReconcile();
+        }
+        return;
+      } catch (error) {
+        if (this.closed || signal.aborted) {
+          return;
+        }
+        this.reportError(error);
+        await sleep(Math.min(this.reconcileIntervalSeconds, 5), signal);
+      }
+    }
+  }
+
+  private sortedContracts(contracts: ContractHandle[]): ContractHandle[] {
+    if (this.contractSortKey === undefined) {
+      return contracts;
+    }
+    return [...contracts].sort((left, right) =>
+      compareSortKey(this.contractSortKey!(left), this.contractSortKey!(right)),
+    );
+  }
+
   private async reconcileContract(contract: ContractHandle): Promise<ConcordManagedContract | null> {
     if (!contract.participants.includes(this.participant)) {
-      await this.release(contract.key);
+      await this.releaseInternal(contract.key);
       return null;
     }
     const record = await this.concord.contractRecord(contract);
     if (record === null) {
-      await this.release(contract.key);
+      await this.releaseInternal(contract.key);
       return null;
     }
     if (this.profile !== undefined && record.profile !== this.profile) {
-      await this.release(contract.key);
+      await this.releaseInternal(contract.key);
       return null;
     }
     if (record.state === ContractState.CANCELLED) {
-      await this.release(contract.key);
+      await this.releaseInternal(contract.key);
       return null;
     }
     if (!(await this.acceptContract(contract, record))) {
-      await this.release(contract.key);
+      await this.releaseInternal(contract.key);
       return null;
     }
     const sessions = {
@@ -1283,7 +1426,7 @@ export class ConcordParticipantManager {
       if (this.cancelTerminalStatuses.has(contractValidity.status)) {
         await this.cancel(contract, { reason: `concord_managed_${contractValidity.status}` });
       }
-      await this.release(contract.key);
+      await this.releaseInternal(contract.key);
       return null;
     }
     let lease = this.leases.get(contract.key);
@@ -1297,7 +1440,7 @@ export class ConcordParticipantManager {
     }
     if (existing !== undefined) {
       if (existing.sessionId !== this.sessionId) {
-        await this.release(contract.key);
+        await this.releaseInternal(contract.key);
         return null;
       }
       lease.adopt(existing);
@@ -1307,7 +1450,7 @@ export class ConcordParticipantManager {
       try {
         token = await lease.attachOrRefresh();
       } catch {
-        await this.release(contract.key);
+        await this.releaseInternal(contract.key);
         return null;
       }
       contractValidity = await this.concord.validate(contract, { currentSessions: sessions });
@@ -1321,12 +1464,18 @@ export class ConcordParticipantManager {
     return managed;
   }
 
-  private async release(key: string): Promise<void> {
+  private async releaseInternal(key: string): Promise<void> {
     this.managed.delete(key);
     const lease = this.leases.get(key);
     if (lease !== undefined) {
       await lease.close();
       this.leases.delete(key);
+    }
+  }
+
+  private reportError(error: unknown): void {
+    if (this.onError !== undefined) {
+      this.onError(error);
     }
   }
 }
@@ -1782,6 +1931,46 @@ function isTerminalParticipantConflict(error: StateConflict): boolean {
     "Concord participant token changed owner",
     "Concord participant is already attached",
   ].some((text) => error.message.includes(text));
+}
+
+function positiveInterval(value: number, fieldName: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new ValidationError(`${fieldName} must be greater than zero`);
+  }
+  return value;
+}
+
+function compareSortKey(
+  left: string | number | [number, string],
+  right: string | number | [number, string],
+): number {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    const numeric = left[0] - right[0];
+    return numeric === 0 ? left[1].localeCompare(right[1]) : numeric;
+  }
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+  return String(left).localeCompare(String(right));
+}
+
+async function sleep(seconds: number, signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, seconds * 1000);
+    timer.unref?.();
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 function emptyReaperCounts(): ConcordReaperScanResult {

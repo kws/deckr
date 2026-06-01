@@ -4,6 +4,16 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  actionsPayloadFromAdvertisement,
+  contextSubject,
+  parseSettingsTargetKey,
+  settingsTargetKey,
+  validateActionInstanceMetadata,
+  validateActionProviderSessionTerms,
+  validateActionsBeaconPayload,
+  validateSettingsTargetRef,
+} from "../src/actions.ts";
+import {
   beaconAdvertisementKey,
   parseBeaconAdvertisementKey,
   validateAdvertisementRecord,
@@ -102,14 +112,109 @@ test("NATS lane vectors match contract artifacts", () => {
 });
 
 test("valid contract fixtures parse and invalid fixtures fail", () => {
+  const actionsAdvertisement = validateAdvertisementRecord(
+    json("fixtures/valid/beacon/actions-advertisement.v1.json"),
+  );
   validateAdvertisementRecord(json("fixtures/valid/beacon/hardware-advertisement.v1.json"));
   validateContractRecord(json("fixtures/valid/concord/hardware-claim-contract.v1.json"));
   validateParticipantTokenRecord(json("fixtures/valid/concord/hardware-claim-token.v1.json"));
+  validateActionsBeaconPayload(json("fixtures/valid/profiles/actions.v1.json"));
+  validateActionProviderSessionTerms(
+    json("fixtures/valid/profiles/action-provider-session.v1.json"),
+  );
+  assert.equal(
+    actionsPayloadFromAdvertisement(actionsAdvertisement).providerInstanceId,
+    "clock-main",
+  );
 
   assert.throws(() =>
     validateAdvertisementRecord(json("fixtures/invalid/beacon/advertisement-missing-session.v1.json")),
   );
   assert.throws(() =>
     validateParticipantTokenRecord(json("fixtures/invalid/concord/token-missing-participant.v1.json")),
+  );
+});
+
+test("action instance metadata requires contextId", () => {
+  assert.deepEqual(
+    validateActionInstanceMetadata({
+      providerInstanceId: "clock-main",
+      providerId: "dev.deckr.clock",
+      actionId: "dev.deckr.clock.show_time",
+      actionInstanceId: "action-instance-1",
+      configId: "config-1",
+      contextId: "ctx-1",
+    }),
+    {
+      providerInstanceId: "clock-main",
+      providerId: "dev.deckr.clock",
+      actionId: "dev.deckr.clock.show_time",
+      actionInstanceId: "action-instance-1",
+      configId: "config-1",
+      contextId: "ctx-1",
+    },
+  );
+
+  assert.throws(() =>
+    validateActionInstanceMetadata({
+      providerInstanceId: "clock-main",
+      providerId: "dev.deckr.clock",
+      actionId: "dev.deckr.clock.show_time",
+      actionInstanceId: "action-instance-1",
+      configId: "config-1",
+    }),
+  );
+});
+
+test("settings target keys round trip with encoded tokens", () => {
+  const actionTarget = validateSettingsTargetRef({
+    scope: "action_instance",
+    controllerId: "controller-main",
+    configId: "deck.1",
+    providerInstanceId: "elgato.com.example.plugin",
+    providerId: "com.example.plugin",
+    actionId: "com.example.action",
+    actionInstanceId: "instance:1",
+    stableId: "living room",
+  });
+  const providerTarget = validateSettingsTargetRef({
+    scope: "action_provider_instance",
+    controllerId: "controller-main",
+    configId: "deck.1",
+    providerInstanceId: "elgato.com.example.plugin",
+    providerId: "com.example.plugin",
+  });
+
+  assert.equal(
+    settingsTargetKey(actionTarget),
+    "settings.target.action_instance.controller-main.b64_ZGVjay4x.b64_ZWxnYXRvLmNvbS5leGFtcGxlLnBsdWdpbg.b64_Y29tLmV4YW1wbGUucGx1Z2lu.b64_Y29tLmV4YW1wbGUuYWN0aW9u.b64_aW5zdGFuY2U6MQ.1.b64_bGl2aW5nIHJvb20",
+  );
+  assert.deepEqual(parseSettingsTargetKey(settingsTargetKey(actionTarget)), actionTarget);
+  assert.deepEqual(parseSettingsTargetKey(settingsTargetKey(providerTarget)), providerTarget);
+  assert.equal(parseSettingsTargetKey("settings.target.action_instance.bad"), null);
+});
+
+test("context subject carries explicit lifecycle identifiers", () => {
+  assert.deepEqual(
+    contextSubject("ctx-1", {
+      providerInstanceId: "clock-main",
+      providerId: "dev.deckr.clock",
+      configId: "config-1",
+      actionInstanceId: "action-instance-1",
+      bindingId: "binding-1",
+      pageSessionId: "page-session-1",
+    }),
+    {
+      kind: "context",
+      identifiers: {
+        contextId: "ctx-1",
+        providerInstanceId: "clock-main",
+        providerId: "dev.deckr.clock",
+        configId: "config-1",
+        actionInstanceId: "action-instance-1",
+        bindingId: "binding-1",
+        pageSessionId: "page-session-1",
+      },
+    },
   );
 });

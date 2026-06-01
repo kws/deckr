@@ -3,6 +3,7 @@ import { requireJsonObject, type JsonObject } from "./json.ts";
 import { validateDeckrMessage, validateHeaderHints, validateSubjectHint, type DeckrMessage } from "./lanes.ts";
 import {
   PERSISTENT_STATE_STORE_POLICY,
+  type StateChange,
   type StateEntry,
   type StateStore,
   type StateStorePolicy,
@@ -52,6 +53,9 @@ export class NatsStateStore implements StateStore {
     const kv = await this.availableKv();
     try {
       const entry = await call(kv, "get", key);
+      if (entry === null || entry === undefined) {
+        return null;
+      }
       return stateEntryFromKv(key, entry);
     } catch (error) {
       if (isMissingKey(error)) {
@@ -67,8 +71,10 @@ export class NatsStateStore implements StateStore {
     const kv = await this.availableKv();
     let keys: string[];
     try {
-      const rawKeys = (await call(kv, "keys")) as Iterable<unknown>;
-      keys = [...rawKeys].map(String).filter((key) => key.startsWith(prefix)).sort();
+      const rawKeys = await call(kv, "keys", prefix === "" ? undefined : `${prefix}>`);
+      keys = (await collectAsyncStrings(rawKeys))
+        .filter((key) => key.startsWith(prefix))
+        .sort();
     } catch (error) {
       throw new StateUnavailable(`Could not list state keys with prefix ${JSON.stringify(prefix)}`, {
         cause: error,
@@ -143,6 +149,10 @@ export class NatsStateStore implements StateStore {
     }
   }
 
+  watch(prefix = ""): AsyncIterable<StateChange> {
+    return this.watchPrefix(prefix);
+  }
+
   private async availableKv(): Promise<unknown> {
     if (this.kv !== null) {
       return this.kv;
@@ -153,7 +163,29 @@ export class NatsStateStore implements StateStore {
       history: 1,
       ...(this.policy.brokerTtlSeconds === null ? {} : { ttl: this.policy.brokerTtlSeconds * 1000 }),
     });
+    await this.reconcileBucketPolicy(this.kv);
     return this.kv;
+  }
+
+  private async reconcileBucketPolicy(kv: unknown): Promise<void> {
+    const status = await call(kv, "status");
+    const expectedTtlMs =
+      this.policy.brokerTtlSeconds === null ? 0 : this.policy.brokerTtlSeconds * 1000;
+    const actualTtlMs = Number(getProperty(status, "ttl"));
+    const actualHistory = Number(getProperty(status, "history"));
+    if (Math.abs(actualTtlMs - expectedTtlMs) <= 1 && actualHistory === 1) {
+      return;
+    }
+    const streamInfo = getProperty(status, "streamInfo");
+    const config = getProperty(streamInfo, "config") as Record<string, unknown>;
+    const streamName = String(getProperty(config, "name"));
+    const manager = await callSync(this.connection, "jetstreamManager");
+    const streams = getProperty(manager, "streams");
+    await call(streams, "update", streamName, {
+      ...config,
+      max_age: expectedTtlMs * 1_000_000,
+      max_msgs_per_subject: 1,
+    });
   }
 
   private validateTtl(ttl: number | null): void {
@@ -170,6 +202,27 @@ export class NatsStateStore implements StateStore {
       throw new StateUnavailable(
         `current state uses broker TTL ${this.policy.brokerTtlSeconds}; per-key TTL ${ttl} is not supported.`,
       );
+    }
+  }
+
+  private async *watchPrefix(prefix: string): AsyncIterable<StateChange> {
+    const kv = await this.availableKv();
+    const iterator = await call(kv, "watch", {
+      key: prefix === "" ? ">" : `${prefix}>`,
+      include: "updates",
+    });
+    for await (const item of iterator as AsyncIterable<unknown>) {
+      const entry = item as Record<string, unknown>;
+      const key = String(getProperty(entry, "key"));
+      const operation = String(getProperty(entry, "operation"));
+      if (!key.startsWith(prefix)) {
+        continue;
+      }
+      if (operation === "PUT") {
+        yield { operation: "put", key, entry: stateEntryFromKv(key, entry) };
+      } else if (operation === "DEL" || operation === "PURGE") {
+        yield { operation: "delete", key };
+      }
     }
   }
 }
@@ -207,6 +260,23 @@ function callSync(target: unknown, method: string, ...args: unknown[]): unknown 
 
 async function call(target: unknown, method: string, ...args: unknown[]): Promise<unknown> {
   return await callSync(target, method, ...args);
+}
+
+async function collectAsyncStrings(value: unknown): Promise<string[]> {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] === "function") {
+    const out: string[] = [];
+    for await (const item of value as AsyncIterable<unknown>) {
+      out.push(String(item));
+    }
+    return out;
+  }
+  if (typeof (value as Iterable<unknown>)[Symbol.iterator] === "function") {
+    return [...(value as Iterable<unknown>)].map(String);
+  }
+  return [];
 }
 
 function isMissingKey(error: unknown): boolean {

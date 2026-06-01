@@ -55,6 +55,24 @@ export function actionProviderAddress(providerInstanceId: string): string {
   return `action_provider:${requireText(providerInstanceId, "provider instance id")}`;
 }
 
+export function parseControllerAddress(address: string): string | null {
+  try {
+    const parsed = parseEndpointAddress(address);
+    return parsed.family === "controller" ? parsed.endpointId : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseActionProviderAddress(address: string): string | null {
+  try {
+    const parsed = parseEndpointAddress(address);
+    return parsed.family === "action_provider" ? parsed.endpointId : null;
+  } catch {
+    return null;
+  }
+}
+
 export function serviceAddress(serviceId: string): string {
   return `service:${requireText(serviceId, "service id")}`;
 }
