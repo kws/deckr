@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::env::{self, VarError};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,6 +10,68 @@ use crate::{Error, Result};
 
 pub const DEFAULT_STATE_TTL_SECONDS: u64 = 30;
 pub const DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS: u64 = 5;
+pub const DEFAULT_STATE_RECONCILE_SECONDS: u64 = 300;
+pub const STATE_RECONCILE_SECONDS_ENV: &str = "DECKR_STATE_RECONCILE_SECONDS";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateMaintenancePolicy {
+    pub renewal_interval: Duration,
+    pub reconcile_interval: Duration,
+}
+
+impl StateMaintenancePolicy {
+    pub fn from_env() -> Result<Self> {
+        Self::from_reconcile_env_result(env::var(STATE_RECONCILE_SECONDS_ENV))
+    }
+
+    fn from_reconcile_env_result(
+        reconcile_env: std::result::Result<String, VarError>,
+    ) -> Result<Self> {
+        Ok(Self {
+            renewal_interval: Duration::from_secs(DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS),
+            reconcile_interval: reconcile_interval_from_env_result(reconcile_env)?,
+        })
+    }
+}
+
+impl Default for StateMaintenancePolicy {
+    fn default() -> Self {
+        Self {
+            renewal_interval: Duration::from_secs(DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS),
+            reconcile_interval: Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS),
+        }
+    }
+}
+
+fn reconcile_interval_from_env_result(
+    reconcile_env: std::result::Result<String, VarError>,
+) -> Result<Duration> {
+    match reconcile_env {
+        Ok(value) => reconcile_interval_from_env_value(&value),
+        Err(VarError::NotPresent) => Ok(Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS)),
+        Err(VarError::NotUnicode(_)) => Err(Error::Invalid(format!(
+            "{STATE_RECONCILE_SECONDS_ENV} must be valid Unicode"
+        ))),
+    }
+}
+
+fn reconcile_interval_from_env_value(value: &str) -> Result<Duration> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS));
+    }
+    let seconds = trimmed.parse::<u64>().map_err(|_| {
+        Error::Invalid(format!(
+            "{STATE_RECONCILE_SECONDS_ENV} must be a positive integer number of seconds"
+        ))
+    })?;
+    if seconds == 0 {
+        return Err(Error::Invalid(format!(
+            "{STATE_RECONCILE_SECONDS_ENV} must be greater than zero"
+        )));
+    }
+    Ok(Duration::from_secs(seconds))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateStorePolicy {
@@ -226,5 +290,86 @@ impl StateStore for MemoryStateStore {
         inner.entries.remove(key);
         inner.revision += 1;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+
+    #[test]
+    fn default_state_maintenance_policy_uses_shared_defaults() {
+        let policy = StateMaintenancePolicy::default();
+
+        assert_eq!(
+            policy.renewal_interval,
+            Duration::from_secs(DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS)
+        );
+        assert_eq!(
+            policy.reconcile_interval,
+            Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS)
+        );
+    }
+
+    #[test]
+    fn state_reconcile_env_absent_or_blank_uses_default() {
+        for env_value in [
+            Err(VarError::NotPresent),
+            Ok(String::new()),
+            Ok("  ".to_string()),
+        ] {
+            let policy = StateMaintenancePolicy::from_reconcile_env_result(env_value).unwrap();
+            assert_eq!(
+                policy.reconcile_interval,
+                Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS)
+            );
+        }
+    }
+
+    #[test]
+    fn state_reconcile_env_accepts_positive_seconds() {
+        let policy =
+            StateMaintenancePolicy::from_reconcile_env_result(Ok("  45  ".to_string())).unwrap();
+
+        assert_eq!(policy.reconcile_interval, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn state_reconcile_env_rejects_zero() {
+        let error = StateMaintenancePolicy::from_reconcile_env_result(Ok("0".to_string()))
+            .expect_err("zero reconcile interval should fail");
+
+        assert_invalid(error, "greater than zero");
+    }
+
+    #[test]
+    fn state_reconcile_env_rejects_malformed_values() {
+        for value in ["abc", "-1", "1.5"] {
+            let error = StateMaintenancePolicy::from_reconcile_env_result(Ok(value.to_string()))
+                .expect_err("malformed reconcile interval should fail");
+            assert_invalid(error, "positive integer");
+        }
+    }
+
+    #[test]
+    fn state_reconcile_env_rejects_non_unicode_values() {
+        let error = StateMaintenancePolicy::from_reconcile_env_result(Err(VarError::NotUnicode(
+            OsString::from("not unicode"),
+        )))
+        .expect_err("non-unicode reconcile interval should fail");
+
+        assert_invalid(error, "valid Unicode");
+    }
+
+    fn assert_invalid(error: Error, expected: &str) {
+        match error {
+            Error::Invalid(message) => assert!(
+                message.contains(expected),
+                "expected {message:?} to contain {expected:?}"
+            ),
+            other => panic!("expected invalid error, got {other:?}"),
+        }
     }
 }
