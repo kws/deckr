@@ -26,6 +26,8 @@ from deckr.beacon import (
 from deckr.concord import (
     CONCORD_CONTRACT_SCHEMA_ID,
     CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
+    CONCORD_STALE_OBSERVATION_SCHEMA_ID,
+    ConcordStaleObservationRecord,
     ContractRecord,
     ParticipantTokenRecord,
     canonical_json_bytes,
@@ -206,6 +208,12 @@ def _add_schemas(add_artifact) -> None:
             "schemas/concord/participant-token.v1.schema.json",
             ParticipantTokenRecord,
             "Concord participant token",
+        ),
+        (
+            CONCORD_STALE_OBSERVATION_SCHEMA_ID,
+            "schemas/concord/stale-observation.v1.schema.json",
+            ConcordStaleObservationRecord,
+            "Concord stale observation",
         ),
         (
             HARDWARE_PROFILE_ID,

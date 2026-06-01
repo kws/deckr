@@ -27,6 +27,7 @@ The supported shared stores are:
 | Beacon advertisements | `deckr_beacon_advertisement_v1` | TTL-bound |
 | Concord contracts | `deckr_concord_contract_v1` | persistent |
 | Concord participant tokens | `deckr_concord_token_v1` | TTL-bound |
+| Concord maintenance observations | `deckr_concord_maintenance_v1` | persistent |
 
 `StateStore` remains the generic CAS/watch abstraction below these protocols.
 Production runtime code does not subscribe directly to Beacon or Concord
@@ -150,6 +151,14 @@ key:    contracts.<contract-id-token>.<generation>.participants.<participant-tok
 schema: dev.deckr.concord.participant-token.v1
 ```
 
+Concord maintenance observations use:
+
+```text
+bucket: deckr_concord_maintenance_v1
+key:    stale.<contract-id-token>.<generation>
+schema: dev.deckr.concord.stale-observation.v1
+```
+
 The runtime-facing Python API is `deckr.concord.ConcordService`.
 
 ```python
@@ -173,6 +182,14 @@ participant maintains an acceptable token for the same contract id, generation,
 participant, session, and terms hash. Any participant may cancel the contract.
 The full Concord semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#concord).
+
+The optional lane-less component `dev.deckr.concord.reaper` runs
+`ConcordReaperService`. It uses only Concord contract/token validity. Beacon
+advertisements are TTL-bound and are not reaped. The reaper persists first stale
+observations, cancels stale open contracts after the configured grace period,
+logs deletion context without full `terms`, deletes cancelled records after
+retention, and cleans any remaining participant-token keys for deleted contract
+generations.
 
 ## Deckr Profiles
 
@@ -255,6 +272,10 @@ token_state = deckr.state(
     "deckr_concord_token_v1",
     policy=CONCORD_TOKEN_STORE_POLICY,
 )
+maintenance_state = deckr.state(
+    "deckr_concord_maintenance_v1",
+    policy=CONCORD_MAINTENANCE_STORE_POLICY,
+)
 ```
 
 TTL-bound stores are configured with broker-owned bucket TTL and one retained
@@ -296,10 +317,12 @@ Inspect the broker:
 nats kv info deckr_beacon_advertisement_v1 --server nats://127.0.0.1:4222
 nats kv info deckr_concord_contract_v1 --server nats://127.0.0.1:4222
 nats kv info deckr_concord_token_v1 --server nats://127.0.0.1:4222
+nats kv info deckr_concord_maintenance_v1 --server nats://127.0.0.1:4222
 
 nats kv ls deckr_beacon_advertisement_v1 'advertisements.by_feature.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_concord_contract_v1 'contracts.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_concord_token_v1 'contracts.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_concord_maintenance_v1 'stale.>' --server nats://127.0.0.1:4222
 ```
 
 Run the smoke harness:

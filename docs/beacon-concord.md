@@ -121,6 +121,8 @@ Create an advertisement with a unique advertisement id using `create`. Refresh
 it by exact-read, owner-check, incrementing `refreshSeq`, and revision-guarded
 `update`. Withdraw it by exact-read, owner-check, and revision-guarded delete.
 If the advertisement is no longer refreshed, the TTL-bound store removes it.
+Beacon advertisements are not reaped by Concord maintenance. Their lifecycle is
+the advertisement owner plus the store TTL.
 
 A Beacon candidate is usable only if:
 
@@ -211,6 +213,36 @@ If no external current-session evidence is available, token existence and
 internal consistency are the session evidence. A missing, invalid, stale, or
 generation-mismatched token means the contract is not valid. A cancelled
 contract is never resumed; recovery uses a successor contract.
+
+### Concord Maintenance
+
+Core Concord maintenance is optional and Concord-only. The lane-less component
+`dev.deckr.concord.reaper` and reusable `ConcordReaperService` scan Concord
+contract and participant-token stores. They never consult Beacon advertisements,
+endpoint presence, catalogs, lane subscriptions, or any other parallel
+authority.
+
+The reaper records `firstObservedStaleAt` in the persistent
+`deckr_concord_maintenance_v1` store for each `contractId:generation`. Open
+contracts count as stale only when Concord validation reports
+`not_yet_fulfilled`, `missing_token`, `invalid_token`, `session_mismatch`,
+`terms_hash_mismatch`, `generation_mismatch`, or `invalid_contract`.
+`unavailable` is not a stale signal.
+
+After the stale grace period, 900 seconds by default, maintenance cancels the
+open contract without acting as a named participant. The cancellation is a
+terminal Concord cancellation with `cancelReason=concord_reaper_stale_contract`
+and `cancelledBy=concord:maintenance`.
+
+Cancelled contract records are retained until `cancelledAt` plus the retention
+period, 3600 seconds by default. Before deleting a cancelled record, maintenance
+logs contract identity, profile, participants, attached participants, lifecycle
+timestamps, cancellation metadata, supersession, terms hash, current validation
+status, and participant-token summaries. Full `terms` are not logged by default.
+After the contract record is deleted, any remaining participant-token keys for
+that contract generation are deleted. If the contract record changes during a
+delete attempt, maintenance logs the conflict and leaves the record for a later
+scan.
 
 ## Profiles
 

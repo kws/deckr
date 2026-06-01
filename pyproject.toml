@@ -33,6 +33,9 @@ dependencies = [
 [project.scripts]
 deckr = "deckr.cli:main"
 
+[project.entry-points."deckr.components"]
+"dev.deckr.concord.reaper" = "deckr.concord_reaper:component"
+
 [project.optional-dependencies]
 cli = [
     "click>=8.3.1,<9.0.0",

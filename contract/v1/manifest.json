@@ -195,6 +195,14 @@
       "title": "Concord participant token"
     },
     {
+      "description": "Canonical JSON Schema for Concord stale observation.",
+      "id": "dev.deckr.concord.stale-observation.v1",
+      "kind": "schema",
+      "path": "schemas/concord/stale-observation.v1.schema.json",
+      "schemaId": "dev.deckr.concord.stale-observation.v1",
+      "title": "Concord stale observation"
+    },
+    {
       "description": "Canonical JSON Schema for Deckr CapabilityDescriptor.",
       "id": "dev.deckr.hardware.capability_descriptor.v1",
       "kind": "schema",

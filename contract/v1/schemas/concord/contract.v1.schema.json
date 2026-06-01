@@ -88,10 +88,15 @@
           "$ref": "#/$defs/EndpointAddress"
         },
         {
+          "const": "concord:maintenance",
+          "type": "string"
+        },
+        {
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "title": "Cancelledby"
     },
     "contractId": {
       "title": "Contractid",
