@@ -17,6 +17,7 @@ from deckr.actions.messages import (
     SETTINGS_PATCH,
     ActionDescriptor,
     ActionExtensionBody,
+    ActionInstanceMetadata,
     BindingMetadata,
     CapabilityInputBody,
     CapabilityInputEvent,
@@ -146,6 +147,17 @@ def test_binding_metadata_is_controller_routing_metadata() -> None:
     dumped = metadata.model_dump(by_alias=True, mode="json")
     assert dumped["bindingId"] == "binding-1"
     assert "bindingContract" not in dumped
+
+
+def test_action_instance_metadata_requires_context_id() -> None:
+    with pytest.raises(ValidationError, match="contextId"):
+        ActionInstanceMetadata(
+            providerInstanceId="demo-provider",
+            providerId="demo.provider",
+            actionId="demo.action",
+            actionInstanceId="instance-1",
+            configId="device-config-1",
+        )
 
 
 def test_actions_beacon_payload_validates_provider_and_action_identity() -> None:

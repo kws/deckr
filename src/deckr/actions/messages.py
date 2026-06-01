@@ -432,7 +432,7 @@ class ActionInstanceMetadata(DeckrModel):
     action_id: str = Field(alias="actionId")
     action_instance_id: str = Field(alias="actionInstanceId")
     config_id: str = Field(alias="configId")
-    context_id: str | None = Field(default=None, alias="contextId")
+    context_id: str = Field(alias="contextId")
 
     @field_validator(
         "provider_instance_id",
@@ -440,6 +440,7 @@ class ActionInstanceMetadata(DeckrModel):
         "action_id",
         "action_instance_id",
         "config_id",
+        "context_id",
     )
     @classmethod
     def _validate_required_ids(cls, value: str) -> str:
@@ -449,11 +450,6 @@ class ActionInstanceMetadata(DeckrModel):
     @classmethod
     def _validate_provider_instance_id(cls, value: str) -> str:
         return require_provider_instance_id(value, field_name="providerInstanceId")
-
-    @field_validator("context_id")
-    @classmethod
-    def _validate_optional_ids(cls, value: str | None) -> str | None:
-        return _require_optional_text(value, field_name="action instance metadata id")
 
 
 class PageSessionMetadata(DeckrModel):

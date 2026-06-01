@@ -76,16 +76,8 @@
           "type": "string"
         },
         "contextId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Contextid"
+          "title": "Contextid",
+          "type": "string"
         },
         "providerId": {
           "title": "Providerid",
@@ -101,7 +93,8 @@
         "providerId",
         "actionId",
         "actionInstanceId",
-        "configId"
+        "configId",
+        "contextId"
       ],
       "title": "ActionInstanceMetadata",
       "type": "object"
