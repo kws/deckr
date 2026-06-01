@@ -11,9 +11,7 @@ _LOW_LEVEL_ALWAYS = {
     "_participant_lease",
     "_refresh_token",
     "attach",
-    "contract_record",
     "create_contract",
-    "find_contracts",
     "participant_lease",
     "refresh_token",
 }

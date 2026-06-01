@@ -1135,20 +1135,23 @@ class ConcordService:
         spec: ConcordAgreementSpec,
     ) -> tuple[ContractHandle, ContractValidity]:
         current_sessions = await _agreement_current_sessions(spec)
-        stale: list[tuple[ContractHandle, ContractValidity]] = []
         next_generation = 1
+        reusable: tuple[ContractHandle, ContractValidity] | None = None
+        open_conflicts: list[tuple[ContractHandle, str]] = []
         if spec.stable_contract_id is not None:
             for contract in await self._find_contracts(
-                spec.profile,
                 contract_id=spec.stable_contract_id,
             ):
                 record = await self._contract_record(contract)
                 if record is None:
                     continue
                 next_generation = max(next_generation, record.generation + 1)
-                if not _agreement_record_matches_spec(record, spec):
-                    continue
                 if record.state != ContractState.OPEN:
+                    continue
+                if not _agreement_record_matches_spec(record, spec):
+                    open_conflicts.append(
+                        (contract, "concord_agreement_conflicting_generation")
+                    )
                     continue
                 validity = await self._validate(
                     contract,
@@ -1157,17 +1160,40 @@ class ConcordService:
                     log_invalid=False,
                 )
                 if _agreement_successor_status(validity.status):
-                    stale.append((contract, validity))
+                    open_conflicts.append(
+                        (
+                            contract,
+                            f"concord_agreement_{validity.status.value}",
+                        )
+                    )
                     continue
-                return contract, validity
+                if reusable is None or contract.generation > reusable[0].generation:
+                    if reusable is not None:
+                        open_conflicts.append(
+                            (
+                                reusable[0],
+                                "concord_agreement_superseded_generation",
+                            )
+                        )
+                    reusable = (contract, validity)
+                    continue
+                open_conflicts.append(
+                    (contract, "concord_agreement_superseded_generation")
+                )
 
-        for contract, validity in stale:
-            await self._cancel(
-                contract,
-                spec.local_participant,
-                reason=f"concord_agreement_{validity.status.value}",
-                log_label=spec.log_label,
-            )
+        for contract, reason in open_conflicts:
+            try:
+                await self._cancel(
+                    contract,
+                    spec.local_participant,
+                    reason=reason,
+                    log_label=spec.log_label,
+                )
+            except StateConflict:
+                return await self._select_or_create_agreement_contract(spec)
+
+        if reusable is not None:
+            return reusable
 
         supersedes = (
             ContractPointer(
@@ -1343,6 +1369,32 @@ class ConcordService:
         pointer: ContractPointer | Mapping[str, Any],
     ) -> ContractHandle | None:
         return await self._coordinator.get_contract(pointer)
+
+    async def contract_record(self, contract: ContractHandle) -> ContractRecord | None:
+        return await self._contract_record(contract)
+
+    async def find_contracts(
+        self,
+        profile: str | None = None,
+        *,
+        contract_id: str | None = None,
+    ) -> tuple[ContractHandle, ...]:
+        return await self._find_contracts(profile, contract_id=contract_id)
+
+    async def cancel_contract(
+        self,
+        contract: ContractHandle,
+        participant: str | EndpointAddress,
+        *,
+        reason: str | None = None,
+        log_label: str = "Concord",
+    ) -> bool:
+        return await self._cancel(
+            contract,
+            participant,
+            reason=reason,
+            log_label=log_label,
+        )
 
     async def _contract_record(self, contract: ContractHandle) -> ContractRecord | None:
         return await self._coordinator.contract_record(contract)

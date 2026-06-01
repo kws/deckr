@@ -50,6 +50,7 @@ from deckr.profiles import (
     ACTIONS_FEATURE_ID,
     ActionProviderSessionTerms,
     ActionsBeaconPayload,
+    action_provider_session_contract_id,
     actions_payload_from_advertisement,
     profile_terms_hash,
 )
@@ -1038,6 +1039,116 @@ async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
 
 
 @pytest.mark.asyncio
+async def test_concord_ensure_agreement_cancels_stable_conflicting_generations() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    provider = action_provider_address("provider-main")
+    stable_id = action_provider_session_contract_id(controller, provider)
+
+    old = await service._create_contract(
+        (controller, provider),
+        contract_id=stable_id,
+        generation=1,
+        profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
+        terms=ActionProviderSessionTerms(
+            sessionId="old-provider-session",
+            controllerEndpoint=controller,
+            providerEndpoint=provider,
+            providerInstanceId="provider-main",
+            providerId="dev.deckr.clock",
+        ),
+        created_by=controller,
+    )
+    older_conflict = await service._create_contract(
+        (controller, provider),
+        contract_id=stable_id,
+        generation=2,
+        profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
+        terms=ActionProviderSessionTerms(
+            sessionId="older-provider-session",
+            controllerEndpoint=controller,
+            providerEndpoint=provider,
+            providerInstanceId="provider-main",
+            providerId="dev.deckr.clock",
+        ),
+        created_by=controller,
+    )
+
+    agreement = await service.ensure_agreement(
+        ConcordAgreementSpec(
+            profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
+            participants=(controller, provider),
+            local_participant=controller,
+            local_session_id="controller-session",
+            stable_contract_id=stable_id,
+            terms=ActionProviderSessionTerms(
+                sessionId="current-provider-session",
+                controllerEndpoint=controller,
+                providerEndpoint=provider,
+                providerInstanceId="provider-main",
+                providerId="dev.deckr.clock",
+            ),
+            current_sessions={
+                str(controller): "controller-session",
+                str(provider): "current-provider-session",
+            },
+        )
+    )
+
+    assert agreement.contract_id == stable_id
+    assert agreement.generation == 3
+    assert (await service._validate(old)).status == ContractValidityStatus.CANCELLED
+    assert (await service._validate(older_conflict)).status == (
+        ContractValidityStatus.CANCELLED
+    )
+    record = await service.contract_record(agreement.contract)
+    assert record is not None
+    assert record.supersedes is not None
+    assert record.supersedes.generation == 2
+
+
+@pytest.mark.asyncio
+async def test_concord_public_contract_helpers_preserve_validation() -> None:
+    service = ConcordService(
+        ConcordCoordinator(
+            MemoryStateStore(name="contracts"),
+            MemoryStateStore(name="tokens"),
+        )
+    )
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (controller, manager),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+
+    assert await service.find_contracts(
+        HARDWARE_CLAIM_PROFILE_ID,
+        contract_id="hardware-contract-1",
+    ) == (contract,)
+    assert await service.contract_record(contract) == await service._contract_record(contract)
+    with pytest.raises(ValueError, match="Concord contract id"):
+        await service.find_contracts(contract_id="")
+    with pytest.raises(ValueError, match="participant"):
+        await service.cancel_contract(
+            contract,
+            service_address("not-a-participant"),
+            reason="test",
+        )
+
+    assert await service.cancel_contract(contract, controller, reason="test")
+    record = await service.contract_record(contract)
+    assert record is not None
+    assert record.state == ContractState.CANCELLED
+    assert record.cancel_reason == "test"
+
+
+@pytest.mark.asyncio
 async def test_concord_ensure_agreement_generated_id_is_fresh() -> None:
     service = ConcordService(
         ConcordCoordinator(
@@ -1354,6 +1465,30 @@ def test_profile_payloads_terms_hashes_and_hardware_claim_conflicts() -> None:
     assert hardware_claim_conflicts((conflicting, non_conflicting), claim_terms) == (
         conflicting,
     )
+
+
+def test_action_provider_session_contract_id_is_endpoint_scoped() -> None:
+    controller = controller_address("controller-main")
+    provider = action_provider_address("provider-main")
+
+    contract_id = action_provider_session_contract_id(controller, provider)
+
+    assert contract_id == action_provider_session_contract_id(
+        str(controller),
+        str(provider),
+    )
+    assert contract_id != action_provider_session_contract_id(
+        controller_address("other-controller"),
+        provider,
+    )
+    assert contract_id != action_provider_session_contract_id(
+        controller,
+        action_provider_address("other-provider"),
+    )
+    with pytest.raises(ValueError, match="controllerEndpoint"):
+        action_provider_session_contract_id(provider, provider)
+    with pytest.raises(ValueError, match="providerEndpoint"):
+        action_provider_session_contract_id(controller, controller)
 
 
 def test_concord_contract_attached_participants_must_be_named() -> None:
