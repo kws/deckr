@@ -61,6 +61,12 @@ contract/v1/
   schemas/
   fixtures/
   vectors/
+rust/deckr/
+  src/        Rust implementation of shared contract primitives
+  tests/      Rust conformance tests against contract/v1 artifacts
+typescript/deckr/
+  src/        TypeScript implementation of shared contract primitives
+  tests/      TypeScript conformance and lifecycle tests
 tests/
 ```
 
@@ -91,6 +97,15 @@ Run the default validation suite:
 uv run ruff check .
 uv run lint-imports
 uv run pytest
+```
+
+Run the TypeScript core conformance checks:
+
+```bash
+cd typescript/deckr
+npm install
+npm test
+npm run typecheck
 ```
 
 Build distributables:

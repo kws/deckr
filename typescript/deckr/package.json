@@ -1,0 +1,40 @@
+{
+  "name": "@deckr/core",
+  "version": "0.3.0-dev.0",
+  "private": true,
+  "description": "TypeScript core contracts and lifecycle helpers for Deckr",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./beacon": "./src/beacon.ts",
+    "./concord": "./src/concord.ts",
+    "./endpoint": "./src/endpoint.ts",
+    "./json": "./src/json.ts",
+    "./keys": "./src/keys.ts",
+    "./lanes": "./src/lanes.ts",
+    "./nats": "./src/nats.ts",
+    "./services": "./src/services.ts",
+    "./state": "./src/state.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "nats": "^2.29.0"
+  },
+  "peerDependenciesMeta": {
+    "nats": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "nats": "^2.29.3",
+    "typescript": "^5.0.0"
+  }
+}

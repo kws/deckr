@@ -186,6 +186,9 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Node / TypeScript
+node_modules/
+
 # PyPI configuration file
 .pypirc
 
