@@ -55,11 +55,16 @@ from deckr.services.messages import (
     ServiceError,
     service_body,
 )
-from deckr.state import StateConflict, StateStore, StateUnavailable
+from deckr.state import (
+    DEFAULT_STATE_RECONCILE_SECONDS,
+    StateConflict,
+    StateStore,
+    StateUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SERVICE_CONTRACT_RECONCILE_SECONDS = 1.0
+DEFAULT_SERVICE_CONTRACT_RECONCILE_SECONDS = DEFAULT_STATE_RECONCILE_SECONDS
 DEFAULT_SERVICE_ADVERTISEMENT_REFRESH_SECONDS = 5.0
 DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS = 5.0
 _CLIENT_CONTRACT_WAIT_INTERVAL_SECONDS = 0.05

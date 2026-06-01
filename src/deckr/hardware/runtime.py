@@ -25,7 +25,7 @@ from deckr.concord import (
     ParticipantHandle,
 )
 from deckr.contracts.messages import DeckrMessage, EndpointAddress, endpoint_target
-from deckr.contracts.models import thaw_json
+from deckr.contracts.models import JsonObject, thaw_json
 from deckr.hardware.descriptors import DeviceDescriptor, DeviceRef
 from deckr.hardware.profiles import (
     HARDWARE_CLAIM_PROFILE_ID,
@@ -35,12 +35,12 @@ from deckr.hardware.profiles import (
     HardwareClaimTerms,
     ProfileCapacity,
 )
-from deckr.state import StateConflict, StateUnavailable
+from deckr.state import DEFAULT_STATE_RECONCILE_SECONDS, StateConflict, StateUnavailable
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS = 5.0
-DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS = 1.0
+DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS = DEFAULT_STATE_RECONCILE_SECONDS
 DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS = 5.0
 DEFAULT_HARDWARE_WATCH_RETRY_SECONDS = 1.0
 
@@ -105,6 +105,7 @@ class HardwareManagerRuntime:
     _advertisement: AdvertisementHandle | None = field(init=False, default=None)
     _advertiser: BeaconAdvertisement | None = field(init=False, default=None)
     _advertisement_id: str = field(init=False, default="")
+    _advertised_payload: JsonObject | None = field(init=False, default=None)
     _advertisement_dirty: bool = field(init=False, default=True)
     _claims: dict[str, LiveHardwareClaim] = field(init=False, default_factory=dict)
     _claims_by_device: dict[str, LiveHardwareClaim] = field(
@@ -298,6 +299,7 @@ class HardwareManagerRuntime:
     async def publish_advertisement(self) -> None:
         async with self._advertisement_lock:
             payload = self._hardware_payload()
+            payload_dict = payload.to_dict()
             try:
                 if self._advertiser is None or self._advertiser.closed:
                     self._advertiser = await self.beacon.ensure_advertisement(
@@ -307,7 +309,7 @@ class HardwareManagerRuntime:
                             session_id=self.endpoint.session_id,
                             advertisement_id=self._advertisement_id,
                             labels=payload.labels,
-                            payload=payload.to_dict(),
+                            payload=payload_dict,
                             refresh_interval=self.advertisement_refresh_seconds,
                             log_label="Hardware",
                         ),
@@ -319,8 +321,9 @@ class HardwareManagerRuntime:
                     )
                 self._advertisement = await self._advertiser.publish(
                     labels=payload.labels,
-                    payload=payload.to_dict(),
+                    payload=payload_dict,
                 )
+                self._advertised_payload = payload_dict
                 self._advertisement_dirty = False
             except StateConflict:
                 logger.info(
@@ -329,6 +332,7 @@ class HardwareManagerRuntime:
                 )
                 self._advertisement = None
                 self._advertiser = None
+                self._advertised_payload = None
                 self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
                 self._advertisement_dirty = True
             except StateUnavailable:
@@ -337,9 +341,24 @@ class HardwareManagerRuntime:
                 )
                 self._advertisement_dirty = True
 
+    async def publish_advertisement_if_changed(self) -> None:
+        async with self._advertisement_lock:
+            payload = self._hardware_payload()
+            payload_dict = payload.to_dict()
+            if (
+                not self._advertisement_dirty
+                and self._advertiser is not None
+                and not self._advertiser.closed
+                and self._advertised_payload == payload_dict
+            ):
+                return
+
+        await self.publish_advertisement()
+
     async def withdraw_advertisement(self) -> None:
         async with self._advertisement_lock:
             self._advertisement = None
+            self._advertised_payload = None
             self._advertisement_dirty = True
             if self._advertiser is not None:
                 try:
@@ -411,7 +430,7 @@ class HardwareManagerRuntime:
         self._claims_by_device = next_by_device
         if lost_claims:
             await self._reset_lost_claim_devices(lost_claims.values())
-        await self.publish_advertisement()
+        await self.publish_advertisement_if_changed()
 
     async def _matching_claim_candidates(self) -> dict[str, _ClaimCandidate]:
         candidates: dict[str, _ClaimCandidate] = {}

@@ -207,6 +207,23 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         await controller_cm.__aexit__(None, None, None)
 
 
+async def test_noop_claim_reconcile_does_not_refresh_hardware_beacon() -> None:
+    deckr, endpoint_cm, runtime = await _runtime()
+    try:
+        await _add_device(runtime, _descriptor())
+        beacon = _beacon(deckr)
+        first = (await beacon.find(HARDWARE_FEATURE_ID))[0]
+
+        await runtime.reconcile_claims(reason="test noop")
+        second = (await beacon.find(HARDWARE_FEATURE_ID))[0]
+
+        assert second.advertisement.refresh_seq == first.advertisement.refresh_seq
+        assert second.revision == first.revision
+    finally:
+        await runtime.stop()
+        await endpoint_cm.__aexit__(None, None, None)
+
+
 async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
     controller_cm = deckr.lane("hardware_messages").register_endpoint(

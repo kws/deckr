@@ -159,6 +159,68 @@ class AsyncMap(Generic[K, V]):
 T = TypeVar("T")
 
 
+class CoalescedTrigger:
+    """Coalesce bursty async notifications into one delayed handler call."""
+
+    def __init__(self, *, batch_interval: float) -> None:
+        if batch_interval <= 0:
+            raise ValueError("batch_interval must be greater than zero")
+        self._batch_interval = batch_interval
+        self._condition = anyio.Condition()
+        self._reasons: list[str] = []
+        self._closed = False
+
+    async def request(self, reason: str) -> None:
+        async with self._condition:
+            if self._closed:
+                return
+            self._reasons.append(reason)
+            self._condition.notify()
+
+    async def aclose(self) -> None:
+        async with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+    async def run(
+        self,
+        handler: Callable[[str], Awaitable[None]],
+        *,
+        reason_prefix: str = "coalesced notifications",
+    ) -> None:
+        next_run_at = 0.0
+        while True:
+            async with self._condition:
+                while not self._reasons and not self._closed:
+                    await self._condition.wait()
+                if self._closed:
+                    return
+
+                now = anyio.current_time()
+                delay = max(0.0, next_run_at - now)
+
+            if delay:
+                await anyio.sleep(delay)
+
+            async with self._condition:
+                if self._closed:
+                    return
+                reasons = tuple(self._reasons)
+                self._reasons.clear()
+
+            next_run_at = anyio.current_time() + self._batch_interval
+            await handler(_coalesced_reason(reason_prefix, reasons))
+
+
+def _coalesced_reason(prefix: str, reasons: tuple[str, ...]) -> str:
+    if not reasons:
+        return prefix
+    first = reasons[0]
+    if len(reasons) == 1:
+        return f"{prefix}: {first}"
+    return f"{prefix}: {first} (+{len(reasons) - 1} more)"
+
+
 @dataclass(order=True)
 class _Entry(Generic[T]):
     due: float

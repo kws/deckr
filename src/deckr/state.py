@@ -12,6 +12,8 @@ from deckr.contracts.models import DeckrModel, freeze_json
 DEFAULT_STATE_STORE_NAME = "deckr_state_v1"
 DEFAULT_STATE_TTL_SECONDS = 30
 DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS = 5.0
+DEFAULT_STATE_RECONCILE_SECONDS = 300.0
+DEFAULT_STATE_NOTIFICATION_BATCH_SECONDS = 1.0
 
 
 class StateConflict(RuntimeError):

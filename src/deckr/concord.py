@@ -17,7 +17,10 @@ from pydantic import Field, field_serializer, field_validator, model_validator
 from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
+from deckr.core.util.anyio import CoalescedTrigger
 from deckr.state import (
+    DEFAULT_STATE_NOTIFICATION_BATCH_SECONDS,
+    DEFAULT_STATE_RECONCILE_SECONDS,
     PERSISTENT_STATE_STORE_POLICY,
     StateChange,
     StateConflict,
@@ -1256,7 +1259,7 @@ class ConcordService:
         contract_sort_key: ConcordContractSortKey | None = None,
         profile: str | None = None,
         refresh_interval: float = 5.0,
-        reconcile_interval: float = 1.0,
+        reconcile_interval: float = DEFAULT_STATE_RECONCILE_SECONDS,
         cancel_terminal_statuses: Collection[ContractValidityStatus] | None = None,
         log_label: str = "Concord",
     ) -> ConcordParticipantManager:
@@ -2512,7 +2515,8 @@ class ConcordParticipantManager:
         contract_sort_key: ConcordContractSortKey | None = None,
         profile: str | None = None,
         refresh_interval: float = 5.0,
-        reconcile_interval: float = 1.0,
+        reconcile_interval: float = DEFAULT_STATE_RECONCILE_SECONDS,
+        notification_batch_interval: float = DEFAULT_STATE_NOTIFICATION_BATCH_SECONDS,
         cancel_terminal_statuses: Collection[ContractValidityStatus] | None = None,
         log_label: str = "Concord",
     ) -> None:
@@ -2520,6 +2524,8 @@ class ConcordParticipantManager:
             raise ValueError("refresh_interval must be greater than zero")
         if reconcile_interval <= 0:
             raise ValueError("reconcile_interval must be greater than zero")
+        if notification_batch_interval <= 0:
+            raise ValueError("notification_batch_interval must be greater than zero")
         self._concord = concord
         self.participant = parse_endpoint_address(participant)
         self.session_id = _require_text(session_id, field_name="Concord session id")
@@ -2530,6 +2536,9 @@ class ConcordParticipantManager:
         self._contract_sort_key = contract_sort_key
         self._refresh_interval = refresh_interval
         self._reconcile_interval = reconcile_interval
+        self._notifications = CoalescedTrigger(
+            batch_interval=notification_batch_interval
+        )
         self._cancel_terminal_statuses = frozenset(cancel_terminal_statuses or ())
         self._log_label = log_label
         self._managed: dict[str, ConcordManagedContract] = {}
@@ -2561,6 +2570,7 @@ class ConcordParticipantManager:
         self._started = True
         self._start_soon = start_soon
         start_soon(self.watch_loop)
+        start_soon(self.notification_reconcile_loop)
         start_soon(self.reconcile_loop)
 
     @asynccontextmanager
@@ -2585,6 +2595,7 @@ class ConcordParticipantManager:
             self._last_status.clear()
             self._contract_index.clear()
             self._contract_index_ready = False
+        await self._notifications.aclose()
 
     async def cancel(
         self,
@@ -2640,8 +2651,9 @@ class ConcordParticipantManager:
                         if self._closed:
                             return
                         await self._update_contract_index(event)
-                        await self.reconcile(
-                            reason=f"contract watch {event.event_type.value}"
+                        await self._notifications.request(
+                            f"{event.event_type.value} "
+                            f"{event.contract.key if event.contract else '<unknown>'}"
                         )
             except StateUnavailable:
                 async with self._lock:
@@ -2663,6 +2675,27 @@ class ConcordParticipantManager:
                     exc_info=True,
                 )
             await anyio.sleep(self._reconcile_interval)
+
+    async def notification_reconcile_loop(self) -> None:
+        await self._notifications.run(
+            self._reconcile_notification,
+            reason_prefix="contract watch",
+        )
+
+    async def _reconcile_notification(self, reason: str) -> None:
+        if self._closed:
+            return
+        try:
+            await self.reconcile(reason=reason)
+        except StateUnavailable:
+            logger.warning(
+                "%s Concord participant manager unavailable; "
+                "notification reconciliation will retry profile=%s participant=%s",
+                self._log_label,
+                self.profile,
+                self.participant,
+                exc_info=True,
+            )
 
     async def reconcile(
         self,
