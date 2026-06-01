@@ -4,6 +4,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
 import anyio
@@ -146,6 +147,34 @@ class NatsSubstrate:
             max_buffer_size=self._buffer_size
         )
         contract = self._lane_contracts.contract_for(lane)
+        subscription = None
+        subscriber_closed = False
+
+        async def close_subscriber_for_backpressure() -> None:
+            nonlocal subscriber_closed
+            if subscriber_closed:
+                return
+            subscriber_closed = True
+            logger.warning(
+                "NATS Deckr lane subscriber buffer full; unsubscribing "
+                "lane=%s endpoint=%s session=%s",
+                lane,
+                endpoint,
+                endpoint_session_id,
+            )
+            await send.aclose()
+            if subscription is not None:
+                try:
+                    await subscription.unsubscribe()
+                except Exception:
+                    logger.debug(
+                        "Could not unsubscribe NATS Deckr lane subscriber "
+                        "after backpressure lane=%s endpoint=%s session=%s",
+                        lane,
+                        endpoint,
+                        endpoint_session_id,
+                        exc_info=True,
+                    )
 
         async def callback(msg) -> None:
             try:
@@ -159,7 +188,11 @@ class NatsSubstrate:
                     return
                 if msg.reply:
                     self._reply_subjects[message.message_id] = msg.reply
-                await send.send(message)
+                send.send_nowait(message)
+            except anyio.WouldBlock:
+                await close_subscriber_for_backpressure()
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                return
             except Exception:
                 logger.exception("Dropped invalid NATS Deckr lane message")
 
@@ -232,6 +265,44 @@ class NatsSubstrate:
         contract = self._lane_contracts.contract_for(message.lane)
         validate_message_for_contract(message, contract)
         return message
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingStateWatchChange:
+    change: StateChange
+    marker_reason: str | None = None
+    marker_revision: int | None = None
+
+
+class _LatestStateWatchPump:
+    def __init__(self) -> None:
+        self._condition = anyio.Condition()
+        self._pending: dict[str, _PendingStateWatchChange] = {}
+        self._closed = False
+
+    async def offer(self, item: _PendingStateWatchChange) -> None:
+        async with self._condition:
+            if self._closed:
+                return
+            self._pending[item.change.key] = item
+            self._condition.notify()
+
+    async def aclose(self) -> None:
+        async with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+    async def __aiter__(self) -> AsyncIterator[_PendingStateWatchChange]:
+        while True:
+            async with self._condition:
+                while not self._pending and not self._closed:
+                    await self._condition.wait()
+                if not self._pending and self._closed:
+                    return
+                items = tuple(self._pending.values())
+                self._pending.clear()
+            for item in items:
+                yield item
 
 
 class NatsStateStore:
@@ -411,6 +482,7 @@ class NatsStateStore:
             max_buffer_size=self._buffer_size
         )
         subject = f"{_kv_subject_prefix(self.name)}{_kv_watch_pattern(prefix)}"
+        pump = _LatestStateWatchPump()
 
         async def callback(msg) -> None:
             try:
@@ -420,60 +492,63 @@ class NatsStateStore:
                 )
                 if change is None or not change.key.startswith(prefix):
                     return
+                marker_reason = None
+                marker_revision = None
                 if change.operation in {"delete", "expire"} and change.entry is None:
-                    current = await self._get_entry(change.key)
                     marker_reason = _state_marker_reason_from_nats_msg(msg)
                     marker_revision = _nats_msg_revision(msg)
-                    if current is not None:
-                        logger.info(
-                            "Ignoring stale NATS Deckr state %s marker "
-                            "bucket=%s key=%s marker_reason=%s "
-                            "marker_revision=%s current_revision=%s",
-                            change.operation,
-                            self.name,
-                            change.key,
-                            marker_reason,
-                            marker_revision,
-                            current.revision,
-                        )
-                        return
-                    logger.info(
-                        "NATS Deckr state %s marker bucket=%s key=%s "
-                        "marker_reason=%s marker_revision=%s",
-                        change.operation,
-                        self.name,
-                        change.key,
-                        marker_reason,
-                        marker_revision,
+                await pump.offer(
+                    _PendingStateWatchChange(
+                        change,
+                        marker_reason=marker_reason,
+                        marker_revision=marker_revision,
                     )
-                await send.send(change)
+                )
             except Exception:
                 logger.exception("Dropped invalid NATS Deckr state update")
 
+        async def pump_loop() -> None:
+            async for item in pump:
+                try:
+                    change = await self._resolve_watch_change(item)
+                    if change is None:
+                        continue
+                    await send.send(change)
+                except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                    return
+                except Exception:
+                    logger.exception("Dropped invalid NATS Deckr state update")
+
         from nats.js import api
 
-        try:
-            subscription = await self._js.subscribe(
-                subject,
-                cb=callback,
-                ordered_consumer=True,
-                deliver_policy=api.DeliverPolicy.LAST_PER_SUBJECT,
-                inactive_threshold=5 * 60,
-            )
-        except Exception as exc:
-            raise StateUnavailable(f"Could not watch state prefix {prefix!r}") from exc
-        try:
-            yield receive
-        finally:
+        subscription = None
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(pump_loop)
             try:
-                await subscription.unsubscribe()
-            finally:
-                await _delete_ephemeral_consumer(
-                    subscription,
-                    reason=f"state watch prefix {prefix!r}",
+                subscription = await self._js.subscribe(
+                    subject,
+                    cb=callback,
+                    ordered_consumer=True,
+                    deliver_policy=api.DeliverPolicy.LAST_PER_SUBJECT,
+                    inactive_threshold=5 * 60,
                 )
-            await send.aclose()
-            await receive.aclose()
+            except Exception as exc:
+                await pump.aclose()
+                raise StateUnavailable(f"Could not watch state prefix {prefix!r}") from exc
+            try:
+                yield receive
+            finally:
+                await pump.aclose()
+                task_group.cancel_scope.cancel()
+                try:
+                    await subscription.unsubscribe()
+                finally:
+                    await _delete_ephemeral_consumer(
+                        subscription,
+                        reason=f"state watch prefix {prefix!r}",
+                    )
+                await send.aclose()
+                await receive.aclose()
 
     async def _ensure_kv(self):
         if self._kv is not None:
@@ -561,6 +636,40 @@ class NatsStateStore:
         if _kv_entry_is_absent_marker(entry):
             return None
         return _state_entry_from_kv(entry)
+
+    async def _resolve_watch_change(
+        self,
+        item: _PendingStateWatchChange,
+    ) -> StateChange | None:
+        change = item.change
+        if change.operation not in {"delete", "expire"} or change.entry is not None:
+            return change
+        current = await self._get_entry(change.key)
+        marker_reason = item.marker_reason or "unknown"
+        marker_revision = item.marker_revision or 0
+        if current is not None:
+            logger.info(
+                "Ignoring stale NATS Deckr state %s marker "
+                "bucket=%s key=%s marker_reason=%s "
+                "marker_revision=%s current_revision=%s",
+                change.operation,
+                self.name,
+                change.key,
+                marker_reason,
+                marker_revision,
+                current.revision,
+            )
+            return None
+        logger.info(
+            "NATS Deckr state %s marker bucket=%s key=%s "
+            "marker_reason=%s marker_revision=%s",
+            change.operation,
+            self.name,
+            change.key,
+            marker_reason,
+            marker_revision,
+        )
+        return change
 
     async def _try_reclaim_absent_marker(
         self,

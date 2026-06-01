@@ -606,6 +606,18 @@ class ConcordContractEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ConcordContractNotification:
+    source: Literal["contract", "token"]
+    operation: Literal["put", "delete", "expire"]
+    contract_id: str
+    generation: int
+    contract: ContractHandle | None = None
+    participant: EndpointAddress | None = None
+    profile: str | None = None
+    change: StateChange | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ConcordManagedContract:
     contract: ContractHandle
     record: ContractRecord
@@ -1792,6 +1804,68 @@ class ConcordService:
         )
 
     @asynccontextmanager
+    async def watch_contract_notifications(
+        self,
+        profile: str | None = None,
+    ) -> Any:
+        send, receive = anyio.create_memory_object_stream[
+            ConcordContractNotification
+        ](100)
+        known_profiles: dict[tuple[str, int], str | None] = {}
+
+        async def contract_loop() -> None:
+            try:
+                async with self._coordinator.watch_contracts() as changes:
+                    async for change in changes:
+                        notification = _contract_notification_from_change(
+                            change,
+                            profile_filter=profile,
+                            known_profiles=known_profiles,
+                        )
+                        if notification is not None:
+                            await send.send(notification)
+            finally:
+                await send.aclose()
+
+        async def token_loop() -> None:
+            async with self._coordinator._token_state.watch(  # noqa: SLF001
+                concord_contracts_prefix()
+            ) as changes:
+                async for change in changes:
+                    notification = _token_notification_from_change(
+                        change,
+                        profile_filter=profile,
+                        known_profiles=known_profiles,
+                    )
+                    if notification is not None:
+                        await send.send(notification)
+
+        caller_exception: BaseException | None = None
+        try:
+            async with receive, send, anyio.create_task_group() as task_group:
+                task_group.start_soon(contract_loop)
+                task_group.start_soon(token_loop)
+                try:
+                    yield receive
+                except BaseException as exc:
+                    caller_exception = exc
+                finally:
+                    task_group.cancel_scope.cancel()
+        except BaseExceptionGroup as exc:
+            unwrapped = _single_exception_from_group(exc)
+            if caller_exception is not None and not isinstance(
+                caller_exception, anyio.EndOfStream
+            ):
+                raise caller_exception from None
+            if unwrapped is not None:
+                raise unwrapped from exc
+            if caller_exception is not None:
+                raise caller_exception from None
+            raise
+        if caller_exception is not None:
+            raise caller_exception
+
+    @asynccontextmanager
     async def watch_contracts(
         self,
         profile: str | None = None,
@@ -2639,21 +2713,20 @@ class ConcordParticipantManager:
     async def watch_loop(self) -> None:
         while not self._closed:
             try:
-                async with self._concord.watch_contracts(
+                async with self._concord.watch_contract_notifications(
                     self.profile,
-                    log_events=False,
                 ) as stream:
                     await self.reconcile(
                         reason="contract watch warmup",
                         rebuild_index=True,
                     )
-                    async for event in stream:
+                    async for notification in stream:
                         if self._closed:
                             return
-                        await self._update_contract_index(event)
+                        await self._update_contract_index(notification)
                         await self._notifications.request(
-                            f"{event.event_type.value} "
-                            f"{event.contract.key if event.contract else '<unknown>'}"
+                            f"{notification.source} {notification.operation} "
+                            f"{notification.change.key if notification.change else '<unknown>'}"
                         )
             except StateUnavailable:
                 async with self._lock:
@@ -2752,15 +2825,35 @@ class ConcordParticipantManager:
             )
         return await self._concord._find_contracts(self.profile)
 
-    async def _update_contract_index(self, event: ConcordContractEvent) -> None:
-        contract = event.contract
-        if contract is None:
+    async def _update_contract_index(
+        self,
+        notification: ConcordContractNotification,
+    ) -> None:
+        if notification.source != "contract":
             return
-        if self.profile is not None and contract.profile != self.profile:
-            return
+        contract = notification.contract
+        key = (
+            notification.change.key
+            if notification.change is not None
+            else concord_contract_key(
+                contract_id=notification.contract_id,
+                generation=notification.generation,
+            )
+        )
         async with self._lock:
-            if self._contract_index_ready:
+            if not self._contract_index_ready:
+                return
+            if contract is not None:
+                if self.profile is not None and contract.profile != self.profile:
+                    self._contract_index.pop(key, None)
+                    return
                 self._contract_index[contract.key] = contract
+                return
+            if notification.operation in {"delete", "expire"}:
+                self._contract_index.pop(key, None)
+                return
+            self._contract_index_ready = False
+            self._contract_index.clear()
 
     async def _reconcile_contract_locked(
         self,
@@ -3218,6 +3311,75 @@ def _contract_handle_from_change(change: StateChange) -> ContractHandle | None:
     return _contract_handle(change.key, record, change.entry.revision)
 
 
+def _contract_notification_from_change(
+    change: StateChange,
+    *,
+    profile_filter: str | None,
+    known_profiles: dict[tuple[str, int], str | None],
+) -> ConcordContractNotification | None:
+    parsed = parse_concord_contract_key(change.key)
+    if parsed is None:
+        return None
+    contract_id, generation = parsed
+    pointer = (contract_id, generation)
+    known_profile = known_profiles.get(pointer)
+    contract = _contract_handle_from_change(change)
+    if contract is not None:
+        profile = contract.profile
+        known_profiles[pointer] = profile
+        profile_known = True
+    else:
+        profile = known_profile
+        profile_known = pointer in known_profiles
+        if change.operation in {"delete", "expire"}:
+            known_profiles.pop(pointer, None)
+    if (
+        profile_filter is not None
+        and profile_known
+        and profile != profile_filter
+    ):
+        return None
+    return ConcordContractNotification(
+        source="contract",
+        operation=change.operation,
+        contract_id=contract_id,
+        generation=generation,
+        contract=contract,
+        profile=profile,
+        change=change,
+    )
+
+
+def _token_notification_from_change(
+    change: StateChange,
+    *,
+    profile_filter: str | None,
+    known_profiles: dict[tuple[str, int], str | None],
+) -> ConcordContractNotification | None:
+    parsed = parse_concord_participant_token_key(change.key)
+    if parsed is None:
+        return None
+    contract_id, generation, participant = parsed
+    pointer = (contract_id, generation)
+    profile_known = pointer in known_profiles
+    profile = known_profiles.get(pointer)
+    if (
+        profile_filter is not None
+        and profile_known
+        and profile != profile_filter
+    ):
+        return None
+    return ConcordContractNotification(
+        source="token",
+        operation=change.operation,
+        contract_id=contract_id,
+        generation=generation,
+        participant=participant,
+        profile=profile,
+        change=change,
+    )
+
+
 def _concord_event_type(validity: ContractValidity) -> ConcordEventType:
     if validity.status == ContractValidityStatus.VALID:
         return ConcordEventType.VALID
@@ -3521,6 +3683,7 @@ __all__ = [
     "ConcordAgreementSpec",
     "ConcordCoordinator",
     "ConcordContractEvent",
+    "ConcordContractNotification",
     "ConcordEventType",
     "ConcordMaintenanceDeletionResult",
     "ConcordManagedContract",

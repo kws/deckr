@@ -167,14 +167,17 @@ class CoalescedTrigger:
             raise ValueError("batch_interval must be greater than zero")
         self._batch_interval = batch_interval
         self._condition = anyio.Condition()
-        self._reasons: list[str] = []
+        self._first_reason: str | None = None
+        self._reason_count = 0
         self._closed = False
 
     async def request(self, reason: str) -> None:
         async with self._condition:
             if self._closed:
                 return
-            self._reasons.append(reason)
+            if self._reason_count == 0:
+                self._first_reason = reason
+            self._reason_count += 1
             self._condition.notify()
 
     async def aclose(self) -> None:
@@ -191,7 +194,7 @@ class CoalescedTrigger:
         next_run_at = 0.0
         while True:
             async with self._condition:
-                while not self._reasons and not self._closed:
+                while self._reason_count == 0 and not self._closed:
                     await self._condition.wait()
                 if self._closed:
                     return
@@ -205,20 +208,32 @@ class CoalescedTrigger:
             async with self._condition:
                 if self._closed:
                     return
-                reasons = tuple(self._reasons)
-                self._reasons.clear()
+                first_reason = self._first_reason
+                reason_count = self._reason_count
+                self._first_reason = None
+                self._reason_count = 0
 
             next_run_at = anyio.current_time() + self._batch_interval
-            await handler(_coalesced_reason(reason_prefix, reasons))
+            await handler(
+                _coalesced_reason(
+                    reason_prefix,
+                    first_reason=first_reason,
+                    reason_count=reason_count,
+                )
+            )
 
 
-def _coalesced_reason(prefix: str, reasons: tuple[str, ...]) -> str:
-    if not reasons:
+def _coalesced_reason(
+    prefix: str,
+    *,
+    first_reason: str | None,
+    reason_count: int,
+) -> str:
+    if first_reason is None or reason_count <= 0:
         return prefix
-    first = reasons[0]
-    if len(reasons) == 1:
-        return f"{prefix}: {first}"
-    return f"{prefix}: {first} (+{len(reasons) - 1} more)"
+    if reason_count == 1:
+        return f"{prefix}: {first_reason}"
+    return f"{prefix}: {first_reason} (+{reason_count - 1} more)"
 
 
 @dataclass(order=True)

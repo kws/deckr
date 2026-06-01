@@ -100,7 +100,14 @@ class StateStore(Protocol):
     def watch(
         self,
         prefix: str = "",
-    ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[StateChange]]: ...
+    ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[StateChange]]:
+        """Receive state notifications by prefix.
+
+        This is not an authoritative event log. Substrates may coalesce or omit
+        intermediate changes, so callers that need correctness against current
+        state must reconcile with `get()` or `items()`.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,6 +21,7 @@ from deckr.concord import (
     ConcordCoordinator,
     ConcordEventType,
     ConcordManagedContractEventType,
+    ConcordParticipantManager,
     ConcordService,
     ContractRecord,
     ContractState,
@@ -76,6 +77,14 @@ async def _receive_managed_event_type(stream, *event_types):
             event = await stream.receive()
             if event.event_type in event_types:
                 return event
+
+
+async def _receive_notification_source(stream, source: str):
+    with anyio.fail_after(1):
+        while True:
+            notification = await stream.receive()
+            if notification.source == source:
+                return notification
 
 
 class RacingUpdateStateStore:
@@ -796,6 +805,83 @@ async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> 
 
 
 @pytest.mark.asyncio
+async def test_concord_participant_manager_notification_reconciles_expiry_and_cancel() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    lifecycle = ConcordParticipantManager(
+        concord=service,
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+        reconcile_interval=30.0,
+        notification_batch_interval=0.01,
+    )
+
+    async with lifecycle.watch() as events, anyio.create_task_group() as task_group:
+        lifecycle.start(task_group)
+        contract = await service._create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(),
+            created_by=controller,
+        )
+        await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.PENDING,
+        )
+        controller_token = await service._attach(
+            contract,
+            controller,
+            "controller-session",
+        )
+        valid = await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.VALID,
+        )
+        assert valid.validity is not None
+        assert valid.validity.status == ContractValidityStatus.VALID
+
+        await token_state.expire(controller_token.key)
+        invalid = await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.INVALID,
+        )
+        assert invalid.validity is not None
+        assert invalid.validity.status == ContractValidityStatus.MISSING_TOKEN
+        released = await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.RELEASED,
+        )
+        assert released.reason == ContractValidityStatus.MISSING_TOKEN.value
+
+        contract = await service._create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-2",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(claim_id="claim-2"),
+            created_by=controller,
+        )
+        await service._attach(contract, controller, "controller-session")
+        await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.VALID,
+        )
+        await service._cancel(contract, controller, reason="done")
+        cancelled = await _receive_managed_event_type(
+            events,
+            ConcordManagedContractEventType.CANCELLED,
+        )
+        assert cancelled.validity is not None
+        assert cancelled.validity.status == ContractValidityStatus.CANCELLED
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_concord_participant_manager_releases_on_token_expiry_and_cancel() -> None:
     contract_state = MemoryStateStore(name="contracts")
     token_state = MemoryStateStore(name="tokens")
@@ -947,6 +1033,54 @@ async def test_concord_watch_can_suppress_lifecycle_logging(caplog) -> None:
     assert event.contract is not None
     assert event.contract.contract_id == contract.contract_id
     assert "Concord contract pending" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_concord_contract_notifications_do_not_validate_or_fetch_contracts() -> None:
+    contract_state = MemoryStateStore(name="contracts")
+    token_state = MemoryStateStore(name="tokens")
+    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+
+    async def fail_validate(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("validate must not be called")
+
+    async def fail_get_contract(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("get_contract must not be called")
+
+    service._coordinator.validate = fail_validate
+    service.get_contract = fail_get_contract
+
+    async with service.watch_contract_notifications(
+        HARDWARE_CLAIM_PROFILE_ID,
+    ) as notifications:
+        contract = await service._create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(),
+            created_by=controller,
+        )
+        contract_notification = await _receive_notification_source(
+            notifications,
+            "contract",
+        )
+        await service._attach(contract, controller, "controller-session")
+        token_notification = await _receive_notification_source(
+            notifications,
+            "token",
+        )
+
+    assert contract_notification.operation == "put"
+    assert contract_notification.contract == contract
+    assert contract_notification.profile == HARDWARE_CLAIM_PROFILE_ID
+    assert token_notification.operation == "put"
+    assert token_notification.contract_id == contract.contract_id
+    assert token_notification.generation == contract.generation
+    assert token_notification.participant == controller
 
 
 @pytest.mark.asyncio

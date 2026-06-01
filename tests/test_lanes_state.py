@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 import anyio
@@ -65,6 +66,18 @@ def _settings_target() -> dict[str, str]:
 async def _receive(stream):
     with anyio.fail_after(1):
         return await stream.receive()
+
+
+async def _wait_for_buffer_used(stream, count: int) -> None:
+    with anyio.fail_after(1):
+        while stream.statistics().current_buffer_used < count:
+            await anyio.sleep(0)
+
+
+async def _wait_for_blocked_sender(stream) -> None:
+    with anyio.fail_after(1):
+        while stream.statistics().tasks_waiting_send < 1:
+            await anyio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -725,6 +738,89 @@ async def test_nats_state_watch_maps_delete_and_max_age_marker(caplog) -> None:
 
 
 @pytest.mark.asyncio
+async def test_nats_state_watch_callback_does_not_block_when_stream_is_full() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=1,
+    )
+
+    async with store.watch("contracts.") as changes:
+        await store.put("contracts.blocker.1.meta", {"value": 1})
+        await _wait_for_buffer_used(changes, 1)
+
+        for index in range(20):
+            with anyio.fail_after(0.2):
+                await store.put(
+                    f"contracts.burst.{index}.meta",
+                    {"value": index},
+                )
+
+
+@pytest.mark.asyncio
+async def test_nats_state_watch_coalesces_repeated_updates_by_key() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=1,
+    )
+    target = "contracts.main.1.participants.controller"
+
+    async with store.watch("contracts.") as changes:
+        await store.put("contracts.blocker.1.meta", {"value": 1})
+        await _wait_for_buffer_used(changes, 1)
+        await store.put("contracts.blocker.2.meta", {"value": 2})
+        await _wait_for_blocked_sender(changes)
+
+        await store.put(target, {"refresh": 1})
+        await store.put(target, {"refresh": 2})
+        await store.put(target, {"refresh": 3})
+
+        first = await _receive(changes)
+        second = await _receive(changes)
+        latest = await _receive(changes)
+        with anyio.move_on_after(0.05) as scope:
+            await changes.receive()
+
+    assert first.key == "contracts.blocker.1.meta"
+    assert second.key == "contracts.blocker.2.meta"
+    assert latest.key == target
+    assert latest.entry is not None
+    assert latest.entry.value["refresh"] == 3
+    assert scope.cancel_called
+
+
+@pytest.mark.asyncio
+async def test_nats_state_watch_stale_marker_exact_check_runs_outside_callback() -> None:
+    fake_js = _FakeJs()
+    store = NatsStateStore(
+        name="test_state",
+        js=fake_js,
+        buffer_size=10,
+    )
+    key = "contracts.main.1.participants.controller"
+
+    async with store.watch("contracts.") as changes:
+        await store.create(key, {"owner": "controller"})
+        await _receive(changes)
+        assert fake_js.kv is not None
+        fake_js.kv.get_started = anyio.Event()
+        fake_js.kv.get_wait = anyio.Event()
+
+        with anyio.fail_after(0.2):
+            await fake_js.kv.publish_stale_max_age_marker(key)
+        await fake_js.kv.get_started.wait()
+        fake_js.kv.get_wait.set()
+        fake_js.kv.get_wait = None
+        with anyio.move_on_after(0.05) as scope:
+            await changes.receive()
+
+    assert scope.cancel_called
+
+
+@pytest.mark.asyncio
 async def test_nats_state_watch_ignores_stale_max_age_marker(caplog) -> None:
     caplog.set_level(logging.INFO, logger="deckr.substrates.nats")
     fake_js = _FakeJs()
@@ -865,6 +961,93 @@ def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() ->
     assert _headers_for(message)["Deckr-Recipient"] == "controller:main"
 
 
+class _FakeLaneMsg:
+    def __init__(self, message: DeckrMessage) -> None:
+        self.subject = _subject_for(message)
+        self.data = json.dumps(
+            message.to_dict(),
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.headers = dict(_headers_for(message))
+        self.reply = None
+
+
+class _FakeLaneSubscription:
+    def __init__(self, nc: _FakeNc, subject: str, callback) -> None:
+        self._nc = nc
+        self.subject = subject
+        self.callback = callback
+        self.unsubscribed = False
+
+    async def deliver(self, message: DeckrMessage) -> None:
+        await self.callback(_FakeLaneMsg(message))
+
+    async def unsubscribe(self) -> None:
+        self.unsubscribed = True
+        if self in self._nc.subscriptions:
+            self._nc.subscriptions.remove(self)
+
+
+class _FakeNc:
+    def __init__(self) -> None:
+        self.subscriptions: list[_FakeLaneSubscription] = []
+
+    async def subscribe(self, subject: str, *, cb) -> _FakeLaneSubscription:
+        subscription = _FakeLaneSubscription(self, subject, cb)
+        self.subscriptions.append(subscription)
+        return subscription
+
+
+@pytest.mark.asyncio
+async def test_nats_lane_subscriber_buffer_full_unsubscribes(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="deckr.substrates.nats")
+    substrate = NatsSubstrate(
+        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        buffer_size=1,
+    )
+    fake_nc = _FakeNc()
+    substrate._nc = fake_nc
+    controller = controller_address("main")
+    provider = action_provider_address("python")
+    first = DeckrMessage(
+        lane=ACTIONS_LANE,
+        messageType="settingsRequest",
+        sender=provider,
+        senderSessionId="provider-session",
+        recipient=endpoint_target(controller),
+        recipientSessionId="controller-session",
+        subject=entity_subject("settings", contextId="ctx-1"),
+        body={"target": _settings_target()},
+    )
+    second = DeckrMessage(
+        lane=ACTIONS_LANE,
+        messageType="settingsRequest",
+        sender=provider,
+        senderSessionId="provider-session",
+        recipient=endpoint_target(controller),
+        recipientSessionId="controller-session",
+        subject=entity_subject("settings", contextId="ctx-2"),
+        body={"target": _settings_target()},
+    )
+
+    async with substrate.subscribe(
+        ACTIONS_LANE,
+        controller,
+        endpoint_session_id="controller-session",
+    ) as stream:
+        subscription = fake_nc.subscriptions[0]
+        await subscription.deliver(first)
+        await subscription.deliver(second)
+
+        assert subscription.unsubscribed
+        assert await _receive(stream) == first
+        with pytest.raises(anyio.EndOfStream):
+            await stream.receive()
+
+    assert "subscriber buffer full" in caplog.text
+    assert "lane=actions endpoint=controller:main session=controller-session" in caplog.text
+
+
 class _FakeKvEntry:
     def __init__(
         self,
@@ -919,9 +1102,15 @@ class _FakeKv:
         self.keys_filters: object = None
         self.get_calls = 0
         self.get_overrides: dict[str, _FakeKvEntry] = {}
+        self.get_started: anyio.Event | None = None
+        self.get_wait: anyio.Event | None = None
 
     async def get(self, key: str) -> _FakeKvEntry:
         self.get_calls += 1
+        if self.get_started is not None:
+            self.get_started.set()
+        if self.get_wait is not None:
+            await self.get_wait.wait()
         if self.fail_get is not None:
             raise self.fail_get
         if key in self.get_overrides:
