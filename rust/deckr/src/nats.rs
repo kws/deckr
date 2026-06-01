@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::time::Duration;
 
-use async_nats::jetstream::kv::{Config as KvConfig, Operation, Store};
+use async_nats::jetstream::kv::{Config as KvConfig, Entry, Operation, Store, Watch, WatcherError};
 use async_nats::jetstream::Context as JetStreamContext;
 use async_nats::{HeaderMap, Message, Subscriber};
 use futures_util::future::{select, Either};
@@ -31,6 +31,55 @@ impl ConcordStateChangeSource {
             Self::Contracts => "contract watch",
             Self::Tokens => "token watch",
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConcordStateChange {
+    pub source: ConcordStateChangeSource,
+    pub key: String,
+}
+
+pub struct ConcordStateChangeStream {
+    contracts: Watch,
+    tokens: Watch,
+}
+
+impl ConcordStateChangeStream {
+    pub async fn next(&mut self) -> Result<ConcordStateChange> {
+        let contracts = self.contracts.next();
+        let tokens = self.tokens.next();
+        pin_mut!(contracts);
+        pin_mut!(tokens);
+
+        match select(contracts, tokens).await {
+            Either::Left((entry, _)) => {
+                map_concord_watch_entry(ConcordStateChangeSource::Contracts, entry)
+            }
+            Either::Right((entry, _)) => {
+                map_concord_watch_entry(ConcordStateChangeSource::Tokens, entry)
+            }
+        }
+    }
+}
+
+fn map_concord_watch_entry(
+    source: ConcordStateChangeSource,
+    entry: Option<std::result::Result<Entry, WatcherError>>,
+) -> Result<ConcordStateChange> {
+    match entry {
+        Some(Ok(entry)) => Ok(ConcordStateChange {
+            source,
+            key: entry.key,
+        }),
+        Some(Err(error)) => Err(Error::StateUnavailable(format!(
+            "watching Concord state via {}: {error}",
+            source.reason()
+        ))),
+        None => Err(Error::StateUnavailable(format!(
+            "Concord state watch ended via {}",
+            source.reason()
+        ))),
     }
 }
 
@@ -135,20 +184,25 @@ impl NatsDeckrRuntime {
         Ok(envelope)
     }
 
-    pub async fn wait_for_concord_change(&self) -> Result<ConcordStateChangeSource> {
+    pub async fn watch_concord_changes(&self) -> Result<ConcordStateChangeStream> {
+        let watch_key = format!("{}>", concord_contracts_prefix());
         let contracts = self
             .concord_contracts
-            .wait_for_change(concord_contracts_prefix());
+            .kv
+            .watch(&watch_key)
+            .await
+            .map_err(|error| {
+                Error::StateUnavailable(format!("watching Concord contract state: {error}"))
+            })?;
         let tokens = self
             .concord_tokens
-            .wait_for_change(concord_contracts_prefix());
-        pin_mut!(contracts);
-        pin_mut!(tokens);
-
-        match select(contracts, tokens).await {
-            Either::Left((result, _)) => result.map(|()| ConcordStateChangeSource::Contracts),
-            Either::Right((result, _)) => result.map(|()| ConcordStateChangeSource::Tokens),
-        }
+            .kv
+            .watch(&watch_key)
+            .await
+            .map_err(|error| {
+                Error::StateUnavailable(format!("watching Concord token state: {error}"))
+            })?;
+        Ok(ConcordStateChangeStream { contracts, tokens })
     }
 }
 
@@ -161,26 +215,6 @@ pub struct NatsStateStore {
 impl NatsStateStore {
     pub fn policy(&self) -> &StateStorePolicy {
         &self.policy
-    }
-
-    pub async fn wait_for_change(&self, prefix: &str) -> Result<()> {
-        let watch_key = if prefix.ends_with('.') {
-            format!("{prefix}>")
-        } else {
-            prefix.to_string()
-        };
-        let mut watch = self.kv.watch(watch_key).await.map_err(|error| {
-            Error::StateUnavailable(format!("watching state {prefix}: {error}"))
-        })?;
-        match watch.next().await {
-            Some(Ok(_entry)) => Ok(()),
-            Some(Err(error)) => Err(Error::StateUnavailable(format!(
-                "watching state {prefix}: {error}"
-            ))),
-            None => Err(Error::StateUnavailable(format!(
-                "state watch ended for {prefix}"
-            ))),
-        }
     }
 
     fn validate_ttl(&self, ttl: Option<u64>) -> Result<()> {

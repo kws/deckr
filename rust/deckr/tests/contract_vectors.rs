@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use deckr::beacon::{beacon_advertisement_key, AdvertisementRecord};
 use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_value};
 use deckr::concord::{
     concord_contract_key, concord_participant_token_key, ConcordCoordinator,
-    ConcordParticipantManager, ContractRecord, ContractValidityStatus, ParticipantTokenRecord,
+    ConcordParticipantLease, ConcordParticipantManager, ContractHandle, ContractRecord,
+    ContractValidityStatus, ParticipantTokenRecord,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
@@ -449,6 +451,180 @@ async fn concord_participant_manager_does_not_resurrect_lost_authority() {
 }
 
 #[tokio::test]
+async fn concord_participant_manager_reuses_fresh_token_without_refresh() {
+    let (concord, _tokens, contract, manager, mut lifecycle) =
+        managed_claim_context("contract-1").await;
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    let first_token = managed[0].token.clone().unwrap();
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    let second_token = managed[0].token.clone().unwrap();
+    let stored_token = concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(second_token.refresh_seq, first_token.refresh_seq);
+    assert_eq!(second_token.revision, first_token.revision);
+    assert_eq!(stored_token.refresh_seq, first_token.refresh_seq);
+    assert_eq!(stored_token.revision, first_token.revision);
+}
+
+#[tokio::test]
+async fn concord_participant_lease_public_refresh_path_is_rate_limited() {
+    let (concord, _tokens, contract, manager, _lifecycle) =
+        managed_claim_context("contract-1").await;
+    let mut lease =
+        ConcordParticipantLease::new(contract.clone(), manager.clone(), "manager-session".into())
+            .unwrap()
+            .with_token_refresh_interval(Duration::from_millis(10));
+
+    let first_token = lease.attach_or_refresh(&concord).await.unwrap();
+    let repeated_token = lease.attach_or_refresh(&concord).await.unwrap();
+    let stored_token = concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(repeated_token.refresh_seq, first_token.refresh_seq);
+    assert_eq!(repeated_token.revision, first_token.revision);
+    assert_eq!(stored_token.refresh_seq, first_token.refresh_seq);
+    assert_eq!(stored_token.revision, first_token.revision);
+
+    tokio::time::sleep(Duration::from_millis(15)).await;
+    let refreshed_token = lease.attach_or_refresh(&concord).await.unwrap();
+
+    assert_eq!(refreshed_token.refresh_seq, first_token.refresh_seq + 1);
+    assert_ne!(refreshed_token.revision, first_token.revision);
+}
+
+#[tokio::test]
+async fn concord_participant_lease_adopted_token_is_not_immediately_refreshed() {
+    let (concord, _tokens, contract, manager, _lifecycle) =
+        managed_claim_context("contract-1").await;
+    let manager_token = concord
+        .attach(
+            &contract,
+            &manager,
+            "manager-session",
+            Some("manager-token".into()),
+        )
+        .await
+        .unwrap();
+    let mut lease =
+        ConcordParticipantLease::new(contract.clone(), manager.clone(), "manager-session".into())
+            .unwrap()
+            .with_token_refresh_interval(Duration::from_millis(10));
+
+    lease.adopt(manager_token.clone()).unwrap();
+    let adopted_token = lease.attach_or_refresh(&concord).await.unwrap();
+
+    assert_eq!(adopted_token.refresh_seq, manager_token.refresh_seq);
+    assert_eq!(adopted_token.revision, manager_token.revision);
+
+    tokio::time::sleep(Duration::from_millis(15)).await;
+    let refreshed_token = lease.attach_or_refresh(&concord).await.unwrap();
+
+    assert_eq!(refreshed_token.refresh_seq, manager_token.refresh_seq + 1);
+    assert_ne!(refreshed_token.revision, manager_token.revision);
+}
+
+#[tokio::test]
+async fn concord_participant_manager_refreshes_due_token() {
+    let (concord, _tokens, contract, manager, lifecycle) =
+        managed_claim_context("contract-1").await;
+    let mut lifecycle = lifecycle.token_refresh_interval(Duration::from_millis(10));
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    let first_token = managed[0].token.clone().unwrap();
+
+    tokio::time::sleep(Duration::from_millis(15)).await;
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    let second_token = managed[0].token.clone().unwrap();
+    let stored_token = concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(first_token.refresh_seq, 1);
+    assert_eq!(second_token.refresh_seq, 2);
+    assert_eq!(stored_token.refresh_seq, 2);
+    assert_ne!(second_token.revision, first_token.revision);
+}
+
+#[tokio::test]
+async fn concord_participant_manager_reconcile_managed_does_not_discover_new_contracts() {
+    let (concord, _tokens, first_contract, manager, mut lifecycle) =
+        managed_claim_context("contract-1").await;
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    assert_eq!(managed.len(), 1);
+
+    let second_contract = concord
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some("contract-2".to_string()),
+            1,
+            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": "claim-2",
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:mirabox-main",
+                "devices": []
+            })),
+            Some(controller.clone()),
+        )
+        .await
+        .unwrap();
+    concord
+        .attach(
+            &second_contract,
+            &controller,
+            "controller-session",
+            Some("controller-token-2".into()),
+        )
+        .await
+        .unwrap();
+
+    let managed = lifecycle.reconcile_managed(None).await.unwrap();
+
+    assert_eq!(managed.len(), 1);
+    assert_eq!(managed[0].contract.key, first_contract.key);
+    assert!(concord
+        .participant_token(&second_contract, &manager)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn concord_participant_manager_reconcile_managed_does_not_resurrect_deleted_token() {
+    let (concord, tokens, contract, _manager, mut lifecycle) =
+        managed_claim_context("contract-1").await;
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    let manager_token = managed[0].token.clone().unwrap();
+    tokens
+        .delete(&manager_token.key, Some(manager_token.revision))
+        .await
+        .unwrap();
+
+    let managed = lifecycle.reconcile_managed(None).await.unwrap();
+
+    assert!(managed.is_empty());
+    assert_eq!(
+        concord.validate(&contract, None).await.status,
+        ContractValidityStatus::MissingToken
+    );
+}
+
+#[tokio::test]
 async fn concord_refresh_returns_latest_token_after_revision_race() {
     let contracts = MemoryStateStore::new();
     let tokens = RacingUpdateStore::new(MemoryStateStore::new());
@@ -497,6 +673,54 @@ fn endpoint_semantics_reject_non_core_and_reserved_addresses() {
     assert!(EndpointAddress::parse("driver:mirabox-main").is_err());
     assert!(EndpointAddress::parse("controller: main").is_err());
     assert!(EndpointAddress::parse("action_provider:dev.deckr.controller.builtin").is_err());
+}
+
+async fn managed_claim_context(
+    contract_id: &str,
+) -> (
+    ConcordCoordinator<MemoryStateStore, MemoryStateStore>,
+    MemoryStateStore,
+    ContractHandle,
+    EndpointAddress,
+    ConcordParticipantManager<MemoryStateStore, MemoryStateStore>,
+) {
+    let contracts = MemoryStateStore::new();
+    let tokens = MemoryStateStore::new();
+    let concord = ConcordCoordinator::new(contracts, tokens.clone());
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let lifecycle =
+        ConcordParticipantManager::new(concord.clone(), manager.clone(), "manager-session".into())
+            .unwrap()
+            .profile(HARDWARE_CLAIM_PROFILE_ID.to_string());
+    let contract = concord
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some(contract_id.to_string()),
+            1,
+            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": contract_id,
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:mirabox-main",
+                "devices": []
+            })),
+            Some(controller.clone()),
+        )
+        .await
+        .unwrap();
+    concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some(format!("{contract_id}-controller-token")),
+        )
+        .await
+        .unwrap();
+
+    (concord, tokens, contract, manager, lifecycle)
 }
 
 fn fixture(path: &str) -> Value {

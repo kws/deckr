@@ -10,27 +10,50 @@ use crate::{Error, Result};
 
 pub const DEFAULT_STATE_TTL_SECONDS: u64 = 30;
 pub const DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS: u64 = 5;
+pub const DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS: u64 = 15;
 pub const DEFAULT_STATE_RECONCILE_SECONDS: u64 = 300;
+pub const CONCORD_TOKEN_REFRESH_SECONDS_ENV: &str = "DECKR_CONCORD_TOKEN_REFRESH_SECONDS";
 pub const STATE_RECONCILE_SECONDS_ENV: &str = "DECKR_STATE_RECONCILE_SECONDS";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateMaintenancePolicy {
     pub renewal_interval: Duration,
+    pub concord_token_refresh_interval: Duration,
     pub reconcile_interval: Duration,
 }
 
 impl StateMaintenancePolicy {
     pub fn from_env() -> Result<Self> {
-        Self::from_reconcile_env_result(env::var(STATE_RECONCILE_SECONDS_ENV))
+        Self::from_env_results(
+            env::var(CONCORD_TOKEN_REFRESH_SECONDS_ENV),
+            env::var(STATE_RECONCILE_SECONDS_ENV),
+        )
     }
 
-    fn from_reconcile_env_result(
+    fn from_env_results(
+        concord_token_refresh_env: std::result::Result<String, VarError>,
         reconcile_env: std::result::Result<String, VarError>,
     ) -> Result<Self> {
         Ok(Self {
             renewal_interval: Duration::from_secs(DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS),
-            reconcile_interval: reconcile_interval_from_env_result(reconcile_env)?,
+            concord_token_refresh_interval: interval_from_env_result(
+                CONCORD_TOKEN_REFRESH_SECONDS_ENV,
+                DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
+                concord_token_refresh_env,
+            )?,
+            reconcile_interval: interval_from_env_result(
+                STATE_RECONCILE_SECONDS_ENV,
+                DEFAULT_STATE_RECONCILE_SECONDS,
+                reconcile_env,
+            )?,
         })
+    }
+
+    #[cfg(test)]
+    fn from_reconcile_env_result(
+        reconcile_env: std::result::Result<String, VarError>,
+    ) -> Result<Self> {
+        Self::from_env_results(Err(VarError::NotPresent), reconcile_env)
     }
 }
 
@@ -38,36 +61,41 @@ impl Default for StateMaintenancePolicy {
     fn default() -> Self {
         Self {
             renewal_interval: Duration::from_secs(DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS),
+            concord_token_refresh_interval: Duration::from_secs(
+                DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
+            ),
             reconcile_interval: Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS),
         }
     }
 }
 
-fn reconcile_interval_from_env_result(
-    reconcile_env: std::result::Result<String, VarError>,
+fn interval_from_env_result(
+    env_name: &str,
+    default_seconds: u64,
+    env_value: std::result::Result<String, VarError>,
 ) -> Result<Duration> {
-    match reconcile_env {
-        Ok(value) => reconcile_interval_from_env_value(&value),
-        Err(VarError::NotPresent) => Ok(Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS)),
-        Err(VarError::NotUnicode(_)) => Err(Error::Invalid(format!(
-            "{STATE_RECONCILE_SECONDS_ENV} must be valid Unicode"
-        ))),
+    match env_value {
+        Ok(value) => interval_from_env_value(env_name, default_seconds, &value),
+        Err(VarError::NotPresent) => Ok(Duration::from_secs(default_seconds)),
+        Err(VarError::NotUnicode(_)) => {
+            Err(Error::Invalid(format!("{env_name} must be valid Unicode")))
+        }
     }
 }
 
-fn reconcile_interval_from_env_value(value: &str) -> Result<Duration> {
+fn interval_from_env_value(env_name: &str, default_seconds: u64, value: &str) -> Result<Duration> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Ok(Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS));
+        return Ok(Duration::from_secs(default_seconds));
     }
     let seconds = trimmed.parse::<u64>().map_err(|_| {
         Error::Invalid(format!(
-            "{STATE_RECONCILE_SECONDS_ENV} must be a positive integer number of seconds"
+            "{env_name} must be a positive integer number of seconds"
         ))
     })?;
     if seconds == 0 {
         return Err(Error::Invalid(format!(
-            "{STATE_RECONCILE_SECONDS_ENV} must be greater than zero"
+            "{env_name} must be greater than zero"
         )));
     }
     Ok(Duration::from_secs(seconds))
@@ -308,9 +336,55 @@ mod tests {
             Duration::from_secs(DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS)
         );
         assert_eq!(
+            policy.concord_token_refresh_interval,
+            Duration::from_secs(DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS)
+        );
+        assert_eq!(
             policy.reconcile_interval,
             Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS)
         );
+    }
+
+    #[test]
+    fn concord_token_refresh_env_absent_or_blank_uses_default() {
+        for env_value in [
+            Err(VarError::NotPresent),
+            Ok(String::new()),
+            Ok("  ".to_string()),
+        ] {
+            let policy =
+                StateMaintenancePolicy::from_env_results(env_value, Err(VarError::NotPresent))
+                    .unwrap();
+            assert_eq!(
+                policy.concord_token_refresh_interval,
+                Duration::from_secs(DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS)
+            );
+        }
+    }
+
+    #[test]
+    fn concord_token_refresh_env_accepts_positive_seconds() {
+        let policy = StateMaintenancePolicy::from_env_results(
+            Ok("  20  ".to_string()),
+            Err(VarError::NotPresent),
+        )
+        .unwrap();
+
+        assert_eq!(
+            policy.concord_token_refresh_interval,
+            Duration::from_secs(20)
+        );
+    }
+
+    #[test]
+    fn concord_token_refresh_env_rejects_zero() {
+        let error = StateMaintenancePolicy::from_env_results(
+            Ok("0".to_string()),
+            Err(VarError::NotPresent),
+        )
+        .expect_err("zero token refresh interval should fail");
+
+        assert_invalid(error, "greater than zero");
     }
 
     #[test]

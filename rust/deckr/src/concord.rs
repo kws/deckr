@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ use crate::keys::{
     concord_participant_token_key as make_concord_participant_token_key,
     parse_concord_contract_key,
 };
+pub use crate::state::DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS;
 use crate::state::{StateStore, StateStorePolicy};
 use crate::{Error, Result};
 
@@ -326,6 +328,8 @@ pub struct ConcordParticipantLease {
     pub participant: EndpointAddress,
     pub session_id: String,
     token: Option<ParticipantHandle>,
+    refresh_interval: Duration,
+    last_token_refresh_at: Option<Instant>,
     closed: bool,
 }
 
@@ -341,8 +345,19 @@ impl ConcordParticipantLease {
             participant,
             session_id,
             token: None,
+            refresh_interval: Duration::from_secs(DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS),
+            last_token_refresh_at: None,
             closed: false,
         })
+    }
+
+    pub fn with_token_refresh_interval(mut self, interval: Duration) -> Self {
+        assert!(
+            !interval.is_zero(),
+            "Concord token refresh interval must be greater than zero"
+        );
+        self.refresh_interval = interval;
+        self
     }
 
     pub fn token(&self) -> Option<&ParticipantHandle> {
@@ -352,6 +367,7 @@ impl ConcordParticipantLease {
     pub fn close(&mut self) {
         self.closed = true;
         self.token = None;
+        self.last_token_refresh_at = None;
     }
 
     pub fn adopt(&mut self, token: ParticipantHandle) -> Result<()> {
@@ -375,7 +391,11 @@ impl ConcordParticipantLease {
                 "participant token belongs to a different session".to_string(),
             ));
         }
+        if self.token.as_ref() == Some(&token) {
+            return Ok(());
+        }
         self.token = Some(token);
+        self.last_token_refresh_at = Some(Instant::now());
         Ok(())
     }
 
@@ -389,13 +409,32 @@ impl ConcordParticipantLease {
             ));
         }
         if let Some(token) = self.token.clone() {
+            match concord.validate_participant_handle(&token).await {
+                Ok(current) => self.adopt(current)?,
+                Err(error) => {
+                    self.token = None;
+                    self.last_token_refresh_at = None;
+                    if is_terminal_participant_conflict(&error) {
+                        self.closed = true;
+                    }
+                    return Err(error);
+                }
+            }
+            let token = self.token.clone().ok_or_else(|| {
+                Error::StateConflict("Concord participant token is missing".to_string())
+            })?;
+            if !self.token_refresh_due() {
+                return Ok(token);
+            }
             match concord.refresh(&token).await {
                 Ok(refreshed) => {
                     self.token = Some(refreshed.clone());
+                    self.last_token_refresh_at = Some(Instant::now());
                     return Ok(refreshed);
                 }
                 Err(error) => {
                     self.token = None;
+                    self.last_token_refresh_at = None;
                     if is_terminal_participant_conflict(&error) {
                         self.closed = true;
                     }
@@ -410,6 +449,7 @@ impl ConcordParticipantLease {
         {
             Ok(token) => {
                 self.token = Some(token.clone());
+                self.last_token_refresh_at = Some(Instant::now());
                 Ok(token)
             }
             Err(error) => {
@@ -419,6 +459,11 @@ impl ConcordParticipantLease {
                 Err(error)
             }
         }
+    }
+
+    fn token_refresh_due(&self) -> bool {
+        self.last_token_refresh_at
+            .is_none_or(|last_refresh| last_refresh.elapsed() >= self.refresh_interval)
     }
 }
 
@@ -717,6 +762,40 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
         ))
     }
 
+    pub async fn validate_participant_handle(
+        &self,
+        handle: &ParticipantHandle,
+    ) -> Result<ParticipantHandle> {
+        let contract_key = make_concord_contract_key(&handle.contract_id, handle.generation);
+        let Some(contract_entry) = self.contract_state.get(&contract_key).await? else {
+            return Err(Error::StateConflict(
+                "Concord contract is missing".to_string(),
+            ));
+        };
+        let contract = ContractRecord::from_value(contract_entry.value)?;
+        if contract.state == ContractState::Cancelled {
+            return Err(Error::StateConflict(
+                "Concord contract is cancelled".to_string(),
+            ));
+        }
+        let Some(token_entry) = self.token_state.get(&handle.key).await? else {
+            return Err(Error::StateConflict(
+                "Concord participant token is missing".to_string(),
+            ));
+        };
+        let token = ParticipantTokenRecord::from_value(token_entry.value)?;
+        if !token_matches_handle(&token, handle) {
+            return Err(Error::StateConflict(
+                "Concord participant token changed owner".to_string(),
+            ));
+        }
+        Ok(participant_handle(
+            handle.key.clone(),
+            &token,
+            token_entry.revision,
+        ))
+    }
+
     pub async fn cancel(
         &self,
         contract: &ContractHandle,
@@ -863,6 +942,7 @@ pub struct ConcordParticipantManager<C: StateStore, T: StateStore> {
     pub participant: EndpointAddress,
     pub session_id: String,
     pub profile: Option<String>,
+    token_refresh_interval: Duration,
     managed: BTreeMap<String, ConcordManagedContract>,
     leases: BTreeMap<String, ConcordParticipantLease>,
 }
@@ -879,6 +959,7 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
             participant,
             session_id,
             profile: None,
+            token_refresh_interval: Duration::from_secs(DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS),
             managed: BTreeMap::new(),
             leases: BTreeMap::new(),
         })
@@ -886,6 +967,15 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
 
     pub fn profile(mut self, profile: impl Into<String>) -> Self {
         self.profile = Some(profile.into());
+        self
+    }
+
+    pub fn token_refresh_interval(mut self, interval: Duration) -> Self {
+        assert!(
+            !interval.is_zero(),
+            "Concord token refresh interval must be greater than zero"
+        );
+        self.token_refresh_interval = interval;
         self
     }
 
@@ -918,6 +1008,42 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         let mut next_managed = BTreeMap::<String, ConcordManagedContract>::new();
         let mut next_leases = BTreeMap::<String, ConcordParticipantLease>::new();
         let mut current_leases = self.leases.clone();
+
+        for contract in contracts {
+            let key = contract.key.clone();
+            let lease = current_leases.remove(&key);
+            let Some((managed, lease)) = self
+                .reconcile_contract(contract, lease, &mut accept_contract, current_sessions)
+                .await?
+            else {
+                continue;
+            };
+            next_leases.insert(key.clone(), lease);
+            next_managed.insert(key, managed);
+        }
+
+        for mut lease in current_leases.into_values() {
+            lease.close();
+        }
+        self.managed = next_managed;
+        self.leases = next_leases;
+        Ok(self.managed_contracts())
+    }
+
+    pub async fn reconcile_managed(
+        &mut self,
+        current_sessions: Option<&BTreeMap<String, String>>,
+    ) -> Result<Vec<ConcordManagedContract>> {
+        let contracts = self
+            .managed
+            .values()
+            .map(|managed| managed.contract.clone())
+            .collect::<Vec<_>>();
+        let mut next_managed = BTreeMap::<String, ConcordManagedContract>::new();
+        let mut next_leases = BTreeMap::<String, ConcordParticipantLease>::new();
+        let mut current_leases = self.leases.clone();
+        let mut accept_contract =
+            |_: &ContractHandle, _: &ContractRecord| -> Result<bool> { Ok(true) };
 
         for contract in contracts {
             let key = contract.key.clone();
@@ -992,7 +1118,8 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
                 contract.clone(),
                 self.participant.clone(),
                 self.session_id.clone(),
-            )?,
+            )?
+            .with_token_refresh_interval(self.token_refresh_interval),
         };
 
         if lease.token().is_none() {
