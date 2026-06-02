@@ -9,7 +9,7 @@ from memory_kv_bucket import MemoryJsonKvBucket
 from memory_lane_substrate import MemoryStateStore, memory_deckr
 
 from deckr.actions.endpoints import action_provider_address
-from deckr.beacon import BeaconAdvertisementSpec, BeaconDiscovery, BeaconService
+from deckr.beacon import Beacon, BeaconAdvertisementSpec
 from deckr.concord import (
     ConcordCoordinator,
     ConcordService,
@@ -70,18 +70,12 @@ def _protocol(
     )
 
 
-class CountingItemsStateStore(MemoryStateStore):
-    def __init__(self, *, name: str) -> None:
-        super().__init__(name=name)
-        self.items_calls = 0
-
-    async def items(self, prefix: str = ""):
-        self.items_calls += 1
-        return await super().items(prefix)
+def _memory_beacon() -> Beacon:
+    return Beacon(MemoryJsonKvBucket(bucket="beacon"))
 
 
 async def _publish_service_advertisement(
-    beacon: BeaconService,
+    beacon: Beacon,
     protocol: ServiceProtocol,
     *,
     service_id: str = "openhab-home",
@@ -90,7 +84,7 @@ async def _publish_service_advertisement(
     payload: Mapping[str, Any] | None = None,
     feature_id: str | None = None,
 ):
-    advertisement = await beacon.ensure_advertisement(
+    return await beacon.advertise(
         BeaconAdvertisementSpec(
             feature_id=feature_id or protocol.feature_id,
             endpoint=service_address(service_id),
@@ -107,15 +101,13 @@ async def _publish_service_advertisement(
             ),
         )
     )
-    await advertisement.publish()
-    return advertisement
 
 
 async def _descriptor(
-    beacon: BeaconService,
+    beacon: Beacon,
     protocol: ServiceProtocol,
 ) -> ServiceDescriptor:
-    candidates = await beacon.find(protocol.feature_id)
+    candidates = beacon.candidates(protocol.feature_id)
     descriptors = [
         descriptor
         for candidate in candidates
@@ -197,10 +189,10 @@ def test_service_protocol_payload_terms_and_view_keys() -> None:
 
 @pytest.mark.asyncio
 async def test_parse_service_descriptor_validates_profile_identity() -> None:
-    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    beacon = _memory_beacon()
     protocol = _protocol()
     await _publish_service_advertisement(beacon, protocol)
-    candidate = (await beacon.find(protocol.feature_id))[0]
+    candidate = beacon.candidates(protocol.feature_id)[0]
 
     descriptor = parse_service_descriptor(candidate, protocol)
     assert descriptor is not None
@@ -225,7 +217,7 @@ async def test_parse_service_descriptor_validates_profile_identity() -> None:
     )
     wrong_profile = [
         item
-        for item in await beacon.find(protocol.feature_id)
+        for item in beacon.candidates(protocol.feature_id)
         if item.advertisement.advertisement_id == "ad-2"
     ][0]
     assert parse_service_descriptor(wrong_profile, protocol) is None
@@ -244,7 +236,7 @@ async def test_parse_service_descriptor_validates_profile_identity() -> None:
     )
     wrong_namespace = [
         item
-        for item in await beacon.find(protocol.feature_id)
+        for item in beacon.candidates(protocol.feature_id)
         if item.advertisement.advertisement_id == "ad-3"
     ][0]
     assert parse_service_descriptor(wrong_namespace, protocol) is None
@@ -252,7 +244,7 @@ async def test_parse_service_descriptor_validates_profile_identity() -> None:
 
 @pytest.mark.asyncio
 async def test_service_use_terms_grant_only_requested_scope() -> None:
-    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    beacon = _memory_beacon()
     protocol = _protocol()
     await _publish_service_advertisement(beacon, protocol)
     descriptor = await _descriptor(beacon, protocol)
@@ -284,8 +276,7 @@ async def test_service_use_terms_grant_only_requested_scope() -> None:
 
 @pytest.mark.asyncio
 async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> None:
-    beacon_state = CountingItemsStateStore(name="beacon")
-    beacon = BeaconService(BeaconDiscovery(beacon_state))
+    beacon = _memory_beacon()
     concord = ConcordService(
         ConcordCoordinator(
             MemoryStateStore(name="contracts"),
@@ -337,7 +328,6 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
             commands = ServiceCommandChannel(endpoint=client_endpoint)
             await view_store.wait_ready()
 
-            beacon_state.items_calls = 0
             reply = await commands.command(
                 lease,
                 "ensureItems",
@@ -395,8 +385,6 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
             current = await view_store.get(cached, view_ref)
             assert current is not None
             assert current.value["state"] == "OFF"
-            assert beacon_state.items_calls == 0
-
             rejected = await commands.command(lease, "sendCommand", {})
             assert rejected.status == ServiceCommandStatus.REJECTED
             assert rejected.error is not None
@@ -409,7 +397,7 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
 
 @pytest.mark.asyncio
 async def test_service_use_manager_replaces_closed_cached_agreement() -> None:
-    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    beacon = _memory_beacon()
     concord = ConcordService(
         ConcordCoordinator(
             MemoryStateStore(name="contracts"),
@@ -475,7 +463,7 @@ async def test_service_use_manager_replaces_closed_cached_agreement() -> None:
 async def test_service_use_stale_contract_is_cancelled_and_superseded(
     missing_participant: str,
 ) -> None:
-    beacon = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+    beacon = _memory_beacon()
     token_store = MemoryStateStore(name="tokens")
     concord = ConcordService(
         ConcordCoordinator(

@@ -10,11 +10,10 @@ from pathlib import Path
 import anyio
 
 from deckr.beacon import (
-    BEACON_ADVERTISEMENT_STORE_POLICY,
     DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+    DEFAULT_BEACON_TTL_SECONDS,
+    Beacon,
     BeaconAdvertisementSpec,
-    BeaconDiscovery,
-    BeaconService,
     beacon_advertisement_key,
 )
 from deckr.concord import (
@@ -57,8 +56,8 @@ from deckr.hardware.profiles import (
     hardware_payload_from_advertisement,
 )
 from deckr.runtime import Deckr
-from deckr.state import StateStore
 from deckr.substrates.nats import NatsSubstrate
+from deckr.substrates.nats_kv import KvBucketPolicy
 from deckr.substrates.supervised_nats import NatsServerSupervisor
 
 
@@ -140,8 +139,8 @@ async def _run_manager(args: argparse.Namespace) -> None:
     endpoint = hardware_manager_address(manager_id)
     descriptor = _device_descriptor(device_id, fingerprint=f"smoke:{args.run_id}")
     async with _deckr(args.url, auth_token=args.auth_token) as deckr:
-        beacon_state, contract_state, token_state = _protocol_states(deckr, args)
-        beacon = BeaconService(BeaconDiscovery(beacon_state))
+        contract_state, token_state = _concord_states(deckr, args)
+        beacon = await _beacon(deckr, args)
         concord = ConcordService(ConcordCoordinator(contract_state, token_state))
         async with (
             deckr.lane("hardware_messages").register_endpoint(
@@ -158,7 +157,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
                 device_id=device_id,
                 descriptor=descriptor,
             )
-            advertisement = await beacon.ensure_advertisement(
+            advertisement = await beacon.advertise(
                 BeaconAdvertisementSpec(
                     feature_id=HARDWARE_FEATURE_ID,
                     endpoint=endpoint,
@@ -166,9 +165,7 @@ async def _run_manager(args: argparse.Namespace) -> None:
                     advertisement_id=manager_id,
                     payload=payload.to_dict(),
                 ),
-                start_soon=tg.start_soon,
             )
-            await advertisement.publish()
 
             def accept_contract(contract, _record) -> bool:
                 return endpoint in contract.participants
@@ -211,8 +208,8 @@ async def _run_controller(args: argparse.Namespace) -> None:
     controller = controller_address(f"smoke_controller_{args.run_id}")
     manager = hardware_manager_address(manager_id)
     async with _deckr(args.url, auth_token=args.auth_token) as deckr:
-        beacon_state, contract_state, token_state = _protocol_states(deckr, args)
-        beacon = BeaconService(BeaconDiscovery(beacon_state))
+        contract_state, token_state = _concord_states(deckr, args)
+        beacon = await _beacon(deckr, args)
         concord = ConcordService(ConcordCoordinator(contract_state, token_state))
         async with deckr.lane("hardware_messages").register_endpoint(controller) as lane:
             candidate = await _wait_for_hardware_advertisement(beacon, manager)
@@ -280,12 +277,12 @@ async def _run_controller(args: argparse.Namespace) -> None:
 
 
 async def _wait_for_hardware_advertisement(
-    beacon: BeaconService,
+    beacon: Beacon,
     manager: EndpointAddress,
 ):
     with anyio.fail_after(15):
         while True:
-            candidates = await beacon.find(
+            candidates = beacon.candidates(
                 HARDWARE_FEATURE_ID,
                 selector=lambda advertisement: advertisement.endpoint == manager,
             )
@@ -324,11 +321,12 @@ async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> Non
         participant=manager,
     )
     async with _deckr(args.url, auth_token=args.auth_token) as deckr:
-        beacon_state, _contract_state, token_state = _protocol_states(deckr, args)
+        beacon_bucket = deckr._substrate.kv_bucket(_beacon_policy(args))
+        _contract_state, token_state = _concord_states(deckr, args)
         with anyio.fail_after(args.ttl_wait):
             while True:
                 entries = [
-                    await beacon_state.get(advertisement_key),
+                    await beacon_bucket.get(advertisement_key),
                     await token_state.get(controller_token_key),
                     await token_state.get(manager_token_key),
                 ]
@@ -337,12 +335,37 @@ async def _wait_for_ttl_cleanup(args: argparse.Namespace, *, run_id: str) -> Non
                 await anyio.sleep(0.5)
 
 
-def _protocol_states(
+async def _beacon(deckr: Deckr, args: argparse.Namespace) -> Beacon:
+    cache = getattr(deckr, "_nats_smoke_beacons", None)
+    if cache is None:
+        cache = {}
+        deckr._nats_smoke_beacons = cache
+    beacon = cache.get(args.beacon_bucket)
+    if beacon is None:
+        beacon = Beacon(deckr._substrate.kv_bucket(_beacon_policy(args)))
+        task_group = getattr(deckr, "_task_group", None)
+        if task_group is None:
+            raise RuntimeError("Deckr runtime is not running")
+        beacon.start(task_group)
+        cache[args.beacon_bucket] = beacon
+    await beacon.wait_ready()
+    return beacon
+
+
+def _beacon_policy(args: argparse.Namespace) -> KvBucketPolicy:
+    return KvBucketPolicy(
+        bucket=args.beacon_bucket,
+        ttl_seconds=float(DEFAULT_BEACON_TTL_SECONDS),
+        allow_write_ttl=True,
+        description="Beacon advertisement KV",
+    )
+
+
+def _concord_states(
     deckr: Deckr,
     args: argparse.Namespace,
-) -> tuple[StateStore, StateStore, StateStore]:
+) -> tuple[object, object]:
     return (
-        deckr.state(args.beacon_bucket, policy=BEACON_ADVERTISEMENT_STORE_POLICY),
         deckr.state(args.contract_bucket, policy=CONCORD_CONTRACT_STORE_POLICY),
         deckr.state(args.token_bucket, policy=CONCORD_TOKEN_STORE_POLICY),
     )

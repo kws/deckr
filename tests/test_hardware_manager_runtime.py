@@ -7,9 +7,8 @@ from memory_lane_substrate import memory_deckr
 
 import deckr.hardware.messages as hw_messages
 from deckr.beacon import (
-    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-    BeaconDiscovery,
-    BeaconService,
+    BEACON_ADVERTISEMENT_STORE_POLICY,
+    Beacon,
 )
 from deckr.concord import (
     DEFAULT_CONCORD_CONTRACT_STORE_NAME,
@@ -39,10 +38,12 @@ def _descriptor(device_id: str = "stream-deck-mini") -> DeviceDescriptor:
     return DeviceDescriptor.model_validate(payload)
 
 
-def _beacon(deckr) -> BeaconService:
-    return BeaconService(
-        BeaconDiscovery(deckr.state(DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME))
-    )
+def _beacon(deckr) -> Beacon:
+    beacon = getattr(deckr, "_test_beacon", None)
+    if beacon is None:
+        beacon = Beacon(deckr._substrate.kv_bucket(BEACON_ADVERTISEMENT_STORE_POLICY))
+        deckr._test_beacon = beacon
+    return beacon
 
 
 def _concord(deckr) -> ConcordService:
@@ -119,7 +120,7 @@ async def test_runtime_publishes_hardware_beacon_payload_and_capacity() -> None:
         descriptor = _descriptor()
         await _add_device(runtime, descriptor)
 
-        candidates = await _beacon(deckr).find(HARDWARE_FEATURE_ID)
+        candidates = _beacon(deckr).candidates(HARDWARE_FEATURE_ID)
         assert len(candidates) == 1
         payload = HardwareBeaconPayload.model_validate(
             candidates[0].advertisement.payload
@@ -164,7 +165,7 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         assert validity.status == ContractValidityStatus.VALID
         assert len(runtime.live_claims) == 1
 
-        candidates = await _beacon(deckr).find(HARDWARE_FEATURE_ID)
+        candidates = _beacon(deckr).candidates(HARDWARE_FEATURE_ID)
         payload = HardwareBeaconPayload.model_validate(
             candidates[0].advertisement.payload
         )
@@ -212,10 +213,10 @@ async def test_noop_claim_reconcile_does_not_refresh_hardware_beacon() -> None:
     try:
         await _add_device(runtime, _descriptor())
         beacon = _beacon(deckr)
-        first = (await beacon.find(HARDWARE_FEATURE_ID))[0]
+        first = beacon.candidates(HARDWARE_FEATURE_ID)[0]
 
         await runtime.reconcile_claims(reason="test noop")
-        second = (await beacon.find(HARDWARE_FEATURE_ID))[0]
+        second = beacon.candidates(HARDWARE_FEATURE_ID)[0]
 
         assert second.advertisement.refresh_seq == first.advertisement.refresh_seq
         assert second.revision == first.revision
@@ -314,7 +315,7 @@ async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
         assert reset_devices == ["stream-deck-mini"]
         assert runtime.live_claims == ()
 
-        candidates = await _beacon(deckr).find(HARDWARE_FEATURE_ID)
+        candidates = _beacon(deckr).candidates(HARDWARE_FEATURE_ID)
         payload = HardwareBeaconPayload.model_validate(
             candidates[0].advertisement.payload
         )
@@ -356,7 +357,7 @@ async def test_remove_device_cancels_live_claim_contract_without_lane_event() ->
             ContractValidityStatus.CANCELLED
         )
         assert runtime.live_claims == ()
-        candidates = await _beacon(deckr).find(HARDWARE_FEATURE_ID)
+        candidates = _beacon(deckr).candidates(HARDWARE_FEATURE_ID)
         payload = HardwareBeaconPayload.model_validate(
             candidates[0].advertisement.payload
         )

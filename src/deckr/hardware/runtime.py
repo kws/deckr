@@ -12,9 +12,9 @@ import anyio
 import deckr.hardware.messages as hw_messages
 from deckr.beacon import (
     AdvertisementHandle,
-    BeaconAdvertisement,
+    Beacon,
+    BeaconAdvertisementLease,
     BeaconAdvertisementSpec,
-    BeaconService,
 )
 from deckr.concord import (
     DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
@@ -37,6 +37,7 @@ from deckr.hardware.profiles import (
     ProfileCapacity,
 )
 from deckr.state import DEFAULT_STATE_RECONCILE_SECONDS, StateConflict, StateUnavailable
+from deckr.substrates.nats_kv import KvConflict, KvUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class _ClaimCandidate:
 @dataclass(slots=True)
 class HardwareManagerRuntime:
     endpoint: HardwareEndpoint
-    beacon: BeaconService
+    beacon: Beacon
     concord: ConcordService
     manager_id: str
     labels: Mapping[str, str] | None = None
@@ -104,7 +105,7 @@ class HardwareManagerRuntime:
     watch_retry_seconds: float = DEFAULT_HARDWARE_WATCH_RETRY_SECONDS
     _devices: dict[str, DeviceDescriptor] = field(init=False, default_factory=dict)
     _advertisement: AdvertisementHandle | None = field(init=False, default=None)
-    _advertiser: BeaconAdvertisement | None = field(init=False, default=None)
+    _advertiser: BeaconAdvertisementLease | None = field(init=False, default=None)
     _advertisement_id: str = field(init=False, default="")
     _advertised_payload: JsonObject | None = field(init=False, default=None)
     _advertisement_dirty: bool = field(init=False, default=True)
@@ -303,7 +304,7 @@ class HardwareManagerRuntime:
             payload_dict = payload.to_dict()
             try:
                 if self._advertiser is None or self._advertiser.closed:
-                    self._advertiser = await self.beacon.ensure_advertisement(
+                    self._advertiser = await self.beacon.advertise(
                         BeaconAdvertisementSpec(
                             feature_id=HARDWARE_FEATURE_ID,
                             endpoint=self.endpoint.endpoint,
@@ -314,19 +315,18 @@ class HardwareManagerRuntime:
                             refresh_interval=self.advertisement_refresh_seconds,
                             log_label="Hardware",
                         ),
-                        start_soon=(
-                            self._task_group.start_soon
-                            if self._task_group is not None
-                            else None
-                        ),
                     )
-                self._advertisement = await self._advertiser.publish(
-                    labels=payload.labels,
-                    payload=payload_dict,
-                )
+                    if self._task_group is not None:
+                        self._advertiser.start(self._task_group)
+                    self._advertisement = self._advertiser.handle
+                else:
+                    self._advertisement = await self._advertiser.update(
+                        labels=payload.labels,
+                        payload=payload_dict,
+                    )
                 self._advertised_payload = payload_dict
                 self._advertisement_dirty = False
-            except StateConflict:
+            except KvConflict:
                 logger.info(
                     "Hardware Beacon advertisement changed; creating a fresh one",
                     exc_info=True,
@@ -336,7 +336,7 @@ class HardwareManagerRuntime:
                 self._advertised_payload = None
                 self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
                 self._advertisement_dirty = True
-            except StateUnavailable:
+            except KvUnavailable:
                 logger.warning(
                     "Hardware Beacon advertisements unavailable; retrying later"
                 )
@@ -364,7 +364,7 @@ class HardwareManagerRuntime:
             if self._advertiser is not None:
                 try:
                     await self._advertiser.aclose()
-                except (StateConflict, StateUnavailable):
+                except (KvConflict, KvUnavailable):
                     logger.debug("Could not withdraw hardware Beacon advertisement")
                 self._advertiser = None
 

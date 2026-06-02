@@ -157,9 +157,9 @@ does not apply to adapter-private protocols such as external runtime attach,
 third-party plugin protocol adaptation, or concrete device protocols.
 
 The NATS substrate surface is available behind the optional `deckr[nats]` extra.
-Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages
-and `Deckr.state(...)` for explicit protocol stores such as Beacon
-advertisements and Concord contracts/tokens. The optional
+Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages,
+`Deckr.beacon` for managed Beacon discovery, and `Deckr.state(...)` for explicit
+Concord contract/token stores or application-owned state. The optional
 `deckr[supervised-nats]` extra also installs the first-party
 `deckr-nats-server-bin` binary package so embedded hosts and the `deckr`
 launcher can supervise a private local `nats-server` process. This is still the

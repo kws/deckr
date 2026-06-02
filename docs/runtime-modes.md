@@ -161,6 +161,7 @@ async with Deckr(substrate=substrate) as deckr:
     ...
 ```
 
-The supervised form still delegates lane traffic and state to `NatsSubstrate`
-after startup. Tests may use explicit fakes at the `LaneSubstrate` and
-`StateStore` boundaries, but supported runtime modes remain real NATS.
+The supervised form still delegates lane traffic, Beacon KV, and state to
+`NatsSubstrate` after startup. Tests may use explicit fakes at the
+`LaneSubstrate`, Beacon KV, and `StateStore` boundaries, but supported runtime
+modes remain real NATS.

@@ -181,7 +181,8 @@ It includes:
 - one application-facing event bus per lane
 - endpoint-bound lane handles
 - recipient filtering for local endpoints
-- explicit StateStore access for protocols such as Beacon and Concord
+- managed Beacon discovery backed by a materialized KV view
+- explicit StateStore access for Concord and application-owned state
 
 The managed lane runtime belongs in `deckr`. It is not a transport, controller,
 hardware manager, action provider runtime, or special discovered component.
@@ -215,7 +216,8 @@ That object is a runtime host helper around the managed lane runtime. It should:
 - expose lane handles through one obvious API such as `lane(name)` or
   `lanes.require(name)`
 - expose endpoint-bound lane handles, recipient filtering diagnostics, and
-  explicit protocol stores
+- managed protocol runtimes such as `beacon`
+- expose explicit state stores for Concord and application-owned state
 - start required generic bus infrastructure exactly once
 - stop that infrastructure through normal async context-manager cancellation
 
@@ -650,9 +652,10 @@ endpoint filter when the component needs a specific configured endpoint.
 
 Dependencies never create component instances, start services, import local
 objects, block `start(ctx)`, block endpoint registration, or stop a component.
-The component host observes dependencies continuously through `BeaconService`
-feature queries and semantic feature events. A running component can therefore
-be ready, unready, or unknown while its local lifecycle remains `running`.
+The component host observes dependencies continuously through the runtime
+`Beacon` materialized view and semantic feature events. A running component can
+therefore be ready, unready, or unknown while its local lifecycle remains
+`running`.
 Dependency observations are readiness evidence only. They do not withdraw,
 invalidate, or cancel existing Concord agreements.
 
@@ -789,8 +792,7 @@ candidates, while Concord supplies live agreement authority.
 Python hardware managers use the shared `deckr.hardware.runtime`
 implementation for the manager side of that protocol. A manager advertises its
 current devices through the `dev.deckr.hardware` Beacon feature using managed
-`BeaconService.ensure_advertisement` lifecycles, accepts controller ownership
-only by maintaining a
+`Beacon.advertise` leases, accepts controller ownership only by maintaining a
 `ConcordParticipantLease` on a matching
 `dev.deckr.profile.hardware_claim.v1` Concord contract, and routes hardware
 input or controller commands only while that contract remains valid. The removed
@@ -924,9 +926,9 @@ to understand component-specific settings.
   [`beacon-concord.md`](beacon-concord.md).
 - After a Concord agreement is negotiated, Beacon no longer participates in that
   agreement's lifecycle, validity, or withdrawal.
-- Runtime components use `BeaconService` and `ConcordService`; raw
-  Beacon/Concord authority state watches belong only inside those core services
-  and substrate internals.
+- Runtime components use `Beacon` and `ConcordService`; raw Beacon/Concord
+  authority state watches belong only inside those core services and substrate
+  internals.
 - Lane contracts are the only generic wiring primitive.
 - The runtime host creates the full core lane set before component startup.
 - Core lane names belong in `deckr`.
@@ -980,7 +982,7 @@ to understand component-specific settings.
 Cross-runtime note:
 `deckr-adapter-elgato-node` and the Rust hardware managers are still behind on
 the new managed Beacon/Concord lifecycle model. They are tracked as follow-up work
-and should be updated to consume `BeaconService`/`ConcordService` APIs in the
+and should be updated to consume `Beacon`/`ConcordService` APIs in the
 same ownership style as the Python reference before claiming Beacon/Concord parity.
 
 If the implementation drifts from this model, fix the implementation. Do not

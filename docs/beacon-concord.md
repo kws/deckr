@@ -120,9 +120,11 @@ An advertisement record must have:
 Create an advertisement with a unique advertisement id using `create`. Refresh
 it by exact-read, owner-check, incrementing `refreshSeq`, and revision-guarded
 `update`. Withdraw it by exact-read, owner-check, and revision-guarded delete.
-If the advertisement is no longer refreshed, the TTL-bound store removes it.
-Beacon advertisements are not reaped by Concord maintenance. Their lifecycle is
-the advertisement owner plus the store TTL.
+The Python runtime owns advertisement leases and may skip refresh writes while
+the stored value is already fresh enough. If the advertisement is no longer
+refreshed, the TTL-bound store removes it. Beacon advertisements are not reaped
+by Concord maintenance. Their lifecycle is the advertisement owner plus the
+store TTL.
 
 A Beacon candidate is usable only if:
 

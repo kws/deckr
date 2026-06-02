@@ -8,10 +8,8 @@ import pytest
 from memory_lane_substrate import memory_deckr
 
 from deckr.beacon import (
-    BEACON_ADVERTISEMENT_STORE_POLICY,
-    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-    BeaconDiscovery,
-    BeaconService,
+    Beacon,
+    BeaconAdvertisementSpec,
 )
 from deckr.components import (
     BaseComponent,
@@ -579,14 +577,8 @@ async def test_start_components_passes_current_state_and_endpoints() -> None:
 
 
 @pytest.mark.asyncio
-async def test_required_service_dependency_controls_effective_readiness(
-    monkeypatch,
-) -> None:
-    async def forbidden_find(self, *args, **kwargs):
-        del self, args, kwargs
-        raise AssertionError("dependency observer should use watch snapshots")
-
-    monkeypatch.setattr(BeaconService, "find", forbidden_find)
+async def test_required_service_dependency_controls_effective_readiness() -> None:
+    assert not hasattr(Beacon, "find")
     definition = ComponentDefinition(
         manifest=ComponentManifest(component_id="com.example.worker"),
         factory=lambda context: _ReadyComponent(name=context.runtime_name),
@@ -630,18 +622,14 @@ async def test_required_service_dependency_controls_effective_readiness(
         )
         assert unready.readiness_reasons == ("dependency.sonos_home.unsatisfied",)
 
-        beacon = BeaconDiscovery(
-            deckr.state(
-                DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-                policy=BEACON_ADVERTISEMENT_STORE_POLICY,
+        advertisement = await deckr.beacon.advertise(
+            BeaconAdvertisementSpec(
+                feature_id="dev.deckr.sonos.service",
+                endpoint=service_address("sonos-home"),
+                session_id="service-session",
+                advertisement_id="sonos-home",
+                operations=("play",),
             )
-        )
-        handle = await beacon.advertise(
-            "dev.deckr.sonos.service",
-            service_address("sonos-home"),
-            "service-session",
-            advertisement_id="sonos-home",
-            operations=("play",),
         )
 
         ready = await _wait_for_readiness(
@@ -651,7 +639,7 @@ async def test_required_service_dependency_controls_effective_readiness(
         )
         assert ready.readiness_reasons == ()
 
-        assert await beacon.withdraw(handle)
+        assert await advertisement.withdraw()
         lost = await _wait_for_status(
             manager,
             "com.example.worker:worker",

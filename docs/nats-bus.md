@@ -29,15 +29,19 @@ The supported shared stores are:
 | Concord participant tokens | `deckr_concord_token_v1` | TTL-bound |
 | Concord maintenance observations | `deckr_concord_maintenance_v1` | persistent |
 
-`StateStore` remains the generic CAS/watch abstraction below these protocols.
-Production runtime code does not subscribe directly to Beacon or Concord
-authority state. Python runtime participants use the shared `BeaconService` and
-`ConcordService` APIs, which own raw state watches, semantic lifecycle events,
-heartbeats, leases, and lifecycle logging. Non-Python implementations must
-follow the same protocol semantics in [`beacon-concord.md`](beacon-concord.md).
+`StateStore` remains the generic CAS/watch abstraction for Concord and
+application state paths, but Beacon no longer uses it. Production runtime code
+does not subscribe directly to Beacon or Concord authority state. Python runtime
+participants use the shared `Beacon` and `ConcordService` APIs; Beacon owns a
+materialized KV view, semantic lifecycle events, advertisement leases,
+heartbeats, freshness checks, and lifecycle logging. Non-Python implementations
+must follow the same protocol semantics in
+[`beacon-concord.md`](beacon-concord.md).
 Retired shared coordination buckets are not part of the v1 surface. Opening a
-store without an explicit policy creates a persistent generic store. Beacon and
-Concord services pass their own `StateStorePolicy` values.
+store without an explicit policy creates a persistent generic store. Concord
+services pass their own `StateStorePolicy` values; Beacon opens its explicit
+JetStream KV bucket policy directly and serves hot reads from its materialized
+view.
 Concord participant-token TTL defaults to 30 seconds. Runtime participants may
 call their lease heartbeat more often, but the shared lease policy refreshes the
 token write only when a token must be attached or the default 15-second Concord
@@ -99,18 +103,11 @@ key:    advertisements.by_feature.<feature-id-token>.<advertisement-id-token>
 schema: dev.deckr.beacon.advertisement.v1
 ```
 
-The runtime-facing Python API is `deckr.beacon.BeaconService`.
+The runtime-facing Python API is `deckr.beacon.Beacon`.
 
 ```python
-beacon = BeaconService(
-    BeaconDiscovery(
-        deckr.state(
-            DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-            policy=BEACON_ADVERTISEMENT_STORE_POLICY,
-        )
-    )
-)
-advertisement = await beacon.ensure_advertisement(
+beacon = deckr.beacon
+advertisement = await beacon.advertise(
     BeaconAdvertisementSpec(
         feature_id="dev.deckr.hardware",
         endpoint="hardware_manager:mirabox-main",
@@ -119,8 +116,8 @@ advertisement = await beacon.ensure_advertisement(
         refresh_interval=5.0,
     )
 )
-handle = await advertisement.publish()
-candidates = await beacon.find("dev.deckr.hardware")
+handle = advertisement.handle
+candidates = beacon.candidates("dev.deckr.hardware")
 ```
 
 Beacon answers "which endpoints currently advertise this feature?" It does not
@@ -129,7 +126,9 @@ Consumers should treat results as candidates and establish any needed Concord
 agreement before relying on them. After that agreement exists, Beacon
 advertisement changes do not withdraw or invalidate it. Advertisers may
 withdraw Beacon advertisements when they are not accepting new Concord
-negotiations; that affects only future discovery.
+negotiations; that affects only future discovery. The Python `Beacon` runtime
+keeps one materialized advertisement view so `candidates(...)`, `get(...)`, and
+feature watches avoid per-query full key scans.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
 
@@ -220,7 +219,7 @@ whether a claim or provider session is live. A missing Beacon advertisement is
 not a withdrawal of an existing claim or provider session. Python hardware
 managers use the shared `deckr.hardware.runtime.HardwareManagerRuntime`
 implementation to advertise hardware through managed
-`BeaconService.ensure_advertisement` lifecycles, maintain claim tokens through
+`Beacon.advertise` leases, maintain claim tokens through
 `ConcordParticipantManager`, and route input only for live claims.
 Hardware device inventory is published through the hardware Beacon profile only.
 The `hardware_messages` lane is for control input, commands, capability state,
@@ -235,7 +234,10 @@ The service API is intentionally layered instead of one broad runtime helper.
 schemas, descriptor parsing, terms construction, and service-view key helpers.
 Services advertise descriptors through Beacon, negotiate service-use authority
 through Concord, and carry service command/reply messages on the `services`
-lane as ordinary lane traffic.
+lane as ordinary lane traffic. A service keeps its own advertisement fresh,
+skips unchanged refresh writes when possible, best-effort withdraws on clean
+shutdown, and removes stale same-endpoint advertisements left by an earlier
+crashed session or changed configuration.
 
 Protected service views are direct JetStream/KV views. `ServiceViewStore` opens
 one service-owned bucket, maintains a local map from the bucket watcher, exposes
@@ -263,20 +265,19 @@ endpoint = "service:sonos-home"
 
 The endpoint filter is optional. A missing candidate makes required dependencies
 unready and optional dependencies diagnostic-only. Dependency observation uses
-`BeaconService` semantic feature events and does not use lane subscription state
-or raw Beacon KV watches as an authority source. Dependency readiness is not
-agreement withdrawal; existing Concord contracts must be validated through
-Concord.
+`Beacon` semantic feature events from the runtime materialized KV view and does
+not use lane subscription state or per-dependency raw Beacon KV watches as an
+authority source. Dependency readiness is not agreement withdrawal; existing
+Concord contracts must be validated through Concord.
 
 ## Store Configuration
 
-NATS-backed stores are opened with explicit policies:
+NATS-backed protocol stores are opened with explicit policies. Beacon is opened
+by the managed runtime as `deckr.beacon`; callers should not construct a Beacon
+state store through `Deckr.state(...)`.
 
 ```python
-beacon_state = deckr.state(
-    "deckr_beacon_advertisement_v1",
-    policy=BEACON_ADVERTISEMENT_STORE_POLICY,
-)
+beacon = deckr.beacon
 contract_state = deckr.state(
     "deckr_concord_contract_v1",
     policy=CONCORD_CONTRACT_STORE_POLICY,
@@ -354,10 +355,11 @@ uv run --extra supervised-nats python scripts/nats_smoke.py --supervised --check
 ### JetStream Consumer Hygiene
 
 NATS KV `watch()` and list-style helpers are backed by JetStream consumers.
-Beacon and Concord state reads, snapshots, and watches must not create
-unbounded growth in unbound broker consumers. Temporary watch/list consumers
-must be explicitly deleted or avoided once the read is complete; server-side
-inactive cleanup is a fallback, not the steady-state cleanup path.
+Beacon uses a single materialized KV watch owned by the runtime; Concord state
+reads, snapshots, and watches must not create unbounded growth in unbound broker
+consumers. Temporary watch/list consumers must be explicitly deleted or avoided
+once the read is complete; server-side inactive cleanup is a fallback, not the
+steady-state cleanup path.
 
 Treat watch events as wakeups and exact KV reads as authority, but remember that
 every watch still consumes broker resources. Use the smoke harness and

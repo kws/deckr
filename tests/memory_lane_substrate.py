@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import anyio
+from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
@@ -29,6 +30,7 @@ from deckr.state import (
     StateStorePolicy,
     state_value,
 )
+from deckr.substrates.nats_kv import KvBucketPolicy
 
 
 def memory_deckr(
@@ -73,6 +75,7 @@ class MemoryLaneSubstrate:
             set[anyio.abc.ObjectSendStream[DeckrMessage]],
         ] = {}
         self._states: dict[str, MemoryStateStore] = {}
+        self._kv_buckets: dict[str, MemoryJsonKvBucket] = {}
 
     async def publish(self, message: DeckrMessage) -> None:
         contract = self._lane_contracts.contract_for(message.lane)
@@ -160,6 +163,16 @@ class MemoryLaneSubstrate:
             store = MemoryStateStore(name=name, buffer_size=self._buffer_size)
             self._states[name] = store
         return store
+
+    def kv_bucket(self, policy: KvBucketPolicy) -> MemoryJsonKvBucket:
+        bucket = self._kv_buckets.get(policy.bucket)
+        if bucket is None:
+            bucket = MemoryJsonKvBucket(
+                bucket=policy.bucket,
+                buffer_size=self._buffer_size,
+            )
+            self._kv_buckets[policy.bucket] = bucket
+        return bucket
 
 
 class MemoryStateStore:

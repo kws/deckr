@@ -11,11 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import anyio
 
 from deckr.beacon import (
-    BEACON_ADVERTISEMENT_STORE_POLICY,
-    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-    BeaconDiscovery,
     BeaconFeatureEventType,
-    BeaconService,
     Candidate,
 )
 from deckr.components._defs import Component
@@ -51,7 +47,6 @@ from deckr.state import (
     DEFAULT_STATE_STORE_NAME,
     StateStore,
     StateStorePolicy,
-    StateUnavailable,
 )
 
 if TYPE_CHECKING:
@@ -1516,14 +1511,7 @@ async def _run_dependency_observer(
     component_manager: ComponentManager,
 ) -> None:
     specs = tuple(spec for spec in plan.specs if spec.dependencies)
-    beacon = BeaconService(
-        BeaconDiscovery(
-            deckr.state(
-                DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-                policy=BEACON_ADVERTISEMENT_STORE_POLICY,
-            )
-        )
-    )
+    beacon = deckr.beacon
     feature_ids = sorted(
         {
             dependency.feature_id
@@ -1544,31 +1532,29 @@ async def _run_dependency_observer(
 
     async def watch_feature(feature_id: str) -> None:
         while True:
-            try:
-                async with beacon.watch_feature(feature_id) as changes:
-                    feature_snapshots[feature_id] = {}
-                    await notify()
-                    async for event in changes:
-                        snapshot = feature_snapshots.get(feature_id)
-                        if snapshot is None:
-                            snapshot = {}
-                            feature_snapshots[feature_id] = snapshot
-                        if (
-                            event.event_type
-                            in {
-                                BeaconFeatureEventType.ADVERTISED,
-                                BeaconFeatureEventType.UPDATED,
-                            }
-                            and event.candidate is not None
-                        ):
-                            snapshot[event.key] = event.candidate
-                        else:
-                            snapshot.pop(event.key, None)
-                        await notify()
-            except StateUnavailable:
-                feature_snapshots[feature_id] = None
+            async with beacon.watch(feature_id) as changes:
+                feature_snapshots[feature_id] = {
+                    candidate.key: candidate
+                    for candidate in beacon.candidates(feature_id)
+                }
                 await notify()
-                await anyio.sleep(1.0)
+                async for event in changes:
+                    snapshot = feature_snapshots.get(feature_id)
+                    if snapshot is None:
+                        snapshot = {}
+                        feature_snapshots[feature_id] = snapshot
+                    if (
+                        event.event_type
+                        in {
+                            BeaconFeatureEventType.ADVERTISED,
+                            BeaconFeatureEventType.UPDATED,
+                        }
+                        and event.candidate is not None
+                    ):
+                        snapshot[event.key] = event.candidate
+                    else:
+                        snapshot.pop(event.key, None)
+                    await notify()
 
     async with send, receive, anyio.create_task_group() as tg:
         for feature_id in feature_ids:

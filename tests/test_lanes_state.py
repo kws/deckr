@@ -13,7 +13,6 @@ from deckr.actions.endpoints import (
 )
 from deckr.actions.messages import action_message
 from deckr.beacon import (
-    BEACON_ADVERTISEMENT_STORE_POLICY,
     beacon_advertisement_key,
     parse_beacon_advertisement_key,
 )
@@ -38,6 +37,7 @@ from deckr.lanes import EndpointRegistrationConflict
 from deckr.runtime import Deckr
 from deckr.state import (
     PERSISTENT_STATE_STORE_POLICY,
+    TTL_STATE_STORE_POLICY,
     StateConflict,
     StateEntry,
     StateUnavailable,
@@ -368,7 +368,7 @@ async def test_nats_state_creates_bucket_with_explicit_broker_ttl() -> None:
         name="test_state",
         js=fake_js,
         buffer_size=10,
-        policy=BEACON_ADVERTISEMENT_STORE_POLICY,
+        policy=TTL_STATE_STORE_POLICY,
     )
 
     await store.put(
@@ -388,7 +388,7 @@ async def test_nats_state_updates_existing_bucket_to_explicit_broker_ttl() -> No
         name="test_state",
         js=fake_js,
         buffer_size=10,
-        policy=BEACON_ADVERTISEMENT_STORE_POLICY,
+        policy=TTL_STATE_STORE_POLICY,
     )
 
     await store.items("advertisements.")

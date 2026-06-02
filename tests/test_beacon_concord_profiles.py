@@ -3,16 +3,16 @@ from __future__ import annotations
 import anyio
 import pytest
 from descriptor_fixtures import stream_deck_bitmap_grid
+from memory_kv_bucket import MemoryJsonKvBucket
 from memory_lane_substrate import MemoryStateStore
 from pydantic import ValidationError
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import (
     AdvertisementRecord,
+    Beacon,
     BeaconAdvertisementSpec,
-    BeaconDiscovery,
     BeaconFeatureEventType,
-    BeaconService,
     CandidateStatus,
     beacon_advertisement_key,
 )
@@ -56,6 +56,7 @@ from deckr.profiles import (
     profile_terms_hash,
 )
 from deckr.state import StateConflict, StateUnavailable
+from deckr.substrates.nats_kv import KvConflict
 
 
 async def _receive(stream):
@@ -196,84 +197,105 @@ def _hardware_claim_terms(
     )
 
 
-def test_beacon_service_exposes_only_managed_advertisement_lifecycle() -> None:
-    for name in ("advertise", "refresh", "withdraw", "advertiser"):
-        assert not hasattr(BeaconService, name)
+def _beacon() -> tuple[Beacon, MemoryJsonKvBucket]:
+    raw = MemoryJsonKvBucket(bucket="beacon")
+    return Beacon(raw, default_ttl_seconds=30), raw
+
+
+def test_beacon_removes_statestore_construction_layer() -> None:
+    import deckr.beacon as beacon_module
+
+    assert not hasattr(beacon_module, "BeaconDiscovery")
+    assert not hasattr(beacon_module, "BeaconService")
+    assert not hasattr(Beacon, "find")
+    assert not hasattr(Beacon, "watch_feature")
 
 
 @pytest.mark.asyncio
 async def test_beacon_create_refresh_withdraw_find_watch_and_validate() -> None:
-    state = MemoryStateStore(name="beacon")
-    beacon = BeaconDiscovery(state, default_ttl_seconds=30)
+    beacon, raw = _beacon()
     endpoint = hardware_manager_address("manager-main")
 
-    async with beacon.watch(HARDWARE_FEATURE_ID) as changes:
-        handle = await beacon.advertise(
-            HARDWARE_FEATURE_ID,
-            endpoint,
-            "manager-session",
-            advertisement_id="advertisement-1",
-            labels={"room": "office"},
-            payload=_hardware_payload().to_dict(),
-        )
-        change = await _receive(changes)
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await beacon.wait_ready()
+        async with beacon.watch(HARDWARE_FEATURE_ID) as changes:
+            advertisement = await beacon.advertise(
+                BeaconAdvertisementSpec(
+                    feature_id=HARDWARE_FEATURE_ID,
+                    endpoint=endpoint,
+                    session_id="manager-session",
+                    advertisement_id="advertisement-1",
+                    labels={"room": "office"},
+                    payload=_hardware_payload().to_dict(),
+                )
+            )
+            handle = advertisement.handle
+            change = await _receive(changes)
 
-    assert change.key == handle.key
-    candidates = await beacon.find(HARDWARE_FEATURE_ID)
-    assert len(candidates) == 1
-    assert candidates[0].advertisement.payload is not None
-    assert await beacon.validate(candidates[0]) == CandidateStatus.CANDIDATE
-    assert (
-        await beacon.validate(
-            candidates[0],
-            current_sessions={str(endpoint): "different-session"},
-        )
-        == CandidateStatus.SESSION_MISMATCH
-    )
-
-    refreshed = await beacon.refresh(handle, hints={"load": "light"})
-    assert refreshed.refresh_seq == 2
-    assert (await beacon.find(HARDWARE_FEATURE_ID))[0].advertisement.hints == {
-        "load": "light"
-    }
-
-    with pytest.raises(StateConflict):
-        await beacon.advertise(
-            HARDWARE_FEATURE_ID,
-            endpoint,
-            "manager-session",
-            advertisement_id="advertisement-1",
+        assert change.key == handle.key
+        candidates = beacon.candidates(HARDWARE_FEATURE_ID)
+        assert len(candidates) == 1
+        assert candidates[0].advertisement.payload is not None
+        assert await beacon.validate(candidates[0]) == CandidateStatus.CANDIDATE
+        assert (
+            await beacon.validate(
+                candidates[0],
+                current_sessions={str(endpoint): "different-session"},
+            )
+            == CandidateStatus.SESSION_MISMATCH
         )
 
-    assert await beacon.withdraw(refreshed)
-    assert await beacon.validate(candidates[0]) == CandidateStatus.MISSING
+        refreshed = await advertisement.update(hints={"load": "light"})
+        assert refreshed.refresh_seq == 2
+        assert beacon.candidates(HARDWARE_FEATURE_ID)[0].advertisement.hints == {
+            "load": "light"
+        }
 
-    invalid = await beacon.advertise(
-        HARDWARE_FEATURE_ID,
-        endpoint,
-        "manager-session",
-        advertisement_id="advertisement-2",
-    )
-    invalid_candidate = (await beacon.find(HARDWARE_FEATURE_ID))[0]
-    await state.put(
-        invalid.key,
-        {
-            "schema": "dev.deckr.beacon.advertisement.v1",
-            "advertisementId": "advertisement-2",
-        },
-    )
-    assert await beacon.validate(invalid_candidate) == CandidateStatus.SCHEMA_INVALID
+        with pytest.raises(KvConflict):
+            await beacon.advertise(
+                BeaconAdvertisementSpec(
+                    feature_id=HARDWARE_FEATURE_ID,
+                    endpoint=endpoint,
+                    session_id="manager-session",
+                    advertisement_id="advertisement-1",
+                )
+            )
+
+        assert await advertisement.withdraw()
+        assert await beacon.validate(candidates[0]) == CandidateStatus.MISSING
+
+        invalid = await beacon.advertise(
+            BeaconAdvertisementSpec(
+                feature_id=HARDWARE_FEATURE_ID,
+                endpoint=endpoint,
+                session_id="manager-session",
+                advertisement_id="advertisement-2",
+            )
+        )
+        invalid_candidate = beacon.candidates(HARDWARE_FEATURE_ID)[0]
+        await raw.put(
+            invalid.handle.key,
+            {
+                "schema": "dev.deckr.beacon.advertisement.v1",
+                "advertisementId": "advertisement-2",
+            },
+        )
+        with anyio.fail_after(1):
+            while await beacon.validate(invalid_candidate) != CandidateStatus.SCHEMA_INVALID:
+                await anyio.sleep(0)
+        tg.cancel_scope.cancel()
+
 
 
 @pytest.mark.asyncio
-async def test_beacon_service_advertiser_emits_semantic_events_and_logs(caplog) -> None:
-    state = MemoryStateStore(name="beacon")
-    service = BeaconService(BeaconDiscovery(state, default_ttl_seconds=30))
+async def test_beacon_advertisement_lease_emits_semantic_events_and_logs(caplog) -> None:
+    beacon, _raw = _beacon()
     endpoint = hardware_manager_address("manager-main")
     caplog.set_level("INFO", logger="deckr.beacon")
 
-    async with service.watch_feature(HARDWARE_FEATURE_ID) as events:
-        advertisement = await service.ensure_advertisement(
+    async with beacon.watch(HARDWARE_FEATURE_ID) as events:
+        advertisement = await beacon.advertise(
             BeaconAdvertisementSpec(
                 feature_id=HARDWARE_FEATURE_ID,
                 endpoint=endpoint,
@@ -284,7 +306,7 @@ async def test_beacon_service_advertiser_emits_semantic_events_and_logs(caplog) 
                 log_label="TestHardware",
             )
         )
-        handle = await advertisement.publish()
+        handle = advertisement.handle
         advertised = await _receive(events)
         assert advertised.event_type == BeaconFeatureEventType.ADVERTISED
         assert advertised.candidate is not None
@@ -292,9 +314,7 @@ async def test_beacon_service_advertiser_emits_semantic_events_and_logs(caplog) 
             handle.advertisement_id
         )
 
-        refreshed = await advertisement.publish(
-            payload=_hardware_payload(session_id="manager-session").to_dict()
-        )
+        refreshed = await advertisement.update(hints={"load": "light"})
         updated = await _receive(events)
         assert updated.event_type == BeaconFeatureEventType.UPDATED
         assert updated.candidate is not None
@@ -311,8 +331,8 @@ async def test_beacon_service_advertiser_emits_semantic_events_and_logs(caplog) 
 
 
 @pytest.mark.asyncio
-async def test_beacon_service_managed_advertisement_reuses_cached_lifecycle() -> None:
-    service = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+async def test_beacon_watch_replays_current_candidate() -> None:
+    beacon, _raw = _beacon()
     spec = BeaconAdvertisementSpec(
         feature_id=HARDWARE_FEATURE_ID,
         endpoint=hardware_manager_address("manager-main"),
@@ -320,28 +340,20 @@ async def test_beacon_service_managed_advertisement_reuses_cached_lifecycle() ->
         advertisement_id="advertisement-1",
         payload=_hardware_payload().to_dict(),
     )
+    advertisement = await beacon.advertise(spec)
 
-    first = await service.ensure_advertisement(spec)
-    assert await service.ensure_advertisement(spec) is first
+    async with beacon.watch(HARDWARE_FEATURE_ID) as events:
+        event = await _receive(events)
 
-    dynamic_spec = BeaconAdvertisementSpec(
-        feature_id=HARDWARE_FEATURE_ID,
-        endpoint=hardware_manager_address("manager-main"),
-        session_id="manager-session",
-        payload=_hardware_payload().to_dict(),
-    )
-    dynamic = await service.ensure_advertisement(dynamic_spec)
-    assert await service.ensure_advertisement(dynamic_spec) is dynamic
-
-    await first.aclose()
-    replacement = await service.ensure_advertisement(spec)
-    assert replacement is not first
+    assert event.event_type == BeaconFeatureEventType.ADVERTISED
+    assert event.candidate is not None
+    assert event.candidate.key == advertisement.handle.key
 
 
 @pytest.mark.asyncio
 async def test_beacon_managed_publish_serializes_concurrent_refreshes() -> None:
-    service = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
-    advertisement = await service.ensure_advertisement(
+    beacon, _raw = _beacon()
+    advertisement = await beacon.advertise(
         BeaconAdvertisementSpec(
             feature_id=HARDWARE_FEATURE_ID,
             endpoint=hardware_manager_address("manager-main"),
@@ -350,25 +362,24 @@ async def test_beacon_managed_publish_serializes_concurrent_refreshes() -> None:
             payload=_hardware_payload().to_dict(),
         )
     )
-    await advertisement.publish()
     refreshes = []
 
     async def publish(hint: str) -> None:
-        refreshes.append(await advertisement.publish(hints={"publish": hint}))
+        refreshes.append(await advertisement.update(hints={"publish": hint}))
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(publish, "a")
         tg.start_soon(publish, "b")
 
-    candidate = (await service.find(HARDWARE_FEATURE_ID))[0]
+    candidate = beacon.candidates(HARDWARE_FEATURE_ID)[0]
     assert sorted(handle.refresh_seq for handle in refreshes) == [2, 3]
     assert candidate.advertisement.refresh_seq == 3
 
 
 @pytest.mark.asyncio
 async def test_beacon_find_returns_newest_revision_first() -> None:
-    service = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
-    old = await service.ensure_advertisement(
+    beacon, _raw = _beacon()
+    await beacon.advertise(
         BeaconAdvertisementSpec(
             feature_id=HARDWARE_FEATURE_ID,
             endpoint=hardware_manager_address("manager-main"),
@@ -377,7 +388,7 @@ async def test_beacon_find_returns_newest_revision_first() -> None:
             payload=_hardware_payload(session_id="old-session").to_dict(),
         )
     )
-    new = await service.ensure_advertisement(
+    await beacon.advertise(
         BeaconAdvertisementSpec(
             feature_id=HARDWARE_FEATURE_ID,
             endpoint=hardware_manager_address("manager-main"),
@@ -387,10 +398,7 @@ async def test_beacon_find_returns_newest_revision_first() -> None:
         )
     )
 
-    await old.publish()
-    await new.publish()
-
-    candidates = await service.find(HARDWARE_FEATURE_ID)
+    candidates = beacon.candidates(HARDWARE_FEATURE_ID)
 
     assert [candidate.advertisement.advertisement_id for candidate in candidates] == [
         "z-new",
@@ -401,8 +409,8 @@ async def test_beacon_find_returns_newest_revision_first() -> None:
 
 @pytest.mark.asyncio
 async def test_beacon_find_treats_refresh_as_newest_write() -> None:
-    service = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
-    old = await service.ensure_advertisement(
+    beacon, _raw = _beacon()
+    old = await beacon.advertise(
         BeaconAdvertisementSpec(
             feature_id=HARDWARE_FEATURE_ID,
             endpoint=hardware_manager_address("manager-main"),
@@ -411,7 +419,7 @@ async def test_beacon_find_treats_refresh_as_newest_write() -> None:
             payload=_hardware_payload(session_id="old-session").to_dict(),
         )
     )
-    new = await service.ensure_advertisement(
+    await beacon.advertise(
         BeaconAdvertisementSpec(
             feature_id=HARDWARE_FEATURE_ID,
             endpoint=hardware_manager_address("manager-main"),
@@ -421,11 +429,9 @@ async def test_beacon_find_treats_refresh_as_newest_write() -> None:
         )
     )
 
-    await old.publish()
-    await new.publish()
-    await old.publish(hints={"refreshed": "true"})
+    await old.update(hints={"refreshed": "true"})
 
-    candidates = await service.find(HARDWARE_FEATURE_ID)
+    candidates = beacon.candidates(HARDWARE_FEATURE_ID)
 
     assert [candidate.advertisement.advertisement_id for candidate in candidates] == [
         "a-old",
@@ -436,11 +442,13 @@ async def test_beacon_find_treats_refresh_as_newest_write() -> None:
 
 
 @pytest.mark.asyncio
-async def test_beacon_managed_close_before_publish_prevents_heartbeat_advertisement() -> None:
-    service = BeaconService(BeaconDiscovery(MemoryStateStore(name="beacon")))
+async def test_beacon_close_withdraws_and_stops_heartbeat() -> None:
+    beacon, _raw = _beacon()
 
     async with anyio.create_task_group() as tg:
-        advertisement = await service.ensure_advertisement(
+        beacon.start(tg)
+        await beacon.wait_ready()
+        advertisement = await beacon.advertise(
             BeaconAdvertisementSpec(
                 feature_id=HARDWARE_FEATURE_ID,
                 endpoint=hardware_manager_address("manager-main"),
@@ -449,58 +457,69 @@ async def test_beacon_managed_close_before_publish_prevents_heartbeat_advertisem
                 payload=_hardware_payload().to_dict(),
                 refresh_interval=0.01,
             ),
-            start_soon=tg.start_soon,
         )
         await advertisement.aclose()
         await anyio.sleep(0.03)
         tg.cancel_scope.cancel()
 
-    assert await service.find(HARDWARE_FEATURE_ID) == ()
+    assert beacon.candidates(HARDWARE_FEATURE_ID) == ()
 
 
 @pytest.mark.asyncio
-async def test_beacon_service_feature_watch_preserves_caller_state_unavailable() -> None:
-    state = MemoryStateStore(name="beacon")
-    service = BeaconService(BeaconDiscovery(state, default_ttl_seconds=30))
+async def test_beacon_watch_emits_withdrawn_when_candidate_leaves_selector() -> None:
+    beacon, _raw = _beacon()
+    advertisement = await beacon.advertise(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="manager-session",
+            advertisement_id="advertisement-1",
+            labels={"room": "lab"},
+            payload=_hardware_payload().to_dict(),
+        )
+    )
 
-    with pytest.raises(StateUnavailable, match="broker unavailable"):
-        async with service.watch_feature(HARDWARE_FEATURE_ID):
-            raise StateUnavailable("broker unavailable")
+    async with beacon.watch(
+        HARDWARE_FEATURE_ID,
+        selector=lambda record: record.labels.get("room") == "office",
+        replay_current=False,
+    ) as events:
+        await advertisement.update(labels={"room": "office"})
+        advertised = await _receive(events)
+        await advertisement.update(labels={"room": "lab"})
+        withdrawn = await _receive(events)
 
-
-@pytest.mark.asyncio
-async def test_beacon_service_feature_watch_preserves_source_state_unavailable() -> None:
-    state = FailingWatchStateStore(name="beacon")
-    service = BeaconService(BeaconDiscovery(state, default_ttl_seconds=30))
-
-    with pytest.raises(StateUnavailable, match="watch unavailable"):
-        async with service.watch_feature(HARDWARE_FEATURE_ID) as events:
-            await events.receive()
+    assert advertised.event_type == BeaconFeatureEventType.ADVERTISED
+    assert withdrawn.event_type == BeaconFeatureEventType.WITHDRAWN
+    assert withdrawn.reason == "selector_mismatch"
 
 
 @pytest.mark.asyncio
 async def test_beacon_service_feature_watch_reports_expiry(caplog) -> None:
-    state = MemoryStateStore(name="beacon")
-    service = BeaconService(BeaconDiscovery(state, default_ttl_seconds=30))
+    beacon, raw = _beacon()
     endpoint = hardware_manager_address("manager-main")
     caplog.set_level("INFO", logger="deckr.beacon")
 
-    async with service.watch_feature(HARDWARE_FEATURE_ID) as events:
-        advertisement = await service.ensure_advertisement(
-            BeaconAdvertisementSpec(
-                feature_id=HARDWARE_FEATURE_ID,
-                endpoint=endpoint,
-                session_id="manager-session",
-                advertisement_id="advertisement-1",
-                labels={"room": "office"},
-                payload=_hardware_payload().to_dict(),
-                log_label="TestHardware",
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await beacon.wait_ready()
+        async with beacon.watch(HARDWARE_FEATURE_ID) as events:
+            advertisement = await beacon.advertise(
+                BeaconAdvertisementSpec(
+                    feature_id=HARDWARE_FEATURE_ID,
+                    endpoint=endpoint,
+                    session_id="manager-session",
+                    advertisement_id="advertisement-1",
+                    labels={"room": "office"},
+                    payload=_hardware_payload().to_dict(),
+                    log_label="TestHardware",
+                )
             )
-        )
-        handle = await advertisement.publish()
-        await _receive(events)
-        await state.expire(handle.key)
-        expired = await _receive(events)
+            handle = advertisement.handle
+            await _receive(events)
+            await raw.expire(handle.key)
+            expired = await _receive(events)
+        tg.cancel_scope.cancel()
 
     assert expired.event_type == BeaconFeatureEventType.EXPIRED
     assert expired.reason == "expire"

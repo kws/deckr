@@ -20,13 +20,11 @@ _LOW_LEVEL_ON_BEACON = {
     "_advertise",
     "_refresh",
     "_withdraw",
-    "advertise",
     "refresh",
-    "withdraw",
     "advertiser",
 }
 _DIRECT_LIFECYCLE_CONSTRUCTORS = {
-    "BeaconAdvertisement",
+    "BeaconAdvertisementLease",
     "ConcordParticipantManager",
 }
 

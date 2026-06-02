@@ -23,10 +23,6 @@ _ALLOW_RAW_LIFECYCLE_STATE = {
 
 _FORBIDDEN_PATTERNS = (
     (
-        re.compile(r"\b(?:self\.)?_?beacon\.watch\("),
-        "direct BeaconDiscovery.watch use",
-    ),
-    (
         re.compile(r"\.watch\(\s*['\"]advertisements\.by_feature\."),
         "direct Beacon authority state watch",
     ),

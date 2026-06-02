@@ -21,9 +21,9 @@ from pydantic import (
 
 from deckr.beacon import (
     AdvertisementHandle,
-    BeaconAdvertisement,
+    Beacon,
+    BeaconAdvertisementLease,
     BeaconAdvertisementSpec,
-    BeaconService,
     Candidate,
 )
 from deckr.concord import (
@@ -61,6 +61,7 @@ from deckr.state import (
     StateConflict,
     StateUnavailable,
 )
+from deckr.substrates.nats_kv import KvConflict, KvUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +415,7 @@ class ServiceAdvertiser:
         protocol: ServiceProtocol,
         service_id: str,
         endpoint: RegisteredEndpointLane,
-        beacon: BeaconService,
+        beacon: Beacon,
         log_label: str = "service",
         refresh_interval: float = DEFAULT_SERVICE_ADVERTISEMENT_REFRESH_SECONDS,
     ) -> None:
@@ -425,7 +426,7 @@ class ServiceAdvertiser:
         self._log_label = log_label
         self._refresh_interval = refresh_interval
         self._advertisement: AdvertisementHandle | None = None
-        self._advertiser: BeaconAdvertisement | None = None
+        self._advertiser: BeaconAdvertisementLease | None = None
         self._backend_status = ServiceBackendStatus.UNAVAILABLE
         self._backend_diagnostics: Mapping[str, Any] = {}
         self._task_group: anyio.abc.TaskGroup | None = None
@@ -464,7 +465,7 @@ class ServiceAdvertiser:
         payload_dict = payload.to_dict()
         try:
             if self._advertiser is None or self._advertiser.closed:
-                self._advertiser = await self._beacon.ensure_advertisement(
+                self._advertiser = await self._beacon.advertise(
                     BeaconAdvertisementSpec(
                         feature_id=self.protocol.feature_id,
                         endpoint=self.endpoint.endpoint,
@@ -474,14 +475,17 @@ class ServiceAdvertiser:
                         refresh_interval=self._refresh_interval,
                         log_label=self._log_label,
                     ),
-                    start_soon=(
-                        self._task_group.start_soon
-                        if self._task_group is not None
-                        else None
-                    ),
+                    cleanup_stale_same_endpoint=True,
                 )
-            self._advertisement = await self._advertiser.publish(payload=payload_dict)
-        except StateUnavailable:
+                if self._task_group is not None:
+                    self._advertiser.start(self._task_group)
+                self._advertisement = self._advertiser.handle
+            else:
+                self._advertisement = await self._advertiser.update(
+                    payload=payload_dict,
+                    operations=self.protocol.operations,
+                )
+        except KvUnavailable:
             logger.warning(
                 "Could not publish %s Beacon advertisement",
                 self._log_label,
@@ -493,7 +497,7 @@ class ServiceAdvertiser:
         if self._advertiser is not None:
             try:
                 await self._advertiser.aclose()
-            except (StateConflict, StateUnavailable):
+            except (KvConflict, KvUnavailable):
                 logger.debug("Could not withdraw %s Beacon advertisement", self._log_label)
             self._advertiser = None
         self._advertisement = None

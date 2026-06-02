@@ -6,6 +6,7 @@ from types import TracebackType
 
 import anyio
 
+from deckr.beacon import BEACON_ADVERTISEMENT_STORE_POLICY, Beacon
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     LaneContract,
@@ -42,6 +43,7 @@ class Deckr:
             None
         )
         self._task_group: anyio.abc.TaskGroup | None = None
+        self._beacon: Beacon | None = None
 
     @property
     def lane_contracts(self) -> LaneContractRegistry:
@@ -57,6 +59,12 @@ class Deckr:
 
     def lane(self, name: str) -> Lane:
         return self._lanes.require(name)
+
+    @property
+    def beacon(self) -> Beacon:
+        if self._beacon is None:
+            raise RuntimeError("Deckr runtime does not provide Beacon")
+        return self._beacon
 
     def state(
         self,
@@ -105,6 +113,10 @@ class Deckr:
         start = getattr(self._substrate, "start", None)
         if start is not None:
             start(self._task_group)
+        kv_bucket = getattr(self._substrate, "kv_bucket", None)
+        if kv_bucket is not None:
+            self._beacon = Beacon(kv_bucket(BEACON_ADVERTISEMENT_STORE_POLICY))
+            self._beacon.start(self._task_group)
         return self
 
     async def __aexit__(
@@ -113,6 +125,8 @@ class Deckr:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
+        if self._beacon is not None:
+            await self._beacon.aclose()
         if self._task_group is not None:
             self._task_group.cancel_scope.cancel()
         result = None
@@ -122,6 +136,7 @@ class Deckr:
         if aclose is not None:
             await aclose()
         self._service_view_stores.clear()
+        self._beacon = None
         self._task_group = None
         self._task_group_cm = None
         return result

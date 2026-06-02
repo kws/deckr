@@ -312,6 +312,182 @@ class NatsJsonKvBucket:
         )
 
 
+class NatsKvMaterializedBucket:
+    """Internal materialized view over one JSON KV bucket.
+
+    This is intentionally a protocol-runtime helper, not a public generic state
+    abstraction. It keeps one long-lived bucket watch and serves reads from an
+    in-memory revision-indexed cache.
+    """
+
+    def __init__(
+        self,
+        *,
+        js: Any | None = None,
+        bucket: str | NatsJsonKvBucket | Any | None = None,
+        policy: KvBucketPolicy | None = None,
+        key_prefix: str = "",
+        buffer_size: int = 100,
+    ) -> None:
+        if isinstance(bucket, str):
+            if js is None:
+                raise ValueError("js is required when bucket is a name")
+            resolved_policy = policy or KvBucketPolicy(
+                bucket=bucket,
+                ttl_seconds=None,
+            )
+            self._bucket = NatsJsonKvBucket(
+                js=js,
+                policy=resolved_policy,
+                buffer_size=buffer_size,
+            )
+        elif bucket is not None:
+            self._bucket = bucket
+        else:
+            if js is None or policy is None:
+                raise ValueError("bucket or js+policy is required")
+            self._bucket = NatsJsonKvBucket(
+                js=js,
+                policy=policy,
+                buffer_size=buffer_size,
+            )
+        self.key_prefix = key_prefix
+        self._buffer_size = buffer_size
+        self._ready = anyio.Event()
+        self._started = False
+        self._entries: dict[str, KvEntry] = {}
+        self._revision_by_key: dict[str, int] = {}
+        self._subscribers: set[anyio.abc.ObjectSendStream[KvChange]] = set()
+        self._lock = anyio.Lock()
+
+    @property
+    def bucket(self) -> str:
+        return str(self._bucket.bucket)
+
+    def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        if self._started:
+            return
+        self._started = True
+        task_group.start_soon(self._watch_loop)
+
+    async def wait_ready(self) -> None:
+        await self._ready.wait()
+
+    def get_cached(self, key: str) -> KvEntry | None:
+        return self._entries.get(key)
+
+    def items_cached(self, prefix: str = "") -> tuple[KvEntry, ...]:
+        return tuple(
+            entry
+            for key, entry in sorted(self._entries.items())
+            if key.startswith(prefix)
+        )
+
+    def revision_cached(self, key: str) -> int | None:
+        return self._revision_by_key.get(key)
+
+    async def get_exact(self, key: str) -> KvEntry | None:
+        return await self._bucket.get(key)
+
+    async def create(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        ttl: float | None = None,
+    ) -> KvEntry:
+        entry = await self._bucket.create(key, value, ttl=ttl)
+        await self._apply_change(KvChange(self.bucket, key, entry.revision, "put", entry))
+        return entry
+
+    async def update(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        revision: int,
+        ttl: float | None = None,
+    ) -> KvEntry:
+        entry = await self._bucket.update(key, value, revision=revision, ttl=ttl)
+        await self._apply_change(KvChange(self.bucket, key, entry.revision, "put", entry))
+        return entry
+
+    async def delete(self, key: str, *, revision: int | None = None) -> None:
+        previous_revision = self._revision_by_key.get(key, 0)
+        await self._bucket.delete(key, revision=revision)
+        if previous_revision == 0 and revision is None:
+            return
+        marker_revision = (
+            revision
+            if revision is not None and revision > previous_revision
+            else previous_revision + 1
+        )
+        await self._apply_change(KvChange(self.bucket, key, marker_revision, "delete"))
+
+    @asynccontextmanager
+    async def subscribe(
+        self,
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange]]:
+        send, receive = anyio.create_memory_object_stream[KvChange](
+            max_buffer_size=self._buffer_size
+        )
+        async with self._lock:
+            self._subscribers.add(send)
+        try:
+            async with send, receive:
+                yield receive
+        finally:
+            async with self._lock:
+                self._subscribers.discard(send)
+
+    async def _watch_loop(self) -> None:
+        retry_seconds = 1.0
+        while True:
+            try:
+                async with self._bucket.watch(self.key_prefix) as changes:
+                    async for change in changes:
+                        if change is None:
+                            self._ready.set()
+                            continue
+                        await self._apply_change(change)
+            except anyio.get_cancelled_exc_class():
+                raise
+            except Exception:
+                logger.warning(
+                    "NATS KV materialized watch failed bucket=%s prefix=%s",
+                    self.bucket,
+                    self.key_prefix,
+                    exc_info=True,
+                )
+                await anyio.sleep(retry_seconds)
+
+    async def _apply_change(self, change: KvChange) -> None:
+        if self.key_prefix and not change.key.startswith(self.key_prefix):
+            return
+        async with self._lock:
+            current_revision = self._revision_by_key.get(change.key, 0)
+            if change.revision <= current_revision:
+                return
+            self._revision_by_key[change.key] = change.revision
+            if change.operation == "put" and change.entry is not None:
+                self._entries[change.key] = change.entry
+            else:
+                self._entries.pop(change.key, None)
+            subscribers = tuple(self._subscribers)
+        for subscriber in subscribers:
+            try:
+                subscriber.send_nowait(change)
+            except anyio.WouldBlock:
+                logger.warning(
+                    "NATS KV materialized subscriber buffer full bucket=%s key=%s",
+                    self.bucket,
+                    change.key,
+                )
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                async with self._lock:
+                    self._subscribers.discard(subscriber)
+
+
 def kv_value(value: Mapping[str, Any] | DeckrModel) -> Mapping[str, Any]:
     if isinstance(value, DeckrModel):
         return freeze_json(
@@ -338,21 +514,26 @@ def kv_change_from_raw(bucket: str, entry) -> KvChange | None:
     key = str(entry.key)
     revision = int(getattr(entry, "revision", 0))
     operation = str(getattr(entry, "operation", "") or "").upper()
+    marker_reason = _raw_header(entry, NATS_MARKER_REASON_HEADER)
     if operation in {KV_DELETE_OPERATION, KV_PURGE_OPERATION}:
         return KvChange(
             bucket=bucket,
             key=key,
             revision=revision,
-            operation="delete",
-            marker_reason=operation,
+            operation=(
+                "expire" if marker_reason == NATS_MARKER_MAX_AGE else "delete"
+            ),
+            marker_reason=marker_reason or operation,
         )
     if kv_entry_is_absent_marker(entry):
         return KvChange(
             bucket=bucket,
             key=key,
             revision=revision,
-            operation="delete",
-            marker_reason=operation or "absent",
+            operation=(
+                "expire" if marker_reason == NATS_MARKER_MAX_AGE else "delete"
+            ),
+            marker_reason=marker_reason or operation or "absent",
         )
     return KvChange(
         bucket=bucket,
@@ -378,6 +559,21 @@ def kv_watch_pattern(prefix: str) -> str:
     if prefix.endswith("."):
         return f"{prefix}>"
     return prefix
+
+
+def _raw_header(entry, key: str) -> str | None:
+    headers = getattr(entry, "headers", None)
+    if headers is None:
+        return None
+    try:
+        value = headers.get(key)
+    except AttributeError:
+        value = None
+    if value is None and isinstance(headers, Mapping):
+        value = headers.get(key)
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return str(value) if value is not None else None
 
 
 async def delete_ephemeral_consumer(subscription, *, reason: str) -> None:
@@ -437,5 +633,6 @@ __all__ = [
     "KvConflict",
     "KvEntry",
     "KvUnavailable",
+    "NatsKvMaterializedBucket",
     "NatsJsonKvBucket",
 ]
