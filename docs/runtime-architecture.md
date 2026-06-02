@@ -183,7 +183,7 @@ It includes:
 - recipient filtering for local endpoints
 - managed Beacon discovery backed by a materialized KV view
 - managed Concord agreements backed by materialized KV views
-- explicit StateStore access for application-owned state
+- explicit KV bucket access for protocol-owned state
 
 The managed lane runtime belongs in `deckr`. It is not a transport, controller,
 hardware manager, action provider runtime, or special discovered component.
@@ -218,7 +218,7 @@ That object is a runtime host helper around the managed lane runtime. It should:
   `lanes.require(name)`
 - expose endpoint-bound lane handles, recipient filtering diagnostics, and
 - managed protocol runtimes such as `beacon`
-- expose explicit state stores for Concord and application-owned state
+- expose explicit KV buckets for protocol-owned state
 - start required generic bus infrastructure exactly once
 - stop that infrastructure through normal async context-manager cancellation
 

@@ -76,6 +76,60 @@ def test_removed_concord_names_are_not_public() -> None:
     assert hasattr(concord, "CONCORD_CONTRACT_BUCKET_POLICY")
 
 
+def test_removed_service_runtime_helpers_are_not_public() -> None:
+    import deckr.services as services
+    import deckr.services.runtime as runtime
+
+    removed = {
+        "AuthorizationDecision",
+        "ServiceAdvertiser",
+        "ServiceCommandChannel",
+        "ServiceUseAuthorizer",
+        "ServiceUseLeaseManager",
+    }
+    assert all(not hasattr(runtime, name) for name in removed)
+    assert all(not hasattr(services, name) for name in removed)
+
+
+def test_removed_state_api_is_not_public() -> None:
+    import importlib
+
+    from deckr.lanes import LaneSubstrate
+    from deckr.runtime import Deckr
+    from deckr.substrates.nats import NatsSubstrate
+    from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
+
+    for owner in (Deckr, LaneSubstrate, NatsSubstrate, SupervisedNatsSubstrate):
+        assert not hasattr(owner, "state")
+
+    try:
+        importlib.import_module("deckr.state")
+    except ModuleNotFoundError:
+        pass
+    else:  # pragma: no cover - assertion branch
+        raise AssertionError("deckr.state should not be importable")
+
+
+def test_python_code_does_not_import_removed_state_module() -> None:
+    workspace = Path(__file__).resolve().parents[1]
+    violations: list[str] = []
+    for path in _repo_python_files(workspace):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "deckr.state":
+                        violations.append(f"{path.relative_to(workspace)}:{node.lineno}")
+            elif isinstance(node, ast.ImportFrom):
+                if node.module == "deckr.state":
+                    violations.append(f"{path.relative_to(workspace)}:{node.lineno}")
+                if node.module == "deckr" and any(
+                    alias.name == "state" for alias in node.names
+                ):
+                    violations.append(f"{path.relative_to(workspace)}:{node.lineno}")
+    assert violations == []
+
+
 def _production_python_files(workspace: Path) -> tuple[Path, ...]:
     roots: list[Path] = []
     for child in workspace.iterdir():
@@ -91,6 +145,26 @@ def _production_python_files(workspace: Path) -> tuple[Path, ...]:
             path
             for path in root.rglob("*.py")
             if "tests" not in path.parts and "__pycache__" not in path.parts
+        )
+    return tuple(sorted(files))
+
+
+def _repo_python_files(workspace: Path) -> tuple[Path, ...]:
+    roots = tuple(
+        root
+        for root in (
+            workspace / "src",
+            workspace / "tests",
+            workspace / "scripts",
+        )
+        if root.is_dir()
+    )
+    files: list[Path] = []
+    for root in roots:
+        files.extend(
+            path
+            for path in root.rglob("*.py")
+            if "__pycache__" not in path.parts
         )
     return tuple(sorted(files))
 

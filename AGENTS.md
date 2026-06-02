@@ -50,7 +50,6 @@ These are enforced in [`.importlinter`](./.importlinter):
 - `deckr.core` must not import `deckr.hardware`
 - `deckr.core` must not import `deckr.actions`
 - `deckr.contracts` must not import `deckr.actions` or `deckr.hardware`
-- `deckr.state` must not import `deckr.actions`
 - `deckr.hardware` must not import `deckr.actions`
 
 After touching package boundaries or import structure, run:

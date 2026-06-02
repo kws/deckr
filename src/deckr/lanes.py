@@ -25,7 +25,6 @@ from deckr.contracts.messages import (
     message_targets_endpoint,
     parse_endpoint_address,
 )
-from deckr.state import StateStore, StateStorePolicy
 
 ReplyPredicate = Callable[[DeckrMessage], bool | Awaitable[bool]]
 
@@ -59,8 +58,6 @@ class LaneSubstrate(Protocol):
         *,
         endpoint_session_id: str,
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]: ...
-
-    def state(self, name: str, *, policy: StateStorePolicy | None = None) -> StateStore: ...
 
 
 class Lane:

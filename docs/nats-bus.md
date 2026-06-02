@@ -29,18 +29,17 @@ The supported shared stores are:
 | Concord participant tokens | `deckr_concord_token_v1` | TTL-bound |
 | Concord maintenance observations | `deckr_concord_maintenance_v1` | persistent |
 
-`StateStore` remains the generic CAS/watch abstraction for application state
-paths, but Beacon and Concord use explicit KV bucket policies and materialized
-views. Production runtime code does not subscribe directly to Beacon or Concord
+Beacon and Concord use explicit KV bucket policies and materialized views.
+Production runtime code does not subscribe directly to Beacon or Concord
 authority state. Python runtime participants use the shared `Beacon` and
 `Concord` APIs; both own materialized KV views, semantic lifecycle events,
 leases, heartbeats, freshness checks, and lifecycle logging. Non-Python
 implementations must follow the same protocol semantics in
 [`beacon-concord.md`](beacon-concord.md).
 Retired shared coordination buckets are not part of the v1 surface. Opening a
-generic state store without an explicit policy creates a persistent generic
-store. Beacon and Concord open their explicit JetStream KV bucket policies
-directly and serve normal reads from materialized views.
+generic state store is no longer part of the Python runtime. Beacon and Concord
+open their explicit JetStream KV bucket policies directly and serve normal reads
+from materialized views.
 Concord participant-token TTL defaults to 30 seconds. Runtime participants may
 call their lease heartbeat more often, but the shared lease policy refreshes the
 token write only when a token must be attached or the default 15-second Concord
@@ -301,9 +300,9 @@ Concord contracts must be validated through Concord.
 
 NATS-backed protocol stores are opened with explicit policies. Beacon is opened
 by the managed runtime as `deckr.beacon`; callers should not construct a Beacon
-state store through `Deckr.state(...)`. Concord is opened by the managed runtime
-as `deckr.concord`; callers should not construct Concord state stores through
-`Deckr.state(...)`.
+store manually. Concord is opened by the managed runtime
+as `deckr.concord`; callers should not construct Concord authority directly
+from raw KV buckets.
 
 ```python
 beacon = deckr.beacon
@@ -366,17 +365,10 @@ nats kv ls deckr_concord_token_v1 'contracts.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_concord_maintenance_v1 'stale.>' --server nats://127.0.0.1:4222
 ```
 
-Run the smoke harness:
+Summarize current Beacon/Concord KV contents:
 
 ```bash
-uv run --extra nats python scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
 uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
-```
-
-Run it with a supervised local NATS server:
-
-```bash
-uv run --extra supervised-nats python scripts/nats_smoke.py --supervised --check-ttl
 ```
 
 ### JetStream Consumer Hygiene
@@ -389,10 +381,9 @@ once the read is complete; server-side inactive cleanup is a fallback, not the
 steady-state cleanup path.
 
 Treat watch events as wakeups and exact KV reads as authority, but remember that
-every watch still consumes broker resources. Use the smoke harness and
-`scripts/nats_state_report.py` for current Beacon/Concord keys and TTL behavior,
-then pair them with the `/jsz` check below to confirm that steady-state unbound
-consumer counts remain bounded.
+every watch still consumes broker resources. Use `scripts/nats_state_report.py`
+for current Beacon/Concord keys and TTL behavior, then pair it with the `/jsz`
+check below to confirm that steady-state unbound consumer counts remain bounded.
 
 ## Troubleshooting
 

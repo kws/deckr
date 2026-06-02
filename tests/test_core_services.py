@@ -31,6 +31,7 @@ from deckr.core.config import ConfigDocument
 from deckr.lanes import Lane
 from deckr.launcher import build_runtime_substrate
 from deckr.substrates.nats import NatsSubstrate
+from deckr.substrates.nats_kv import KvBucketPolicy
 
 
 class _DummyComponent(BaseComponent):
@@ -534,11 +535,12 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_components_passes_current_state_and_endpoints() -> None:
+async def test_start_components_passes_kv_bucket_and_endpoints() -> None:
     seen: dict[str, object] = {}
+    policy = KvBucketPolicy(bucket="test_component_context_v1", ttl_seconds=None)
 
     def factory(context):
-        seen["state"] = context.state()
+        seen["bucket"] = context.kv_bucket(policy)
         seen["endpoint"] = context.require_endpoint_id("controller")
         return _DummyComponent(name=context.runtime_name)
 
@@ -572,7 +574,7 @@ async def test_start_components_passes_current_state_and_endpoints() -> None:
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan):
-        assert seen["state"] is deckr.state()
+        assert seen["bucket"] is deckr.kv_bucket(policy)
         assert seen["endpoint"] == "controller-main"
 
 

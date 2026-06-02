@@ -6,24 +6,14 @@ from typing import Any
 import anyio
 import pytest
 from memory_kv_bucket import MemoryJsonKvBucket
-from memory_lane_substrate import memory_deckr
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import Beacon, BeaconAdvertisementSpec
-from deckr.concord import (
-    Concord,
-    ContractValidityStatus,
-)
-from deckr.contracts.messages import SERVICES_LANE, entity_subject, service_address
+from deckr.contracts.messages import service_address
 from deckr.services import (
-    SERVICE_COMMAND_REPLY,
     ServiceAdvertisementPayload,
     ServiceBackendStatus,
-    ServiceCommandBody,
-    ServiceCommandReplyBody,
-    ServiceCommandStatus,
     ServiceDescriptor,
-    ServiceError,
     ServiceProtocol,
     ServiceUseTerms,
     ServiceViewEntry,
@@ -33,18 +23,9 @@ from deckr.services import (
     UnsupportedServiceScope,
     newest_service_descriptor,
     parse_service_descriptor,
-    service_body,
-    service_command_message,
     service_use_terms,
     service_view_key,
     service_view_prefix,
-)
-from deckr.services.runtime import (
-    AuthorizationDecision,
-    ServiceAdvertiser,
-    ServiceCommandChannel,
-    ServiceUseAuthorizer,
-    ServiceUseLeaseManager,
 )
 from deckr.substrates.nats_kv import KvConflict
 
@@ -71,17 +52,6 @@ def _protocol(
 
 def _memory_beacon() -> Beacon:
     return Beacon(MemoryJsonKvBucket(bucket="beacon"))
-
-
-def _memory_concord(
-    *,
-    token_bucket: MemoryJsonKvBucket | None = None,
-) -> Concord:
-    return Concord(
-        MemoryJsonKvBucket(bucket="contracts"),
-        token_bucket or MemoryJsonKvBucket(bucket="tokens"),
-        MemoryJsonKvBucket(bucket="maintenance"),
-    )
 
 
 async def _publish_service_advertisement(
@@ -126,37 +96,6 @@ async def _descriptor(
     descriptor = newest_service_descriptor(descriptors)
     assert descriptor is not None
     return descriptor
-
-
-async def _service_reply_loop(endpoint, authorizer: ServiceUseAuthorizer) -> None:
-    async with endpoint.subscribe() as stream:
-        async for message in stream:
-            body = service_body(message)
-            if not isinstance(body, ServiceCommandBody):
-                continue
-            decision = await authorizer.authorize_command(message, body)
-            if decision is AuthorizationDecision.AUTHORIZED:
-                reply = ServiceCommandReplyBody(
-                    serviceNamespace=body.service_namespace,
-                    operation=body.operation,
-                    status=ServiceCommandStatus.OK,
-                    result={"accepted": True},
-                )
-            else:
-                reply = ServiceCommandReplyBody(
-                    serviceNamespace=body.service_namespace,
-                    operation=body.operation,
-                    status=ServiceCommandStatus.REJECTED,
-                    error=ServiceError(
-                        code="not_authorized",
-                        message="Command is not authorized",
-                    ),
-                )
-            await endpoint.reply_to(
-                message,
-                message_type=SERVICE_COMMAND_REPLY,
-                body=reply.to_dict(),
-            )
 
 
 def test_service_protocol_payload_terms_and_view_keys() -> None:
@@ -285,314 +224,78 @@ async def test_service_use_terms_grant_only_requested_scope() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> None:
+async def test_service_view_store_uses_explicit_lease_scope() -> None:
     beacon = _memory_beacon()
-    concord = _memory_concord()
+    protocol = _protocol()
+    await _publish_service_advertisement(beacon, protocol)
+    descriptor = await _descriptor(beacon, protocol)
+    terms = service_use_terms(
+        descriptor,
+        action_provider_address("provider-main"),
+        operations={"ensureItems"},
+        views={"items"},
+    )
+    lease = _FakeServiceUseLease(descriptor=descriptor, terms=terms)
     view_store = ServiceViewStore(
         bucket=MemoryJsonKvBucket(bucket="deckr_openhab_service_view_v1")
     )
-    protocol = _protocol()
+    view_ref = ServiceViewRef(
+        "deckr_openhab_service_view_v1",
+        service_view_key("openhab-home", "items", "Kitchen Light"),
+    )
 
-    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
-        service_address("openhab-home")
-    ) as service_endpoint, deckr.lane(SERVICES_LANE).register_endpoint(
-        action_provider_address("provider-main")
-    ) as client_endpoint:
-        advertiser = ServiceAdvertiser(
-            protocol=protocol,
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+        created = await view_store.put(
+            view=view_ref,
+            payload={"item": "Kitchen Light", "state": "ON"},
             service_id="openhab-home",
-            endpoint=service_endpoint,
-            beacon=beacon,
+            service_namespace=protocol.namespace,
+            session_id="service-session",
         )
-        authorizer = ServiceUseAuthorizer(
-            protocol=protocol,
-            service_id="openhab-home",
-            endpoint=service_endpoint,
-            concord=concord,
-        )
-        await advertiser.publish(ServiceBackendStatus.AVAILABLE)
-        descriptor = await _descriptor(beacon, protocol)
-        key = service_view_key("openhab-home", "items", "Kitchen Light")
-        view_ref = ServiceViewRef("deckr_openhab_service_view_v1", key)
 
-        async with anyio.create_task_group() as tg:
-            view_store.start(tg)
-            authorizer.start(tg)
-            tg.start_soon(_service_reply_loop, service_endpoint, authorizer)
-            leases = ServiceUseLeaseManager(
-                endpoint=client_endpoint,
-                concord=concord,
-                task_group=tg,
-            )
-            lease = await leases.ensure(
-                descriptor,
-                operations={"ensureItems"},
-                views={"items"},
-                timeout=1.0,
-            )
-            commands = ServiceCommandChannel(endpoint=client_endpoint)
-            await view_store.wait_ready()
+        current = await view_store.get(lease, view_ref)
+        assert current is not None
+        assert isinstance(current, ServiceViewEntry)
+        assert current.value["state"] == "ON"
 
-            reply = await commands.command(
-                lease,
-                "ensureItems",
-                {"items": ["Kitchen Light"]},
-            )
-            assert reply.status == ServiceCommandStatus.OK
-
-            await view_store.put(
+        async with view_store.watch(lease, view_ref) as changes:
+            updated = await view_store.update(
                 view=view_ref,
-                payload={"item": "Kitchen Light", "state": "ON"},
+                payload={"item": "Kitchen Light", "state": "OFF"},
                 service_id="openhab-home",
                 service_namespace=protocol.namespace,
-                session_id=service_endpoint.session_id,
+                session_id="service-session",
+                revision=created.revision,
             )
-            current = await view_store.get(lease, view_ref)
-            assert current is not None
-            assert isinstance(current, ServiceViewEntry)
-            assert current.value["state"] == "ON"
-            async with view_store.watch(lease, view_ref) as changes:
-                updated = await view_store.update(
-                    view=view_ref,
-                    payload={"item": "Kitchen Light", "state": "OFF"},
-                    service_id="openhab-home",
-                    service_namespace=protocol.namespace,
-                    session_id=service_endpoint.session_id,
-                    revision=current.revision,
-                )
-                change = await changes.receive()
-                assert change.operation == "put"
-                assert change.entry == updated
-                with pytest.raises(KvConflict):
-                    await view_store.update(
-                        view=view_ref,
-                        payload={"item": "Kitchen Light", "state": "STALE"},
-                        service_id="openhab-home",
-                        service_namespace=protocol.namespace,
-                        session_id=service_endpoint.session_id,
-                        revision=current.revision,
-                    )
+            change = await changes.receive()
+            assert change.operation == "put"
+            assert change.entry == updated
 
-            await advertiser.withdraw()
-            cached = await leases.cached(
+        with pytest.raises(KvConflict):
+            await view_store.update(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "STALE"},
                 service_id="openhab-home",
-                namespace=protocol.namespace,
-                operations={"ensureItems"},
-                views={"items"},
-            )
-            assert cached is lease
-            reply = await commands.command(
-                cached,
-                "ensureItems",
-                {"items": ["Kitchen Light"]},
-            )
-            assert reply.status == ServiceCommandStatus.OK
-            current = await view_store.get(cached, view_ref)
-            assert current is not None
-            assert current.value["state"] == "OFF"
-            rejected = await commands.command(lease, "sendCommand", {})
-            assert rejected.status == ServiceCommandStatus.REJECTED
-            assert rejected.error is not None
-            assert rejected.error.code == "operation_not_authorized"
-
-            await leases.aclose()
-            await authorizer.aclose()
-            tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_service_use_manager_replaces_closed_cached_agreement() -> None:
-    beacon = _memory_beacon()
-    concord = _memory_concord()
-    protocol = _protocol()
-
-    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
-        service_address("openhab-home")
-    ) as service_endpoint, deckr.lane(SERVICES_LANE).register_endpoint(
-        action_provider_address("provider-main")
-    ) as client_endpoint:
-        advertiser = ServiceAdvertiser(
-            protocol=protocol,
-            service_id="openhab-home",
-            endpoint=service_endpoint,
-            beacon=beacon,
-        )
-        authorizer = ServiceUseAuthorizer(
-            protocol=protocol,
-            service_id="openhab-home",
-            endpoint=service_endpoint,
-            concord=concord,
-        )
-        await advertiser.publish(ServiceBackendStatus.AVAILABLE)
-        descriptor = await _descriptor(beacon, protocol)
-
-        async with anyio.create_task_group() as tg:
-            concord.start(tg)
-            await concord.wait_ready()
-            authorizer.start(tg)
-            leases = ServiceUseLeaseManager(
-                endpoint=client_endpoint,
-                concord=concord,
-                task_group=tg,
-            )
-            lease = await leases.ensure(
-                descriptor,
-                views={"items"},
-                timeout=1.0,
-            )
-            await lease.agreement.aclose()
-
-            replacement = await leases.ensure(
-                descriptor,
-                views={"items"},
-                timeout=1.0,
+                service_namespace=protocol.namespace,
+                session_id="service-session",
+                revision=created.revision,
             )
 
-            assert replacement is not lease
-            assert replacement.agreement is not lease.agreement
-            assert (await replacement.agreement.refresh()).status == (
-                ContractValidityStatus.VALID
-            )
-
-            await leases.aclose()
-            await authorizer.aclose()
-            await advertiser.withdraw()
-            tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("missing_participant", ["client", "service"])
-async def test_service_use_stale_contract_is_cancelled_and_superseded(
-    missing_participant: str,
-) -> None:
-    beacon = _memory_beacon()
-    token_store = MemoryJsonKvBucket(bucket="tokens")
-    concord = _memory_concord(token_bucket=token_store)
-    protocol = _protocol()
-
-    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
-        service_address("openhab-home")
-    ) as service_endpoint, deckr.lane(SERVICES_LANE).register_endpoint(
-        action_provider_address("provider-main")
-    ) as client_endpoint:
-        advertiser = ServiceAdvertiser(
-            protocol=protocol,
-            service_id="openhab-home",
-            endpoint=service_endpoint,
-            beacon=beacon,
+        unauthorized = ServiceViewRef(
+            "deckr_openhab_service_view_v1",
+            "views.openhab-home.items-unrelated.Kitchen",
         )
-        authorizer = ServiceUseAuthorizer(
-            protocol=protocol,
-            service_id="openhab-home",
-            endpoint=service_endpoint,
-            concord=concord,
-        )
-        await advertiser.publish(ServiceBackendStatus.AVAILABLE)
-        descriptor = await _descriptor(beacon, protocol)
-
-        async with anyio.create_task_group() as tg:
-            concord.start(tg)
-            await concord.wait_ready()
-            authorizer.start(tg)
-            leases = ServiceUseLeaseManager(
-                endpoint=client_endpoint,
-                concord=concord,
-                task_group=tg,
-            )
-            lease = await leases.ensure(
-                descriptor,
-                operations={"ensureItems"},
-                timeout=1.0,
-            )
-            await authorizer.reconcile_contracts()
-            client_token = lease.agreement.local_token
-            managed = authorizer._manager.managed_contract(lease.contract)  # noqa: SLF001
-            assert client_token is not None
-            assert managed is not None
-            assert managed.token is not None
-
-            stale_token = (
-                client_token if missing_participant == "client" else managed.token
-            )
-            await token_store.delete(stale_token.key, revision=stale_token.revision)
-            await authorizer.reconcile_contracts()
-
-            cancelled = await concord._validate(lease.contract)  # noqa: SLF001
-            assert cancelled.status == ContractValidityStatus.CANCELLED
-
-            replacement = await leases.ensure(
-                descriptor,
-                operations={"ensureItems"},
-                timeout=1.0,
-            )
-            assert replacement.contract.contract_id == lease.contract.contract_id
-            assert replacement.contract.generation == lease.contract.generation + 1
-            assert (await replacement.agreement.refresh()).status == (
-                ContractValidityStatus.VALID
-            )
-
-            await leases.aclose()
-            await authorizer.aclose()
-            await advertiser.withdraw()
-            tg.cancel_scope.cancel()
+        with pytest.raises(UnsupportedServiceScope):
+            await view_store.get(lease, unauthorized)
+        tg.cancel_scope.cancel()
 
 
-@pytest.mark.asyncio
-async def test_service_authorizer_not_applicable_for_wrong_target() -> None:
-    concord = _memory_concord()
-    protocol = _protocol()
+class _FakeServiceUseLease:
+    def __init__(self, *, descriptor: ServiceDescriptor, terms: ServiceUseTerms) -> None:
+        self.descriptor = descriptor
+        self.terms = terms
 
-    async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
-        service_address("openhab-home")
-    ) as service_endpoint:
-        authorizer = ServiceUseAuthorizer(
-            protocol=protocol,
-            service_id="openhab-home",
-            endpoint=service_endpoint,
-            concord=concord,
-        )
-        body = ServiceCommandBody(
-            serviceNamespace="wrong-namespace",
-            operation="ensureItems",
-        )
-        message = service_command_message(
-            sender=action_provider_address("provider-main"),
-            sender_session_id="provider-session",
-            recipient=service_endpoint.endpoint,
-            recipient_session_id=service_endpoint.session_id,
-            subject=entity_subject(
-                "service",
-                serviceId="openhab-home",
-                namespace="wrong-namespace",
-                operation="ensureItems",
-            ),
-            body=body,
-        )
-
-        assert (
-            await authorizer.authorize_command(message, body)
-            is AuthorizationDecision.NOT_APPLICABLE
-        )
-
-        body = ServiceCommandBody(
-            serviceNamespace=protocol.namespace,
-            operation="ensureItems",
-        )
-        message = service_command_message(
-            sender=action_provider_address("provider-main"),
-            sender_session_id="provider-session",
-            recipient=service_endpoint.endpoint,
-            recipient_session_id=service_endpoint.session_id,
-            subject=entity_subject(
-                "service",
-                serviceId="other-service",
-                namespace=protocol.namespace,
-                operation="ensureItems",
-            ),
-            body=body,
-        )
-
-        assert (
-            await authorizer.authorize_command(message, body)
-            is AuthorizationDecision.NOT_APPLICABLE
-        )
+    async def refresh(self) -> None:
+        return None

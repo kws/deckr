@@ -43,11 +43,6 @@ from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.config import ConfigDocument
 from deckr.core.util.runtime_id import require_runtime_id
 from deckr.lanes import Lane, LaneRegistry
-from deckr.state import (
-    DEFAULT_STATE_STORE_NAME,
-    StateStore,
-    StateStorePolicy,
-)
 from deckr.substrates.nats_kv import KvBucketPolicy
 
 if TYPE_CHECKING:
@@ -117,7 +112,6 @@ class ComponentContext:
     endpoints: Mapping[str, str]
     base_dir: Path
     lanes: LaneRegistry
-    state_for: Callable[..., StateStore]
     kv_bucket_for: Callable[[KvBucketPolicy], Any] | None = None
 
     def require_lane(self, name: str) -> Lane:
@@ -130,14 +124,6 @@ class ComponentContext:
                 f"Component {self.runtime_name!r} has no endpoint slot {slot!r}"
             )
         return endpoint_id
-
-    def state(
-        self,
-        name: str = DEFAULT_STATE_STORE_NAME,
-        *,
-        policy: StateStorePolicy | None = None,
-    ) -> StateStore:
-        return self.state_for(name, policy=policy)
 
     def kv_bucket(self, policy: KvBucketPolicy) -> Any:
         if self.kv_bucket_for is None:
@@ -1492,8 +1478,7 @@ async def _activate_component_plan(
             endpoints=spec.endpoints,
             base_dir=plan.base_dir,
             lanes=deckr.lanes,
-            state_for=deckr.state,
-            kv_bucket_for=getattr(deckr._substrate, "kv_bucket", None),  # noqa: SLF001
+            kv_bucket_for=deckr.kv_bucket,
         )
         component = spec.definition.factory(context)
         if not isinstance(component, Component):

@@ -21,9 +21,8 @@ from deckr.contracts.lanes import (
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.lanes import Lane, LaneRegistry, LaneSubstrate
 from deckr.services.views import ServiceViewStore
-from deckr.state import DEFAULT_STATE_STORE_NAME, StateStore, StateStorePolicy
 from deckr.substrates.nats import NatsSubstrate
-from deckr.substrates.nats_kv import KvBucketPolicy
+from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
 
 
 class Deckr:
@@ -79,13 +78,11 @@ class Deckr:
             raise RuntimeError("Deckr runtime does not provide Concord")
         return self._concord
 
-    def state(
-        self,
-        name: str = DEFAULT_STATE_STORE_NAME,
-        *,
-        policy: StateStorePolicy | None = None,
-    ) -> StateStore:
-        return self._substrate.state(name, policy=policy)
+    def kv_bucket(self, policy: KvBucketPolicy) -> NatsJsonKvBucket:
+        kv_bucket = getattr(self._substrate, "kv_bucket", None)
+        if kv_bucket is None:
+            raise RuntimeError("Deckr substrate does not provide NATS KV buckets")
+        return kv_bucket(policy)
 
     def service_view_store(
         self,
@@ -95,14 +92,11 @@ class Deckr:
     ) -> ServiceViewStore:
         if self._task_group is None:
             raise RuntimeError("Deckr runtime must be running")
-        kv_bucket = getattr(self._substrate, "kv_bucket", None)
-        if kv_bucket is None:
-            raise RuntimeError("Deckr substrate does not provide NATS KV buckets")
         key = (bucket, ttl_seconds)
         store = self._service_view_stores.get(key)
         if store is None:
             store = ServiceViewStore(
-                bucket=kv_bucket(
+                bucket=self.kv_bucket(
                     KvBucketPolicy(
                         bucket=bucket,
                         ttl_seconds=ttl_seconds,

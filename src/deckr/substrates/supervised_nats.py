@@ -20,7 +20,6 @@ import anyio
 from deckr.contracts.lanes import LaneContractRegistry
 from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.lanes import ReplyPredicate
-from deckr.state import StateStore, StateStorePolicy
 from deckr.substrates.nats import NatsSubstrate
 from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
 
@@ -504,14 +503,6 @@ class SupervisedNatsSubstrate:
             endpoint,
             endpoint_session_id=endpoint_session_id,
         )
-
-    def state(
-        self,
-        name: str,
-        *,
-        policy: StateStorePolicy | None = None,
-    ) -> StateStore:
-        return self._connected_nats().state(name, policy=policy)
 
     def kv_bucket(self, policy: KvBucketPolicy) -> NatsJsonKvBucket:
         return self._connected_nats().kv_bucket(policy)

@@ -11,8 +11,8 @@ from deckr.beacon import (
     parse_beacon_advertisement_key,
 )
 from deckr.concord import (
-    DEFAULT_CONCORD_CONTRACT_STORE_NAME,
-    DEFAULT_CONCORD_TOKEN_STORE_NAME,
+    DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
+    DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
     parse_concord_contract_key,
     parse_concord_participant_token_key,
 )
@@ -186,8 +186,8 @@ def _buckets(args: argparse.Namespace) -> tuple[str, ...]:
         return tuple(args.bucket)
     return (
         DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-        DEFAULT_CONCORD_CONTRACT_STORE_NAME,
-        DEFAULT_CONCORD_TOKEN_STORE_NAME,
+        DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
+        DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
     )
 
 

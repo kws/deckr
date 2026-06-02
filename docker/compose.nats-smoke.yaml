@@ -1,8 +1,0 @@
-name: deckr-nats-smoke
-
-services:
-  nats:
-    image: nats:2.12.8
-    command: ["-js"]
-    ports:
-      - "127.0.0.1:4222:4222"

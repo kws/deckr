@@ -771,7 +771,7 @@ def _is_materialized_bucket(value: Any) -> bool:
     )
 
 
-class _ConcordCoordinator:
+class _ConcordKvStore:
     def __init__(
         self,
         contract_bucket: NatsKvMaterializedBucket | Any,
@@ -1361,7 +1361,7 @@ class Concord:
         token_ttl_seconds: int = DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
         buffer_size: int = 100,
     ) -> None:
-        self._coordinator = _ConcordCoordinator(
+        self._coordinator = _ConcordKvStore(
             contract_bucket,
             token_bucket,
             token_ttl_seconds=token_ttl_seconds,

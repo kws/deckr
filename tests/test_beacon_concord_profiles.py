@@ -57,71 +57,6 @@ from deckr.profiles import (
 )
 from deckr.substrates.nats_kv import KvChange, KvConflict
 
-StateConflict = ConcordConflict
-StateUnavailable = ConcordUnavailable
-
-
-class MemoryStateStore(MemoryJsonKvBucket):
-    def __init__(self, *, name: str, buffer_size: int = 100) -> None:
-        super().__init__(bucket=name, buffer_size=buffer_size)
-        self.name = name
-
-    async def items(self, prefix: str = ""):
-        async with self._lock:
-            return tuple(
-                entry
-                for key, entry in sorted(self._entries.items())
-                if key.startswith(prefix)
-            )
-
-
-class ConcordCoordinator(Concord):
-    def __init__(self, contract_state, token_state, *, token_ttl_seconds: int = 30):
-        super().__init__(
-            contract_state,
-            token_state,
-            MemoryJsonKvBucket(bucket=f"maintenance-{id(self)}"),
-            token_ttl_seconds=token_ttl_seconds,
-        )
-
-    async def create_contract(self, *args, **kwargs):
-        return await self._create_contract(*args, **kwargs)
-
-    async def attach(self, *args, **kwargs):
-        return await self._attach(*args, **kwargs)
-
-    async def refresh(self, *args, **kwargs):
-        return await self._refresh_token(*args, **kwargs)
-
-    async def validate_participant_handle(self, *args, **kwargs):
-        return await self._validate_participant_token(*args, **kwargs)
-
-    async def find_contracts(self, *args, **kwargs):
-        return await self.contracts(*args, **kwargs)
-
-    async def cancel(self, contract, participant, **kwargs):
-        return await self._cancel(contract, participant, **kwargs)
-
-
-class ConcordService:
-    def __init__(self, coordinator: ConcordCoordinator):
-        self._inner = coordinator
-        self._coordinator = coordinator
-
-    def __getattr__(self, name):
-        mapping = {
-            "ensure_agreement": "propose",
-            "participant_manager": "participant",
-            "find_contracts": "contracts",
-        }
-        return getattr(self._inner, mapping.get(name, name))
-
-    async def cancel_contract(self, contract, participant, **kwargs):
-        return await self._inner.cancel(contract, participant, **kwargs)
-
-
-ConcordParticipantManager = ConcordParticipant
-
 
 async def _receive(stream):
     with anyio.fail_after(1):
@@ -152,8 +87,8 @@ async def _receive_notification_source(stream, source: str):
                 return notification
 
 
-class RacingUpdateStateStore:
-    def __init__(self, inner: MemoryStateStore) -> None:
+class RacingUpdateKvBucket:
+    def __init__(self, inner: MemoryJsonKvBucket) -> None:
         self._inner = inner
         self.raced = False
 
@@ -163,9 +98,6 @@ class RacingUpdateStateStore:
 
     async def get(self, *args, **kwargs):
         return await self._inner.get(*args, **kwargs)
-
-    async def items(self, *args, **kwargs):
-        return await self._inner.items(*args, **kwargs)
 
     async def put(self, *args, **kwargs):
         return await self._inner.put(*args, **kwargs)
@@ -192,26 +124,40 @@ class RacingUpdateStateStore:
 
 class UnavailableWatch:
     async def __aenter__(self):
-        raise StateUnavailable("watch unavailable")
+        raise ConcordUnavailable("watch unavailable")
 
     async def __aexit__(self, *args):
         return None
 
 
-class FailingWatchStateStore(MemoryStateStore):
+class FailingWatchKvBucket(MemoryJsonKvBucket):
     def watch(self, prefix: str = ""):
         del prefix
         return UnavailableWatch()
 
 
-class CountingItemsStateStore(MemoryStateStore):
-    def __init__(self, *, name: str) -> None:
-        super().__init__(name=name)
+class CountingItemsKvBucket(MemoryJsonKvBucket):
+    def __init__(self, *, bucket: str) -> None:
+        super().__init__(bucket=bucket)
         self.items_prefixes: list[str] = []
 
     async def items(self, prefix: str = ""):
         self.items_prefixes.append(prefix)
-        return await super().items(prefix)
+        return ()
+
+
+def _concord(
+    contract_bucket: MemoryJsonKvBucket | object,
+    token_bucket: MemoryJsonKvBucket | object,
+    *,
+    token_ttl_seconds: int = 30,
+) -> Concord:
+    return Concord(
+        contract_bucket,
+        token_bucket,
+        MemoryJsonKvBucket(bucket=f"maintenance-{id(contract_bucket)}-{id(token_bucket)}"),
+        token_ttl_seconds=token_ttl_seconds,
+    )
 
 
 def _raw_revision(bucket) -> int:
@@ -220,7 +166,7 @@ def _raw_revision(bucket) -> int:
 
 
 def _inner_concord(service_or_concord) -> Concord:
-    return getattr(service_or_concord, "_inner", service_or_concord)
+    return service_or_concord
 
 
 async def _delete_token_from_view(
@@ -630,14 +576,14 @@ async def test_beacon_service_feature_watch_reports_expiry(caplog) -> None:
 
 @pytest.mark.asyncio
 async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    concord = ConcordCoordinator(contract_state, token_state)
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    concord = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
 
-    contract = await concord.create_contract(
+    contract = await concord._create_contract(
         (manager, controller),
         contract_id="hardware-contract-1",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -655,7 +601,7 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
         ContractValidityStatus.NOT_YET_FULFILLED
     )
 
-    controller_token = await concord.attach(
+    controller_token = await concord._attach(
         contract,
         controller,
         "controller-session",
@@ -665,7 +611,7 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
         ContractValidityStatus.NOT_YET_FULFILLED
     )
 
-    manager_token = await concord.attach(
+    manager_token = await concord._attach(
         contract,
         manager,
         "manager-session",
@@ -677,7 +623,7 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
     assert validity.tokens[str(controller)].key == controller_token.key
     assert validity.tokens[str(manager)].key == manager_token.key
 
-    refreshed = await concord.refresh(controller_token)
+    refreshed = await concord._refresh_token(controller_token)
     assert refreshed.refresh_seq == 2
     assert (
         await concord.validate(
@@ -689,8 +635,8 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
     await _delete_token_from_view(concord, token_state, manager_token)
     missing = await concord.validate(contract)
     assert missing.status == ContractValidityStatus.MISSING_TOKEN
-    with pytest.raises(StateConflict, match="already attached"):
-        await concord.attach(
+    with pytest.raises(ConcordConflict, match="already attached"):
+        await concord._attach(
             contract,
             manager,
             "manager-session",
@@ -698,39 +644,39 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
         )
 
     async with concord.watch(replay_current=False) as changes:
-        assert await concord.cancel(contract, controller, reason="test complete")
+        assert await concord._cancel(contract, controller, reason="test complete")
         change = await _receive(changes)
     assert change.change is not None
     assert change.change.key == contract.key
     assert (await concord.validate(contract)).status == ContractValidityStatus.CANCELLED
-    with pytest.raises(StateConflict, match="cancelled"):
-        await concord.attach(contract, controller, "new-session")
+    with pytest.raises(ConcordConflict, match="cancelled"):
+        await concord._attach(contract, controller, "new-session")
 
 
 @pytest.mark.asyncio
 async def test_concord_refresh_returns_latest_token_after_revision_race() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = RacingUpdateStateStore(MemoryStateStore(name="tokens"))
-    concord = ConcordCoordinator(contract_state, token_state)
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = RacingUpdateKvBucket(MemoryJsonKvBucket(bucket="tokens"))
+    concord = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
 
-    contract = await concord.create_contract(
+    contract = await concord._create_contract(
         (manager, controller),
         contract_id="hardware-contract-1",
         profile=HARDWARE_CLAIM_PROFILE_ID,
         terms=terms,
         created_by=controller,
     )
-    controller_token = await concord.attach(
+    controller_token = await concord._attach(
         contract,
         controller,
         "controller-session",
         token_id="controller-token",
     )
 
-    refreshed = await concord.refresh(controller_token)
+    refreshed = await concord._refresh_token(controller_token)
 
     assert token_state.raced
     assert refreshed.refresh_seq == 2
@@ -739,9 +685,9 @@ async def test_concord_refresh_returns_latest_token_after_revision_race() -> Non
 
 @pytest.mark.asyncio
 async def test_concord_participant_lease_closes_after_cancelled_contract() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
@@ -761,17 +707,17 @@ async def test_concord_participant_lease_closes_after_cancelled_contract() -> No
     await lease.attach_or_refresh()
     await service._cancel(contract, controller, reason="test complete")
 
-    with pytest.raises(StateConflict, match="cancelled"):
+    with pytest.raises(ConcordConflict, match="cancelled"):
         await lease.attach_or_refresh()
-    with pytest.raises(StateConflict, match="closed"):
+    with pytest.raises(ConcordConflict, match="closed"):
         await lease.attach_or_refresh()
 
 
 @pytest.mark.asyncio
 async def test_concord_participant_lease_rate_limits_token_writes() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -806,9 +752,9 @@ async def test_concord_participant_lease_rate_limits_token_writes() -> None:
 
 @pytest.mark.asyncio
 async def test_concord_participant_lease_adopts_without_immediate_refresh() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -842,9 +788,9 @@ async def test_concord_participant_lease_adopts_without_immediate_refresh() -> N
 
 @pytest.mark.asyncio
 async def test_concord_participant_manager_attaches_adopts_and_filters() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
@@ -864,7 +810,7 @@ async def test_concord_participant_manager_attaches_adopts_and_filters() -> None
     await service._attach(contract, controller, "controller-session")
     await service._attach(other, controller, "controller-session")
 
-    manager_lifecycle = service.participant_manager(
+    manager_lifecycle = service.participant(
         participant=manager,
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -877,7 +823,7 @@ async def test_concord_participant_manager_attaches_adopts_and_filters() -> None
     assert managed[0].token is not None
     assert managed[0].token.refresh_seq == 1
 
-    adopted_lifecycle = service.participant_manager(
+    adopted_lifecycle = service.participant(
         participant=manager,
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -892,11 +838,9 @@ async def test_concord_participant_manager_attaches_adopts_and_filters() -> None
 
 @pytest.mark.asyncio
 async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -> None:
-    contract_state = CountingItemsStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(
-        ConcordCoordinator(contract_state, token_state, token_ttl_seconds=30)
-    )
+    contract_state = CountingItemsKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state, token_ttl_seconds=30)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -907,7 +851,7 @@ async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -
         created_by=controller,
     )
     await service._attach(contract, controller, "controller-session")
-    lifecycle = service.participant_manager(
+    lifecycle = service.participant(
         participant=manager,
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -942,14 +886,12 @@ async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -
 
 @pytest.mark.asyncio
 async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(
-        ConcordCoordinator(contract_state, token_state, token_ttl_seconds=30)
-    )
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state, token_ttl_seconds=30)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
-    lifecycle = service.participant_manager(
+    lifecycle = service.participant(
         participant=manager,
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -1001,12 +943,12 @@ async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> 
 
 @pytest.mark.asyncio
 async def test_concord_participant_manager_notification_reconciles_expiry_and_cancel() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
-    lifecycle = ConcordParticipantManager(
+    lifecycle = ConcordParticipant(
         concord=service,
         participant=manager,
         session_id="manager-session",
@@ -1083,12 +1025,12 @@ async def test_concord_participant_manager_notification_reconciles_expiry_and_ca
 
 @pytest.mark.asyncio
 async def test_concord_participant_manager_releases_on_token_expiry_and_cancel() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
-    lifecycle = service.participant_manager(
+    lifecycle = service.participant(
         participant=manager,
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -1150,9 +1092,9 @@ async def test_concord_participant_manager_releases_on_token_expiry_and_cancel()
 
 @pytest.mark.asyncio
 async def test_concord_participant_manager_policy_rejection_does_not_cancel() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -1162,7 +1104,7 @@ async def test_concord_participant_manager_policy_rejection_does_not_cancel() ->
         terms=_hardware_claim_terms(),
         created_by=controller,
     )
-    lifecycle = service.participant_manager(
+    lifecycle = service.participant(
         participant=manager,
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -1180,9 +1122,9 @@ async def test_concord_participant_manager_policy_rejection_does_not_cancel() ->
 async def test_concord_participant_manager_policy_rejection_skips_validation_logs(
     caplog,
 ) -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -1194,7 +1136,7 @@ async def test_concord_participant_manager_policy_rejection_skips_validation_log
     )
     token = await service._attach(contract, controller, "controller-session")
     await _delete_token_from_view(service, token_state, token)
-    lifecycle = service.participant_manager(
+    lifecycle = service.participant(
         participant=manager,
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -1214,9 +1156,9 @@ async def test_concord_participant_manager_policy_rejection_skips_validation_log
 
 @pytest.mark.asyncio
 async def test_concord_watch_emits_single_event_stream(caplog) -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     caplog.set_level("INFO", logger="deckr.concord")
@@ -1245,9 +1187,9 @@ async def test_concord_watch_emits_single_event_stream(caplog) -> None:
 
 @pytest.mark.asyncio
 async def test_concord_event_stream_does_not_validate_or_fetch_contracts() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
 
@@ -1297,20 +1239,20 @@ async def test_concord_event_stream_does_not_validate_or_fetch_contracts() -> No
 
 @pytest.mark.asyncio
 async def test_concord_service_watch_preserves_caller_state_unavailable() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
 
-    with pytest.raises(StateUnavailable, match="broker unavailable"):
+    with pytest.raises(ConcordUnavailable, match="broker unavailable"):
         async with service.watch(replay_current=False):
-            raise StateUnavailable("broker unavailable")
+            raise ConcordUnavailable("broker unavailable")
 
 
 @pytest.mark.asyncio
 async def test_concord_service_watch_uses_cached_events_without_source_watch() -> None:
-    contract_state = FailingWatchStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = FailingWatchKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
 
@@ -1329,9 +1271,9 @@ async def test_concord_service_watch_uses_cached_events_without_source_watch() -
 
 @pytest.mark.asyncio
 async def test_concord_service_use_missing_token_logs_below_info(caplog) -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     service_endpoint = service_address("openhab-home")
     client = action_provider_address("python-dev.deckr.openhab")
     contract = await service._create_contract(
@@ -1354,9 +1296,9 @@ async def test_concord_service_use_missing_token_logs_below_info(caplog) -> None
 
 @pytest.mark.asyncio
 async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     service_endpoint = service_address("openhab-home")
     client = action_provider_address("python-dev.deckr.openhab")
     spec = ConcordAgreementSpec(
@@ -1372,13 +1314,13 @@ async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
         log_label="TestConcord",
     )
 
-    agreement = await service.ensure_agreement(spec)
+    agreement = await service.propose(spec)
     await service._attach(agreement.contract, service_endpoint, "service-session")
     assert (await agreement.refresh()).status == ContractValidityStatus.VALID
     assert agreement.local_token is not None
     await _delete_token_from_view(service, token_state, agreement.local_token)
 
-    successor = await service.ensure_agreement(spec)
+    successor = await service.propose(spec)
 
     assert successor.contract_id == agreement.contract_id
     assert successor.generation == 2
@@ -1393,9 +1335,9 @@ async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
 
 @pytest.mark.asyncio
 async def test_concord_ensure_agreement_cancels_stable_conflicting_generations() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     provider = action_provider_address("provider-main")
     stable_id = action_provider_session_contract_id(controller, provider)
@@ -1429,7 +1371,7 @@ async def test_concord_ensure_agreement_cancels_stable_conflicting_generations()
         created_by=controller,
     )
 
-    agreement = await service.ensure_agreement(
+    agreement = await service.propose(
         ConcordAgreementSpec(
             profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
             participants=(controller, provider),
@@ -1464,11 +1406,9 @@ async def test_concord_ensure_agreement_cancels_stable_conflicting_generations()
 
 @pytest.mark.asyncio
 async def test_concord_public_contract_helpers_preserve_validation() -> None:
-    service = ConcordService(
-        ConcordCoordinator(
-            MemoryStateStore(name="contracts"),
-            MemoryStateStore(name="tokens"),
-        )
+    service = _concord(
+        MemoryJsonKvBucket(bucket="contracts"),
+        MemoryJsonKvBucket(bucket="tokens"),
     )
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
@@ -1480,21 +1420,21 @@ async def test_concord_public_contract_helpers_preserve_validation() -> None:
         created_by=controller,
     )
 
-    assert await service.find_contracts(
+    assert await service.contracts(
         HARDWARE_CLAIM_PROFILE_ID,
         contract_id="hardware-contract-1",
     ) == (contract,)
     assert await service.contract_record(contract) == await service._contract_record(contract)
     with pytest.raises(ValueError, match="Concord contract id"):
-        await service.find_contracts(contract_id="")
+        await service.contracts(contract_id="")
     with pytest.raises(ValueError, match="participant"):
-        await service.cancel_contract(
+        await service.cancel(
             contract,
-            service_address("not-a-participant"),
+            participant=service_address("not-a-participant"),
             reason="test",
         )
 
-    assert await service.cancel_contract(contract, controller, reason="test")
+    assert await service.cancel(contract, participant=controller, reason="test")
     record = await service.contract_record(contract)
     assert record is not None
     assert record.state == ContractState.CANCELLED
@@ -1503,11 +1443,9 @@ async def test_concord_public_contract_helpers_preserve_validation() -> None:
 
 @pytest.mark.asyncio
 async def test_concord_ensure_agreement_generated_id_is_fresh() -> None:
-    service = ConcordService(
-        ConcordCoordinator(
-            MemoryStateStore(name="contracts"),
-            MemoryStateStore(name="tokens"),
-        )
+    service = _concord(
+        MemoryJsonKvBucket(bucket="contracts"),
+        MemoryJsonKvBucket(bucket="tokens"),
     )
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
@@ -1519,8 +1457,8 @@ async def test_concord_ensure_agreement_generated_id_is_fresh() -> None:
         terms=_hardware_claim_terms(),
     )
 
-    first = await service.ensure_agreement(spec)
-    second = await service.ensure_agreement(spec)
+    first = await service.propose(spec)
+    second = await service.propose(spec)
 
     assert first.contract_id != second.contract_id
     assert first.generation == 1
@@ -1531,11 +1469,9 @@ async def test_concord_ensure_agreement_generated_id_is_fresh() -> None:
 
 @pytest.mark.asyncio
 async def test_concord_participant_manager_factory_reconciles() -> None:
-    service = ConcordService(
-        ConcordCoordinator(
-            MemoryStateStore(name="contracts"),
-            MemoryStateStore(name="tokens"),
-        )
+    service = _concord(
+        MemoryJsonKvBucket(bucket="contracts"),
+        MemoryJsonKvBucket(bucket="tokens"),
     )
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
@@ -1547,7 +1483,7 @@ async def test_concord_participant_manager_factory_reconciles() -> None:
         created_by=controller,
     )
     await service._attach(contract, controller, "controller-session")
-    lifecycle = service.participant_manager(
+    lifecycle = service.participant(
         participant=manager,
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -1566,9 +1502,9 @@ async def test_concord_participant_manager_factory_reconciles() -> None:
 
 @pytest.mark.asyncio
 async def test_concord_service_lease_events_and_logs(caplog) -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
@@ -1634,9 +1570,9 @@ async def test_concord_service_lease_events_and_logs(caplog) -> None:
         expired = await _receive_event_type(events, ConcordEventType.TOKEN_EXPIRED)
         assert expired.participant == controller
         assert expired.reason == "expire"
-        with pytest.raises(StateConflict, match="missing"):
+        with pytest.raises(ConcordConflict, match="missing"):
             await controller_lease.attach_or_refresh()
-        with pytest.raises(StateConflict, match="closed"):
+        with pytest.raises(ConcordConflict, match="closed"):
             await controller_lease.attach_or_refresh()
 
         assert await service._cancel(
@@ -1661,21 +1597,21 @@ async def test_concord_service_lease_events_and_logs(caplog) -> None:
 
 @pytest.mark.asyncio
 async def test_concord_find_and_watch_contracts() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    concord = ConcordCoordinator(contract_state, token_state)
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    concord = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
 
-    contract = await concord.create_contract(
+    contract = await concord._create_contract(
         (manager, controller),
         contract_id="hardware-contract-1",
         profile=HARDWARE_CLAIM_PROFILE_ID,
         terms=terms,
         created_by=controller,
     )
-    other = await concord.create_contract(
+    other = await concord._create_contract(
         (manager, controller),
         contract_id="other-contract-1",
         profile="dev.deckr.profile.other.v1",
@@ -1686,13 +1622,13 @@ async def test_concord_find_and_watch_contracts() -> None:
         {"schema": "dev.deckr.concord.contract.v1"},
     )
 
-    assert await concord.find_contracts() == (contract, other)
-    assert await concord.find_contracts(HARDWARE_CLAIM_PROFILE_ID) == (contract,)
-    assert await concord.find_contracts(contract_id="hardware-contract-1") == (contract,)
-    assert await concord.find_contracts(contract_id="missing") == ()
+    assert await concord.contracts() == (contract, other)
+    assert await concord.contracts(HARDWARE_CLAIM_PROFILE_ID) == (contract,)
+    assert await concord.contracts(contract_id="hardware-contract-1") == (contract,)
+    assert await concord.contracts(contract_id="missing") == ()
 
     async with concord.watch(replay_current=False) as changes:
-        await concord.cancel(contract, controller, reason="done")
+        await concord._cancel(contract, controller, reason="done")
         change = await _receive(changes)
     assert change.change is not None
     assert change.change.key == contract.key
@@ -1700,9 +1636,9 @@ async def test_concord_find_and_watch_contracts() -> None:
 
 @pytest.mark.asyncio
 async def test_concord_stable_agreement_lookup_uses_contract_id_prefix() -> None:
-    contract_state = CountingItemsStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    service = ConcordService(ConcordCoordinator(contract_state, token_state))
+    contract_state = CountingItemsKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
     service_endpoint = service_address("openhab-home")
     client = action_provider_address("python-dev.deckr.openhab")
     for index in range(5):
@@ -1731,7 +1667,7 @@ async def test_concord_stable_agreement_lookup_uses_contract_id_prefix() -> None
     )
     contract_state.items_prefixes.clear()
 
-    agreement = await service.ensure_agreement(spec)
+    agreement = await service.propose(spec)
 
     assert agreement.contract.key == contract.key
     assert contract_state.items_prefixes == []
@@ -1739,23 +1675,23 @@ async def test_concord_stable_agreement_lookup_uses_contract_id_prefix() -> None
 
 @pytest.mark.asyncio
 async def test_concord_duplicate_contract_and_generation_mismatch_are_rejected() -> None:
-    contract_state = MemoryStateStore(name="contracts")
-    token_state = MemoryStateStore(name="tokens")
-    concord = ConcordCoordinator(contract_state, token_state)
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    concord = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
-    contract = await concord.create_contract(
+    contract = await concord._create_contract(
         (controller, manager),
         contract_id="hardware-contract-1",
         profile=HARDWARE_CLAIM_PROFILE_ID,
         terms=terms,
     )
-    await concord.attach(contract, controller, "controller-session")
-    manager_token = await concord.attach(contract, manager, "manager-session")
+    await concord._attach(contract, controller, "controller-session")
+    manager_token = await concord._attach(contract, manager, "manager-session")
 
-    with pytest.raises(StateConflict):
-        await concord.create_contract(
+    with pytest.raises(ConcordConflict):
+        await concord._create_contract(
             (controller, manager),
             contract_id="hardware-contract-1",
             profile=HARDWARE_CLAIM_PROFILE_ID,

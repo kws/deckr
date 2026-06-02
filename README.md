@@ -49,7 +49,6 @@ src/deckr/
   substrates/  Lane substrate implementations, currently NATS
   lanes.py     Endpoint-bound lane handles and lane validation
   runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
-  state.py     Generic StateStore protocol and CAS/watch primitives
 docs/
   beacon-concord.md
   nats-bus.md
@@ -158,31 +157,19 @@ third-party plugin protocol adaptation, or concrete device protocols.
 
 The NATS substrate surface is available behind the optional `deckr[nats]` extra.
 Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages,
-`Deckr.beacon` for managed Beacon discovery, and `Deckr.state(...)` for explicit
-Concord contract/token stores or application-owned state. The optional
+`Deckr.beacon` for managed Beacon discovery, `Deckr.concord` for managed
+agreement state, and `Deckr.kv_bucket(...)` for explicit NATS KV buckets. The optional
 `deckr[supervised-nats]` extra also installs the first-party
 `deckr-nats-server-bin` binary package so embedded hosts and the `deckr`
 launcher can supervise a private local `nats-server` process. This is still the
 same NATS/KV runtime contract, not an in-memory or no-NATS product mode.
 
-A real-NATS smoke harness is available at `scripts/nats_smoke.py`, and
 `scripts/nats_state_report.py` summarizes the broker's current Deckr
 Beacon/Concord communication state. The NATS bus docs also cover JetStream
-consumer hygiene checks for watch/list paths.
-
-Run the smoke harness against the included JetStream-enabled NATS compose service:
+consumer hygiene checks for watch paths.
 
 ```bash
-docker compose -f docker/compose.nats-smoke.yaml up -d nats
-uv run --extra nats python scripts/nats_smoke.py --url nats://127.0.0.1:4222 --check-ttl
 uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
-docker compose -f docker/compose.nats-smoke.yaml down -v
-```
-
-Run the same smoke harness with a supervised local NATS server:
-
-```bash
-uv run --extra supervised-nats python scripts/nats_smoke.py --supervised --check-ttl
 ```
 
 ## Package Boundaries
@@ -197,7 +184,6 @@ Internal boundaries are enforced with `.importlinter`:
 - `deckr.core` must not import `deckr.hardware`
 - `deckr.core` must not import `deckr.actions`
 - `deckr.contracts` must not import `deckr.actions` or `deckr.hardware`
-- `deckr.state` must not import `deckr.actions`
 - `deckr.hardware` must not import `deckr.actions`
 
 Run the contract checks with:

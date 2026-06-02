@@ -340,9 +340,6 @@ def test_component_factory_wires_default_stores_and_config_overrides() -> None:
     deckr = memory_deckr()
     calls = []
 
-    def state_for(name, *, policy=None):
-        return deckr.state(name, policy=policy)
-
     def kv_bucket_for(policy):
         calls.append((policy.bucket, policy))
         return deckr._substrate.kv_bucket(policy)
@@ -361,7 +358,6 @@ def test_component_factory_wires_default_stores_and_config_overrides() -> None:
         endpoints={},
         base_dir=Path.cwd(),
         lanes=deckr.lanes,
-        state_for=state_for,
         kv_bucket_for=kv_bucket_for,
     )
 
