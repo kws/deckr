@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Literal
 
 import anyio
@@ -26,6 +27,13 @@ class KvConflict(RuntimeError):
 
 class KvUnavailable(RuntimeError):
     """Raised when a NATS KV bucket cannot answer safely."""
+
+
+class KvViewStatus(StrEnum):
+    STARTING = "starting"
+    READY = "ready"
+    STALE = "stale"
+    CLOSED = "closed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,6 +377,8 @@ class NatsKvMaterializedBucket:
         self.key_prefix = key_prefix
         self._buffer_size = buffer_size
         self._ready = anyio.Event()
+        self._status = KvViewStatus.STARTING
+        self._status_condition = anyio.Condition()
         self._started = False
         self._entries: dict[str, KvEntry] = {}
         self._revision_by_key: dict[str, int] = {}
@@ -379,14 +389,33 @@ class NatsKvMaterializedBucket:
     def bucket(self) -> str:
         return str(self._bucket.bucket)
 
+    @property
+    def status(self) -> KvViewStatus:
+        return self._status
+
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
         if self._started:
             return
         self._started = True
         task_group.start_soon(self._watch_loop)
 
+    def is_ready(self) -> bool:
+        return self._ready.is_set()
+
+    def is_current(self) -> bool:
+        return self._status == KvViewStatus.READY
+
     async def wait_ready(self) -> None:
         await self._ready.wait()
+
+    async def wait_current(self) -> None:
+        async with self._status_condition:
+            while self._status != KvViewStatus.READY:
+                if self._status == KvViewStatus.CLOSED:
+                    raise KvUnavailable(
+                        f"NATS KV materialized view is closed bucket={self.bucket!r}"
+                    )
+                await self._status_condition.wait()
 
     def get_cached(self, key: str) -> KvEntry | None:
         return self._entries.get(key)
@@ -485,14 +514,18 @@ class NatsKvMaterializedBucket:
                                     snapshot_revisions=snapshot_revisions,
                                 )
                                 snapshot_open = False
-                            self._ready.set()
+                            await self._set_status(KvViewStatus.READY)
                             continue
                         if snapshot_open:
                             snapshot_keys.add(change.key)
                         await self._apply_change(change)
+                await self._set_status(KvViewStatus.STALE)
             except anyio.get_cancelled_exc_class():
+                with anyio.CancelScope(shield=True):
+                    await self._set_status(KvViewStatus.CLOSED)
                 raise
             except Exception:
+                await self._set_status(KvViewStatus.STALE)
                 logger.warning(
                     "NATS KV materialized watch failed bucket=%s prefix=%s",
                     self.bucket,
@@ -500,6 +533,17 @@ class NatsKvMaterializedBucket:
                     exc_info=True,
                 )
                 await anyio.sleep(retry_seconds)
+
+    async def _set_status(self, status: KvViewStatus) -> None:
+        async with self._status_condition:
+            if self._status == KvViewStatus.CLOSED and status != KvViewStatus.CLOSED:
+                return
+            if status == KvViewStatus.READY:
+                self._ready.set()
+            if self._status == status:
+                return
+            self._status = status
+            self._status_condition.notify_all()
 
     def _snapshot_revisions(self) -> dict[str, int]:
         return {
@@ -724,6 +768,7 @@ __all__ = [
     "KvConflict",
     "KvEntry",
     "KvUnavailable",
+    "KvViewStatus",
     "NatsKvMaterializedBucket",
     "NatsJsonKvBucket",
 ]

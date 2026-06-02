@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 import anyio
 import pytest
 from descriptor_fixtures import stream_deck_bitmap_grid
@@ -55,7 +58,7 @@ from deckr.profiles import (
     actions_payload_from_advertisement,
     profile_terms_hash,
 )
-from deckr.substrates.nats_kv import KvChange, KvConflict
+from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, KvUnavailable
 
 
 async def _receive(stream):
@@ -134,6 +137,69 @@ class FailingWatchKvBucket(MemoryJsonKvBucket):
     def watch(self, prefix: str = ""):
         del prefix
         return UnavailableWatch()
+
+
+class PausingWatchKvBucket(MemoryJsonKvBucket):
+    def __init__(self, *, bucket: str) -> None:
+        super().__init__(bucket=bucket)
+        self._close_events: list[anyio.Event] = []
+        self._pause_next_watch = False
+        self._watch_paused = anyio.Event()
+        self._resume_watch = anyio.Event()
+
+    def close_current_watch(self) -> None:
+        self._close_events[-1].set()
+
+    def pause_next_watch(self) -> None:
+        self._pause_next_watch = True
+        self._watch_paused = anyio.Event()
+        self._resume_watch = anyio.Event()
+
+    async def wait_next_watch_paused(self) -> None:
+        await self._watch_paused.wait()
+
+    def resume_next_watch(self) -> None:
+        self._resume_watch.set()
+
+    @asynccontextmanager
+    async def watch(
+        self,
+        prefix: str = "",
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
+        if self._pause_next_watch:
+            self._pause_next_watch = False
+            self._watch_paused.set()
+            await self._resume_watch.wait()
+        close_event = anyio.Event()
+        self._close_events.append(close_event)
+        send, receive = anyio.create_memory_object_stream[KvChange | None](
+            max_buffer_size=self._buffer_size
+        )
+        async with self._lock:
+            self._watchers[send] = prefix
+            snapshot: tuple[KvEntry, ...] = tuple(
+                entry
+                for key, entry in sorted(self._entries.items())
+                if key.startswith(prefix)
+            )
+
+        async def run() -> None:
+            for entry in snapshot:
+                await send.send(
+                    KvChange(self.bucket, entry.key, entry.revision, "put", entry)
+                )
+            await send.send(None)
+            await close_event.wait()
+            await send.aclose()
+
+        try:
+            async with send, receive, anyio.create_task_group() as task_group:
+                task_group.start_soon(run)
+                yield receive
+                task_group.cancel_scope.cancel()
+        finally:
+            async with self._lock:
+                self._watchers.pop(send, None)
 
 
 class CountingItemsKvBucket(MemoryJsonKvBucket):
@@ -667,6 +733,49 @@ async def test_beacon_service_feature_watch_reports_expiry(caplog) -> None:
 
 
 @pytest.mark.asyncio
+async def test_beacon_validate_reports_unavailable_while_view_stale() -> None:
+    raw = PausingWatchKvBucket(bucket="beacon")
+    beacon = Beacon(raw, default_ttl_seconds=30)
+    endpoint = hardware_manager_address("manager-main")
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await beacon.wait_ready()
+        advertisement = await beacon.advertise(
+            BeaconAdvertisementSpec(
+                feature_id=HARDWARE_FEATURE_ID,
+                endpoint=endpoint,
+                session_id="manager-session",
+                advertisement_id="advertisement-1",
+                payload=_hardware_payload().to_dict(),
+            )
+        )
+        candidate = beacon.get(
+            feature_id=HARDWARE_FEATURE_ID,
+            advertisement_id=advertisement.handle.advertisement_id,
+        )
+        assert candidate is not None
+
+        raw.pause_next_watch()
+        raw.close_current_watch()
+        with anyio.fail_after(1):
+            await raw.wait_next_watch_paused()
+
+        assert await beacon.validate(candidate) == CandidateStatus.UNAVAILABLE
+        with pytest.raises(KvUnavailable, match="not current"):
+            beacon.get(
+                feature_id=HARDWARE_FEATURE_ID,
+                advertisement_id=advertisement.handle.advertisement_id,
+            )
+
+        raw.resume_next_watch()
+        with anyio.fail_after(1):
+            while await beacon.validate(candidate) != CandidateStatus.CANDIDATE:
+                await anyio.sleep(0)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
@@ -743,6 +852,61 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
     assert (await concord.validate(contract)).status == ContractValidityStatus.CANCELLED
     with pytest.raises(ConcordConflict, match="cancelled"):
         await concord._attach(contract, controller, "new-session")
+
+
+@pytest.mark.asyncio
+async def test_concord_validate_reports_unavailable_while_token_view_stale() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = PausingWatchKvBucket(bucket="tokens")
+    concord = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+
+    async with anyio.create_task_group() as tg:
+        concord.start(tg)
+        await concord.wait_ready()
+        contract = await concord._create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(),
+            created_by=controller,
+        )
+        await concord._attach(
+            contract,
+            controller,
+            "controller-session",
+            token_id="controller-token",
+        )
+        manager_token = await concord._attach(
+            contract,
+            manager,
+            "manager-session",
+            token_id="manager-token",
+        )
+        with anyio.fail_after(1):
+            while (await concord.validate(contract)).status != (
+                ContractValidityStatus.VALID
+            ):
+                await anyio.sleep(0)
+
+        token_state.pause_next_watch()
+        token_state.close_current_watch()
+        with anyio.fail_after(1):
+            await token_state.wait_next_watch_paused()
+        await token_state.delete(manager_token.key, revision=manager_token.revision)
+
+        assert (await concord.validate(contract)).status == (
+            ContractValidityStatus.UNAVAILABLE
+        )
+
+        token_state.resume_next_watch()
+        with anyio.fail_after(1):
+            while (await concord.validate(contract)).status != (
+                ContractValidityStatus.MISSING_TOKEN
+            ):
+                await anyio.sleep(0)
+        tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio

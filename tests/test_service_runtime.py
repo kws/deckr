@@ -459,6 +459,44 @@ async def test_service_view_store_recovers_absent_key_after_watch_restart() -> N
 
 
 @pytest.mark.asyncio
+async def test_service_view_store_get_waits_while_materialized_view_stale() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = _RecoveringServiceViewBucket(bucket=view_ref.store_name)
+    raw.add(
+        view_ref.key,
+        {
+            "item": "Kitchen Light",
+            "state": "ON",
+            "serviceId": "openhab-home",
+            "serviceNamespace": protocol.namespace,
+            "sessionId": "service-session",
+        },
+    )
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+        assert await view_store.get(lease, view_ref) is not None
+
+        raw.pause_next_watch()
+        raw.close_current_watch()
+        with anyio.fail_after(1):
+            await raw.wait_next_watch_paused()
+
+        with anyio.move_on_after(0.05) as scope:
+            await view_store.get(lease, view_ref)
+        assert scope.cancelled_caught
+
+        raw.remove_without_publish(view_ref.key)
+        raw.resume_next_watch()
+        with anyio.fail_after(1):
+            while await view_store.get(lease, view_ref) is not None:
+                await anyio.sleep(0)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_service_view_store_delete_updates_cache_immediately() -> None:
     protocol, lease, view_ref = await _service_view_context()
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
@@ -537,6 +575,9 @@ class _RecoveringServiceViewBucket:
         self._revision = 0
         self._entries: dict[str, KvEntry] = {}
         self._close_events: list[anyio.Event] = []
+        self._pause_next_watch = False
+        self._watch_paused = anyio.Event()
+        self._resume_watch = anyio.Event()
 
     def add(self, key: str, value: Mapping[str, Any]) -> KvEntry:
         self._revision += 1
@@ -552,6 +593,17 @@ class _RecoveringServiceViewBucket:
     def close_current_watch(self) -> None:
         self._close_events[-1].set()
 
+    def pause_next_watch(self) -> None:
+        self._pause_next_watch = True
+        self._watch_paused = anyio.Event()
+        self._resume_watch = anyio.Event()
+
+    async def wait_next_watch_paused(self) -> None:
+        await self._watch_paused.wait()
+
+    def resume_next_watch(self) -> None:
+        self._resume_watch.set()
+
     async def get(self, key: str) -> KvEntry | None:
         return self._entries.get(key)
 
@@ -560,6 +612,10 @@ class _RecoveringServiceViewBucket:
         self,
         prefix: str = "",
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
+        if self._pause_next_watch:
+            self._pause_next_watch = False
+            self._watch_paused.set()
+            await self._resume_watch.wait()
         close_event = anyio.Event()
         self._close_events.append(close_event)
         send, receive = anyio.create_memory_object_stream[KvChange | None](100)
@@ -569,7 +625,9 @@ class _RecoveringServiceViewBucket:
 
         async def run() -> None:
             for entry in snapshot:
-                await send.send(KvChange(self.bucket, entry.key, entry.revision, "put", entry))
+                await send.send(
+                    KvChange(self.bucket, entry.key, entry.revision, "put", entry)
+                )
             await send.send(None)
             await close_event.wait()
             await send.aclose()

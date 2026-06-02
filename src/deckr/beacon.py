@@ -374,6 +374,19 @@ class Beacon:
     async def wait_ready(self) -> None:
         await self._ready.wait()
 
+    def is_current(self) -> bool:
+        return (
+            self._ready.is_set()
+            and self._bucket.is_current()
+            and self._cache_matches_materialized_bucket()
+        )
+
+    async def wait_current(self) -> None:
+        await self.wait_ready()
+        await self._bucket.wait_current()
+        while not self._cache_matches_materialized_bucket():
+            await anyio.sleep(0)
+
     async def aclose(self) -> None:
         self._closed = True
         async with self._lock:
@@ -391,7 +404,7 @@ class Beacon:
         if self._closed:
             raise KvUnavailable("Beacon is closed")
         if self._started:
-            await self.wait_ready()
+            await self.wait_current()
         if cleanup_stale_same_endpoint:
             await self.remove_stale_advertisements(spec)
         lease = BeaconAdvertisementLease(self, spec)
@@ -420,6 +433,7 @@ class Beacon:
         *,
         selector: AdvertisementFilter | None = None,
     ) -> tuple[Candidate, ...]:
+        self._raise_if_cache_unavailable()
         feature_id = _require_text(feature_id, field_name="Beacon feature id")
         keys = tuple(self._keys_by_feature.get(feature_id, ()))
         candidates = [
@@ -439,6 +453,7 @@ class Beacon:
         feature_id: str,
         advertisement_id: str,
     ) -> Candidate | None:
+        self._raise_if_cache_unavailable()
         key = beacon_advertisement_key(
             feature_id=_require_text(feature_id, field_name="Beacon feature id"),
             advertisement_id=_require_text(
@@ -454,8 +469,9 @@ class Beacon:
         *,
         current_sessions: Mapping[str, str] | None = None,
     ) -> CandidateStatus:
-        if self._started and not self._ready.is_set():
-            return CandidateStatus.UNAVAILABLE
+        if self._started:
+            if not self.is_current():
+                return CandidateStatus.UNAVAILABLE
         current = self._entries_by_key.get(candidate.key)
         if current is None:
             if candidate.key in self._invalid_by_key:
@@ -483,7 +499,7 @@ class Beacon:
         if feature_id is not None:
             feature_id = _require_text(feature_id, field_name="Beacon feature id")
         if self._started:
-            await self.wait_ready()
+            await self.wait_current()
         send, receive = anyio.create_memory_object_stream[BeaconFeatureEvent](
             max_buffer_size=self._buffer_size
         )
@@ -517,7 +533,7 @@ class Beacon:
         spec: BeaconAdvertisementSpec,
     ) -> int:
         if self._started:
-            await self.wait_ready()
+            await self.wait_current()
         keys = tuple(
             self._keys_by_feature_endpoint.get(
                 (spec.feature_id, str(spec.advertiser), str(spec.endpoint)),
@@ -543,12 +559,30 @@ class Beacon:
         return removed
 
     async def _event_loop(self) -> None:
-        async with self._bucket.subscribe() as changes:
-            await self._bucket.wait_ready()
-            await self._rebuild_from_bucket()
-            self._ready.set()
-            async for change in changes:
-                await self._apply_kv_change(change)
+        try:
+            async with self._bucket.subscribe() as changes:
+                await self._bucket.wait_current()
+                await self._rebuild_from_bucket()
+                self._ready.set()
+                async for change in changes:
+                    await self._apply_kv_change(change)
+        except anyio.get_cancelled_exc_class():
+            self._started = False
+            raise
+
+    def _raise_if_cache_unavailable(self) -> None:
+        if self._started and self._ready.is_set() and not self.is_current():
+            raise KvUnavailable("Beacon materialized view is not current")
+
+    def _cache_matches_materialized_bucket(self) -> bool:
+        for entry in self._bucket.items_cached():
+            if self._revision_by_key.get(entry.key, 0) < entry.revision:
+                return False
+        for key, revision in self._revision_by_key.items():
+            bucket_revision = self._bucket.revision_cached(key)
+            if bucket_revision is not None and revision < bucket_revision:
+                return False
+        return True
 
     async def _rebuild_from_bucket(self) -> None:
         entries_by_key: dict[str, Candidate] = {}
@@ -1002,8 +1036,11 @@ def _is_materialized_bucket(value: Any) -> bool:
         for name in (
             "start",
             "wait_ready",
+            "is_current",
+            "wait_current",
             "get_exact",
             "items_cached",
+            "revision_cached",
             "subscribe",
             "create",
             "update",

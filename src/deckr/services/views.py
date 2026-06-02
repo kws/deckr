@@ -94,6 +94,19 @@ class ServiceViewStore:
     async def wait_ready(self) -> None:
         await self._ready.wait()
 
+    def is_current(self) -> bool:
+        return (
+            self._ready.is_set()
+            and self._bucket.is_current()
+            and self._cache_matches_materialized_bucket()
+        )
+
+    async def wait_current(self) -> None:
+        await self.wait_ready()
+        await self._bucket.wait_current()
+        while not self._cache_matches_materialized_bucket():
+            await anyio.sleep(0)
+
     async def get(
         self,
         lease: ServiceUseLease,
@@ -101,7 +114,7 @@ class ServiceViewStore:
     ) -> ServiceViewEntry | None:
         self._assert_authorized(lease, view)
         await lease.refresh()
-        await self.wait_ready()
+        await self.wait_current()
         async with self._lock:
             entry = self._entries.get(view.key)
         if entry is None:
@@ -243,7 +256,7 @@ class ServiceViewStore:
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
         self._assert_authorized(lease, view)
         await lease.refresh()
-        await self.wait_ready()
+        await self.wait_current()
         send, receive = anyio.create_memory_object_stream[ServiceViewChange](
             max_buffer_size=self._buffer_size
         )
@@ -264,11 +277,21 @@ class ServiceViewStore:
 
     async def _event_loop(self) -> None:
         async with self._bucket.subscribe() as changes:
-            await self._bucket.wait_ready()
+            await self._bucket.wait_current()
             await self._rebuild_from_bucket()
             self._ready.set()
             async for change in changes:
                 await self._apply_kv_change(change)
+
+    def _cache_matches_materialized_bucket(self) -> bool:
+        for entry in self._bucket.items_cached():
+            if self._revision_by_key.get(entry.key, 0) < entry.revision:
+                return False
+        for key, revision in self._revision_by_key.items():
+            bucket_revision = self._bucket.revision_cached(key)
+            if bucket_revision is not None and revision < bucket_revision:
+                return False
+        return True
 
     async def _rebuild_from_bucket(self) -> None:
         entries: dict[str, ServiceViewEntry] = {}
@@ -455,6 +478,8 @@ def _is_materialized_bucket(value: Any) -> bool:
         for name in (
             "start",
             "wait_ready",
+            "is_current",
+            "wait_current",
             "get_exact",
             "get_cached",
             "items_cached",

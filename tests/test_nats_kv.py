@@ -11,6 +11,7 @@ from deckr.substrates.nats_kv import (
     KvBucketPolicy,
     KvChange,
     KvEntry,
+    KvViewStatus,
     NatsJsonKvBucket,
     NatsKvMaterializedBucket,
     kv_entry_is_absent_marker,
@@ -117,6 +118,42 @@ async def test_nats_json_kv_items_lists_current_entries_by_prefix() -> None:
 
 
 @pytest.mark.asyncio
+async def test_materialized_bucket_status_tracks_stale_and_current_recovery() -> None:
+    raw = _RecoveringWatchBucket(bucket="recovering")
+    raw.add("items.a", {"value": "a"})
+    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        await materialized.wait_current()
+
+        assert materialized.status == KvViewStatus.READY
+        assert materialized.is_ready()
+        assert materialized.is_current()
+
+        raw.pause_next_watch()
+        raw.close_current_watch()
+        with anyio.fail_after(1):
+            await raw.wait_next_watch_paused()
+
+        assert materialized.status == KvViewStatus.STALE
+        assert materialized.is_ready()
+        assert not materialized.is_current()
+
+        with anyio.move_on_after(0.05) as scope:
+            await materialized.wait_current()
+        assert scope.cancelled_caught
+
+        raw.resume_next_watch()
+        with anyio.fail_after(1):
+            await materialized.wait_current()
+
+        assert materialized.status == KvViewStatus.READY
+        assert materialized.is_current()
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_materialized_bucket_reconciles_absent_keys_on_watch_recovery() -> None:
     raw = _RecoveringWatchBucket(bucket="recovering")
     raw.add("items.a", {"value": "a"})
@@ -180,6 +217,9 @@ class _RecoveringWatchBucket:
         self._revision = 0
         self._entries: dict[str, KvEntry] = {}
         self._close_events: list[anyio.Event] = []
+        self._pause_next_watch = False
+        self._watch_paused = anyio.Event()
+        self._resume_watch = anyio.Event()
         self.get_count = 0
         self.watch_count = 0
 
@@ -197,6 +237,17 @@ class _RecoveringWatchBucket:
     def close_current_watch(self) -> None:
         self._close_events[-1].set()
 
+    def pause_next_watch(self) -> None:
+        self._pause_next_watch = True
+        self._watch_paused = anyio.Event()
+        self._resume_watch = anyio.Event()
+
+    async def wait_next_watch_paused(self) -> None:
+        await self._watch_paused.wait()
+
+    def resume_next_watch(self) -> None:
+        self._resume_watch.set()
+
     async def get(self, key: str) -> KvEntry | None:
         self.get_count += 1
         return self._entries.get(key)
@@ -207,6 +258,10 @@ class _RecoveringWatchBucket:
         prefix: str = "",
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
         self.watch_count += 1
+        if self._pause_next_watch:
+            self._pause_next_watch = False
+            self._watch_paused.set()
+            await self._resume_watch.wait()
         close_event = anyio.Event()
         self._close_events.append(close_event)
         send, receive = anyio.create_memory_object_stream[KvChange | None](100)
@@ -216,7 +271,9 @@ class _RecoveringWatchBucket:
 
         async def run() -> None:
             for entry in snapshot:
-                await send.send(KvChange(self.bucket, entry.key, entry.revision, "put", entry))
+                await send.send(
+                    KvChange(self.bucket, entry.key, entry.revision, "put", entry)
+                )
             await send.send(None)
             await close_event.wait()
             await send.aclose()

@@ -672,8 +672,17 @@ class _ConcordBucketAdapter:
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
         self._bucket.start(task_group)
 
+    def is_ready(self) -> bool:
+        return self._bucket.is_ready()
+
+    def is_current(self) -> bool:
+        return self._bucket.is_current()
+
     async def wait_ready(self) -> None:
         await self._bucket.wait_ready()
+
+    async def wait_current(self) -> None:
+        await self._bucket.wait_current()
 
     def get_cached(self, key: str) -> KvEntry | None:
         return self._bucket.get_cached(key)
@@ -775,10 +784,14 @@ def _is_materialized_bucket(value: Any) -> bool:
         for name in (
             "start",
             "wait_ready",
+            "is_ready",
+            "is_current",
+            "wait_current",
             "get_exact",
             "get_cached",
             "items_cached",
             "items_exact",
+            "revision_cached",
             "subscribe",
             "create",
             "update",
@@ -1486,6 +1499,20 @@ class Concord:
     async def wait_ready(self) -> None:
         await self._ready.wait()
 
+    def is_current(self) -> bool:
+        return (
+            self._ready.is_set()
+            and self._state_views_current()
+            and self._state_cache_matches_materialized_buckets()
+        )
+
+    async def wait_current(self) -> None:
+        await self.wait_ready()
+        await self._coordinator._contract_bucket.wait_current()  # noqa: SLF001
+        await self._coordinator._token_bucket.wait_current()  # noqa: SLF001
+        while not self._state_cache_matches_materialized_buckets():
+            await anyio.sleep(0)
+
     async def aclose(self) -> None:
         self._closed = True
         async with self._lock:
@@ -1513,7 +1540,7 @@ class Concord:
         """
 
         if self._started:
-            await self.wait_ready()
+            await self.wait_current()
         async with self._agreement_lock:
             return await self._ensure_agreement_locked(spec, start_soon=start_soon)
 
@@ -1593,9 +1620,9 @@ class Concord:
             self._maintenance_bucket.subscribe() as maintenance_changes,
             anyio.create_task_group() as task_group,
         ):
-            await contract_bucket.wait_ready()
-            await token_bucket.wait_ready()
-            await self._maintenance_bucket.wait_ready()
+            await contract_bucket.wait_current()
+            await token_bucket.wait_current()
+            await self._maintenance_bucket.wait_current()
             await self._rebuild_from_buckets()
             self._ready.set()
             task_group.start_soon(self._consume_contract_changes, contract_changes)
@@ -1646,6 +1673,42 @@ class Concord:
                 key: self._validate_from_cache_locked(handle).status
                 for key, handle in self._contract_handles_by_key.items()
             }
+
+    def _state_views_current(self) -> bool:
+        return (
+            self._coordinator._contract_bucket.is_current()  # noqa: SLF001
+            and self._coordinator._token_bucket.is_current()  # noqa: SLF001
+        )
+
+    def _state_cache_matches_materialized_buckets(self) -> bool:
+        prefix = concord_contracts_prefix()
+        return self._cache_matches_materialized_bucket(
+            self._coordinator._contract_bucket,  # noqa: SLF001
+            self._contract_revision_by_key,
+            prefix=prefix,
+        ) and self._cache_matches_materialized_bucket(
+            self._coordinator._token_bucket,  # noqa: SLF001
+            self._token_revision_by_key,
+            prefix=prefix,
+        )
+
+    @staticmethod
+    def _cache_matches_materialized_bucket(
+        bucket: _ConcordBucketAdapter,
+        revision_by_key: Mapping[str, int],
+        *,
+        prefix: str,
+    ) -> bool:
+        for entry in bucket.items_cached(prefix):
+            if revision_by_key.get(entry.key, 0) < entry.revision:
+                return False
+        for key, revision in revision_by_key.items():
+            if not key.startswith(prefix):
+                continue
+            bucket_revision = bucket.revision_cached(key)
+            if bucket_revision is not None and revision < bucket_revision:
+                return False
+        return True
 
     def _clear_indexes_locked(self) -> None:
         self._contract_entries_by_key.clear()
@@ -2356,7 +2419,7 @@ class Concord:
         pointer: ContractPointer | Mapping[str, Any],
     ) -> ContractHandle | None:
         if self._started:
-            await self.wait_ready()
+            await self.wait_current()
         parsed = (
             pointer
             if isinstance(pointer, ContractPointer)
@@ -2374,7 +2437,7 @@ class Concord:
 
     async def contract_record(self, contract: ContractHandle) -> ContractRecord | None:
         if self._started:
-            await self.wait_ready()
+            await self.wait_current()
         return await self._contract_record(contract)
 
     async def contracts(
@@ -2386,7 +2449,7 @@ class Concord:
         state: ContractState | None = None,
     ) -> tuple[ContractHandle, ...]:
         if self._started:
-            await self.wait_ready()
+            await self.wait_current()
         return await self._find_contracts(
             profile,
             contract_id=contract_id,
@@ -2592,6 +2655,8 @@ class Concord:
         participant: str | EndpointAddress | None = None,
         state: ContractState | None = None,
     ) -> tuple[ContractHandle, ...]:
+        if self._started:
+            await self.wait_current()
         if contract_id is not None:
             contract_id = _require_text(
                 contract_id,
@@ -2787,7 +2852,7 @@ class Concord:
         log_label: str = "Concord",
         log_invalid: bool = True,
     ) -> ContractValidity:
-        if self._started and not self._ready.is_set():
+        if self._started and not self.is_current():
             validity = ContractValidity(ContractValidityStatus.UNAVAILABLE)
         else:
             async with self._lock:
@@ -2850,7 +2915,7 @@ class Concord:
         replay_current: bool = True,
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ConcordEvent]]:
         if self._started:
-            await self.wait_ready()
+            await self.wait_current()
         parsed_participant = (
             parse_endpoint_address(participant)
             if participant is not None
