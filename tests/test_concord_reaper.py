@@ -7,7 +7,7 @@ from pathlib import Path
 import anyio
 import pytest
 from memory_kv_bucket import MemoryJsonKvBucket
-from memory_message_bus import memory_deckr
+from message_bus_mocks import mock_deckr
 
 from deckr.components import ComponentContext
 from deckr.concord import (
@@ -391,7 +391,7 @@ async def test_maintenance_cancel_does_not_require_named_participant() -> None:
 
 
 def test_component_factory_wires_default_stores_and_config_overrides() -> None:
-    deckr = memory_deckr()
+    deckr = mock_deckr()
     calls = []
 
     def kv_bucket_for(policy):

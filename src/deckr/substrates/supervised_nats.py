@@ -17,7 +17,7 @@ from typing import Any
 
 import anyio
 
-from deckr.contracts.lanes import MessageContractRegistry
+from deckr.contracts.lanes import MessageContract, MessageContractRegistry
 from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.lanes import ReplyPredicate
 from deckr.substrates.nats import NatsSubstrate
@@ -466,6 +466,9 @@ class SupervisedNatsSubstrate:
         finally:
             self._nats = None
             await self.supervisor.stop()
+
+    def contract_for(self, lane: str) -> MessageContract:
+        return self._lane_contracts.contract_for(lane)
 
     async def publish(self, message: DeckrMessage) -> None:
         await self._connected_nats().publish(message)

@@ -85,13 +85,12 @@ class Deckr:
             address=address,
             session_id=session_id,
             metadata=metadata,
-            contracts=self._lane_contracts,
             message_bus=self._message_bus,
         )
         try:
             yield session
         finally:
-            session.close()
+            await session.aclose()
 
     @property
     def beacon(self) -> Beacon:

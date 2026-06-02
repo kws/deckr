@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import anyio
 import pytest
 from descriptor_fixtures import stream_deck_bitmap_grid
-from memory_message_bus import memory_deckr
+from message_bus_mocks import mock_deckr
 
 import deckr.hardware.messages as hw_messages
 from deckr.beacon import (
@@ -64,7 +63,7 @@ async def _runtime(
     command_handler=None,
     reset_handler=None,
 ):
-    deckr = memory_deckr()
+    deckr = mock_deckr()
     endpoint_cm = deckr.endpoint(hardware_manager_address("manager-main"))
     endpoint = await endpoint_cm.__aenter__()
     runtime = HardwareManagerRuntime(
@@ -173,21 +172,20 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         assert capacity.claimed_instances == 1
         assert capacity.available_instances == 0
 
-        async with controller_endpoint.subscribe("hardware_messages") as stream:
-            await runtime.handle_hardware_message(
-                hw_messages.control_input_message(
-                    manager_id="manager-main",
-                    sender_session_id=runtime.endpoint.session_id,
-                    device_id="stream-deck-mini",
-                    fingerprint=_descriptor().fingerprint,
-                    control_id="0,0",
-                    capability_id="raster.bitmap",
-                    event_type="press",
-                    value={"eventType": "press"},
-                )
+        deckr._message_bus.publish.reset_mock()
+        await runtime.handle_hardware_message(
+            hw_messages.control_input_message(
+                manager_id="manager-main",
+                sender_session_id=runtime.endpoint.session_id,
+                device_id="stream-deck-mini",
+                fingerprint=_descriptor().fingerprint,
+                control_id="0,0",
+                capability_id="raster.bitmap",
+                event_type="press",
+                value={"eventType": "press"},
             )
-            with anyio.fail_after(1):
-                routed = await stream.receive()
+        )
+        routed = deckr._message_bus.publish.call_args.args[0]
         assert routed.recipient.endpoint == controller_endpoint.address
         assert routed.recipient_session_id == controller_endpoint.session_id
 
@@ -269,10 +267,9 @@ async def test_unclaimed_commands_are_rejected() -> None:
             capability_id="raster.bitmap",
             command_type="clear",
         )
-        async with controller_endpoint.subscribe("hardware_messages") as stream:
-            assert not await runtime.handle_command(command)
-            with anyio.fail_after(1):
-                rejected = await stream.receive()
+        deckr._message_bus.publish_reply.reset_mock()
+        assert not await runtime.handle_command(command)
+        rejected = deckr._message_bus.publish_reply.call_args.args[0]
         body = hw_messages.hardware_body_from_message(rejected)
         assert isinstance(body, hw_messages.CommandRejectedMessage)
         assert body.reason == "unauthorized"
@@ -339,11 +336,11 @@ async def test_remove_device_cancels_live_claim_contract_without_lane_event() ->
             await concord._validate(contract)
         ).status == ContractValidityStatus.VALID
 
-        async with controller_endpoint.subscribe("hardware_messages") as stream:
-            await runtime.remove_device("stream-deck-mini", reason="disconnected")
-            with anyio.move_on_after(0.05) as scope:
-                await stream.receive()
-            assert scope.cancel_called
+        deckr._message_bus.publish.reset_mock()
+        deckr._message_bus.publish_reply.reset_mock()
+        await runtime.remove_device("stream-deck-mini", reason="disconnected")
+        assert not deckr._message_bus.publish.called
+        assert not deckr._message_bus.publish_reply.called
 
         assert (await concord._validate(contract)).status == (
             ContractValidityStatus.CANCELLED

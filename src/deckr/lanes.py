@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from inspect import isawaitable
-from types import MappingProxyType
+from types import MappingProxyType, TracebackType
 from typing import Any, Protocol
 
 import anyio
@@ -33,6 +33,8 @@ ReplyPredicate = Callable[[DeckrMessage], bool | Awaitable[bool]]
 
 
 class MessageBus(Protocol):
+    def contract_for(self, lane: str) -> MessageContract: ...
+
     async def publish(self, message: DeckrMessage) -> None: ...
 
     async def publish_reply(
@@ -73,7 +75,6 @@ class EndpointSession:
         address: EndpointAddress,
         session_id: str,
         metadata: Mapping[str, str],
-        contracts: MessageContractRegistry,
         message_bus: MessageBus,
     ) -> None:
         self._info = EndpointSessionInfo(
@@ -81,8 +82,8 @@ class EndpointSession:
             session_id=session_id,
             metadata=MappingProxyType(dict(metadata)),
         )
-        self._contracts = contracts
         self._message_bus = message_bus
+        self._subscriptions: set[_EndpointSubscription] = set()
         self._closed = False
 
     @property
@@ -200,14 +201,22 @@ class EndpointSession:
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]:
         self._ensure_active()
         self._contract_for(lane)
-        return self._message_bus.subscribe(
-            lane,
-            self.address,
-            endpoint_session_id=self.session_id,
+        return _EndpointSubscription(
+            self,
+            self._message_bus.subscribe(
+                lane,
+                self.address,
+                endpoint_session_id=self.session_id,
+            ),
         )
 
     def close(self) -> None:
         self._closed = True
+
+    async def aclose(self) -> None:
+        self._closed = True
+        for subscription in tuple(self._subscriptions):
+            await subscription.aclose()
 
     def _message(
         self,
@@ -237,11 +246,60 @@ class EndpointSession:
         )
 
     def _contract_for(self, lane: str) -> MessageContract:
-        return self._contracts.contract_for(lane)
+        return self._message_bus.contract_for(lane)
 
     def _ensure_active(self) -> None:
         if self._closed:
             raise RuntimeError(f"Endpoint session {self.address} is closed")
+
+    def _track_subscription(self, subscription: _EndpointSubscription) -> None:
+        self._ensure_active()
+        self._subscriptions.add(subscription)
+
+    def _untrack_subscription(self, subscription: _EndpointSubscription) -> None:
+        self._subscriptions.discard(subscription)
+
+
+class _EndpointSubscription:
+    def __init__(
+        self,
+        session: EndpointSession,
+        context_manager: AbstractAsyncContextManager[
+            anyio.abc.ObjectReceiveStream[DeckrMessage]
+        ],
+    ) -> None:
+        self._session = session
+        self._context_manager = context_manager
+        self._entered = False
+        self._closed = False
+
+    async def __aenter__(self) -> anyio.abc.ObjectReceiveStream[DeckrMessage]:
+        self._session._ensure_active()  # noqa: SLF001
+        stream = await self._context_manager.__aenter__()
+        try:
+            self._session._track_subscription(self)  # noqa: SLF001
+        except BaseException:
+            await self._context_manager.__aexit__(None, None, None)
+            raise
+        self._entered = True
+        return stream
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        if not self._entered or self._closed:
+            return None
+        self._closed = True
+        try:
+            return await self._context_manager.__aexit__(exc_type, exc, traceback)
+        finally:
+            self._session._untrack_subscription(self)  # noqa: SLF001
+
+    async def aclose(self) -> None:
+        await self.__aexit__(None, None, None)
 
 
 class Lane:
@@ -303,14 +361,12 @@ def endpoint_session(
     address: str | EndpointAddress,
     session_id: str | None,
     metadata: Mapping[str, str] | None,
-    contracts: MessageContractRegistry,
     message_bus: MessageBus,
 ) -> EndpointSession:
     return EndpointSession(
         address=parse_endpoint_address(address),
         session_id=session_id or new_endpoint_session_id(),
         metadata=metadata or {},
-        contracts=contracts,
         message_bus=message_bus,
     )
 

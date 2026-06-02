@@ -158,7 +158,9 @@ MQTT lane transports are removed architecture, not parallel runtime paths.
 The shared lane implementation is the application-facing bus for one Deckr
 runtime. Components use `Deckr.endpoint(...)` to acquire endpoint sessions so the
 bus layer can stamp envelope senders, fence sessions, and filter recipients
-centrally.
+centrally. The message bus exposes lane contract lookup plus publish,
+request/reply, reply publication, and subscribe operations; it does not own
+discovery, liveness, authorization, services, or current state.
 
 NATS may provide broker fan-out, request/reply inboxes, queue groups, ops-only
 Services, JetStream, KV watches, TTL, duplicate windows, WebSocket/MQTT-facing
@@ -184,6 +186,8 @@ It includes:
 - managed Beacon discovery backed by a materialized KV view
 - managed Concord agreements backed by materialized KV views
 - explicit KV bucket access for protocol-owned state
+- endpoint-session shutdown that closes local lane subscriptions opened by that
+  session
 
 The managed lane runtime belongs in `deckr`. It is not a transport, controller,
 hardware manager, action provider runtime, or special discovered component.
@@ -842,6 +846,9 @@ The live design is:
 - Endpoint sessions subscribe with their Deckr endpoint address.
 - The endpoint session layer stamps envelope senders and filters received
   envelopes for the local endpoint before application code sees them.
+- Request/reply uses ordinary Deckr envelopes and NATS reply inboxes; requesters
+  accept the first deliverable reply that correlates to the original message and
+  passes any caller-provided predicate.
 - NATS subject, reply inbox, queue group, ops-only Service, JetStream, and KV
   concepts remain substrate mechanics below the Deckr lane contract.
 
@@ -941,6 +948,8 @@ to understand component-specific settings.
 - Home-grown WebSocket/MQTT Deckr lane transports are removed runtime paths.
 - Shared lane infrastructure owns the application-facing endpoint-session
   send/subscribe/fan-out API.
+- Endpoint-session close stops local lane subscriptions opened by that session,
+  but does not withdraw Beacon advertisements or cancel Concord agreements.
 - Required lane infrastructure must not depend on the bundled Deckr launcher.
 - Core bus infrastructure is not an auto-discovered component.
 - The public Python runtime API is AnyIO-native; backend-specific async objects

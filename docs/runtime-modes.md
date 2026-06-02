@@ -162,6 +162,6 @@ async with Deckr(message_bus=message_bus) as deckr:
 ```
 
 The supervised form still delegates lane traffic and explicit KV buckets to
-`NatsSubstrate` after startup. Tests may use explicit fakes at the
-`MessageBus` and KV-bucket boundaries, but supported runtime modes remain
-real NATS.
+`NatsSubstrate` after startup. Unit tests may use mocks at the `MessageBus` and
+KV-bucket boundaries, but supported runtime modes remain real NATS; there is no
+separate in-memory lane bus runtime.

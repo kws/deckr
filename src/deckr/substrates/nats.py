@@ -9,7 +9,7 @@ import anyio
 from pydantic import ValidationError
 
 from deckr.contracts.keys import decode_key_token, encode_key_token
-from deckr.contracts.lanes import MessageContractRegistry
+from deckr.contracts.lanes import MessageContract, MessageContractRegistry
 from deckr.contracts.messages import (
     BroadcastTarget,
     DeckrMessage,
@@ -64,8 +64,11 @@ class NatsSubstrate:
         self._nc = None
         self._js = None
 
+    def contract_for(self, lane: str) -> MessageContract:
+        return self._lane_contracts.contract_for(lane)
+
     async def publish(self, message: DeckrMessage) -> None:
-        contract = self._lane_contracts.contract_for(message.lane)
+        contract = self.contract_for(message.lane)
         validate_message_for_contract(message, contract)
         await self._publish_payload(
             _subject_for(message),
@@ -96,25 +99,47 @@ class NatsSubstrate:
     ) -> DeckrMessage:
         if self._nc is None:
             raise RuntimeError("NATS substrate is not connected")
-        contract = self._lane_contracts.contract_for(message.lane)
+        contract = self.contract_for(message.lane)
         validate_message_for_contract(message, contract)
-        response = await self._nc.request(
-            _subject_for(message),
-            _payload_for(message),
-            timeout=timeout,
-            headers=_headers_for(message),
+        send, receive = anyio.create_memory_object_stream[DeckrMessage](
+            max_buffer_size=1
         )
-        reply = self._message_from_nats(response)
-        if not message_is_deliverable(
-            reply,
-            endpoint=message.sender,
-            endpoint_session_id=message.sender_session_id,
-            contract=contract,
-        ):
-            raise TimeoutError("NATS request returned no deliverable Deckr reply")
-        if not await reply_is_accepted(reply, request=message, accept=accept):
-            raise TimeoutError("NATS request returned no accepted Deckr reply")
-        return reply
+        reply_subject = self._nc.new_inbox()
+
+        async def callback(msg) -> None:
+            try:
+                reply = self._message_from_nats(msg)
+                if not message_is_deliverable(
+                    reply,
+                    endpoint=message.sender,
+                    endpoint_session_id=message.sender_session_id,
+                    contract=contract,
+                ):
+                    return
+                if not await reply_is_accepted(reply, request=message, accept=accept):
+                    return
+                send.send_nowait(reply)
+            except anyio.WouldBlock:
+                return
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                return
+            except Exception:
+                logger.exception("Dropped invalid NATS Deckr request reply")
+
+        subscription = await self._nc.subscribe(reply_subject, cb=callback)
+        try:
+            await self._publish_payload(
+                _subject_for(message),
+                message,
+                headers=_headers_for(message),
+                reply_subject=reply_subject,
+            )
+            with anyio.fail_after(timeout):
+                return await receive.receive()
+        finally:
+            await subscription.unsubscribe()
+            await send.aclose()
+            await receive.aclose()
 
     @asynccontextmanager
     async def subscribe(
@@ -129,7 +154,7 @@ class NatsSubstrate:
         send, receive = anyio.create_memory_object_stream[DeckrMessage](
             max_buffer_size=self._buffer_size
         )
-        contract = self._lane_contracts.contract_for(lane)
+        contract = self.contract_for(lane)
         subscriptions = []
         subscriber_closed = False
 
@@ -227,10 +252,16 @@ class NatsSubstrate:
         message: DeckrMessage,
         *,
         headers: Mapping[str, str],
+        reply_subject: str | None = None,
     ) -> None:
         if self._nc is None:
             raise RuntimeError("NATS substrate is not connected")
-        await self._nc.publish(subject, _payload_for(message), headers=dict(headers))
+        await self._nc.publish(
+            subject,
+            _payload_for(message),
+            reply=reply_subject or "",
+            headers=dict(headers),
+        )
 
     def _message_from_nats(self, msg) -> DeckrMessage:
         try:
@@ -240,7 +271,7 @@ class NatsSubstrate:
             raise ValueError("NATS message payload is not a Deckr envelope") from exc
         _validate_subject_hint(msg.subject, message)
         _validate_headers(getattr(msg, "headers", None), message)
-        contract = self._lane_contracts.contract_for(message.lane)
+        contract = self.contract_for(message.lane)
         validate_message_for_contract(message, contract)
         return message
 

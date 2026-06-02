@@ -5,7 +5,7 @@ from pathlib import Path
 
 import anyio
 import pytest
-from memory_message_bus import memory_deckr
+from message_bus_mocks import mock_deckr
 
 from deckr.beacon import (
     Beacon,
@@ -57,7 +57,7 @@ def _document(raw: dict) -> ConfigDocument:
 @asynccontextmanager
 async def _running_components(document: ConfigDocument):
     plan = resolve_component_host_plan(document)
-    async with memory_deckr(
+    async with mock_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan) as component_host:
@@ -509,7 +509,7 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
         document,
         definitions={"com.example.action_runtime": definition},
     )
-    async with memory_deckr(
+    async with mock_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan) as component_host:
@@ -569,7 +569,7 @@ async def test_start_components_passes_kv_bucket_and_endpoints() -> None:
         document,
         definitions={"dev.deckr.controller": definition},
     )
-    async with memory_deckr(
+    async with mock_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan):
@@ -611,7 +611,7 @@ async def test_required_service_dependency_controls_effective_readiness() -> Non
         definitions={"com.example.worker": definition},
     )
 
-    async with memory_deckr(
+    async with mock_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan) as component_host:
@@ -683,7 +683,7 @@ async def test_optional_service_dependency_reports_without_blocking_readiness() 
         definitions={"com.example.worker": definition},
     )
 
-    async with memory_deckr(
+    async with mock_deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
     ) as deckr, start_components(deckr, plan) as component_host:

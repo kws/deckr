@@ -56,7 +56,9 @@ adopts them without immediately writing again.
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence
 for discovery lives in Beacon advertisements. Live agreement authority lives in
-Concord contracts and participant tokens.
+Concord contracts and participant tokens. Closing an endpoint session closes
+local lane subscriptions opened by that session; it does not withdraw Beacon
+advertisements or cancel Concord agreements.
 
 ## Lane Subjects
 
@@ -95,9 +97,17 @@ async with deckr.endpoint("action_provider:clock") as endpoint:
 ```
 
 The endpoint session stamps `sender` and `senderSessionId`, validates the message
-contract for the requested lane, and publishes the envelope. Subscribers receive
-messages only when the envelope recipient matches the local endpoint/session and
-message contract.
+contract for the requested lane through the message bus, and publishes the
+envelope. Subscribers receive messages only when the envelope recipient matches
+the local endpoint/session and message contract.
+
+Request/reply is a message-bus operation over ordinary `DeckrMessage`
+envelopes. The requester publishes the request with a NATS reply inbox and
+accepts the first deliverable reply whose `inReplyTo` matches the request
+`messageId` and whose optional acceptance predicate passes. Rejected, invalid,
+or non-deliverable replies are ignored until timeout. Replies sent through
+`EndpointSession.reply_to(...)` target the original request sender and
+`senderSessionId`.
 
 Message lanes remain ordinary command/data messaging. Beacon and Concord replace
 authority for discovery and agreements; they do not replace action messages,
