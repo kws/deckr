@@ -88,7 +88,8 @@ Concord terms hashes use canonical JSON:
 State transitions use compare-and-set when the substrate supports it. Initial
 creation uses `create`; refresh and cancellation use revision-guarded `update`;
 withdrawal/deletion should use revision-guarded `delete`. Watches are wakeups.
-Exact reads and recomputed validity are the authority path.
+For language-neutral protocol semantics, exact reads and recomputed validity are
+the strict authority path.
 
 ## Beacon
 
@@ -224,8 +225,8 @@ means the contract is not yet fulfilled. A missing token for a participant that
 is already in `attachedParticipants` means authority was lost and the contract is
 invalid for that generation.
 
-Validate a contract by exact-reading the contract and every named participant
-token. The result is valid only if:
+Language-neutral implementations validate a contract by exact-reading the
+contract and every named participant token. The result is valid only if:
 
 - the contract exists and is `open`
 - every named participant is in `attachedParticipants`
@@ -239,6 +240,13 @@ If no external current-session evidence is available, token existence and
 internal consistency are the session evidence. A missing, invalid, stale, or
 generation-mismatched token means the contract is not valid. A cancelled
 contract is never resumed; recovery uses a successor contract.
+
+The Python runtime exposes two validation paths. `Concord.validate(...)` is the
+normal hot path for runtime participants and uses Concord's managed
+materialized KV view after readiness. `Concord.validate_exact(...)` performs the
+strict exact-read validation described above and is the path for maintenance,
+recovery, diagnostics, and code that must bypass the materialized cache. Concord
+write paths still exact-read current records before revision-guarded updates.
 
 ### Concord Maintenance
 
@@ -336,6 +344,11 @@ service-use Concord contract is negotiated, service command and view authority
 follows that Concord contract and its participant tokens, not continued Beacon
 advertisement presence. Protected service views are authorized through the
 service-use contract and fenced by the advertised service identity and session.
+Protected view watches deliver payloads only while the stored entry matches the
+watcher's service-use fence. If a visible same-key entry is replaced by another
+service identity or session, the watcher observes only a removal-style event and
+must not receive the replacement payload. Delete and expire events for entries
+that were never visible to that watcher are not delivered.
 A service may withdraw its Beacon advertisement when it cannot accept new
 service-use contracts; existing service-use contracts remain governed only by
 Concord validity and participant tokens.

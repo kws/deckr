@@ -236,16 +236,30 @@ async def test_missing_token_contract_cancelled_only_after_stale_grace() -> None
 async def test_unavailable_status_does_not_create_or_advance_stale_observation() -> None:
     clock = ManualClock()
     contract_state, token_state, maintenance_state = _stores()
-    coordinator = _concord(contract_state, token_state, maintenance_state)
+    coordinator = _concord(
+        contract_state,
+        UnavailableGetKvBucket(token_state),
+        maintenance_state,
+    )
     contract = await _contract(coordinator, contract_id="unavailable-contract")
-    normal_reaper = _reaper(coordinator, clock)
-    await normal_reaper.scan_once()
+    reaper = _reaper(coordinator, clock)
+
+    assert (await coordinator.validate_exact(contract)).status == (
+        ContractValidityStatus.UNAVAILABLE
+    )
+    result = await reaper.scan_once()
+    assert result.scanned_contract_count == 1
+    assert result.stale_observations_created == 0
+    assert result.contracts_cancelled == 0
+    await _assert_no_stale_observation(maintenance_state, contract)
 
     clock.advance(3600)
-    result = await normal_reaper.scan_once()
+    result = await reaper.scan_once()
 
-    assert result.contracts_cancelled == 1
-    assert (await coordinator.contract_record(contract)).state == ContractState.CANCELLED
+    assert result.stale_observations_created == 0
+    assert result.contracts_cancelled == 0
+    assert (await coordinator.contract_record(contract)).state == ContractState.OPEN
+    await _assert_no_stale_observation(maintenance_state, contract)
 
 
 @pytest.mark.asyncio

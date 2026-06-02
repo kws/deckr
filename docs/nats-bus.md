@@ -283,20 +283,25 @@ skips unchanged refresh writes when possible, best-effort withdraws on clean
 shutdown, and removes stale same-endpoint advertisements left by an earlier
 crashed session or changed configuration.
 
-Protected service views are direct JetStream/KV views. `ServiceViewStore` opens
-one service-owned bucket through the same materialized KV recovery helper used
-by Beacon and Concord, exposes direct `get`, `put`, `create`, `update`,
-`delete`, and `watch` style behavior, and authorizes protected reads and watches
-with an active Concord service-use lease. Local view state is updated
-immediately after successful writes and deletes, and recovered watch snapshots
-reconcile missing keys so missed delete/expiry events do not leave stale cached
-view entries. View entries are fenced by `serviceId`, `serviceNamespace`, and
-`sessionId`, and writes return `entry.revision` for CAS updates and deletes.
-After a service-use Concord contract is negotiated, service command and
-protected view authority follows Concord, not continued Beacon advertisement
-presence. A service may withdraw its Beacon advertisement when it cannot accept
-new service-use contracts; existing service-use contracts remain
-Concord-governed.
+Protected service views are direct JetStream/KV views. Runtime code opens them
+through `Deckr.service_view_store(bucket, ttl_seconds=...)`, which returns a
+managed `ServiceViewStore` for one service-owned bucket. `ServiceViewStore` uses
+the same materialized KV recovery helper as Beacon and Concord, exposes direct
+`get`, `put`, `create`, `update`, `delete`, and `watch` style behavior, and
+authorizes protected reads and watches with an active Concord service-use lease.
+Local view state is updated immediately after successful writes and deletes, and
+recovered watch snapshots reconcile missing keys so missed delete/expiry events
+do not leave stale cached view entries. View entries are fenced by `serviceId`,
+`serviceNamespace`, and `sessionId`, and writes return `entry.revision` for CAS
+updates and deletes. Protected watches deliver `put` payloads only when the
+entry matches the watcher's lease fence. Replacing a visible same-key entry with
+another service identity or session emits a removal-style event to the original
+watcher without exposing the replacement payload, and delete/expire events for
+never-visible entries are suppressed for that watcher. After a service-use
+Concord contract is negotiated, service command and protected view authority
+follows Concord, not continued Beacon advertisement presence. A service may
+withdraw its Beacon advertisement when it cannot accept new service-use
+contracts; existing service-use contracts remain Concord-governed.
 
 ## Component Dependencies
 
@@ -328,6 +333,7 @@ from raw KV buckets.
 ```python
 beacon = deckr.beacon
 concord = deckr.concord
+views = deckr.service_view_store("com_example_service_view_v1", ttl_seconds=30)
 ```
 
 Component factories that need raw KV buckets, such as the Concord reaper, receive
@@ -341,8 +347,9 @@ maintenance_bucket = context.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY)
 
 The reaper wraps these buckets in Concord maintenance logic for CAS
 cancellation, retention deletion, token cleanup, and orphaned stale-observation
-cleanup. Other components should prefer managed `deckr.beacon` and
-`deckr.concord` for normal protocol authority.
+cleanup. Other components should prefer managed `deckr.beacon`,
+`deckr.concord`, and `deckr.service_view_store(...)` for normal protocol and
+protected service-view authority.
 
 TTL-bound buckets are configured with broker-owned bucket TTL and one retained
 message per subject. Persistent buckets reject per-write TTL. Reopening the same
@@ -413,10 +420,12 @@ cleanup path.
 infrequently and does not provide immediate notification. It avoids materialized
 watches entirely, so it should not leave watch consumers behind.
 
-Treat watch events as wakeups and exact KV reads as authority, but remember that
-every watch still consumes broker resources. Use `scripts/nats_state_report.py`
-for current Beacon/Concord keys and TTL behavior, then pair it with the `/jsz`
-check below to confirm that steady-state unbound consumer counts remain bounded.
+Treat watch events as wakeups. Managed materialized views are the normal Python
+runtime authority for reads; exact KV reads are used for writes, strict
+validation, recovery, and maintenance. Every watch still consumes broker
+resources. Use `scripts/nats_state_report.py` for current Beacon/Concord keys
+and TTL behavior, then pair it with the `/jsz` check below to confirm that
+steady-state unbound consumer counts remain bounded.
 
 ## Troubleshooting
 

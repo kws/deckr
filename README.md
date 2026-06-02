@@ -163,8 +163,9 @@ third-party plugin protocol adaptation, or concrete device protocols.
 The NATS substrate surface is available behind the optional `deckr[nats]` extra.
 Use `Deckr.lane(...).register_endpoint(...)` for endpoint-session lane messages,
 `Deckr.beacon` for managed Beacon discovery, `Deckr.concord` for managed
-agreement state, and `Deckr.kv_bucket(...)` for explicit NATS KV buckets. The optional
-`deckr[supervised-nats]` extra also installs the first-party
+agreement state, `Deckr.service_view_store(bucket, ttl_seconds=...)` for
+protected service views, and `Deckr.kv_bucket(...)` for explicit NATS KV
+buckets. The optional `deckr[supervised-nats]` extra also installs the first-party
 `deckr-nats-server-bin` binary package so embedded hosts and the `deckr`
 launcher can supervise a private local `nats-server` process. This is still the
 same NATS/KV runtime contract, not an in-memory or no-NATS product mode.

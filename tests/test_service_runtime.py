@@ -123,6 +123,13 @@ async def _receive_service_change(stream):
         return await stream.receive()
 
 
+async def _assert_no_service_change(stream) -> None:
+    received = None
+    with anyio.move_on_after(0.05) as scope:
+        received = await stream.receive()
+    assert scope.cancel_called, f"unexpected service view change: {received!r}"
+
+
 def test_service_protocol_payload_terms_and_view_keys() -> None:
     protocol = _protocol()
     payload = protocol.advertisement_payload(
@@ -314,6 +321,110 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
         )
         with pytest.raises(UnsupportedServiceScope):
             await view_store.get(lease, unauthorized)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_watch_hides_puts_for_different_service_fence() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+
+        async with view_store.watch(lease, view_ref) as changes:
+            await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "ON"},
+                service_id="other-service",
+                service_namespace=protocol.namespace,
+                session_id="other-session",
+            )
+            await _assert_no_service_change(changes)
+
+        assert await view_store.get(lease, view_ref) is None
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_watch_replacement_with_other_fence_removes_visible_entry() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+        created = await view_store.put(
+            view=view_ref,
+            payload={"item": "Kitchen Light", "state": "ON"},
+            service_id="openhab-home",
+            service_namespace=protocol.namespace,
+            session_id="service-session",
+        )
+
+        async with view_store.watch(lease, view_ref) as changes:
+            replacement = await view_store.update(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "OFF"},
+                service_id="other-service",
+                service_namespace=protocol.namespace,
+                session_id="other-session",
+                revision=created.revision,
+            )
+            change = await _receive_service_change(changes)
+
+            assert change.operation == "delete"
+            assert change.key == view_ref.key
+            assert change.revision == replacement.revision
+            assert change.entry is None
+            await _assert_no_service_change(changes)
+
+        assert await view_store.get(lease, view_ref) is None
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+
+        async with view_store.watch(lease, view_ref) as changes:
+            first_hidden = await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "ON"},
+                service_id="other-service",
+                service_namespace=protocol.namespace,
+                session_id="other-session",
+            )
+            await _assert_no_service_change(changes)
+
+            await view_store.delete(view=view_ref, revision=first_hidden.revision)
+            await _assert_no_service_change(changes)
+
+            second_hidden = await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "OFF"},
+                service_id="other-service",
+                service_namespace=protocol.namespace,
+                session_id="other-session",
+            )
+            await _assert_no_service_change(changes)
+
+            await raw.expire(view_ref.key)
+            with anyio.fail_after(1):
+                while view_store._revision_by_key[view_ref.key] <= second_hidden.revision:
+                    await anyio.sleep(0)
+            await _assert_no_service_change(changes)
+
+        assert await view_store.get(lease, view_ref) is None
         tg.cancel_scope.cancel()
 
 

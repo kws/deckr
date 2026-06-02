@@ -41,6 +41,20 @@ class ServiceViewChange:
     entry: ServiceViewEntry | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _ServiceViewLeaseFence:
+    service_id: str
+    service_namespace: str
+    session_id: str
+
+
+@dataclass(slots=True)
+class _ServiceViewSubscriber:
+    key: str
+    fence: _ServiceViewLeaseFence
+    visible: bool
+
+
 class ServiceViewStore:
     """Direct KV-backed materialized service-view store."""
 
@@ -62,7 +76,7 @@ class ServiceViewStore:
         self._revision_by_key: dict[str, int] = {}
         self._subscribers: dict[
             anyio.abc.ObjectSendStream[ServiceViewChange],
-            str,
+            _ServiceViewSubscriber,
         ] = {}
         self._lock = anyio.Lock()
 
@@ -233,8 +247,14 @@ class ServiceViewStore:
         send, receive = anyio.create_memory_object_stream[ServiceViewChange](
             max_buffer_size=self._buffer_size
         )
+        fence = _lease_fence(lease)
         async with self._lock:
-            self._subscribers[send] = view.key
+            current = self._entries.get(view.key)
+            self._subscribers[send] = _ServiceViewSubscriber(
+                key=view.key,
+                fence=fence,
+                visible=current is not None and _entry_matches_fence(current, fence),
+            )
         try:
             async with send, receive:
                 yield receive
@@ -302,14 +322,21 @@ class ServiceViewStore:
                 self._entries[change.key] = change.entry
             else:
                 self._entries.pop(change.key, None)
-            subscribers = tuple(
-                subscriber
-                for subscriber, key in self._subscribers.items()
-                if key == change.key
-            )
-        for subscriber in subscribers:
+            deliveries: list[
+                tuple[
+                    anyio.abc.ObjectSendStream[ServiceViewChange],
+                    ServiceViewChange,
+                ]
+            ] = []
+            for subscriber, state in self._subscribers.items():
+                if state.key != change.key:
+                    continue
+                delivery = _subscriber_delivery(change, state)
+                if delivery is not None:
+                    deliveries.append((subscriber, delivery))
+        for subscriber, delivery in deliveries:
             try:
-                subscriber.send_nowait(change)
+                subscriber.send_nowait(delivery)
             except anyio.WouldBlock:
                 continue
             except (anyio.BrokenResourceError, anyio.ClosedResourceError):
@@ -375,12 +402,51 @@ def _required_value(value: Mapping[str, Any], key: str) -> str:
 
 
 def _entry_matches_lease(entry: ServiceViewEntry, lease: ServiceUseLease) -> bool:
+    return _entry_matches_fence(entry, _lease_fence(lease))
+
+
+def _lease_fence(lease: ServiceUseLease) -> _ServiceViewLeaseFence:
     descriptor = lease.descriptor
-    return (
-        entry.service_id == descriptor.service_id
-        and entry.service_namespace == descriptor.namespace
-        and entry.session_id == descriptor.session_id
+    return _ServiceViewLeaseFence(
+        service_id=descriptor.service_id,
+        service_namespace=descriptor.namespace,
+        session_id=descriptor.session_id,
     )
+
+
+def _entry_matches_fence(
+    entry: ServiceViewEntry,
+    fence: _ServiceViewLeaseFence,
+) -> bool:
+    return (
+        entry.service_id == fence.service_id
+        and entry.service_namespace == fence.service_namespace
+        and entry.session_id == fence.session_id
+    )
+
+
+def _subscriber_delivery(
+    change: ServiceViewChange,
+    state: _ServiceViewSubscriber,
+) -> ServiceViewChange | None:
+    if change.operation == "put":
+        if change.entry is not None and _entry_matches_fence(change.entry, state.fence):
+            state.visible = True
+            return change
+        if state.visible:
+            state.visible = False
+            return ServiceViewChange(
+                "delete",
+                change.bucket,
+                change.key,
+                change.revision,
+            )
+        return None
+
+    if state.visible:
+        state.visible = False
+        return change
+    return None
 
 
 def _is_materialized_bucket(value: Any) -> bool:
