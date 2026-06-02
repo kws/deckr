@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
+use futures_util::future::{select, Either};
+use futures_util::{pin_mut, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -11,10 +13,10 @@ use crate::endpoint::EndpointAddress;
 use crate::keys::{
     concord_contract_key as make_concord_contract_key, concord_contracts_prefix,
     concord_participant_token_key as make_concord_participant_token_key,
-    parse_concord_contract_key,
+    parse_concord_contract_key, parse_concord_participant_token_key,
 };
 pub use crate::state::DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS;
-use crate::state::{StateStore, StateStorePolicy};
+use crate::state::{StateChange, StateOperation, StateStore, StateStorePolicy, StateWatchStream};
 use crate::{Error, Result};
 
 pub const CONCORD_CONTRACT_SCHEMA_ID: &str = "dev.deckr.concord.contract.v1";
@@ -322,6 +324,77 @@ pub struct ConcordManagedContract {
     pub token: Option<ParticipantHandle>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConcordNotificationSource {
+    Contract,
+    Token,
+}
+
+impl ConcordNotificationSource {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Contract => "contract watch",
+            Self::Token => "token watch",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConcordContractNotification {
+    pub source: ConcordNotificationSource,
+    pub operation: StateOperation,
+    pub contract_id: String,
+    pub generation: u64,
+    pub contract: Option<ContractHandle>,
+    pub participant: Option<EndpointAddress>,
+    pub profile: Option<String>,
+    pub change: StateChange,
+}
+
+pub struct ConcordContractNotificationStream {
+    contracts: StateWatchStream,
+    tokens: StateWatchStream,
+    known_profiles: BTreeMap<(String, u64), Option<String>>,
+    profile_filter: Option<String>,
+}
+
+impl ConcordContractNotificationStream {
+    pub async fn next(&mut self) -> Result<ConcordContractNotification> {
+        loop {
+            let contracts = self.contracts.next();
+            let tokens = self.tokens.next();
+            pin_mut!(contracts);
+            pin_mut!(tokens);
+
+            let notification = match select(contracts, tokens).await {
+                Either::Left((change, _)) => {
+                    let change = change.ok_or_else(|| {
+                        Error::StateUnavailable("Concord contract watch ended".to_string())
+                    })??;
+                    contract_notification_from_change(
+                        change,
+                        self.profile_filter.as_deref(),
+                        &mut self.known_profiles,
+                    )
+                }
+                Either::Right((change, _)) => {
+                    let change = change.ok_or_else(|| {
+                        Error::StateUnavailable("Concord token watch ended".to_string())
+                    })??;
+                    token_notification_from_change(
+                        change,
+                        self.profile_filter.as_deref(),
+                        &self.known_profiles,
+                    )
+                }
+            };
+            if let Some(notification) = notification {
+                return Ok(notification);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ConcordParticipantLease {
     pub contract: ContractHandle,
@@ -485,6 +558,21 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
 
     pub fn token_state(&self) -> &T {
         &self.token_state
+    }
+
+    pub async fn watch_contract_notifications(
+        &self,
+        profile: Option<&str>,
+    ) -> Result<ConcordContractNotificationStream> {
+        Ok(ConcordContractNotificationStream {
+            contracts: self
+                .contract_state
+                .watch(concord_contracts_prefix())
+                .await?,
+            tokens: self.token_state.watch(concord_contracts_prefix()).await?,
+            known_profiles: BTreeMap::new(),
+            profile_filter: profile.map(ToString::to_string),
+        })
     }
 
     pub async fn create_contract(
@@ -945,6 +1033,7 @@ pub struct ConcordParticipantManager<C: StateStore, T: StateStore> {
     token_refresh_interval: Duration,
     managed: BTreeMap<String, ConcordManagedContract>,
     leases: BTreeMap<String, ConcordParticipantLease>,
+    contract_index: BTreeMap<String, ContractHandle>,
 }
 
 impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
@@ -962,6 +1051,7 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
             token_refresh_interval: Duration::from_secs(DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS),
             managed: BTreeMap::new(),
             leases: BTreeMap::new(),
+            contract_index: BTreeMap::new(),
         })
     }
 
@@ -988,6 +1078,7 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
             lease.close();
         }
         self.managed.remove(contract_key);
+        self.contract_index.remove(contract_key);
     }
 
     pub async fn cancel(&self, contract: &ContractHandle, reason: Option<String>) -> Result<bool> {
@@ -1005,6 +1096,10 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         F: FnMut(&ContractHandle, &ContractRecord) -> Result<bool>,
     {
         let contracts = self.concord.find_contracts(self.profile.as_deref()).await?;
+        self.contract_index = contracts
+            .iter()
+            .map(|contract| (contract.key.clone(), contract.clone()))
+            .collect();
         let mut next_managed = BTreeMap::<String, ConcordManagedContract>::new();
         let mut next_leases = BTreeMap::<String, ConcordParticipantLease>::new();
         let mut current_leases = self.leases.clone();
@@ -1027,6 +1122,51 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         }
         self.managed = next_managed;
         self.leases = next_leases;
+        Ok(self.managed_contracts())
+    }
+
+    pub async fn reconcile_notification<F>(
+        &mut self,
+        notification: &ConcordContractNotification,
+        mut accept_contract: F,
+        current_sessions: Option<&BTreeMap<String, String>>,
+    ) -> Result<Vec<ConcordManagedContract>>
+    where
+        F: FnMut(&ContractHandle, &ContractRecord) -> Result<bool>,
+    {
+        let contract_key =
+            make_concord_contract_key(&notification.contract_id, notification.generation);
+        let contract = match notification.source {
+            ConcordNotificationSource::Contract => {
+                self.update_contract_index(notification, &contract_key)
+            }
+            ConcordNotificationSource::Token => self
+                .managed
+                .get(&contract_key)
+                .map(|managed| managed.contract.clone()),
+        };
+
+        let Some(contract) = contract else {
+            if notification.source == ConcordNotificationSource::Contract {
+                self.release(&contract_key);
+            }
+            return Ok(self.managed_contracts());
+        };
+
+        let key = contract.key.clone();
+        let lease = self.leases.remove(&key);
+        match self
+            .reconcile_contract(contract, lease, &mut accept_contract, current_sessions)
+            .await?
+        {
+            Some((managed, lease)) => {
+                self.leases.insert(key.clone(), lease);
+                self.managed.insert(key, managed);
+            }
+            None => {
+                self.managed.remove(&key);
+            }
+        }
         Ok(self.managed_contracts())
     }
 
@@ -1064,6 +1204,35 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         self.managed = next_managed;
         self.leases = next_leases;
         Ok(self.managed_contracts())
+    }
+
+    fn update_contract_index(
+        &mut self,
+        notification: &ConcordContractNotification,
+        contract_key: &str,
+    ) -> Option<ContractHandle> {
+        let Some(contract) = notification.contract.clone() else {
+            if matches!(
+                notification.operation,
+                StateOperation::Delete | StateOperation::Expire
+            ) {
+                self.contract_index.remove(contract_key);
+            } else {
+                self.contract_index.clear();
+            }
+            return None;
+        };
+        if self
+            .profile
+            .as_deref()
+            .is_some_and(|profile| contract.profile.as_deref() != Some(profile))
+        {
+            self.contract_index.remove(contract_key);
+            return None;
+        }
+        self.contract_index
+            .insert(contract.key.clone(), contract.clone());
+        Some(contract)
     }
 
     async fn reconcile_contract<F>(
@@ -1191,6 +1360,83 @@ pub fn concord_participant_token_key(
     participant: &EndpointAddress,
 ) -> String {
     make_concord_participant_token_key(contract_id, generation, participant)
+}
+
+fn contract_notification_from_change(
+    change: StateChange,
+    profile_filter: Option<&str>,
+    known_profiles: &mut BTreeMap<(String, u64), Option<String>>,
+) -> Option<ConcordContractNotification> {
+    let (contract_id, generation) = parse_concord_contract_key(&change.key)?;
+    let pointer = (contract_id.clone(), generation);
+    let known_profile = known_profiles.get(&pointer).cloned().flatten();
+    let contract = contract_handle_from_change(&change);
+    let (profile, profile_known) = if let Some(contract) = contract.as_ref() {
+        let profile = contract.profile.clone();
+        known_profiles.insert(pointer.clone(), profile.clone());
+        (profile, true)
+    } else {
+        let profile_known = known_profiles.contains_key(&pointer);
+        if matches!(
+            change.operation,
+            StateOperation::Delete | StateOperation::Expire
+        ) {
+            known_profiles.remove(&pointer);
+        }
+        (known_profile, profile_known)
+    };
+    if profile_filter.is_some_and(|filter| profile_known && profile.as_deref() != Some(filter)) {
+        return None;
+    }
+    Some(ConcordContractNotification {
+        source: ConcordNotificationSource::Contract,
+        operation: change.operation,
+        contract_id,
+        generation,
+        contract,
+        participant: None,
+        profile,
+        change,
+    })
+}
+
+fn token_notification_from_change(
+    change: StateChange,
+    profile_filter: Option<&str>,
+    known_profiles: &BTreeMap<(String, u64), Option<String>>,
+) -> Option<ConcordContractNotification> {
+    let (contract_id, generation, participant) = parse_concord_participant_token_key(&change.key)?;
+    let pointer = (contract_id.clone(), generation);
+    let profile_known = known_profiles.contains_key(&pointer);
+    let profile = known_profiles.get(&pointer).cloned().flatten();
+    if profile_filter.is_some_and(|filter| profile_known && profile.as_deref() != Some(filter)) {
+        return None;
+    }
+    Some(ConcordContractNotification {
+        source: ConcordNotificationSource::Token,
+        operation: change.operation,
+        contract_id,
+        generation,
+        contract: None,
+        participant: Some(participant),
+        profile,
+        change,
+    })
+}
+
+fn contract_handle_from_change(change: &StateChange) -> Option<ContractHandle> {
+    if change.operation != StateOperation::Put {
+        return None;
+    }
+    let entry = change.entry.as_ref()?;
+    let (contract_id, generation) = parse_concord_contract_key(&change.key)?;
+    let Ok(record) = ContractRecord::from_value(entry.value.clone()) else {
+        return None;
+    };
+    if record.contract_id != contract_id || record.generation != generation {
+        return None;
+    }
+    Some(contract_handle(entry.key.clone(), &record, entry.revision))
 }
 
 fn validity<T: Into<Option<String>>>(

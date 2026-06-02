@@ -1,8 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env::{self, VarError};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use futures_channel::mpsc::{unbounded, UnboundedSender};
+use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -153,6 +156,8 @@ pub struct StateChange {
     pub entry: Option<StateEntry>,
 }
 
+pub type StateWatchStream = Pin<Box<dyn Stream<Item = Result<StateChange>> + Send + 'static>>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrefixObservation {
     pub entries: Vec<StateEntry>,
@@ -173,6 +178,7 @@ pub trait StateStore: Clone + Send + Sync + 'static {
         ttl: Option<u64>,
     ) -> Result<StateEntry>;
     async fn delete(&self, key: &str, revision: Option<u64>) -> Result<()>;
+    async fn watch(&self, prefix: &str) -> Result<StateWatchStream>;
 }
 
 pub async fn observe_prefix_current<S: StateStore>(
@@ -212,6 +218,13 @@ pub struct MemoryStateStore {
 struct MemoryStateInner {
     entries: BTreeMap<String, StateEntry>,
     revision: u64,
+    watchers: Vec<MemoryStateWatcher>,
+}
+
+#[derive(Debug)]
+struct MemoryStateWatcher {
+    prefix: String,
+    sender: UnboundedSender<Result<StateChange>>,
 }
 
 impl MemoryStateStore {
@@ -222,6 +235,15 @@ impl MemoryStateStore {
     fn next_revision(inner: &mut MemoryStateInner) -> u64 {
         inner.revision += 1;
         inner.revision
+    }
+
+    fn notify_watchers(inner: &mut MemoryStateInner, change: StateChange) {
+        inner.watchers.retain(|watcher| {
+            if !change.key.starts_with(&watcher.prefix) {
+                return true;
+            }
+            watcher.sender.unbounded_send(Ok(change.clone())).is_ok()
+        });
     }
 }
 
@@ -255,6 +277,14 @@ impl StateStore for MemoryStateStore {
             revision: Self::next_revision(&mut inner),
         };
         inner.entries.insert(key.to_string(), entry.clone());
+        Self::notify_watchers(
+            &mut inner,
+            StateChange {
+                operation: StateOperation::Put,
+                key: key.to_string(),
+                entry: Some(entry.clone()),
+            },
+        );
         Ok(entry)
     }
 
@@ -271,6 +301,14 @@ impl StateStore for MemoryStateStore {
             revision: Self::next_revision(&mut inner),
         };
         inner.entries.insert(key.to_string(), entry.clone());
+        Self::notify_watchers(
+            &mut inner,
+            StateChange {
+                operation: StateOperation::Put,
+                key: key.to_string(),
+                entry: Some(entry.clone()),
+            },
+        );
         Ok(entry)
     }
 
@@ -298,6 +336,14 @@ impl StateStore for MemoryStateStore {
             revision: Self::next_revision(&mut inner),
         };
         inner.entries.insert(key.to_string(), entry.clone());
+        Self::notify_watchers(
+            &mut inner,
+            StateChange {
+                operation: StateOperation::Put,
+                key: key.to_string(),
+                entry: Some(entry.clone()),
+            },
+        );
         Ok(entry)
     }
 
@@ -315,9 +361,32 @@ impl StateStore for MemoryStateStore {
                 )));
             }
         }
-        inner.entries.remove(key);
+        let removed = inner.entries.remove(key);
         inner.revision += 1;
+        if removed.is_some() {
+            Self::notify_watchers(
+                &mut inner,
+                StateChange {
+                    operation: StateOperation::Delete,
+                    key: key.to_string(),
+                    entry: None,
+                },
+            );
+        }
         Ok(())
+    }
+
+    async fn watch(&self, prefix: &str) -> Result<StateWatchStream> {
+        let (sender, receiver) = unbounded();
+        self.inner
+            .lock()
+            .expect("memory state mutex poisoned")
+            .watchers
+            .push(MemoryStateWatcher {
+                prefix: prefix.to_string(),
+                sender,
+            });
+        Ok(Box::pin(receiver))
     }
 }
 
@@ -325,7 +394,46 @@ impl StateStore for MemoryStateStore {
 mod tests {
     use std::ffi::OsString;
 
+    use futures_util::StreamExt;
+    use serde_json::json;
+
     use super::*;
+
+    #[tokio::test]
+    async fn memory_state_watch_emits_prefix_filtered_changes() {
+        let state = MemoryStateStore::new();
+        let mut watch = state.watch("matched.").await.unwrap();
+
+        state
+            .put("other.key", json!({"ignored": true}), None)
+            .await
+            .unwrap();
+        let created = state
+            .create("matched.key", json!({"value": 1}), None)
+            .await
+            .unwrap();
+        let change = watch.next().await.unwrap().unwrap();
+        assert_eq!(change.operation, StateOperation::Put);
+        assert_eq!(change.key, "matched.key");
+        assert_eq!(change.entry, Some(created.clone()));
+
+        let updated = state
+            .update("matched.key", json!({"value": 2}), created.revision, None)
+            .await
+            .unwrap();
+        let change = watch.next().await.unwrap().unwrap();
+        assert_eq!(change.operation, StateOperation::Put);
+        assert_eq!(change.entry, Some(updated.clone()));
+
+        state
+            .delete("matched.key", Some(updated.revision))
+            .await
+            .unwrap();
+        let change = watch.next().await.unwrap().unwrap();
+        assert_eq!(change.operation, StateOperation::Delete);
+        assert_eq!(change.key, "matched.key");
+        assert_eq!(change.entry, None);
+    }
 
     #[test]
     fn default_state_maintenance_policy_uses_shared_defaults() {

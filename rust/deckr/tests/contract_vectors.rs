@@ -6,8 +6,8 @@ use deckr::beacon::{beacon_advertisement_key, AdvertisementRecord};
 use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_value};
 use deckr::concord::{
     concord_contract_key, concord_participant_token_key, ConcordCoordinator,
-    ConcordParticipantLease, ConcordParticipantManager, ContractHandle, ContractRecord,
-    ContractValidityStatus, ParticipantTokenRecord,
+    ConcordNotificationSource, ConcordParticipantLease, ConcordParticipantManager, ContractHandle,
+    ContractRecord, ContractValidityStatus, ParticipantTokenRecord,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
@@ -18,7 +18,7 @@ use deckr::profiles::hardware::{
     hardware_payload_from_advertisement, HardwareBeaconPayload, HardwareClaimTerms,
     HARDWARE_CLAIM_PROFILE_ID,
 };
-use deckr::state::{MemoryStateStore, StateEntry, StateStore};
+use deckr::state::{MemoryStateStore, StateEntry, StateStore, StateWatchStream};
 use deckr::Result;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -104,6 +104,10 @@ impl StateStore for RacingUpdateStore {
 
     async fn delete(&self, key: &str, revision: Option<u64>) -> Result<()> {
         self.inner.delete(key, revision).await
+    }
+
+    async fn watch(&self, prefix: &str) -> Result<StateWatchStream> {
+        self.inner.watch(prefix).await
     }
 }
 
@@ -622,6 +626,131 @@ async fn concord_participant_manager_reconcile_managed_does_not_resurrect_delete
         concord.validate(&contract, None).await.status,
         ContractValidityStatus::MissingToken
     );
+}
+
+#[tokio::test]
+async fn concord_contract_notifications_include_contract_and_token_details() {
+    let contracts = MemoryStateStore::new();
+    let tokens = MemoryStateStore::new();
+    let concord = ConcordCoordinator::new(contracts, tokens);
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let mut stream = concord
+        .watch_contract_notifications(Some(HARDWARE_CLAIM_PROFILE_ID))
+        .await
+        .unwrap();
+
+    let contract = concord
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some("contract-watch-1".to_string()),
+            1,
+            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": "contract-watch-1",
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:mirabox-main",
+                "devices": []
+            })),
+            Some(controller.clone()),
+        )
+        .await
+        .unwrap();
+
+    let notification = stream.next().await.unwrap();
+    assert_eq!(notification.source, ConcordNotificationSource::Contract);
+    assert_eq!(notification.contract_id, contract.contract_id);
+    assert_eq!(notification.generation, contract.generation);
+    assert_eq!(
+        notification.profile.as_deref(),
+        Some(HARDWARE_CLAIM_PROFILE_ID)
+    );
+    assert_eq!(notification.contract.unwrap().key, contract.key);
+
+    concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some("controller-token".into()),
+        )
+        .await
+        .unwrap();
+
+    let mut saw_controller_token = false;
+    for _ in 0..4 {
+        let notification = tokio::time::timeout(Duration::from_millis(100), stream.next())
+            .await
+            .expect("expected token notification")
+            .unwrap();
+        if notification.source == ConcordNotificationSource::Token
+            && notification.participant.as_ref() == Some(&controller)
+        {
+            saw_controller_token = true;
+            break;
+        }
+    }
+    assert!(saw_controller_token);
+}
+
+#[tokio::test]
+async fn concord_participant_manager_notification_discovers_new_contract() {
+    let contracts = MemoryStateStore::new();
+    let tokens = MemoryStateStore::new();
+    let concord = ConcordCoordinator::new(contracts, tokens);
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let mut stream = concord
+        .watch_contract_notifications(Some(HARDWARE_CLAIM_PROFILE_ID))
+        .await
+        .unwrap();
+
+    let contract = concord
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some("contract-watch-2".to_string()),
+            1,
+            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": "contract-watch-2",
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:mirabox-main",
+                "devices": []
+            })),
+            Some(controller.clone()),
+        )
+        .await
+        .unwrap();
+    let notification = stream.next().await.unwrap();
+    concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some("controller-token".into()),
+        )
+        .await
+        .unwrap();
+
+    let mut lifecycle =
+        ConcordParticipantManager::new(concord.clone(), manager.clone(), "manager-session".into())
+            .unwrap()
+            .profile(HARDWARE_CLAIM_PROFILE_ID.to_string());
+    let managed = lifecycle
+        .reconcile_notification(&notification, |_, _| Ok(true), None)
+        .await
+        .unwrap();
+
+    assert_eq!(managed.len(), 1);
+    assert_eq!(managed[0].contract.key, contract.key);
+    assert_eq!(managed[0].validity.status, ContractValidityStatus::Valid);
+    assert!(concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_some());
 }
 
 #[tokio::test]

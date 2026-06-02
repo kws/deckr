@@ -2,11 +2,10 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::time::Duration;
 
-use async_nats::jetstream::kv::{Config as KvConfig, Entry, Operation, Store, Watch, WatcherError};
+use async_nats::jetstream::kv::{Config as KvConfig, Entry, Operation, Store, WatcherError};
 use async_nats::jetstream::Context as JetStreamContext;
 use async_nats::{HeaderMap, Message, Subscriber};
-use futures_util::future::{select, Either};
-use futures_util::{pin_mut, StreamExt, TryStreamExt};
+use futures_util::{StreamExt, TryStreamExt};
 use serde_json::Value;
 
 use crate::beacon::{beacon_advertisement_store_policy, DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME};
@@ -14,74 +13,11 @@ use crate::concord::{
     concord_contract_store_policy, concord_token_store_policy, DEFAULT_CONCORD_CONTRACT_STORE_NAME,
     DEFAULT_CONCORD_TOKEN_STORE_NAME,
 };
-use crate::keys::concord_contracts_prefix;
 use crate::lanes::{headers_for, validate_subject_hint, DeckrMessage, HARDWARE_MESSAGES_LANE};
-use crate::state::{StateEntry, StateStore, StateStorePolicy};
+use crate::state::{
+    StateChange, StateEntry, StateOperation, StateStore, StateStorePolicy, StateWatchStream,
+};
 use crate::{Error, Result};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConcordStateChangeSource {
-    Contracts,
-    Tokens,
-}
-
-impl ConcordStateChangeSource {
-    pub fn reason(self) -> &'static str {
-        match self {
-            Self::Contracts => "contract watch",
-            Self::Tokens => "token watch",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConcordStateChange {
-    pub source: ConcordStateChangeSource,
-    pub key: String,
-}
-
-pub struct ConcordStateChangeStream {
-    contracts: Watch,
-    tokens: Watch,
-}
-
-impl ConcordStateChangeStream {
-    pub async fn next(&mut self) -> Result<ConcordStateChange> {
-        let contracts = self.contracts.next();
-        let tokens = self.tokens.next();
-        pin_mut!(contracts);
-        pin_mut!(tokens);
-
-        match select(contracts, tokens).await {
-            Either::Left((entry, _)) => {
-                map_concord_watch_entry(ConcordStateChangeSource::Contracts, entry)
-            }
-            Either::Right((entry, _)) => {
-                map_concord_watch_entry(ConcordStateChangeSource::Tokens, entry)
-            }
-        }
-    }
-}
-
-fn map_concord_watch_entry(
-    source: ConcordStateChangeSource,
-    entry: Option<std::result::Result<Entry, WatcherError>>,
-) -> Result<ConcordStateChange> {
-    match entry {
-        Some(Ok(entry)) => Ok(ConcordStateChange {
-            source,
-            key: entry.key,
-        }),
-        Some(Err(error)) => Err(Error::StateUnavailable(format!(
-            "watching Concord state via {}: {error}",
-            source.reason()
-        ))),
-        None => Err(Error::StateUnavailable(format!(
-            "Concord state watch ended via {}",
-            source.reason()
-        ))),
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct NatsDeckrRuntime {
@@ -182,27 +118,6 @@ impl NatsDeckrRuntime {
             validate_nats_headers(headers, &envelope)?;
         }
         Ok(envelope)
-    }
-
-    pub async fn watch_concord_changes(&self) -> Result<ConcordStateChangeStream> {
-        let watch_key = format!("{}>", concord_contracts_prefix());
-        let contracts = self
-            .concord_contracts
-            .kv
-            .watch(&watch_key)
-            .await
-            .map_err(|error| {
-                Error::StateUnavailable(format!("watching Concord contract state: {error}"))
-            })?;
-        let tokens = self
-            .concord_tokens
-            .kv
-            .watch(&watch_key)
-            .await
-            .map_err(|error| {
-                Error::StateUnavailable(format!("watching Concord token state: {error}"))
-            })?;
-        Ok(ConcordStateChangeStream { contracts, tokens })
     }
 }
 
@@ -361,6 +276,40 @@ impl StateStore for NatsStateStore {
                 }
             })
     }
+
+    async fn watch(&self, prefix: &str) -> Result<StateWatchStream> {
+        let watch_key = if prefix.is_empty() {
+            ">".to_string()
+        } else {
+            format!("{prefix}>")
+        };
+        let watch = self.kv.watch(&watch_key).await.map_err(|error| {
+            Error::StateUnavailable(format!("watching state prefix {prefix:?}: {error}"))
+        })?;
+        Ok(Box::pin(watch.map(map_nats_watch_entry)))
+    }
+}
+
+fn map_nats_watch_entry(entry: std::result::Result<Entry, WatcherError>) -> Result<StateChange> {
+    let entry =
+        entry.map_err(|error| Error::StateUnavailable(format!("watching state: {error}")))?;
+    let operation = match entry.operation {
+        Operation::Put => StateOperation::Put,
+        Operation::Delete | Operation::Purge => StateOperation::Delete,
+    };
+    let state_entry = match entry.operation {
+        Operation::Put => Some(StateEntry {
+            key: entry.key.clone(),
+            value: serde_json::from_slice(&entry.value)?,
+            revision: entry.revision,
+        }),
+        Operation::Delete | Operation::Purge => None,
+    };
+    Ok(StateChange {
+        operation,
+        key: entry.key,
+        entry: state_entry,
+    })
 }
 
 pub fn nats_headers_for(message: &DeckrMessage) -> HeaderMap {
