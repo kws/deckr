@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from typing import Any
+
+import anyio
 import pytest
 
 from deckr.substrates.nats_kv import (
     KvBucketPolicy,
+    KvChange,
+    KvEntry,
     NatsJsonKvBucket,
+    NatsKvMaterializedBucket,
+    kv_value,
 )
 
 
@@ -83,6 +92,117 @@ async def test_nats_json_kv_watch_maps_put_delete_and_expire_markers() -> None:
     assert expired.operation == "expire"
     assert ready is None
     assert fake_js.deleted_consumers == [("KV_deckr_concord_contract_v1", "consumer-1")]
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_reconciles_absent_keys_on_watch_recovery() -> None:
+    raw = _RecoveringWatchBucket(bucket="recovering")
+    raw.add("items.a", {"value": "a"})
+    stale = raw.add("items.b", {"value": "b"})
+    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        await materialized.wait_ready()
+
+        assert materialized.get_cached("items.b") == stale
+
+        raw.remove_without_publish("items.b")
+        raw.close_current_watch()
+
+        with anyio.fail_after(1):
+            while materialized.get_cached("items.b") is not None:
+                await anyio.sleep(0)
+
+        tombstone_revision = materialized.revision_cached("items.b")
+        assert tombstone_revision == stale.revision + 1
+
+        await materialized._apply_change(  # noqa: SLF001
+            KvChange(raw.bucket, stale.key, stale.revision, "put", stale)
+        )
+        assert materialized.get_cached("items.b") is None
+        assert materialized.revision_cached("items.b") == tombstone_revision
+
+        fresh = raw.add("items.b", {"value": "fresh"})
+        await materialized._apply_change(  # noqa: SLF001
+            KvChange(raw.bucket, fresh.key, fresh.revision, "put", fresh)
+        )
+        assert materialized.get_cached("items.b") == fresh
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_cached_reads_do_not_scan_native_bucket() -> None:
+    raw = _RecoveringWatchBucket(bucket="recovering")
+    raw.add("items.a", {"value": "a"})
+    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        await materialized.wait_ready()
+        get_count = raw.get_count
+        watch_count = raw.watch_count
+
+        assert materialized.get_cached("items.a") is not None
+        assert materialized.items_cached("items.") == (materialized.get_cached("items.a"),)
+        assert materialized.revision_cached("items.a") == 1
+
+        assert raw.get_count == get_count
+        assert raw.watch_count == watch_count
+        task_group.cancel_scope.cancel()
+
+
+class _RecoveringWatchBucket:
+    def __init__(self, *, bucket: str) -> None:
+        self.bucket = bucket
+        self._revision = 0
+        self._entries: dict[str, KvEntry] = {}
+        self._close_events: list[anyio.Event] = []
+        self.get_count = 0
+        self.watch_count = 0
+
+    def add(self, key: str, value: Mapping[str, Any]) -> KvEntry:
+        self._revision += 1
+        entry = KvEntry(self.bucket, key, kv_value(value), self._revision)
+        self._entries[key] = entry
+        return entry
+
+    def remove_without_publish(self, key: str) -> None:
+        if key in self._entries:
+            self._revision += 1
+            self._entries.pop(key)
+
+    def close_current_watch(self) -> None:
+        self._close_events[-1].set()
+
+    async def get(self, key: str) -> KvEntry | None:
+        self.get_count += 1
+        return self._entries.get(key)
+
+    @asynccontextmanager
+    async def watch(
+        self,
+        prefix: str = "",
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
+        self.watch_count += 1
+        close_event = anyio.Event()
+        self._close_events.append(close_event)
+        send, receive = anyio.create_memory_object_stream[KvChange | None](100)
+        snapshot = tuple(
+            entry for key, entry in sorted(self._entries.items()) if key.startswith(prefix)
+        )
+
+        async def run() -> None:
+            for entry in snapshot:
+                await send.send(KvChange(self.bucket, entry.key, entry.revision, "put", entry))
+            await send.send(None)
+            await close_event.wait()
+            await send.aclose()
+
+        async with send, receive, anyio.create_task_group() as task_group:
+            task_group.start_soon(run)
+            yield receive
+            task_group.cancel_scope.cancel()
 
 
 class _FakeKvEntry:

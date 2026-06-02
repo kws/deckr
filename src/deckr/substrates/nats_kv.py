@@ -389,6 +389,17 @@ class NatsKvMaterializedBucket:
     async def get_exact(self, key: str) -> KvEntry | None:
         return await self._bucket.get(key)
 
+    async def put(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        ttl: float | None = None,
+    ) -> KvEntry:
+        entry = await self._bucket.put(key, value, ttl=ttl)
+        await self._apply_change(KvChange(self.bucket, key, entry.revision, "put", entry))
+        return entry
+
     async def create(
         self,
         key: str,
@@ -444,11 +455,22 @@ class NatsKvMaterializedBucket:
         retry_seconds = 1.0
         while True:
             try:
+                snapshot_revisions = self._snapshot_revisions()
                 async with self._bucket.watch(self.key_prefix) as changes:
+                    snapshot_keys: set[str] = set()
+                    snapshot_open = True
                     async for change in changes:
                         if change is None:
+                            if snapshot_open:
+                                await self._reconcile_snapshot(
+                                    snapshot_keys,
+                                    snapshot_revisions=snapshot_revisions,
+                                )
+                                snapshot_open = False
                             self._ready.set()
                             continue
+                        if snapshot_open:
+                            snapshot_keys.add(change.key)
                         await self._apply_change(change)
             except anyio.get_cancelled_exc_class():
                 raise
@@ -460,6 +482,40 @@ class NatsKvMaterializedBucket:
                     exc_info=True,
                 )
                 await anyio.sleep(retry_seconds)
+
+    def _snapshot_revisions(self) -> dict[str, int]:
+        return {
+            key: revision
+            for key, revision in self._revision_by_key.items()
+            if key.startswith(self.key_prefix)
+        }
+
+    async def _reconcile_snapshot(
+        self,
+        snapshot_keys: set[str],
+        *,
+        snapshot_revisions: Mapping[str, int],
+    ) -> None:
+        stale_changes: list[KvChange] = []
+        async with self._lock:
+            for key, baseline_revision in snapshot_revisions.items():
+                if key in snapshot_keys:
+                    continue
+                if key not in self._entries:
+                    continue
+                if self._revision_by_key.get(key, 0) != baseline_revision:
+                    continue
+                stale_changes.append(
+                    KvChange(
+                        self.bucket,
+                        key,
+                        baseline_revision + 1,
+                        "delete",
+                        marker_reason="watch_snapshot_absent",
+                    )
+                )
+        for change in stale_changes:
+            await self._apply_change(change)
 
     async def _apply_change(self, change: KvChange) -> None:
         if self.key_prefix and not change.key.startswith(self.key_prefix):

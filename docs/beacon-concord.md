@@ -120,11 +120,20 @@ An advertisement record must have:
 Create an advertisement with a unique advertisement id using `create`. Refresh
 it by exact-read, owner-check, incrementing `refreshSeq`, and revision-guarded
 `update`. Withdraw it by exact-read, owner-check, and revision-guarded delete.
-The Python runtime owns advertisement leases and may skip refresh writes while
-the stored value is already fresh enough. If the advertisement is no longer
-refreshed, the TTL-bound store removes it. Beacon advertisements are not reaped
-by Concord maintenance. Their lifecycle is the advertisement owner plus the
-store TTL.
+The Python runtime owns advertisement leases and treats `refreshInterval` as a
+requested cadence. Advertisement refresh writes are clamped to no faster than
+`ttlSeconds / 6` and no later than `ttlSeconds * 0.8`; with the default
+30-second TTL this preserves the 5-second write cadence. Real payload, label,
+hint, protocol, or operation changes publish immediately, but unchanged
+heartbeat refreshes may be skipped while the stored value is already fresh
+enough. If the advertisement is no longer refreshed, the TTL-bound store removes
+it. Beacon advertisements are not reaped by Concord maintenance. Their
+lifecycle is the advertisement owner plus the store TTL.
+
+Managed advertisers should best-effort remove stale advertisements for the same
+feature, advertiser, and endpoint during startup or replacement, using
+revision-guarded deletes. This cleanup affects future discovery only and must
+not be interpreted as Concord withdrawal.
 
 A Beacon candidate is usable only if:
 
@@ -189,11 +198,20 @@ match the local handle, incrementing `refreshSeq`, and revision-guarded
 missing, or the token has changed owner/session/token id/terms hash, the
 participant no longer maintains authority for that contract generation.
 The default participant-token TTL is 30 seconds. The default local Concord token
-refresh interval is 15 seconds; lease implementations may validate/adopt the
-current token more often, but they should not write a token refresh until a
-token must be attached or the refresh interval is due. If reconciliation
-observes fresher same-session token details, the local lease adopts them without
-immediately writing again.
+refresh interval is 15 seconds. Lease implementations treat configured refresh
+intervals as requested cadence, not guaranteed write cadence. Participant-token
+refresh writes are clamped to no faster than `ttlSeconds / 2` and no later than
+`ttlSeconds * 0.8`; with the default 30-second TTL this preserves the 15-second
+write cadence. Leases may validate/adopt the current token more often, but they
+should not write a token refresh until a token must be attached or the effective
+refresh interval is due. If reconciliation observes fresher same-session token
+details, the local lease adopts them without immediately writing again.
+
+When a participant lease or owner-side agreement closes cleanly, it should
+best-effort withdraw its owned token by exact-reading the token, confirming
+contract id, generation, participant, session, token id, and terms hash still
+match the local handle, and then issuing a revision-guarded delete. Cleanup
+failure or changed token ownership must not delete another participant's token.
 
 Once a participant has successfully attached a token for a contract generation,
 loss of that token means loss of authority for that generation. The participant

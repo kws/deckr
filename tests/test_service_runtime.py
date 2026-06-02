@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any
 
 import anyio
@@ -27,7 +28,7 @@ from deckr.services import (
     service_view_key,
     service_view_prefix,
 )
-from deckr.substrates.nats_kv import KvConflict
+from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
 
 
 def _protocol(
@@ -96,6 +97,30 @@ async def _descriptor(
     descriptor = newest_service_descriptor(descriptors)
     assert descriptor is not None
     return descriptor
+
+
+async def _service_view_context():
+    beacon = _memory_beacon()
+    protocol = _protocol()
+    await _publish_service_advertisement(beacon, protocol)
+    descriptor = await _descriptor(beacon, protocol)
+    terms = service_use_terms(
+        descriptor,
+        action_provider_address("provider-main"),
+        operations={"ensureItems"},
+        views={"items"},
+    )
+    lease = _FakeServiceUseLease(descriptor=descriptor, terms=terms)
+    view_ref = ServiceViewRef(
+        "deckr_openhab_service_view_v1",
+        service_view_key("openhab-home", "items", "Kitchen Light"),
+    )
+    return protocol, lease, view_ref
+
+
+async def _receive_service_change(stream):
+    with anyio.fail_after(1):
+        return await stream.receive()
 
 
 def test_service_protocol_payload_terms_and_view_keys() -> None:
@@ -292,6 +317,100 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
         tg.cancel_scope.cancel()
 
 
+@pytest.mark.asyncio
+async def test_service_view_store_recovers_absent_key_after_watch_restart() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = _RecoveringServiceViewBucket(bucket=view_ref.store_name)
+    raw.add(
+        view_ref.key,
+        {
+            "item": "Kitchen Light",
+            "state": "ON",
+            "serviceId": "openhab-home",
+            "serviceNamespace": protocol.namespace,
+            "sessionId": "service-session",
+        },
+    )
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+        assert await view_store.get(lease, view_ref) is not None
+
+        raw.remove_without_publish(view_ref.key)
+        raw.close_current_watch()
+
+        with anyio.fail_after(1):
+            while await view_store.get(lease, view_ref) is not None:
+                await anyio.sleep(0)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_store_delete_updates_cache_immediately() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+        created = await view_store.put(
+            view=view_ref,
+            payload={"item": "Kitchen Light", "state": "ON"},
+            service_id="openhab-home",
+            service_namespace=protocol.namespace,
+            session_id="service-session",
+        )
+
+        async with view_store.watch(lease, view_ref) as changes:
+            await view_store.delete(view=view_ref, revision=created.revision)
+            change = await _receive_service_change(changes)
+
+        assert change.operation == "delete"
+        assert await view_store.get(lease, view_ref) is None
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_store_forwards_expire_and_delete_events() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+
+        async with view_store.watch(lease, view_ref) as changes:
+            await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "ON"},
+                service_id="openhab-home",
+                service_namespace=protocol.namespace,
+                session_id="service-session",
+            )
+            await _receive_service_change(changes)
+            await raw.expire(view_ref.key)
+            expired = await _receive_service_change(changes)
+
+            recreated = await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "OFF"},
+                service_id="openhab-home",
+                service_namespace=protocol.namespace,
+                session_id="service-session",
+            )
+            await _receive_service_change(changes)
+            await raw.delete(view_ref.key, revision=recreated.revision)
+            deleted = await _receive_service_change(changes)
+
+        assert expired.operation == "expire"
+        assert deleted.operation == "delete"
+        tg.cancel_scope.cancel()
+
+
 class _FakeServiceUseLease:
     def __init__(self, *, descriptor: ServiceDescriptor, terms: ServiceUseTerms) -> None:
         self.descriptor = descriptor
@@ -299,3 +418,52 @@ class _FakeServiceUseLease:
 
     async def refresh(self) -> None:
         return None
+
+
+class _RecoveringServiceViewBucket:
+    def __init__(self, *, bucket: str) -> None:
+        self.bucket = bucket
+        self._revision = 0
+        self._entries: dict[str, KvEntry] = {}
+        self._close_events: list[anyio.Event] = []
+
+    def add(self, key: str, value: Mapping[str, Any]) -> KvEntry:
+        self._revision += 1
+        entry = KvEntry(self.bucket, key, kv_value(value), self._revision)
+        self._entries[key] = entry
+        return entry
+
+    def remove_without_publish(self, key: str) -> None:
+        if key in self._entries:
+            self._revision += 1
+            self._entries.pop(key)
+
+    def close_current_watch(self) -> None:
+        self._close_events[-1].set()
+
+    async def get(self, key: str) -> KvEntry | None:
+        return self._entries.get(key)
+
+    @asynccontextmanager
+    async def watch(
+        self,
+        prefix: str = "",
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
+        close_event = anyio.Event()
+        self._close_events.append(close_event)
+        send, receive = anyio.create_memory_object_stream[KvChange | None](100)
+        snapshot = tuple(
+            entry for key, entry in sorted(self._entries.items()) if key.startswith(prefix)
+        )
+
+        async def run() -> None:
+            for entry in snapshot:
+                await send.send(KvChange(self.bucket, entry.key, entry.revision, "put", entry))
+            await send.send(None)
+            await close_event.wait()
+            await send.aclose()
+
+        async with send, receive, anyio.create_task_group() as task_group:
+            task_group.start_soon(run)
+            yield receive
+            task_group.cancel_scope.cancel()

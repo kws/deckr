@@ -13,7 +13,12 @@ from deckr.services.runtime import (
     ServiceViewRef,
     UnsupportedServiceScope,
 )
-from deckr.substrates.nats_kv import KvChange, KvEntry, NatsJsonKvBucket
+from deckr.substrates.nats_kv import (
+    KvChange,
+    KvEntry,
+    NatsJsonKvBucket,
+    NatsKvMaterializedBucket,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,10 +47,14 @@ class ServiceViewStore:
     def __init__(
         self,
         *,
-        bucket: NatsJsonKvBucket,
+        bucket: NatsJsonKvBucket | NatsKvMaterializedBucket | Any,
         buffer_size: int = 100,
     ) -> None:
-        self._bucket = bucket
+        self._bucket = (
+            bucket
+            if _is_materialized_bucket(bucket)
+            else NatsKvMaterializedBucket(bucket=bucket, buffer_size=buffer_size)
+        )
         self._buffer_size = buffer_size
         self._ready = anyio.Event()
         self._started = False
@@ -62,10 +71,11 @@ class ServiceViewStore:
         return self._bucket.bucket
 
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        self._bucket.start(task_group)
         if self._started:
             return
         self._started = True
-        task_group.start_soon(self._watch_loop)
+        task_group.start_soon(self._event_loop)
 
     async def wait_ready(self) -> None:
         await self._ready.wait()
@@ -196,7 +206,20 @@ class ServiceViewStore:
                 f"Service view store {view.store_name!r} does not match bucket "
                 f"{self.bucket!r}"
             )
+        previous_revision = self._bucket.revision_cached(view.key) or (
+            self._revision_by_key.get(view.key, 0)
+        )
         await self._bucket.delete(view.key, revision=revision)
+        if previous_revision == 0 and revision is None:
+            return
+        marker_revision = self._bucket.revision_cached(view.key) or (
+            revision
+            if revision is not None and revision > previous_revision
+            else previous_revision + 1
+        )
+        await self._apply_service_change(
+            ServiceViewChange("delete", self.bucket, view.key, marker_revision)
+        )
 
     @asynccontextmanager
     async def watch(
@@ -219,14 +242,27 @@ class ServiceViewStore:
             async with self._lock:
                 self._subscribers.pop(send, None)
 
-    async def _watch_loop(self) -> None:
-        while True:
-            async with self._bucket.watch("") as changes:
-                async for change in changes:
-                    if change is None:
-                        self._ready.set()
-                        continue
-                    await self._apply_kv_change(change)
+    async def _event_loop(self) -> None:
+        async with self._bucket.subscribe() as changes:
+            await self._bucket.wait_ready()
+            await self._rebuild_from_bucket()
+            self._ready.set()
+            async for change in changes:
+                await self._apply_kv_change(change)
+
+    async def _rebuild_from_bucket(self) -> None:
+        entries: dict[str, ServiceViewEntry] = {}
+        revisions: dict[str, int] = {}
+        for entry in self._bucket.items_cached():
+            revisions[entry.key] = entry.revision
+            try:
+                service_entry = _service_view_entry_from_kv(entry)
+            except ValueError:
+                continue
+            entries[entry.key] = service_entry
+        async with self._lock:
+            self._entries = entries
+            self._revision_by_key = revisions
 
     async def _apply_kv_change(self, change: KvChange) -> None:
         current_revision = self._revision_by_key.get(change.key, 0)
@@ -344,6 +380,25 @@ def _entry_matches_lease(entry: ServiceViewEntry, lease: ServiceUseLease) -> boo
         entry.service_id == descriptor.service_id
         and entry.service_namespace == descriptor.namespace
         and entry.session_id == descriptor.session_id
+    )
+
+
+def _is_materialized_bucket(value: Any) -> bool:
+    return all(
+        hasattr(value, name)
+        for name in (
+            "start",
+            "wait_ready",
+            "get_exact",
+            "get_cached",
+            "items_cached",
+            "revision_cached",
+            "subscribe",
+            "put",
+            "create",
+            "update",
+            "delete",
+        )
     )
 
 

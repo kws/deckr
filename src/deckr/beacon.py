@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from time import monotonic
 from typing import Any, Literal, Protocol
 
 import anyio
@@ -80,6 +81,11 @@ def _require_text(value: str, *, field_name: str) -> str:
 
 def _now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+def _beacon_refresh_interval(*, requested: float, ttl_seconds: int | float) -> float:
+    ttl = float(ttl_seconds)
+    return min(max(float(requested), ttl / 6), ttl * 0.8)
 
 
 def beacon_advertisement_key(*, feature_id: str, advertisement_id: str) -> str:
@@ -380,7 +386,7 @@ class Beacon:
         self,
         spec: BeaconAdvertisementSpec,
         *,
-        cleanup_stale_same_endpoint: bool = False,
+        cleanup_stale_same_endpoint: bool = True,
     ) -> BeaconAdvertisementLease:
         if self._closed:
             raise KvUnavailable("Beacon is closed")
@@ -837,9 +843,13 @@ class BeaconAdvertisementLease:
         self._labels = dict(spec.labels or {})
         self._hints = dict(spec.hints or {})
         self._payload = dict(spec.payload) if spec.payload is not None else None
-        self._refresh_interval = spec.refresh_interval
+        self._refresh_interval = _beacon_refresh_interval(
+            requested=spec.refresh_interval,
+            ttl_seconds=spec.ttl_seconds or beacon._default_ttl_seconds,  # noqa: SLF001
+        )
         self._log_label = spec.log_label
         self._handle: AdvertisementHandle | None = None
+        self._last_refresh_at: float | None = None
         self._lock = anyio.Lock()
         self._started = False
         self._closed = False
@@ -948,7 +958,11 @@ class BeaconAdvertisementLease:
                 self.spec,
                 advertisement_id=self._advertisement_id,
             )
+            self._last_refresh_at = monotonic()
             return self._handle
+        if force_refresh and not self._refresh_due():
+            return self._handle
+        old_revision = self._handle.revision
         refreshed = await self._beacon._refresh_advertisement(
             self._handle,
             protocol=self._protocol,
@@ -958,7 +972,7 @@ class BeaconAdvertisementLease:
             payload=self._payload,
             force_refresh=force_refresh,
         )
-        if refreshed.revision != self._handle.revision:
+        if refreshed.revision != old_revision:
             logger.debug(
                 "%s Beacon advertisement heartbeat feature=%s endpoint=%s "
                 "session=%s advertisement=%s refresh=%s revision=%s",
@@ -971,7 +985,15 @@ class BeaconAdvertisementLease:
                 refreshed.revision,
             )
         self._handle = refreshed
+        if refreshed.revision != old_revision:
+            self._last_refresh_at = monotonic()
         return refreshed
+
+    def _refresh_due(self) -> bool:
+        return (
+            self._last_refresh_at is None
+            or monotonic() - self._last_refresh_at >= self._refresh_interval
+        )
 
 
 def _is_materialized_bucket(value: Any) -> bool:

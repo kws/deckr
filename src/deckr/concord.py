@@ -166,6 +166,15 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
+def _concord_token_refresh_interval(
+    *,
+    requested: float,
+    ttl_seconds: int | float,
+) -> float:
+    ttl = float(ttl_seconds)
+    return min(max(float(requested), ttl / 2), ttl * 0.8)
+
+
 def concord_contract_key(*, contract_id: str, generation: int) -> str:
     return ".".join(
         (
@@ -1021,6 +1030,19 @@ class _ConcordKvStore:
             raise ConcordConflict("Concord participant token changed owner")
         return _participant_handle(handle.key, token, token_entry.revision)
 
+    async def withdraw(self, handle: ParticipantHandle) -> bool:
+        token_entry = await self._token_bucket.get(handle.key)
+        if token_entry is None:
+            return False
+        try:
+            token = ParticipantTokenRecord.model_validate(token_entry.value)
+        except ValueError as exc:
+            raise ConcordConflict("Concord participant token is invalid") from exc
+        if not _token_matches_handle(token, handle):
+            raise ConcordConflict("Concord participant token changed owner")
+        await self._token_bucket.delete(handle.key, revision=token_entry.revision)
+        return True
+
     async def cancel(
         self,
         contract: ContractHandle,
@@ -1209,7 +1231,11 @@ class ConcordParticipantLease:
         self.session_id = _require_text(session_id, field_name="Concord session id")
         self._token_id = token_id
         self._ttl_seconds = ttl_seconds
-        self._refresh_interval = refresh_interval
+        self._requested_refresh_interval = refresh_interval
+        self._refresh_interval = _concord_token_refresh_interval(
+            requested=refresh_interval,
+            ttl_seconds=ttl_seconds or service._coordinator._token_ttl_seconds,  # noqa: SLF001
+        )
         self._log_label = log_label
         self._token: ParticipantHandle | None = None
         self._last_refresh_at: float | None = None
@@ -1230,10 +1256,30 @@ class ConcordParticipantLease:
         self._started = True
         start_soon(self.heartbeat_loop)
 
-    async def aclose(self) -> None:
-        self._closed = True
-        self._token = None
-        self._last_refresh_at = None
+    async def aclose(self, *, withdraw: bool = True) -> None:
+        async with self._lock:
+            token = self._token
+            self._closed = True
+            self._token = None
+            self._last_refresh_at = None
+        if withdraw and token is not None:
+            try:
+                await self._service._withdraw_token(  # noqa: SLF001
+                    token,
+                    log_label=self._log_label,
+                )
+            except (ConcordConflict, ConcordUnavailable):
+                logger.debug(
+                    "%s Concord participant token cleanup failed contract=%s "
+                    "generation=%s participant=%s session=%s token=%s",
+                    self._log_label,
+                    token.contract_id,
+                    token.generation,
+                    token.participant,
+                    token.session_id,
+                    token.token_id,
+                    exc_info=True,
+                )
         await self._service._forget_participant_lease(self)  # noqa: SLF001
 
     def adopt(self, token: ParticipantHandle) -> None:
@@ -1247,6 +1293,10 @@ class ConcordParticipantLease:
             raise ValueError("participant token belongs to a different session")
         if self._token == token:
             return
+        self._refresh_interval = _concord_token_refresh_interval(
+            requested=self._requested_refresh_interval,
+            ttl_seconds=token.ttl_seconds,
+        )
         self._token = token
         self._last_refresh_at = monotonic()
 
@@ -1295,6 +1345,10 @@ class ConcordParticipantLease:
                     token_id=self._token_id,
                     ttl_seconds=self._ttl_seconds,
                     log_label=self._log_label,
+                )
+                self._refresh_interval = _concord_token_refresh_interval(
+                    requested=self._requested_refresh_interval,
+                    ttl_seconds=self._token.ttl_seconds,
                 )
                 self._last_refresh_at = monotonic()
             except ConcordConflict as exc:
@@ -2645,6 +2699,34 @@ class Concord:
         )
         return refreshed
 
+    async def _withdraw_token(
+        self,
+        handle: ParticipantHandle,
+        *,
+        log_label: str = "Concord",
+    ) -> bool:
+        withdrawn = await self._coordinator.withdraw(handle)
+        if not withdrawn:
+            return False
+        marker_revision = self._coordinator._token_bucket.revision_cached(  # noqa: SLF001
+            handle.key
+        ) or (handle.revision + 1)
+        await self._apply_token_change(
+            KvChange(self.token_bucket, handle.key, marker_revision, "delete")
+        )
+        logger.debug(
+            "%s Concord participant token withdrawn contract=%s generation=%s "
+            "participant=%s session=%s token=%s revision=%s",
+            log_label,
+            handle.contract_id,
+            handle.generation,
+            handle.participant,
+            handle.session_id,
+            handle.token_id,
+            marker_revision,
+        )
+        return True
+
     async def _validate_participant_token(
         self,
         handle: ParticipantHandle,
@@ -3818,7 +3900,7 @@ class ConcordParticipant:
         managed = self._managed.pop(key, None)
         lease = self._leases.pop(key, None)
         if lease is not None:
-            await lease.aclose()
+            await lease.aclose(withdraw=False)
         self._last_status.pop(key, None)
         if managed is None:
             return

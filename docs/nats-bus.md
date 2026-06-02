@@ -33,18 +33,22 @@ Beacon and Concord use explicit KV bucket policies and materialized views.
 Production runtime code does not subscribe directly to Beacon or Concord
 authority state. Python runtime participants use the shared `Beacon` and
 `Concord` APIs; both own materialized KV views, semantic lifecycle events,
-leases, heartbeats, freshness checks, and lifecycle logging. Non-Python
-implementations must follow the same protocol semantics in
+leases, heartbeats, freshness checks, recovery reconciliation, and lifecycle
+logging. Non-Python implementations must follow the same protocol semantics in
 [`beacon-concord.md`](beacon-concord.md).
 Retired shared coordination buckets are not part of the v1 surface. Opening a
 generic state store is no longer part of the Python runtime. Beacon and Concord
 open their explicit JetStream KV bucket policies directly and serve normal reads
 from materialized views.
-Concord participant-token TTL defaults to 30 seconds. Runtime participants may
-call their lease heartbeat more often, but the shared lease policy refreshes the
-token write only when a token must be attached or the default 15-second Concord
-token refresh interval is due. If reconciliation observes fresher same-session
-token details, the local lease adopts them without immediately writing again.
+TTL-bound heartbeats are core-governed. Caller-provided refresh intervals are
+requests, not guaranteed write cadences. Beacon advertisement writes are clamped
+to no faster than `ttlSeconds / 6` and no later than `ttlSeconds * 0.8`.
+Concord participant-token writes are clamped to no faster than `ttlSeconds / 2`
+and no later than `ttlSeconds * 0.8`; with the default 30-second token TTL this
+preserves the 15-second token write cadence. Runtime participants may call
+refresh methods more often, but no-op heartbeats are coalesced. If
+reconciliation observes fresher same-session token details, the local lease
+adopts them without immediately writing again.
 
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence
@@ -127,6 +131,11 @@ withdraw Beacon advertisements when they are not accepting new Concord
 negotiations; that affects only future discovery. The Python `Beacon` runtime
 keeps one materialized advertisement view so `candidates(...)`, `get(...)`, and
 feature watches avoid per-query full key scans.
+Managed `Beacon.advertise(...)` performs best-effort same
+feature/advertiser/endpoint startup cleanup by default, using revision-guarded
+deletes for stale advertisements left by crashed sessions or changed
+configuration. Real advertisement content changes still publish immediately;
+unchanged heartbeat refreshes follow the effective TTL-clamped cadence.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
 
@@ -210,6 +219,10 @@ await lease.aclose()
 A Concord contract is valid only while the contract is open and every named
 participant maintains an acceptable token for the same contract id, generation,
 participant, session, and terms hash. Any participant may cancel the contract.
+Explicit participant-lease and agreement close perform best-effort owned-token
+withdrawal after exact ownership validation. Reconciliation may still release a
+locally managed lease without deleting its token when it is only changing local
+selection state.
 The full Concord semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#concord).
 
@@ -266,10 +279,13 @@ shutdown, and removes stale same-endpoint advertisements left by an earlier
 crashed session or changed configuration.
 
 Protected service views are direct JetStream/KV views. `ServiceViewStore` opens
-one service-owned bucket, maintains a local map from the bucket watcher, exposes
-direct `get`, `put`, `create`, `update`, `delete`, and `watch` style behavior,
-and authorizes protected reads and watches with an active Concord service-use
-lease. View entries are fenced by `serviceId`, `serviceNamespace`, and
+one service-owned bucket through the same materialized KV recovery helper used
+by Beacon and Concord, exposes direct `get`, `put`, `create`, `update`,
+`delete`, and `watch` style behavior, and authorizes protected reads and watches
+with an active Concord service-use lease. Local view state is updated
+immediately after successful writes and deletes, and recovered watch snapshots
+reconcile missing keys so missed delete/expiry events do not leave stale cached
+view entries. View entries are fenced by `serviceId`, `serviceNamespace`, and
 `sessionId`, and writes return `entry.revision` for CAS updates and deletes.
 After a service-use Concord contract is negotiated, service command and
 protected view authority follows Concord, not continued Beacon advertisement
@@ -374,11 +390,14 @@ uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4
 ### JetStream Consumer Hygiene
 
 NATS KV `watch()` and list-style helpers are backed by JetStream consumers.
-Beacon uses a single materialized KV watch owned by the runtime; Concord state
-reads, snapshots, and watches must not create unbounded growth in unbound broker
-consumers. Temporary watch/list consumers must be explicitly deleted or avoided
-once the read is complete; server-side inactive cleanup is a fallback, not the
-steady-state cleanup path.
+Beacon, Concord, and service views use long-lived materialized KV watches owned
+by the runtime. On watch startup and recovery, the materialized helper
+reconciles the full watch snapshot against the cached prefix and synthesizes
+tombstones for cached keys absent from the recovered snapshot. Normal reads are
+served from cached maps rather than per-query native bucket scans. Temporary
+watch/list consumers must be explicitly deleted or avoided once the read is
+complete; server-side inactive cleanup is a fallback, not the steady-state
+cleanup path.
 
 Treat watch events as wakeups and exact KV reads as authority, but remember that
 every watch still consumes broker resources. Use `scripts/nats_state_report.py`

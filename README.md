@@ -137,6 +137,9 @@ Beacon is only candidate discovery. After participants negotiate a Concord
 contract, that contract's validity and withdrawal are governed by Concord
 contracts and participant tokens, not by continued Beacon advertisement
 presence.
+The Python runtime owns Beacon/Concord materialized KV views, reconciles watch
+recovery snapshots, and coalesces no-op heartbeat writes behind TTL-derived
+cadence rules.
 
 If you are looking for the design rules around discovery, lane ownership,
 lane substrate configuration, wire-safe schemas, component planning, and alpha

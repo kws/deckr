@@ -307,7 +307,8 @@ async def test_beacon_create_refresh_withdraw_find_watch_and_validate() -> None:
                     endpoint=endpoint,
                     session_id="manager-session",
                     advertisement_id="advertisement-1",
-                )
+                ),
+                cleanup_stale_same_endpoint=False,
             )
 
         assert await advertisement.withdraw()
@@ -443,7 +444,8 @@ async def test_beacon_find_returns_newest_revision_first() -> None:
             session_id="new-session",
             advertisement_id="z-new",
             payload=_hardware_payload(session_id="new-session").to_dict(),
-        )
+        ),
+        cleanup_stale_same_endpoint=False,
     )
 
     candidates = beacon.candidates(HARDWARE_FEATURE_ID)
@@ -474,7 +476,8 @@ async def test_beacon_find_treats_refresh_as_newest_write() -> None:
             session_id="new-session",
             advertisement_id="z-new",
             payload=_hardware_payload(session_id="new-session").to_dict(),
-        )
+        ),
+        cleanup_stale_same_endpoint=False,
     )
 
     await old.update(hints={"refreshed": "true"})
@@ -511,6 +514,95 @@ async def test_beacon_close_withdraws_and_stops_heartbeat() -> None:
         tg.cancel_scope.cancel()
 
     assert beacon.candidates(HARDWARE_FEATURE_ID) == ()
+
+
+@pytest.mark.asyncio
+async def test_beacon_heartbeat_cadence_is_clamped_by_ttl() -> None:
+    raw = MemoryJsonKvBucket(bucket="beacon")
+    beacon = Beacon(raw, default_ttl_seconds=1)
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await beacon.wait_ready()
+        advertisement = await beacon.advertise(
+            BeaconAdvertisementSpec(
+                feature_id=HARDWARE_FEATURE_ID,
+                endpoint=hardware_manager_address("manager-main"),
+                session_id="manager-session",
+                advertisement_id="advertisement-1",
+                payload=_hardware_payload().to_dict(),
+                ttl_seconds=1,
+                refresh_interval=0.01,
+            )
+        )
+        first = advertisement.handle
+        await anyio.sleep(0.05)
+        early = await raw.get(first.key)
+        assert early is not None
+        assert early.revision == first.revision
+
+        with anyio.fail_after(1):
+            while True:
+                current = await raw.get(first.key)
+                assert current is not None
+                record = AdvertisementRecord.model_validate(current.value)
+                if record.refresh_seq > first.refresh_seq:
+                    break
+                await anyio.sleep(0.01)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_beacon_noop_updates_do_not_bypass_heartbeat_cadence() -> None:
+    beacon, raw = _beacon()
+    advertisement = await beacon.advertise(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="manager-session",
+            advertisement_id="advertisement-1",
+            payload=_hardware_payload().to_dict(),
+        )
+    )
+    first_revision = _raw_revision(raw)
+
+    repeated = await advertisement.update()
+    await advertisement.update(payload=_hardware_payload().to_dict())
+
+    assert repeated.revision == advertisement.handle.revision
+    assert _raw_revision(raw) == first_revision
+
+
+@pytest.mark.asyncio
+async def test_beacon_advertise_cleans_stale_same_endpoint_by_default() -> None:
+    beacon, raw = _beacon()
+    endpoint = hardware_manager_address("manager-main")
+    stale = await beacon.advertise(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=endpoint,
+            session_id="old-session",
+            advertisement_id="stale-ad",
+            payload=_hardware_payload(session_id="old-session").to_dict(),
+        )
+    )
+
+    fresh = await beacon.advertise(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=endpoint,
+            session_id="new-session",
+            advertisement_id="fresh-ad",
+            payload=_hardware_payload(session_id="new-session").to_dict(),
+        )
+    )
+
+    assert await raw.get(stale.handle.key) is None
+    assert await raw.get(fresh.handle.key) is not None
+    assert [
+        candidate.advertisement.advertisement_id
+        for candidate in beacon.candidates(HARDWARE_FEATURE_ID)
+    ] == ["fresh-ad"]
 
 
 @pytest.mark.asyncio
@@ -687,7 +779,7 @@ async def test_concord_refresh_returns_latest_token_after_revision_race() -> Non
 async def test_concord_participant_lease_closes_after_cancelled_contract() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state)
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
@@ -717,7 +809,7 @@ async def test_concord_participant_lease_closes_after_cancelled_contract() -> No
 async def test_concord_participant_lease_rate_limits_token_writes() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state)
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -744,6 +836,11 @@ async def test_concord_participant_lease_rate_limits_token_writes() -> None:
     assert repeated_entry.revision == first.revision
 
     await anyio.sleep(0.06)
+    early = await lease.attach_or_refresh()
+    assert early.refresh_seq == first.refresh_seq
+    assert early.revision == first.revision
+
+    await anyio.sleep(0.5)
     refreshed = await lease.attach_or_refresh()
 
     assert refreshed.refresh_seq == first.refresh_seq + 1
@@ -754,7 +851,7 @@ async def test_concord_participant_lease_rate_limits_token_writes() -> None:
 async def test_concord_participant_lease_adopts_without_immediate_refresh() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state)
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -779,7 +876,7 @@ async def test_concord_participant_lease_adopts_without_immediate_refresh() -> N
     assert adopted.refresh_seq == manager_token.refresh_seq
     assert adopted.revision == manager_token.revision
 
-    await anyio.sleep(0.02)
+    await anyio.sleep(0.55)
     refreshed = await lease.attach_or_refresh()
 
     assert refreshed.refresh_seq == manager_token.refresh_seq + 1
@@ -787,10 +884,72 @@ async def test_concord_participant_lease_adopts_without_immediate_refresh() -> N
 
 
 @pytest.mark.asyncio
-async def test_concord_participant_manager_attaches_adopts_and_filters() -> None:
+async def test_concord_participant_lease_close_withdraws_owned_token() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
     service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    lease = service._participant_lease(
+        contract=contract,
+        participant=controller,
+        session_id="controller-session",
+    )
+    token = await lease.attach_or_refresh()
+
+    await lease.aclose()
+
+    assert await token_state.get(token.key) is None
+    assert (await service._validate(contract)).status == ContractValidityStatus.MISSING_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_lease_close_does_not_withdraw_changed_owner() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    lease = service._participant_lease(
+        contract=contract,
+        participant=controller,
+        session_id="controller-session",
+    )
+    token = await lease.attach_or_refresh()
+    entry = await token_state.get(token.key)
+    assert entry is not None
+    record = ParticipantTokenRecord.model_validate(entry.value)
+    changed_owner = record.model_copy(update={"token_id": "different-token"})
+    await token_state.update(token.key, changed_owner, revision=entry.revision)
+
+    await lease.aclose()
+
+    current = await token_state.get(token.key)
+    assert current is not None
+    assert ParticipantTokenRecord.model_validate(current.value).token_id == (
+        "different-token"
+    )
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_attaches_adopts_and_filters() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
@@ -840,7 +999,7 @@ async def test_concord_participant_manager_attaches_adopts_and_filters() -> None
 async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -> None:
     contract_state = CountingItemsKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=30)
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -862,7 +1021,7 @@ async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -
 
     async with anyio.create_task_group() as task_group:
         lifecycle.start(task_group)
-        with anyio.fail_after(1):
+        with anyio.fail_after(2):
             while True:
                 managed = lifecycle.managed_contract(contract)
                 if managed is not None and managed.token is not None:
@@ -888,7 +1047,7 @@ async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -
 async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=30)
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     lifecycle = service.participant(
@@ -923,7 +1082,7 @@ async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> 
         assert valid.validity is not None
         assert valid.validity.status == ContractValidityStatus.VALID
 
-        with anyio.fail_after(1):
+        with anyio.fail_after(2):
             while True:
                 managed = lifecycle.managed_contract(contract)
                 if (
@@ -945,7 +1104,7 @@ async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> 
 async def test_concord_participant_manager_notification_reconciles_expiry_and_cancel() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state)
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     lifecycle = ConcordParticipant(
@@ -1504,7 +1663,7 @@ async def test_concord_participant_manager_factory_reconciles() -> None:
 async def test_concord_service_lease_events_and_logs(caplog) -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state)
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
@@ -1538,7 +1697,7 @@ async def test_concord_service_lease_events_and_logs(caplog) -> None:
         controller_token = await controller_lease.attach_or_refresh()
         repeated_controller_token = await controller_lease.attach_or_refresh()
         assert repeated_controller_token.refresh_seq == 1
-        await anyio.sleep(0.02)
+        await anyio.sleep(0.55)
         refreshed_controller_token = await controller_lease.attach_or_refresh()
         assert refreshed_controller_token.refresh_seq == 2
 
