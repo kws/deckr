@@ -34,6 +34,7 @@ from deckr.state import (
     StateUnavailable,
     state_value,
 )
+from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,15 @@ class NatsSubstrate:
             return policy
         del name
         return PERSISTENT_STATE_STORE_POLICY
+
+    def kv_bucket(self, policy: KvBucketPolicy) -> NatsJsonKvBucket:
+        if self._js is None:
+            raise RuntimeError("NATS substrate is not connected")
+        return NatsJsonKvBucket(
+            js=self._js,
+            policy=policy,
+            buffer_size=self._buffer_size,
+        )
 
     async def _publish_payload(
         self,

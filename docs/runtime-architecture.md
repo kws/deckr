@@ -767,8 +767,9 @@ For that first-party source, omitted `block` defaults to an empty list,
 Each Python action-provider runtime instance registers
 `action_provider:<provider-instance-id>` on both `actions` and `services`.
 The `actions` endpoint carries controller/action traffic. The
-`services` endpoint lets hosted action instances use service command/reply and
-service view helpers without becoming service components themselves.
+`services` endpoint lets hosted action instances use service command/reply lane
+messages and Concord-authorized service views without becoming service
+components themselves.
 
 ### Runtime-Local Component Status
 
@@ -832,7 +833,7 @@ The live design is:
 - Deckr lanes remain logical contracts.
 - NATS carries distributed lane traffic.
 - KV carries Beacon advertisements, Concord contracts, Concord participant
-  tokens, and owner-qualified private state where appropriate.
+  tokens, and owner-qualified service-view/private buckets where appropriate.
 - Lane listeners register with their Deckr endpoint address.
 - The lane layer stamps envelope senders and filters received envelopes for the
   local endpoint before application code sees them.

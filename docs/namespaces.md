@@ -198,8 +198,8 @@ Do not use generic private bucket names such as `state`, `cache`, `services`,
 
 Package-owned private buckets must not redefine Beacon advertisements, Concord
 contract validity, or Deckr-owned hardware/action profile semantics. Service
-packages may define their own Beacon payloads, Concord terms, and private state
-under their own public namespace.
+packages may define their own Beacon payloads, Concord terms, and direct
+KV-backed service-view buckets under their own public namespace.
 
 ## Pre-V1 Contract Rule
 

@@ -228,18 +228,26 @@ and replies; it must not be treated as the inventory authority. If a claimed
 device disappears, the hardware manager cancels the matching Concord claim or
 stops maintaining its participant token.
 
-Service components use the explicit `deckr.services` service-profile helpers
-for each layer: `ServiceAdvertiser` publishes Beacon descriptors,
-`ServiceUseAuthorizer` maintains the service participant side of Concord
-service-use contracts, `ServiceCommandChannel` carries services-lane
-request/reply traffic, and `ServiceViewReader` / `ServiceViewWriter` apply
-current-state view fences. Client code performs Beacon lookup and descriptor
-selection explicitly, then opens authority through `ServiceUseLeaseManager` for
-the chosen descriptor and requested scope. After a service-use Concord contract
-is negotiated, service command and protected view authority follows Concord, not
-continued Beacon advertisement presence. A service may withdraw its Beacon
-advertisement when it cannot accept new service-use contracts; existing
-service-use contracts remain Concord-governed.
+The service API is intentionally layered instead of one broad runtime helper.
+`deckr.services` exports service profile and message contracts such as
+`ServiceProtocol`, `ServiceAdvertisementPayload`, `ServiceDescriptor`,
+`ServiceUseTerms`, `ServiceViewFamily`, `ServiceViewRef`, service command
+schemas, descriptor parsing, terms construction, and service-view key helpers.
+Services advertise descriptors through Beacon, negotiate service-use authority
+through Concord, and carry service command/reply messages on the `services`
+lane as ordinary lane traffic.
+
+Protected service views are direct JetStream/KV views. `ServiceViewStore` opens
+one service-owned bucket, maintains a local map from the bucket watcher, exposes
+direct `get`, `put`, `create`, `update`, `delete`, and `watch` style behavior,
+and authorizes protected reads and watches with an active Concord service-use
+lease. View entries are fenced by `serviceId`, `serviceNamespace`, and
+`sessionId`, and writes return `entry.revision` for CAS updates and deletes.
+After a service-use Concord contract is negotiated, service command and
+protected view authority follows Concord, not continued Beacon advertisement
+presence. A service may withdraw its Beacon advertisement when it cannot accept
+new service-use contracts; existing service-use contracts remain
+Concord-governed.
 
 ## Component Dependencies
 

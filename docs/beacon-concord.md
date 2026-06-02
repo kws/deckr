@@ -303,14 +303,16 @@ provider-session contract is valid; Beacon may only discover candidates for new
 or successor negotiations.
 
 Service packages may use generic Beacon and Concord with package-owned feature
-ids, advertisement payload profiles, terms profiles, and private state. Deckr
-core does not define service-specific domain semantics such as Sonos zones,
-OpenHAB items, or package-owned view schemas. After a service-use Concord
-contract is negotiated, service command and view authority follows that Concord
-contract and its participant tokens, not continued Beacon advertisement
-presence. A service may withdraw its Beacon advertisement when it cannot accept
-new service-use contracts; existing service-use contracts remain governed only
-by Concord validity and participant tokens.
+ids, advertisement payload profiles, terms profiles, and direct KV-backed
+service views. Deckr core does not define service-specific domain semantics
+such as Sonos zones, OpenHAB items, or package-owned view schemas. After a
+service-use Concord contract is negotiated, service command and view authority
+follows that Concord contract and its participant tokens, not continued Beacon
+advertisement presence. Protected service views are authorized through the
+service-use contract and fenced by the advertised service identity and session.
+A service may withdraw its Beacon advertisement when it cannot accept new
+service-use contracts; existing service-use contracts remain governed only by
+Concord validity and participant tokens.
 
 ## Contract Artifacts And Conformance
 

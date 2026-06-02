@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Collection, Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -59,7 +59,6 @@ from deckr.services.messages import (
 from deckr.state import (
     DEFAULT_STATE_RECONCILE_SECONDS,
     StateConflict,
-    StateStore,
     StateUnavailable,
 )
 
@@ -807,98 +806,6 @@ class ServiceCommandChannel:
         return ServiceCommandReplyBody.model_validate(thaw_json(reply.body))
 
 
-class ServiceViewReader:
-    """Fenced current-state reader for service views scoped by a lease."""
-
-    def __init__(self, *, state_for: Callable[[str], StateStore]) -> None:
-        self._state_for = state_for
-
-    async def read(
-        self,
-        lease: ServiceUseLease,
-        view: ServiceViewRef,
-    ) -> Mapping[str, Any] | None:
-        if not _view_ref_authorized(lease, view):
-            raise UnsupportedServiceScope(
-                f"Service-use lease does not authorize view {view.key!r}"
-            )
-        try:
-            await lease.refresh()
-        except ServiceUnavailable:
-            return None
-        store = self._state_for(view.store_name)
-        try:
-            entry = await store.get(view.key)
-        except StateUnavailable:
-            return None
-        if entry is None:
-            return None
-        value = thaw_json(entry.value)
-        descriptor = lease.descriptor
-        if value.get("serviceId") != descriptor.service_id:
-            return None
-        if value.get("serviceNamespace") != descriptor.namespace:
-            return None
-        if value.get("sessionId") != descriptor.session_id:
-            return None
-        return value
-
-    async def watch(
-        self,
-        lease: ServiceUseLease,
-        view: ServiceViewRef,
-    ) -> AsyncIterator[Mapping[str, Any] | None]:
-        if not _view_ref_authorized(lease, view):
-            raise UnsupportedServiceScope(
-                f"Service-use lease does not authorize view {view.key!r}"
-            )
-        store = self._state_for(view.store_name)
-        yield await self.read(lease, view)
-        while True:
-            try:
-                async with store.watch(view.key) as changes:
-                    async for change in changes:
-                        if change.key != view.key:
-                            continue
-                        yield await self.read(lease, view)
-            except StateUnavailable:
-                yield None
-                await anyio.sleep(1.0)
-
-
-class ServiceViewWriter:
-    """Service-side fenced current-state writer."""
-
-    def __init__(
-        self,
-        *,
-        protocol: ServiceProtocol,
-        service_id: str,
-        endpoint: RegisteredEndpointLane,
-        state: StateStore,
-    ) -> None:
-        self.protocol = protocol
-        self.service_id = _require_text(service_id, field_name="service id")
-        self.endpoint = endpoint
-        self._state = state
-        self._revisions: dict[str, int] = {}
-
-    async def put(self, key: str, payload: Mapping[str, Any]) -> None:
-        fenced_payload = {
-            **payload,
-            "serviceId": self.service_id,
-            "serviceNamespace": self.protocol.namespace,
-            "sessionId": self.endpoint.session_id,
-        }
-        entry = await self._state.put(key, fenced_payload)
-        self._revisions[key] = entry.revision
-
-    async def withdraw(self) -> None:
-        for key, revision in list(self._revisions.items()):
-            await _delete_if_current(self._state, key, revision)
-        self._revisions.clear()
-
-
 class ServiceUseAuthorizer:
     """Service-side Concord authorization helper for service commands."""
 
@@ -1121,15 +1028,6 @@ def newest_service_descriptor(
     if not descriptors:
         return None
     return max(descriptors, key=service_descriptor_sort_key)
-
-
-async def _delete_if_current(state: StateStore, key: str, revision: int) -> None:
-    try:
-        await state.delete(key, revision=revision)
-    except StateConflict:
-        logger.debug("Service view %s changed before cleanup", key)
-    except StateUnavailable:
-        logger.debug("Service view %s unavailable before cleanup", key, exc_info=True)
 
 
 _STALE_SERVICE_USE_STATUSES = frozenset(

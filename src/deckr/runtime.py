@@ -13,8 +13,10 @@ from deckr.contracts.lanes import (
 )
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.lanes import Lane, LaneRegistry, LaneSubstrate
+from deckr.services.views import ServiceViewStore
 from deckr.state import DEFAULT_STATE_STORE_NAME, StateStore, StateStorePolicy
 from deckr.substrates.nats import NatsSubstrate
+from deckr.substrates.nats_kv import KvBucketPolicy
 
 
 class Deckr:
@@ -35,6 +37,7 @@ class Deckr:
             lane_contracts=self._lane_contracts,
             substrate=self._substrate,
         )
+        self._service_view_stores: dict[tuple[str, float | None], ServiceViewStore] = {}
         self._task_group_cm: AbstractAsyncContextManager[anyio.abc.TaskGroup] | None = (
             None
         )
@@ -63,6 +66,34 @@ class Deckr:
     ) -> StateStore:
         return self._substrate.state(name, policy=policy)
 
+    def service_view_store(
+        self,
+        bucket: str,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> ServiceViewStore:
+        if self._task_group is None:
+            raise RuntimeError("Deckr runtime must be running")
+        kv_bucket = getattr(self._substrate, "kv_bucket", None)
+        if kv_bucket is None:
+            raise RuntimeError("Deckr substrate does not provide NATS KV buckets")
+        key = (bucket, ttl_seconds)
+        store = self._service_view_stores.get(key)
+        if store is None:
+            store = ServiceViewStore(
+                bucket=kv_bucket(
+                    KvBucketPolicy(
+                        bucket=bucket,
+                        ttl_seconds=ttl_seconds,
+                        allow_write_ttl=ttl_seconds is not None,
+                        description="service view KV",
+                    )
+                )
+            )
+            store.start(self._task_group)
+            self._service_view_stores[key] = store
+        return store
+
     async def __aenter__(self) -> Deckr:
         if self._task_group is not None:
             raise RuntimeError("Deckr runtime is already running")
@@ -90,6 +121,7 @@ class Deckr:
         aclose = getattr(self._substrate, "aclose", None)
         if aclose is not None:
             await aclose()
+        self._service_view_stores.clear()
         self._task_group = None
         self._task_group_cm = None
         return result

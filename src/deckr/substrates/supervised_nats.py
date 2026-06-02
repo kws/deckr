@@ -22,6 +22,7 @@ from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.lanes import ReplyPredicate
 from deckr.state import StateStore, StateStorePolicy
 from deckr.substrates.nats import NatsSubstrate
+from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
 
 logger = logging.getLogger(__name__)
 
@@ -511,6 +512,9 @@ class SupervisedNatsSubstrate:
         policy: StateStorePolicy | None = None,
     ) -> StateStore:
         return self._connected_nats().state(name, policy=policy)
+
+    def kv_bucket(self, policy: KvBucketPolicy) -> NatsJsonKvBucket:
+        return self._connected_nats().kv_bucket(policy)
 
     def _connected_nats(self) -> NatsSubstrate:
         if self._nats is None:

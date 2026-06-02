@@ -5,6 +5,7 @@ from typing import Any
 
 import anyio
 import pytest
+from memory_kv_bucket import MemoryJsonKvBucket
 from memory_lane_substrate import MemoryStateStore, memory_deckr
 
 from deckr.actions.endpoints import action_provider_address
@@ -17,24 +18,19 @@ from deckr.concord import (
 from deckr.contracts.messages import SERVICES_LANE, entity_subject, service_address
 from deckr.services import (
     SERVICE_COMMAND_REPLY,
-    AuthorizationDecision,
     ServiceAdvertisementPayload,
-    ServiceAdvertiser,
     ServiceBackendStatus,
     ServiceCommandBody,
-    ServiceCommandChannel,
     ServiceCommandReplyBody,
     ServiceCommandStatus,
     ServiceDescriptor,
     ServiceError,
     ServiceProtocol,
-    ServiceUseAuthorizer,
-    ServiceUseLeaseManager,
     ServiceUseTerms,
+    ServiceViewEntry,
     ServiceViewFamily,
-    ServiceViewReader,
     ServiceViewRef,
-    ServiceViewWriter,
+    ServiceViewStore,
     UnsupportedServiceScope,
     newest_service_descriptor,
     parse_service_descriptor,
@@ -44,6 +40,14 @@ from deckr.services import (
     service_view_key,
     service_view_prefix,
 )
+from deckr.services.runtime import (
+    AuthorizationDecision,
+    ServiceAdvertiser,
+    ServiceCommandChannel,
+    ServiceUseAuthorizer,
+    ServiceUseLeaseManager,
+)
+from deckr.substrates.nats_kv import KvConflict
 
 
 def _protocol(
@@ -288,7 +292,9 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
             MemoryStateStore(name="tokens"),
         )
     )
-    view_store = MemoryStateStore(name="views")
+    view_store = ServiceViewStore(
+        bucket=MemoryJsonKvBucket(bucket="deckr_openhab_service_view_v1")
+    )
     protocol = _protocol()
 
     async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
@@ -308,18 +314,13 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
             endpoint=service_endpoint,
             concord=concord,
         )
-        writer = ServiceViewWriter(
-            protocol=protocol,
-            service_id="openhab-home",
-            endpoint=service_endpoint,
-            state=view_store,
-        )
         await advertiser.publish(ServiceBackendStatus.AVAILABLE)
         descriptor = await _descriptor(beacon, protocol)
         key = service_view_key("openhab-home", "items", "Kitchen Light")
         view_ref = ServiceViewRef("deckr_openhab_service_view_v1", key)
 
         async with anyio.create_task_group() as tg:
+            view_store.start(tg)
             authorizer.start(tg)
             tg.start_soon(_service_reply_loop, service_endpoint, authorizer)
             leases = ServiceUseLeaseManager(
@@ -334,7 +335,7 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
                 timeout=1.0,
             )
             commands = ServiceCommandChannel(endpoint=client_endpoint)
-            views = ServiceViewReader(state_for=lambda _name: view_store)
+            await view_store.wait_ready()
 
             beacon_state.items_calls = 0
             reply = await commands.command(
@@ -344,10 +345,38 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
             )
             assert reply.status == ServiceCommandStatus.OK
 
-            await writer.put(key, {"item": "Kitchen Light", "state": "ON"})
-            current = await views.read(lease, view_ref)
+            await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "ON"},
+                service_id="openhab-home",
+                service_namespace=protocol.namespace,
+                session_id=service_endpoint.session_id,
+            )
+            current = await view_store.get(lease, view_ref)
             assert current is not None
-            assert current["state"] == "ON"
+            assert isinstance(current, ServiceViewEntry)
+            assert current.value["state"] == "ON"
+            async with view_store.watch(lease, view_ref) as changes:
+                updated = await view_store.update(
+                    view=view_ref,
+                    payload={"item": "Kitchen Light", "state": "OFF"},
+                    service_id="openhab-home",
+                    service_namespace=protocol.namespace,
+                    session_id=service_endpoint.session_id,
+                    revision=current.revision,
+                )
+                change = await changes.receive()
+                assert change.operation == "put"
+                assert change.entry == updated
+                with pytest.raises(KvConflict):
+                    await view_store.update(
+                        view=view_ref,
+                        payload={"item": "Kitchen Light", "state": "STALE"},
+                        service_id="openhab-home",
+                        service_namespace=protocol.namespace,
+                        session_id=service_endpoint.session_id,
+                        revision=current.revision,
+                    )
 
             await advertiser.withdraw()
             cached = await leases.cached(
@@ -363,9 +392,9 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
                 {"items": ["Kitchen Light"]},
             )
             assert reply.status == ServiceCommandStatus.OK
-            current = await views.read(cached, view_ref)
+            current = await view_store.get(cached, view_ref)
             assert current is not None
-            assert current["state"] == "ON"
+            assert current.value["state"] == "OFF"
             assert beacon_state.items_calls == 0
 
             rejected = await commands.command(lease, "sendCommand", {})
@@ -375,7 +404,6 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
 
             await leases.aclose()
             await authorizer.aclose()
-            await writer.withdraw()
             tg.cancel_scope.cancel()
 
 
