@@ -10,6 +10,7 @@ import pytest
 from deckr.substrates.nats_kv import (
     KvBucketPolicy,
     KvChange,
+    KvConflict,
     KvEntry,
     KvViewStatus,
     NatsJsonKvBucket,
@@ -115,6 +116,41 @@ async def test_nats_json_kv_items_lists_current_entries_by_prefix() -> None:
         "contracts.main.2.meta",
     ]
     assert entries[0].value == {"state": "open"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["DEL", "PURGE", "PUT"])
+async def test_nats_json_kv_create_reclaims_absent_marker(operation: str) -> None:
+    fake_js = _FakeJs()
+    marker = fake_js.kv.add_marker("contracts.main.1.meta", operation=operation)
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
+    )
+
+    entry = await bucket.create("contracts.main.1.meta", {"state": "open"})
+
+    assert entry.value == {"state": "open"}
+    assert entry.revision == marker.revision + 1
+    raw_entry = await fake_js.kv.get("contracts.main.1.meta")
+    assert not kv_entry_is_absent_marker(raw_entry)
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_create_keeps_live_entry_conflict() -> None:
+    fake_js = _FakeJs()
+    fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"existing"}')
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
+    )
+
+    with pytest.raises(KvConflict):
+        await bucket.create("contracts.main.1.meta", {"state": "open"})
+
+    entry = await bucket.get("contracts.main.1.meta")
+    assert entry is not None
+    assert entry.value == {"state": "existing"}
 
 
 @pytest.mark.asyncio
@@ -301,6 +337,11 @@ class _FakeKvEntry:
         self.headers = headers or {}
 
 
+class _FakeKeyDeleted(RuntimeError):
+    def __init__(self, entry: _FakeKvEntry) -> None:
+        self.entry = entry
+
+
 class _FakeKv:
     def __init__(self, js: _FakeJs) -> None:
         self._js = js
@@ -336,6 +377,12 @@ class _FakeKv:
         entry = self._entries.get(key)
         if entry is None:
             raise RuntimeError("missing")
+        return entry
+
+    async def _get(self, key: str) -> _FakeKvEntry:
+        entry = await self.get(key)
+        if kv_entry_is_absent_marker(entry):
+            raise _FakeKeyDeleted(entry)
         return entry
 
     async def keys(self, filters=None) -> tuple[str, ...]:

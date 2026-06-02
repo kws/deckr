@@ -142,13 +142,43 @@ class NatsJsonKvBucket:
         self._validate_ttl(ttl)
         kv = await self._available_kv()
         normalized = kv_value(value)
+        payload = kv_payload(normalized)
         try:
-            revision = await kv.create(key, kv_payload(normalized))
+            revision = await kv.create(key, payload)
         except Exception as exc:
             if is_revision_conflict(exc):
+                revision = await self._create_over_absent_marker(
+                    kv,
+                    key,
+                    payload,
+                    conflict=exc,
+                )
+            else:
+                raise KvUnavailable(f"Could not create KV key {key!r}") from exc
+        return KvEntry(self.bucket, key, normalized, int(revision))
+
+    async def _create_over_absent_marker(
+        self,
+        kv,
+        key: str,
+        payload: bytes,
+        *,
+        conflict: BaseException,
+    ) -> int:
+        try:
+            marker_revision = await kv_absent_marker_revision(kv, key)
+        except Exception as exc:
+            if is_key_missing(exc):
+                raise KvConflict(f"KV key {key!r} already exists") from conflict
+            raise KvUnavailable(f"Could not create KV key {key!r}") from exc
+        if marker_revision is None:
+            raise KvConflict(f"KV key {key!r} already exists") from conflict
+        try:
+            return int(await kv.update(key, payload, last=marker_revision))
+        except Exception as exc:
+            if is_revision_conflict(exc) or is_key_missing(exc):
                 raise KvConflict(f"KV key {key!r} already exists") from exc
             raise KvUnavailable(f"Could not create KV key {key!r}") from exc
-        return KvEntry(self.bucket, key, normalized, int(revision))
 
     async def update(
         self,
@@ -669,6 +699,22 @@ def kv_entry_is_absent_marker(entry) -> bool:
     }:
         return True
     return getattr(entry, "value", None) in {None, b""}
+
+
+async def kv_absent_marker_revision(kv, key: str) -> int | None:
+    get_raw = getattr(kv, "_get", None)
+    if get_raw is None:
+        get_raw = kv.get
+    try:
+        entry = await get_raw(key)
+    except Exception as exc:
+        entry = getattr(exc, "entry", None)
+        if entry is not None and kv_entry_is_absent_marker(entry):
+            return int(entry.revision)
+        raise
+    if kv_entry_is_absent_marker(entry):
+        return int(entry.revision)
+    return None
 
 
 def kv_watch_pattern(prefix: str) -> str:
