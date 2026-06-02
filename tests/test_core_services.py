@@ -5,7 +5,7 @@ from pathlib import Path
 
 import anyio
 import pytest
-from memory_lane_substrate import memory_deckr
+from memory_message_bus import memory_deckr
 
 from deckr.beacon import (
     Beacon,
@@ -25,7 +25,7 @@ from deckr.components import (
     resolve_component_host_plan,
     start_components,
 )
-from deckr.contracts.lanes import LaneContract
+from deckr.contracts.lanes import MessageContract
 from deckr.contracts.messages import entity_subject, service_address
 from deckr.core.config import ConfigDocument
 from deckr.lanes import Lane
@@ -92,7 +92,7 @@ def _component(
     consumes: tuple[str, ...] = (),
     publishes: tuple[str, ...] = (),
     endpoints: tuple[str, ...] = (),
-    lane_contracts: tuple[LaneContract, ...] = (),
+    lane_contracts: tuple[MessageContract, ...] = (),
 ) -> ComponentDefinition:
     return ComponentDefinition(
         manifest=ComponentManifest(
@@ -517,10 +517,9 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
             "com.example.action_runtime:main",
             ComponentState.RUNNING,
         )
-        async with deckr.lane("actions").register_endpoint(
-            "controller:main"
-        ) as controller:
+        async with deckr.endpoint("controller:main") as controller:
             await controller.send(
+                lane="actions",
                 recipient="action_provider:main",
                 subject=entity_subject("test"),
                 message_type="actionExtension",
@@ -746,7 +745,7 @@ def test_deployment_lane_contract_uses_direct_v1_fields() -> None:
             component_id="acme.worker",
             publishes=("acme.events",),
             lane_contracts=(
-                LaneContract(
+                MessageContract(
                     lane="acme.events",
                     schema_id="acme.events.v1",
                     message_types=frozenset({"ping"}),
@@ -837,20 +836,19 @@ def test_deployment_lane_contract_rejects_removed_transport_fields(
         resolve_component_host_plan(document, definitions={})
 
 
-@pytest.mark.parametrize("field", ["mqtt", "websocket", "remote_endpoints"])
-def test_deployment_lane_contract_rejects_removed_delivery_fields(field: str) -> None:
+def test_deployment_lane_contract_rejects_removed_delivery_field() -> None:
     document = _document(
         {
             "deckr": {
                 "lane_contracts": {
                     "acme.events": {
                         "schema_id": "acme.events.v1",
-                        "delivery": {field: {}},
+                        "delivery": {"persistence": "ephemeral"},
                     }
                 }
             }
         }
     )
 
-    with pytest.raises(ValueError, match=field):
+    with pytest.raises(ValueError, match="delivery"):
         resolve_component_host_plan(document, definitions={})

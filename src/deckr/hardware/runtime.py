@@ -27,7 +27,12 @@ from deckr.concord import (
     ContractValidityStatus,
     ParticipantHandle,
 )
-from deckr.contracts.messages import DeckrMessage, EndpointAddress, endpoint_target
+from deckr.contracts.messages import (
+    HARDWARE_MESSAGES_LANE,
+    DeckrMessage,
+    EndpointAddress,
+    EntitySubject,
+)
 from deckr.contracts.models import JsonObject, thaw_json
 from deckr.hardware.descriptors import DeviceDescriptor, DeviceRef
 from deckr.hardware.profiles import (
@@ -52,13 +57,34 @@ HardwareResetHandler = Callable[[str], Awaitable[None]]
 
 
 class HardwareEndpoint(Protocol):
-    endpoint: EndpointAddress
+    address: EndpointAddress
     session_id: str
 
-    async def publish(self, message: DeckrMessage) -> DeckrMessage: ...
+    async def send(
+        self,
+        *,
+        lane: str,
+        recipient: str | EndpointAddress,
+        recipient_session_id: str | None = None,
+        subject: EntitySubject,
+        message_type: str,
+        body: Mapping[str, Any],
+        causation_id: str | None = None,
+    ) -> DeckrMessage: ...
+
+    async def reply_to(
+        self,
+        request: DeckrMessage,
+        *,
+        message_type: str,
+        body: Mapping[str, Any],
+        subject: EntitySubject | None = None,
+        causation_id: str | None = None,
+    ) -> DeckrMessage: ...
 
     def subscribe(
         self,
+        lane: str,
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]: ...
 
 
@@ -122,11 +148,11 @@ class HardwareManagerRuntime:
     _task_group: anyio.abc.TaskGroup | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        if self.endpoint.endpoint.family != "hardware_manager":
+        if self.endpoint.address.family != "hardware_manager":
             raise ValueError(
                 "hardware manager runtime endpoint must be hardware_manager"
             )
-        if self.endpoint.endpoint.endpoint_id != self.manager_id:
+        if self.endpoint.address.endpoint_id != self.manager_id:
             raise ValueError("manager_id must match hardware_manager endpoint id")
         if self.advertisement_refresh_seconds <= 0:
             raise ValueError("advertisement_refresh_seconds must be greater than zero")
@@ -138,7 +164,7 @@ class HardwareManagerRuntime:
             raise ValueError("watch_retry_seconds must be greater than zero")
         self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
         self._claim_manager = self.concord.participant(
-            participant=self.endpoint.endpoint,
+            participant=self.endpoint.address,
             session_id=self.endpoint.session_id,
             profile=HARDWARE_CLAIM_PROFILE_ID,
             refresh_interval=self.token_refresh_seconds,
@@ -244,22 +270,19 @@ class HardwareManagerRuntime:
                 ref.device_id,
             )
             return False
-        await self.endpoint.publish(
-            hw_messages.hardware_message(
-                sender=self.endpoint.endpoint,
-                sender_session_id=self.endpoint.session_id,
-                recipient=endpoint_target(claim.controller_endpoint),
-                recipient_session_id=claim.controller_session_id,
-                message_type=message.message_type,
-                body=event,
-                subject=message.subject,
-                causation_id=message.causation_id,
-            )
+        await self.endpoint.send(
+            lane=HARDWARE_MESSAGES_LANE,
+            recipient=claim.controller_endpoint,
+            recipient_session_id=claim.controller_session_id,
+            message_type=message.message_type,
+            body=hw_messages.hardware_body_to_dict(event),
+            subject=message.subject,
+            causation_id=message.causation_id,
         )
         return True
 
     async def command_subscription_loop(self) -> None:
-        async with self.endpoint.subscribe() as stream:
+        async with self.endpoint.subscribe(HARDWARE_MESSAGES_LANE) as stream:
             async for envelope in stream:
                 await self.handle_command(envelope)
 
@@ -308,7 +331,7 @@ class HardwareManagerRuntime:
                     self._advertiser = await self.beacon.advertise(
                         BeaconAdvertisementSpec(
                             feature_id=HARDWARE_FEATURE_ID,
-                            endpoint=self.endpoint.endpoint,
+                            endpoint=self.endpoint.address,
                             session_id=self.endpoint.session_id,
                             advertisement_id=self._advertisement_id,
                             labels=payload.labels,
@@ -447,7 +470,7 @@ class HardwareManagerRuntime:
                 continue
             if not self._claim_terms_match_current_devices(terms):
                 continue
-            if self.endpoint.endpoint not in managed.contract.participants:
+            if self.endpoint.address not in managed.contract.participants:
                 continue
             if terms.controller_endpoint not in managed.contract.participants:
                 continue
@@ -469,7 +492,7 @@ class HardwareManagerRuntime:
         self,
         terms: HardwareClaimTerms,
     ) -> bool:
-        if terms.manager_endpoint != self.endpoint.endpoint:
+        if terms.manager_endpoint != self.endpoint.address:
             return False
         for claim_device in terms.devices:
             ref = claim_device.device_ref
@@ -493,7 +516,7 @@ class HardwareManagerRuntime:
             return False
         if not (
             self._claim_terms_match_current_devices(terms)
-            and self.endpoint.endpoint in contract.participants
+            and self.endpoint.address in contract.participants
             and terms.controller_endpoint in contract.participants
         ):
             return False
@@ -504,7 +527,7 @@ class HardwareManagerRuntime:
         return True
 
     def _claim_current_sessions(self, _contract: ContractHandle) -> Mapping[str, str]:
-        return {str(self.endpoint.endpoint): self.endpoint.session_id}
+        return {str(self.endpoint.address): self.endpoint.session_id}
 
     def _prepare_claim_reconcile(self) -> None:
         self._claim_selection_device_ids = set()
@@ -571,7 +594,7 @@ class HardwareManagerRuntime:
         claimed = set(self._claims_by_device)
         return HardwareBeaconPayload(
             managerId=self.manager_id,
-            managerEndpoint=self.endpoint.endpoint,
+            managerEndpoint=self.endpoint.address,
             sessionId=self.endpoint.session_id,
             labels=dict(self.labels or {}),
             devices={
@@ -609,18 +632,12 @@ class HardwareManagerRuntime:
                 reason=reason,
                 message=f"Hardware command {reason}",
             )
-            await self.endpoint.publish(
-                hw_messages.hardware_message(
-                    sender=self.endpoint.endpoint,
-                    sender_session_id=self.endpoint.session_id,
-                    recipient=endpoint_target(envelope.sender),
-                    recipient_session_id=envelope.sender_session_id,
-                    message_type=hw_messages.COMMAND_REJECTED,
-                    body=reply_body,
-                    subject=envelope.subject,
-                    in_reply_to=envelope.message_id,
-                    causation_id=envelope.causation_id,
-                )
+            await self.endpoint.reply_to(
+                envelope,
+                message_type=hw_messages.COMMAND_REJECTED,
+                body=hw_messages.hardware_body_to_dict(reply_body),
+                subject=envelope.subject,
+                causation_id=envelope.causation_id,
             )
             return
         reply_body = hw_messages.CapabilityStateReplyMessage(
@@ -631,18 +648,12 @@ class HardwareManagerRuntime:
             status="rejected" if reason != "unsupported" else "unsupported",
             error=f"Hardware state request {reason}",
         )
-        await self.endpoint.publish(
-            hw_messages.hardware_message(
-                sender=self.endpoint.endpoint,
-                sender_session_id=self.endpoint.session_id,
-                recipient=endpoint_target(envelope.sender),
-                recipient_session_id=envelope.sender_session_id,
-                message_type=hw_messages.CAPABILITY_STATE_REPLY,
-                body=reply_body,
-                subject=envelope.subject,
-                in_reply_to=envelope.message_id,
-                causation_id=envelope.causation_id,
-            )
+        await self.endpoint.reply_to(
+            envelope,
+            message_type=hw_messages.CAPABILITY_STATE_REPLY,
+            body=hw_messages.hardware_body_to_dict(reply_body),
+            subject=envelope.subject,
+            causation_id=envelope.causation_id,
         )
 
 

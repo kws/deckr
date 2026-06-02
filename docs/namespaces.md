@@ -85,7 +85,7 @@ ids. They intentionally stay short:
 - core lane names, currently `actions`, `hardware_messages`, and `services`
 - core endpoint families, such as `controller`, `action_provider`,
   `hardware_manager`, and `service`
-- core NATS subject roots and shared buckets, such as `deckr.lane.*`,
+- core NATS subject roots and shared buckets, such as `deckr.msg.*`,
   `deckr_beacon_advertisement_v1`, `deckr_concord_contract_v1`, and
   `deckr_concord_token_v1`
 

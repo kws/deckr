@@ -94,12 +94,12 @@ def test_removed_service_runtime_helpers_are_not_public() -> None:
 def test_removed_state_api_is_not_public() -> None:
     import importlib
 
-    from deckr.lanes import LaneSubstrate
+    from deckr.lanes import MessageBus
     from deckr.runtime import Deckr
     from deckr.substrates.nats import NatsSubstrate
     from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
 
-    for owner in (Deckr, LaneSubstrate, NatsSubstrate, SupervisedNatsSubstrate):
+    for owner in (Deckr, MessageBus, NatsSubstrate, SupervisedNatsSubstrate):
         assert not hasattr(owner, "state")
 
     try:

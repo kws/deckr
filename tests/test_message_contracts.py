@@ -19,8 +19,9 @@ from deckr.contracts.messages import (
     controller_address,
     endpoint_target,
     entity_subject,
+    service_address,
 )
-from deckr.lanes import validate_message_for_contract
+from deckr.lanes import message_is_deliverable, validate_message_for_contract
 
 
 @pytest.mark.parametrize(
@@ -193,3 +194,75 @@ def test_core_lane_validation_checks_message_type_body_pair() -> None:
             message,
             CORE_LANE_CONTRACTS[ACTIONS_LANE],
         )
+
+
+def _valid_action_extension(**overrides) -> DeckrMessage:
+    fields = {
+        "lane": ACTIONS_LANE,
+        "messageType": "actionExtension",
+        "sender": action_endpoints.action_provider_address("python"),
+        "senderSessionId": "session-provider",
+        "recipient": endpoint_target(controller_address("main")),
+        "subject": entity_subject("extension", contextId="ctx"),
+        "body": {
+            "extensionType": "test.extension",
+            "extensionSchemaId": "test.extension.v1",
+            "data": {},
+        },
+    }
+    fields.update(overrides)
+    return DeckrMessage(**fields)
+
+
+def test_contract_validation_rejects_wrong_lane() -> None:
+    message = _valid_action_extension(lane="other")
+
+    with pytest.raises(ValueError, match="does not match contract"):
+        validate_message_for_contract(message, CORE_LANE_CONTRACTS[ACTIONS_LANE])
+
+
+def test_contract_validation_rejects_bad_message_type() -> None:
+    message = _valid_action_extension(messageType="unknown")
+
+    with pytest.raises(ValueError, match="not supported"):
+        validate_message_for_contract(message, CORE_LANE_CONTRACTS[ACTIONS_LANE])
+
+
+def test_contract_validation_rejects_disallowed_sender_family() -> None:
+    message = _valid_action_extension(sender=service_address("media"))
+
+    with pytest.raises(ValueError, match="Sender family"):
+        validate_message_for_contract(message, CORE_LANE_CONTRACTS[ACTIONS_LANE])
+
+
+def test_contract_validation_rejects_disallowed_recipient_family() -> None:
+    message = _valid_action_extension(recipient=endpoint_target(service_address("media")))
+
+    with pytest.raises(ValueError, match="Recipient family"):
+        validate_message_for_contract(message, CORE_LANE_CONTRACTS[ACTIONS_LANE])
+
+
+def test_contract_validation_rejects_bad_broadcast_target() -> None:
+    message = _valid_action_extension(
+        recipient=broadcast_target(
+            scope="hardware_managers",
+            endpoint_family="hardware_manager",
+        )
+    )
+
+    with pytest.raises(ValueError, match="Broadcast target"):
+        validate_message_for_contract(message, CORE_LANE_CONTRACTS[ACTIONS_LANE])
+
+
+def test_expired_message_is_not_deliverable() -> None:
+    message = _valid_action_extension(
+        recipient=endpoint_target(controller_address("main")),
+        ttlMs=0,
+    )
+
+    assert not message_is_deliverable(
+        message,
+        endpoint=controller_address("main"),
+        endpoint_session_id="session-controller",
+        contract=CORE_LANE_CONTRACTS[ACTIONS_LANE],
+    )

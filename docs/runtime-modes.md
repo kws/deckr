@@ -28,9 +28,9 @@ short configured addresses.
 
 ## Full Stack Runtime
 
-A full-stack process creates `Deckr` with the configured runtime substrate, then
+A full-stack process creates `Deckr` with the configured runtime message bus, then
 starts controller, action provider runtime, hardware manager, and any adapter
-components from one component host plan. The NATS lane substrate itself is runtime
+components from one component host plan. The NATS message bus itself is runtime
 infrastructure, not a discovered component.
 
 ```python
@@ -117,14 +117,14 @@ server_path = "/usr/local/bin/nats-server"
 
 A skinny action provider runtime uses the same `Deckr` and component host APIs,
 but its configuration only includes an action provider runtime component and the
-lane substrate needed to reach the controller domain. Distributed runtimes use
+message bus needed to reach the controller domain. Distributed runtimes use
 the NATS substrate; the old WebSocket/MQTT lane transport examples have been
 removed.
 
 ## Remote Hardware Manager Runtime
 
 A remote hardware manager runtime likewise uses the same APIs, but includes one
-or more hardware manager components plus the lane substrate needed for
+or more hardware manager components plus the message bus needed for
 `hardware_messages`. It does not need a local controller or action provider
 runtime.
 
@@ -144,7 +144,7 @@ from deckr.runtime import Deckr
 from deckr.substrates.nats import NatsSubstrate
 
 async with Deckr(
-    substrate=NatsSubstrate(url="nats://127.0.0.1:4222", lane_contracts=...),
+    message_bus=NatsSubstrate(url="nats://127.0.0.1:4222", lane_contracts=...),
 ) as deckr:
     ...
 ```
@@ -155,13 +155,13 @@ They can also supervise a private local `nats-server` process:
 from deckr.runtime import Deckr
 from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
 
-substrate = SupervisedNatsSubstrate(lane_contracts=...)
+message_bus = SupervisedNatsSubstrate(lane_contracts=...)
 
-async with Deckr(substrate=substrate) as deckr:
+async with Deckr(message_bus=message_bus) as deckr:
     ...
 ```
 
 The supervised form still delegates lane traffic and explicit KV buckets to
 `NatsSubstrate` after startup. Tests may use explicit fakes at the
-`LaneSubstrate` and KV-bucket boundaries, but supported runtime modes remain
+`MessageBus` and KV-bucket boundaries, but supported runtime modes remain
 real NATS.

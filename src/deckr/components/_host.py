@@ -25,19 +25,8 @@ from deckr.components.dependencies import (
 )
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
-    BackpressureHandling,
-    DeliveryGuarantee,
-    DeliveryOrdering,
-    DeliveryPersistence,
-    DeliveryReplay,
-    DeliverySemantics,
-    ExpiryHandling,
-    IdempotencySemantics,
-    LaneContract,
-    LaneContractRegistry,
-    MalformedMessageHandling,
-    MessageFamily,
-    MessageFamilyDelivery,
+    MessageContract,
+    MessageContractRegistry,
 )
 from deckr.contracts.messages import CORE_LANE_NAMES
 from deckr.core.config import ConfigDocument
@@ -52,31 +41,30 @@ COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
 COMPONENT_INSTANCE_SOURCE_ENTRYPOINT_GROUP = "deckr.component_instance_sources"
 REMOVED_LANE_CONTRACT_FIELDS = frozenset(
     {
+        "current_state",
+        "delivery",
+        "delivery_semantics",
         "mqtt",
         "remote_endpoints",
         "route_policy",
         "route_table",
         "routes",
+        "state",
+        "state_policy",
+        "store_policy",
         "transport_route",
         "websocket",
     }
 )
-DELIVERY_CONTRACT_FIELDS = frozenset(
+MESSAGE_CONTRACT_FIELDS = frozenset(
     {
-        "persistence",
-        "guarantee",
-        "replay",
-        "ordering",
-        "ordering_keys",
-        "expiry",
-        "local_backpressure",
-        "remote_backpressure",
-        "malformed_messages",
-        "message_families",
+        "allowed_recipient_families",
+        "allowed_sender_families",
+        "broadcast_targets",
+        "default_broadcast_hop_limit",
+        "message_types",
+        "schema_id",
     }
-)
-REMOVED_DELIVERY_CONTRACT_FIELDS = REMOVED_LANE_CONTRACT_FIELDS | frozenset(
-    {"durability"}
 )
 
 
@@ -91,7 +79,7 @@ class ComponentManifest:
     consumes: tuple[str, ...] = ()
     publishes: tuple[str, ...] = ()
     cardinality: ComponentCardinality = ComponentCardinality.SINGLETON
-    lane_contracts: tuple[LaneContract, ...] = ()
+    lane_contracts: tuple[MessageContract, ...] = ()
     endpoint_slots: tuple[str, ...] = ()
     role: str | None = None
 
@@ -153,7 +141,7 @@ class LaneBindingValidator(Protocol):
         config: Mapping[str, Any],
         endpoints: Mapping[str, str],
         instance_id: str,
-        lane_contracts: LaneContractRegistry,
+        lane_contracts: MessageContractRegistry,
     ) -> None: ...
 
 
@@ -270,7 +258,7 @@ class ComponentDefinition:
         config: Mapping[str, Any],
         endpoints: Mapping[str, str],
         instance_id: str,
-        lane_contracts: LaneContractRegistry,
+        lane_contracts: MessageContractRegistry,
     ) -> None:
         if self.validate_lane_bindings is None:
             return
@@ -321,7 +309,7 @@ class ComponentInstanceSpec:
 @dataclass(frozen=True, slots=True)
 class ComponentHostPlan:
     specs: tuple[ComponentInstanceSpec, ...]
-    lane_contracts: LaneContractRegistry
+    lane_contracts: MessageContractRegistry
     lane_names: tuple[str, ...]
     base_dir: Path
     report: ComponentPlanningReport = field(default_factory=ComponentPlanningReport)
@@ -332,7 +320,7 @@ class ComponentHostPlan:
         specs: Sequence[ComponentInstanceSpec],
         *,
         base_dir: Path | None = None,
-        lane_contracts: LaneContractRegistry | Sequence[LaneContract] | None = None,
+        lane_contracts: MessageContractRegistry | Sequence[MessageContract] | None = None,
     ) -> ComponentHostPlan:
         normalized_specs = tuple(specs)
         registry = _build_lane_contract_registry(
@@ -430,7 +418,7 @@ def load_component_instance_source_definition(
 def build_lane_contract_registry(
     instance_specs: Sequence[ComponentInstanceSpec],
     document: ConfigDocument,
-) -> LaneContractRegistry:
+) -> MessageContractRegistry:
     return _build_lane_contract_registry(instance_specs, document=document)
 
 
@@ -1024,200 +1012,31 @@ def _broadcast_targets(value: Any, *, field_name: str) -> Mapping[str, str]:
     return targets
 
 
-def _string_tuple(value: Any, *, field_name: str) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, str) or not isinstance(value, Sequence):
-        raise ValueError(f"{field_name} must be a list of strings")
-    items: list[str] = []
-    for item in value:
-        if not isinstance(item, str) or not item:
-            raise ValueError(f"{field_name} must be a list of non-empty strings")
-        items.append(item)
-    return tuple(items)
-
-
-def _enum_value(enum_type, value: Any, *, field_name: str):
-    if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be a string")
-    try:
-        return enum_type(value)
-    except ValueError as exc:
-        allowed = ", ".join(repr(item.value) for item in enum_type)
-        raise ValueError(f"{field_name} must be one of {allowed}") from exc
-
-
-def _optional_enum_value(enum_type, value: Any, *, field_name: str):
-    if value is None:
-        return None
-    return _enum_value(enum_type, value, field_name=field_name)
-
-
-def _message_family_delivery_from_mapping(
-    value: Any,
-    *,
-    field_name: str,
-) -> MessageFamilyDelivery:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{field_name} must be a table")
-    family = _optional_enum_value(
-        MessageFamily,
-        value.get("family"),
-        field_name=f"{field_name}.family",
-    )
-    if family is None:
-        raise ValueError(f"{field_name}.family is required")
-    idempotency = _optional_enum_value(
-        IdempotencySemantics,
-        value.get("idempotency"),
-        field_name=f"{field_name}.idempotency",
-    )
-    return MessageFamilyDelivery(
-        family=family,
-        message_types=_string_set(
-            value.get("message_types"),
-            field_name=f"{field_name}.message_types",
-        ),
-        idempotency=idempotency,
-        ordering_keys=_string_tuple(
-            value.get("ordering_keys"),
-            field_name=f"{field_name}.ordering_keys",
-        ),
-    )
-
-
-def _message_family_deliveries(
-    value: Any, *, field_name: str
-) -> tuple[MessageFamilyDelivery, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, str) or not isinstance(value, Sequence):
-        raise ValueError(f"{field_name} must be a list of tables")
-    return tuple(
-        _message_family_delivery_from_mapping(
-            item,
-            field_name=f"{field_name}.{index}",
-        )
-        for index, item in enumerate(value)
-    )
-
-
-def _delivery_from_mapping(source: Any, *, lane: str) -> DeliverySemantics | None:
-    if source is None:
-        return None
-    if isinstance(source, str):
-        raise ValueError(
-            f"Lane contract {lane!r} delivery must be a table, not a string"
-        )
-    if not isinstance(source, Mapping):
-        raise ValueError(f"Lane contract {lane!r} delivery must be a table")
-    removed = sorted(key for key in REMOVED_DELIVERY_CONTRACT_FIELDS if key in source)
-    if removed:
-        keys = ", ".join(f"delivery.{key}" for key in removed)
-        raise ValueError(f"{keys} are not part of the v1 lane contract")
-    unknown = sorted(set(source) - DELIVERY_CONTRACT_FIELDS)
-    if unknown:
-        keys = ", ".join(f"delivery.{key}" for key in unknown)
-        raise ValueError(f"{keys} are not part of the v1 lane contract")
-    return DeliverySemantics(
-        persistence=(
-            _optional_enum_value(
-                DeliveryPersistence,
-                source.get("persistence"),
-                field_name="delivery.persistence",
-            )
-            or DeliveryPersistence.EPHEMERAL
-        ),
-        guarantee=(
-            _optional_enum_value(
-                DeliveryGuarantee,
-                source.get("guarantee"),
-                field_name="delivery.guarantee",
-            )
-            or DeliveryGuarantee.AT_MOST_ONCE
-        ),
-        replay=(
-            _optional_enum_value(
-                DeliveryReplay,
-                source.get("replay"),
-                field_name="delivery.replay",
-            )
-            or DeliveryReplay.NONE
-        ),
-        ordering=(
-            _optional_enum_value(
-                DeliveryOrdering,
-                source.get("ordering"),
-                field_name="delivery.ordering",
-            )
-            or DeliveryOrdering.LOCAL_OR_CONNECTION_FIFO
-        ),
-        ordering_keys=_string_tuple(
-            source.get("ordering_keys"),
-            field_name="delivery.ordering_keys",
-        ),
-        expiry=(
-            _optional_enum_value(
-                ExpiryHandling,
-                source.get("expiry"),
-                field_name="delivery.expiry",
-            )
-            or ExpiryHandling.DROP_AND_REPORT
-        ),
-        local_backpressure=(
-            _optional_enum_value(
-                BackpressureHandling,
-                source.get("local_backpressure"),
-                field_name="delivery.local_backpressure",
-            )
-            or BackpressureHandling.DROP_SUBSCRIBER
-        ),
-        remote_backpressure=(
-            _optional_enum_value(
-                BackpressureHandling,
-                source.get("remote_backpressure"),
-                field_name="delivery.remote_backpressure",
-            )
-            or BackpressureHandling.DISCONNECT
-        ),
-        malformed_messages=(
-            _optional_enum_value(
-                MalformedMessageHandling,
-                source.get("malformed_messages"),
-                field_name="delivery.malformed_messages",
-            )
-            or MalformedMessageHandling.DROP_UNPARSEABLE_LOG_PARSEABLE_REJECTION
-        ),
-        message_families=_message_family_deliveries(
-            source.get("message_families"),
-            field_name="delivery.message_families",
-        ),
-    )
-
-
-def _lane_contract_from_mapping(lane: str, source: Mapping[str, Any]) -> LaneContract:
+def _lane_contract_from_mapping(lane: str, source: Mapping[str, Any]) -> MessageContract:
     schema_id = source.get("schema_id")
     if schema_id is not None and not isinstance(schema_id, str):
         raise ValueError(f"Lane contract {lane!r} schema_id must be a string")
-    if source.get("delivery_semantics") is not None:
-        raise ValueError(
-            f"Lane contract {lane!r} delivery_semantics has been replaced by delivery"
-        )
     removed = sorted(key for key in REMOVED_LANE_CONTRACT_FIELDS if key in source)
     if removed:
         keys = ", ".join(removed)
         raise ValueError(
             f"Lane contract {lane!r} removed field(s) {keys} are not part of "
-            "the v1 lane contract; use direct NATS-backed lane contract fields"
+            "the v1 message contract"
         )
-    return LaneContract(
+    unknown = sorted(set(source) - MESSAGE_CONTRACT_FIELDS)
+    if unknown:
+        keys = ", ".join(unknown)
+        raise ValueError(
+            f"Lane contract {lane!r} unknown field(s) {keys} are not part of "
+            "the v1 message contract"
+        )
+    return MessageContract(
         lane=lane,
         schema_id=schema_id,
         message_types=_string_set(
             source.get("message_types"),
             field_name=f"Lane contract {lane!r} message_types",
         ),
-        delivery=_delivery_from_mapping(source.get("delivery"), lane=lane),
         allowed_sender_families=_optional_string_set(
             source.get("allowed_sender_families"),
             field_name="allowed_sender_families",
@@ -1299,20 +1118,7 @@ def _narrow_message_types(
     return override
 
 
-def _narrow_delivery(
-    base: DeliverySemantics | None,
-    override: DeliverySemantics | None,
-    *,
-    lane: str,
-) -> DeliverySemantics | None:
-    if override is None:
-        return base
-    if base is not None and override != base:
-        raise ValueError(f"Deployment lane contract {lane!r} must not change delivery")
-    return override
-
-
-def _narrow_lane_contract(base: LaneContract, override: LaneContract) -> LaneContract:
+def _narrow_lane_contract(base: MessageContract, override: MessageContract) -> MessageContract:
     if override.schema_id is not None and base.schema_id not in {
         None,
         override.schema_id,
@@ -1320,7 +1126,7 @@ def _narrow_lane_contract(base: LaneContract, override: LaneContract) -> LaneCon
         raise ValueError(
             f"Deployment lane contract {base.lane!r} must not change schema_id"
         )
-    return LaneContract(
+    return MessageContract(
         lane=base.lane,
         schema_id=base.schema_id or override.schema_id,
         message_types=_narrow_message_types(
@@ -1328,7 +1134,6 @@ def _narrow_lane_contract(base: LaneContract, override: LaneContract) -> LaneCon
             override.message_types,
             lane=base.lane,
         ),
-        delivery=_narrow_delivery(base.delivery, override.delivery, lane=base.lane),
         allowed_sender_families=_narrow_families(
             base.allowed_sender_families,
             override.allowed_sender_families,
@@ -1358,10 +1163,10 @@ def _build_lane_contract_registry(
     instance_specs: Sequence[ComponentInstanceSpec],
     *,
     document: ConfigDocument | None = None,
-    extra_contracts: LaneContractRegistry | Sequence[LaneContract] | None = None,
-) -> LaneContractRegistry:
-    contracts: dict[str, LaneContract] = dict(CORE_LANE_CONTRACTS)
-    if isinstance(extra_contracts, LaneContractRegistry):
+    extra_contracts: MessageContractRegistry | Sequence[MessageContract] | None = None,
+) -> MessageContractRegistry:
+    contracts: dict[str, MessageContract] = dict(CORE_LANE_CONTRACTS)
+    if isinstance(extra_contracts, MessageContractRegistry):
         provided_contracts = tuple(extra_contracts.contracts.values())
     else:
         provided_contracts = tuple(extra_contracts or ())
@@ -1410,13 +1215,13 @@ def _build_lane_contract_registry(
                 if existing is not None
                 else contract
             )
-    return LaneContractRegistry(contracts.values())
+    return MessageContractRegistry(contracts.values())
 
 
 def _lane_names_for_specs(
     instance_specs: Sequence[ComponentInstanceSpec],
     *,
-    lane_contracts: LaneContractRegistry | None = None,
+    lane_contracts: MessageContractRegistry | None = None,
 ) -> tuple[str, ...]:
     lane_names: set[str] = set(CORE_LANE_NAMES)
     for spec in instance_specs:
@@ -1433,7 +1238,7 @@ def _lane_names_for_specs(
 
 def _validate_component_lane_bindings(
     specs: Sequence[ComponentInstanceSpec],
-    lane_contracts: LaneContractRegistry,
+    lane_contracts: MessageContractRegistry,
 ) -> None:
     for spec in specs:
         spec.definition.validate_resolved_lane_bindings(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import TracebackType
 
 import anyio
@@ -15,11 +15,17 @@ from deckr.concord import (
 )
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
-    LaneContract,
-    LaneContractRegistry,
+    MessageContract,
+    MessageContractRegistry,
 )
-from deckr.contracts.messages import CORE_LANE_NAMES
-from deckr.lanes import Lane, LaneRegistry, LaneSubstrate
+from deckr.contracts.messages import CORE_LANE_NAMES, EndpointAddress
+from deckr.lanes import (
+    EndpointSession,
+    Lane,
+    LaneRegistry,
+    MessageBus,
+    endpoint_session,
+)
 from deckr.services.views import ServiceViewStore
 from deckr.substrates.nats import NatsSubstrate
 from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
@@ -29,19 +35,20 @@ class Deckr:
     def __init__(
         self,
         *,
-        lane_contracts: LaneContractRegistry | Sequence[LaneContract] = (),
+        lane_contracts: MessageContractRegistry | Sequence[MessageContract] = (),
         lanes: Sequence[str] = (),
-        substrate: LaneSubstrate | None = None,
+        message_bus: MessageBus | None = None,
     ) -> None:
         self._lane_contracts = self._build_lane_contracts(
             lane_contracts,
             lanes=lanes,
         )
-        self._substrate = substrate or NatsSubstrate(lane_contracts=self._lane_contracts)
+        self._message_bus = message_bus or NatsSubstrate(
+            lane_contracts=self._lane_contracts
+        )
         self._lanes = LaneRegistry.from_names(
             tuple(sorted(set(CORE_LANE_NAMES) | set(lanes))),
-            lane_contracts=self._lane_contracts,
-            substrate=self._substrate,
+            message_contracts=self._lane_contracts,
         )
         self._service_view_stores: dict[tuple[str, float | None], ServiceViewStore] = {}
         self._task_group_cm: AbstractAsyncContextManager[anyio.abc.TaskGroup] | None = (
@@ -52,7 +59,7 @@ class Deckr:
         self._concord: Concord | None = None
 
     @property
-    def lane_contracts(self) -> LaneContractRegistry:
+    def lane_contracts(self) -> MessageContractRegistry:
         return self._lane_contracts
 
     @property
@@ -65,6 +72,26 @@ class Deckr:
 
     def lane(self, name: str) -> Lane:
         return self._lanes.require(name)
+
+    @asynccontextmanager
+    async def endpoint(
+        self,
+        address: str | EndpointAddress,
+        *,
+        session_id: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> AsyncIterator[EndpointSession]:
+        session = endpoint_session(
+            address=address,
+            session_id=session_id,
+            metadata=metadata,
+            contracts=self._lane_contracts,
+            message_bus=self._message_bus,
+        )
+        try:
+            yield session
+        finally:
+            session.close()
 
     @property
     def beacon(self) -> Beacon:
@@ -79,9 +106,9 @@ class Deckr:
         return self._concord
 
     def kv_bucket(self, policy: KvBucketPolicy) -> NatsJsonKvBucket:
-        kv_bucket = getattr(self._substrate, "kv_bucket", None)
+        kv_bucket = getattr(self._message_bus, "kv_bucket", None)
         if kv_bucket is None:
-            raise RuntimeError("Deckr substrate does not provide NATS KV buckets")
+            raise RuntimeError("Deckr message bus does not provide NATS KV buckets")
         return kv_bucket(policy)
 
     def service_view_store(
@@ -112,15 +139,15 @@ class Deckr:
     async def __aenter__(self) -> Deckr:
         if self._task_group is not None:
             raise RuntimeError("Deckr runtime is already running")
-        connect = getattr(self._substrate, "connect", None)
+        connect = getattr(self._message_bus, "connect", None)
         if connect is not None:
             await connect()
         self._task_group_cm = anyio.create_task_group()
         self._task_group = await self._task_group_cm.__aenter__()
-        start = getattr(self._substrate, "start", None)
+        start = getattr(self._message_bus, "start", None)
         if start is not None:
             start(self._task_group)
-        kv_bucket = getattr(self._substrate, "kv_bucket", None)
+        kv_bucket = getattr(self._message_bus, "kv_bucket", None)
         if kv_bucket is not None:
             self._beacon = Beacon(kv_bucket(BEACON_ADVERTISEMENT_STORE_POLICY))
             self._beacon.start(self._task_group)
@@ -147,7 +174,7 @@ class Deckr:
         result = None
         if self._task_group_cm is not None:
             result = await self._task_group_cm.__aexit__(exc_type, exc, traceback)
-        aclose = getattr(self._substrate, "aclose", None)
+        aclose = getattr(self._message_bus, "aclose", None)
         if aclose is not None:
             await aclose()
         self._service_view_stores.clear()
@@ -159,12 +186,12 @@ class Deckr:
 
     @staticmethod
     def _build_lane_contracts(
-        lane_contracts: LaneContractRegistry | Sequence[LaneContract],
+        lane_contracts: MessageContractRegistry | Sequence[MessageContract],
         *,
         lanes: Sequence[str],
-    ) -> LaneContractRegistry:
+    ) -> MessageContractRegistry:
         contracts = dict(CORE_LANE_CONTRACTS)
-        if isinstance(lane_contracts, LaneContractRegistry):
+        if isinstance(lane_contracts, MessageContractRegistry):
             provided = tuple(lane_contracts.contracts.values())
         else:
             provided = tuple(lane_contracts)
@@ -204,4 +231,4 @@ class Deckr:
                 f"Extension lane contract(s) require explicit lanes: {names}"
             )
 
-        return LaneContractRegistry(contracts.values())
+        return MessageContractRegistry(contracts.values())

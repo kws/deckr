@@ -8,8 +8,8 @@ from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
-    LaneContract,
-    LaneContractRegistry,
+    MessageContract,
+    MessageContractRegistry,
 )
 from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.lanes import (
@@ -24,41 +24,41 @@ from deckr.substrates.nats_kv import KvBucketPolicy
 
 def memory_deckr(
     *,
-    lane_contracts: LaneContractRegistry | Sequence[LaneContract] = (),
+    lane_contracts: MessageContractRegistry | Sequence[MessageContract] = (),
     lanes: Sequence[str] = (),
 ) -> Deckr:
-    registry = _lane_contract_registry(lane_contracts)
+    registry = _message_contract_registry(lane_contracts)
     return Deckr(
         lane_contracts=registry,
         lanes=lanes,
-        substrate=MemoryLaneSubstrate(lane_contracts=registry),
+        message_bus=MemoryMessageBus(lane_contracts=registry),
     )
 
 
-def _lane_contract_registry(
-    lane_contracts: LaneContractRegistry | Sequence[LaneContract],
-) -> LaneContractRegistry:
-    if isinstance(lane_contracts, LaneContractRegistry):
+def _message_contract_registry(
+    lane_contracts: MessageContractRegistry | Sequence[MessageContract],
+) -> MessageContractRegistry:
+    if isinstance(lane_contracts, MessageContractRegistry):
         provided = tuple(lane_contracts.contracts.values())
     else:
         provided = tuple(lane_contracts)
     contracts = dict(CORE_LANE_CONTRACTS)
     contracts.update((contract.lane, contract) for contract in provided)
-    return LaneContractRegistry(contracts.values())
+    return MessageContractRegistry(contracts.values())
 
 
-class MemoryLaneSubstrate:
+class MemoryMessageBus:
     def __init__(
         self,
         *,
-        lane_contracts: LaneContractRegistry,
+        lane_contracts: MessageContractRegistry,
         buffer_size: int = 100,
     ) -> None:
         self._lane_contracts = lane_contracts
         self._buffer_size = buffer_size
         self._lock = anyio.Lock()
         self._subscribers: dict[
-            tuple[str, EndpointAddress],
+            tuple[str, EndpointAddress, str],
             set[anyio.abc.ObjectSendStream[DeckrMessage]],
         ] = {}
         self._kv_buckets: dict[str, MemoryJsonKvBucket] = {}
@@ -69,7 +69,11 @@ class MemoryLaneSubstrate:
         async with self._lock:
             subscribers = [
                 (endpoint, endpoint_session_id, tuple(streams))
-                for (lane, endpoint, endpoint_session_id), streams in self._subscribers.items()
+                for (
+                    lane,
+                    endpoint,
+                    endpoint_session_id,
+                ), streams in self._subscribers.items()
                 if lane == message.lane
             ]
         for endpoint, endpoint_session_id, streams in subscribers:

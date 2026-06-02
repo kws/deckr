@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from inspect import isawaitable
+from types import MappingProxyType
 from typing import Any, Protocol
 
 import anyio
 
-from deckr.contracts.lanes import LaneContract, LaneContractRegistry
+from deckr.contracts.lanes import MessageContract, MessageContractRegistry
 from deckr.contracts.messages import (
     ACTIONS_LANE,
     CORE_LANE_NAMES,
@@ -20,6 +22,7 @@ from deckr.contracts.messages import (
     EndpointTarget,
     EntitySubject,
     MessageTarget,
+    TraceContext,
     endpoint_target,
     message_is_expired,
     message_targets_endpoint,
@@ -29,11 +32,7 @@ from deckr.contracts.messages import (
 ReplyPredicate = Callable[[DeckrMessage], bool | Awaitable[bool]]
 
 
-class EndpointRegistrationConflict(RuntimeError):
-    """Raised when an endpoint address is already registered on a lane."""
-
-
-class LaneSubstrate(Protocol):
+class MessageBus(Protocol):
     async def publish(self, message: DeckrMessage) -> None: ...
 
     async def publish_reply(
@@ -60,135 +59,108 @@ class LaneSubstrate(Protocol):
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]: ...
 
 
-class Lane:
+@dataclass(frozen=True, slots=True)
+class EndpointSessionInfo:
+    address: EndpointAddress
+    session_id: str
+    metadata: Mapping[str, str]
+
+
+class EndpointSession:
     def __init__(
         self,
         *,
-        name: str,
-        contract: LaneContract,
-        substrate: LaneSubstrate,
-    ) -> None:
-        self.name = name
-        self.contract = contract
-        self._substrate = substrate
-        self._registration_lock = anyio.Lock()
-        self._registered_endpoints: set[EndpointAddress] = set()
-
-    @asynccontextmanager
-    async def register_endpoint(
-        self,
-        endpoint: str | EndpointAddress,
-        *,
-        metadata: Mapping[str, str] | None = None,
-        task_group: anyio.abc.TaskGroup | None = None,
-    ) -> AsyncIterator[RegisteredEndpointLane]:
-        parsed = parse_endpoint_address(endpoint)
-        registered = RegisteredEndpointLane(
-            lane=self,
-            endpoint=parsed,
-            session_id=str(uuid.uuid4()),
-            metadata=metadata or {},
-        )
-        async with self._registration_lock:
-            if parsed in self._registered_endpoints:
-                raise EndpointRegistrationConflict(
-                    f"Endpoint {parsed} is already registered on lane {self.name!r}"
-                )
-            self._registered_endpoints.add(parsed)
-        try:
-            del task_group
-            yield registered
-        finally:
-            registered._closed = True
-            async with self._registration_lock:
-                self._registered_endpoints.discard(parsed)
-
-
-class RegisteredEndpointLane:
-    def __init__(
-        self,
-        *,
-        lane: Lane,
-        endpoint: EndpointAddress,
+        address: EndpointAddress,
         session_id: str,
         metadata: Mapping[str, str],
+        contracts: MessageContractRegistry,
+        message_bus: MessageBus,
     ) -> None:
-        self.lane = lane
-        self.endpoint = endpoint
-        self.session_id = session_id
-        self._metadata = dict(metadata)
+        self._info = EndpointSessionInfo(
+            address=address,
+            session_id=session_id,
+            metadata=MappingProxyType(dict(metadata)),
+        )
+        self._contracts = contracts
+        self._message_bus = message_bus
         self._closed = False
+
+    @property
+    def info(self) -> EndpointSessionInfo:
+        return self._info
+
+    @property
+    def address(self) -> EndpointAddress:
+        return self._info.address
+
+    @property
+    def session_id(self) -> str:
+        return self._info.session_id
+
+    @property
+    def metadata(self) -> Mapping[str, str]:
+        return dict(self._info.metadata)
 
     async def send(
         self,
         *,
+        lane: str,
         recipient: str | EndpointAddress | MessageTarget,
-        recipient_session_id: str | None = None,
         subject: EntitySubject,
         message_type: str,
         body: Mapping[str, Any],
+        recipient_session_id: str | None = None,
         ttl_ms: int | None = None,
         causation_id: str | None = None,
+        trace: TraceContext | None = None,
     ) -> DeckrMessage:
-        message = DeckrMessage(
-            lane=self.lane.name,
-            messageType=message_type,
-            sender=self.endpoint,
-            senderSessionId=self.session_id,
-            recipient=_coerce_target(recipient),
-            recipientSessionId=recipient_session_id,
+        self._ensure_active()
+        message = self._message(
+            lane=lane,
+            recipient=recipient,
+            recipient_session_id=recipient_session_id,
             subject=subject,
-            ttlMs=ttl_ms,
-            causationId=causation_id,
+            message_type=message_type,
             body=body,
+            ttl_ms=ttl_ms,
+            causation_id=causation_id,
+            trace=trace,
         )
-        await self._publish_current_message(message)
-        return message
-
-    async def publish(self, message: DeckrMessage) -> DeckrMessage:
-        """Publish a prebuilt envelope through this endpoint-bound lane."""
-        if message.sender != self.endpoint:
-            raise ValueError(
-                f"Message sender {message.sender} does not match bound endpoint "
-                f"{self.endpoint}"
-            )
-        if message.sender_session_id != self.session_id:
-            raise ValueError(
-                f"Message senderSessionId {message.sender_session_id!r} does not "
-                f"match bound endpoint session {self.session_id!r}"
-            )
-        await self._publish_current_message(message)
+        validate_message_for_contract(message, self._contract_for(lane))
+        await self._message_bus.publish(message)
         return message
 
     async def request(
         self,
         *,
+        lane: str,
         recipient: str | EndpointAddress | MessageTarget,
-        recipient_session_id: str | None = None,
         subject: EntitySubject,
         message_type: str,
         body: Mapping[str, Any],
+        recipient_session_id: str | None = None,
         timeout: float = 2.0,
         accept: ReplyPredicate | None = None,
         ttl_ms: int | None = None,
         causation_id: str | None = None,
+        trace: TraceContext | None = None,
     ) -> DeckrMessage:
+        self._ensure_active()
         if timeout <= 0:
             raise ValueError("timeout must be greater than zero")
-        message = DeckrMessage(
-            lane=self.lane.name,
-            messageType=message_type,
-            sender=self.endpoint,
-            senderSessionId=self.session_id,
-            recipient=_coerce_target(recipient),
-            recipientSessionId=recipient_session_id,
+        message = self._message(
+            lane=lane,
+            recipient=recipient,
+            recipient_session_id=recipient_session_id,
             subject=subject,
-            ttlMs=ttl_ms,
-            causationId=causation_id,
+            message_type=message_type,
             body=body,
+            ttl_ms=ttl_ms,
+            causation_id=causation_id,
+            trace=trace,
         )
-        validate_message_for_contract(message, self.lane.contract)
-        return await self.lane._substrate.request(
+        validate_message_for_contract(message, self._contract_for(lane))
+        return await self._message_bus.request(
             message,
             timeout=timeout,
             accept=accept,
@@ -202,43 +174,87 @@ class RegisteredEndpointLane:
         body: Mapping[str, Any],
         subject: EntitySubject | None = None,
         causation_id: str | None = None,
+        trace: TraceContext | None = None,
     ) -> DeckrMessage:
+        self._ensure_active()
         reply = DeckrMessage(
             lane=request.lane,
             messageType=message_type,
-            sender=self.endpoint,
+            sender=self.address,
             senderSessionId=self.session_id,
             recipient=endpoint_target(request.sender),
             recipientSessionId=request.sender_session_id,
             subject=subject or request.subject,
             inReplyTo=request.message_id,
             causationId=causation_id,
+            trace=trace,
             body=body,
         )
-        validate_message_for_contract(reply, self.lane.contract)
-        await self.lane._substrate.publish_reply(reply, request=request)
+        validate_message_for_contract(reply, self._contract_for(request.lane))
+        await self._message_bus.publish_reply(reply, request=request)
         return reply
 
     def subscribe(
         self,
+        lane: str,
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]:
         self._ensure_active()
-        return self.lane._substrate.subscribe(
-            self.lane.name,
-            self.endpoint,
+        self._contract_for(lane)
+        return self._message_bus.subscribe(
+            lane,
+            self.address,
             endpoint_session_id=self.session_id,
         )
 
-    async def _publish_current_message(self, message: DeckrMessage) -> None:
-        validate_message_for_contract(message, self.lane.contract)
-        self._ensure_active()
-        await self.lane._substrate.publish(message)
+    def close(self) -> None:
+        self._closed = True
+
+    def _message(
+        self,
+        *,
+        lane: str,
+        recipient: str | EndpointAddress | MessageTarget,
+        recipient_session_id: str | None,
+        subject: EntitySubject,
+        message_type: str,
+        body: Mapping[str, Any],
+        ttl_ms: int | None,
+        causation_id: str | None,
+        trace: TraceContext | None,
+    ) -> DeckrMessage:
+        return DeckrMessage(
+            lane=lane,
+            messageType=message_type,
+            sender=self.address,
+            senderSessionId=self.session_id,
+            recipient=_coerce_target(recipient),
+            recipientSessionId=recipient_session_id,
+            subject=subject,
+            ttlMs=ttl_ms,
+            causationId=causation_id,
+            trace=trace,
+            body=body,
+        )
+
+    def _contract_for(self, lane: str) -> MessageContract:
+        return self._contracts.contract_for(lane)
 
     def _ensure_active(self) -> None:
         if self._closed:
-            raise RuntimeError(
-                f"Endpoint {self.endpoint} on lane {self.lane.name!r} is closed"
-            )
+            raise RuntimeError(f"Endpoint session {self.address} is closed")
+
+
+class Lane:
+    """A stable DeckrMessage namespace and message contract selector."""
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        contract: MessageContract,
+    ) -> None:
+        self.name = name
+        self.contract = contract
 
 
 class LaneRegistry:
@@ -250,8 +266,7 @@ class LaneRegistry:
         cls,
         lane_names: Sequence[str],
         *,
-        lane_contracts: LaneContractRegistry,
-        substrate: LaneSubstrate,
+        message_contracts: MessageContractRegistry,
     ) -> LaneRegistry:
         names = set(CORE_LANE_NAMES)
         names.update(lane_names)
@@ -259,8 +274,7 @@ class LaneRegistry:
             {
                 name: Lane(
                     name=name,
-                    contract=lane_contracts.contract_for(name),
-                    substrate=substrate,
+                    contract=message_contracts.contract_for(name),
                 )
                 for name in sorted(names)
             }
@@ -280,9 +294,30 @@ class LaneRegistry:
         return tuple(sorted(self._lanes))
 
 
+def new_endpoint_session_id() -> str:
+    return str(uuid.uuid4())
+
+
+def endpoint_session(
+    *,
+    address: str | EndpointAddress,
+    session_id: str | None,
+    metadata: Mapping[str, str] | None,
+    contracts: MessageContractRegistry,
+    message_bus: MessageBus,
+) -> EndpointSession:
+    return EndpointSession(
+        address=parse_endpoint_address(address),
+        session_id=session_id or new_endpoint_session_id(),
+        metadata=metadata or {},
+        contracts=contracts,
+        message_bus=message_bus,
+    )
+
+
 def validate_message_for_contract(
     message: DeckrMessage,
-    contract: LaneContract,
+    contract: MessageContract,
 ) -> None:
     if message.lane != contract.lane:
         raise ValueError(
@@ -310,6 +345,8 @@ def validate_message_for_contract(
             lane=message.lane,
         )
         return
+    if message.recipient_session_id is not None:
+        raise ValueError("recipientSessionId is only valid for endpoint recipients")
     expected_family = contract.broadcast_targets.get(recipient.scope)
     if expected_family != recipient.endpoint_family:
         raise ValueError(
@@ -328,7 +365,7 @@ def message_is_deliverable(
     *,
     endpoint: EndpointAddress,
     endpoint_session_id: str,
-    contract: LaneContract,
+    contract: MessageContract,
 ) -> bool:
     if message_is_expired(message):
         return False
@@ -367,7 +404,7 @@ async def reply_is_accepted(
 def _validate_recipient_family(
     family: str,
     *,
-    contract: LaneContract,
+    contract: MessageContract,
     lane: str,
 ) -> None:
     if contract.allowed_recipient_families is None:

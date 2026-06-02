@@ -11,7 +11,7 @@
         "Deckr-Sender-Session": "provider-session"
       },
       "id": "actions.settings_request",
-      "subject": "deckr.lane.actions.action_provider.clock-main"
+      "subject": "deckr.msg.actions.to.controller.controller-main"
     }
   ],
   "schema": "dev.deckr.vector.nats_lane.v1"

@@ -61,10 +61,11 @@ Concord contracts and participant tokens.
 ## Lane Subjects
 
 Deckr lane messages are canonical `DeckrMessage` envelopes. The NATS substrate
-publishes them under a sender-hinted subject:
+publishes them under recipient-hinted subjects:
 
 ```text
-deckr.lane.<lane-token>.<sender-family-token>.<sender-id-token>
+deckr.msg.<lane-token>.to.<recipient-family-token>.<recipient-id-token>
+deckr.msg.<lane-token>.broadcast.<scope-token>.<endpoint-family-token>
 ```
 
 Tokens use the shared key-token rules in `deckr.contracts.keys`:
@@ -74,15 +75,18 @@ Tokens use the shared key-token rules in `deckr.contracts.keys`:
 
 The NATS subject is an optimization for subscription fan-out. The payload is
 authoritative, and the substrate validates the subject and headers against the
-envelope when reading from NATS.
+envelope when reading from NATS. Endpoint subscriptions attach only to the
+endpoint's direct subject and the matching broadcast-family subject for each
+lane.
 
 ## Lane Delivery
 
-Components acquire lane handles with:
+Components acquire endpoint sessions with:
 
 ```python
-async with deckr.lane("actions").register_endpoint("action_provider:clock") as lane:
-    await lane.send(
+async with deckr.endpoint("action_provider:clock") as endpoint:
+    await endpoint.send(
+        lane="actions",
         recipient="controller:main",
         subject=entity_subject("settings", contextId="ctx"),
         message_type="settingsRequest",
@@ -90,9 +94,10 @@ async with deckr.lane("actions").register_endpoint("action_provider:clock") as l
     )
 ```
 
-The lane handle stamps `sender` and `senderSessionId`, validates the lane
-contract, and publishes the envelope. Subscribers receive messages only when the
-envelope recipient matches the local endpoint/session and lane contract.
+The endpoint session stamps `sender` and `senderSessionId`, validates the message
+contract for the requested lane, and publishes the envelope. Subscribers receive
+messages only when the envelope recipient matches the local endpoint/session and
+message contract.
 
 Message lanes remain ordinary command/data messaging. Beacon and Concord replace
 authority for discovery and agreements; they do not replace action messages,

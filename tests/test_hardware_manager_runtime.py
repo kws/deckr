@@ -3,7 +3,7 @@ from __future__ import annotations
 import anyio
 import pytest
 from descriptor_fixtures import stream_deck_bitmap_grid
-from memory_lane_substrate import memory_deckr
+from memory_message_bus import memory_deckr
 
 import deckr.hardware.messages as hw_messages
 from deckr.beacon import (
@@ -41,7 +41,7 @@ def _descriptor(device_id: str = "stream-deck-mini") -> DeviceDescriptor:
 def _beacon(deckr) -> Beacon:
     beacon = getattr(deckr, "_test_beacon", None)
     if beacon is None:
-        beacon = Beacon(deckr._substrate.kv_bucket(BEACON_ADVERTISEMENT_STORE_POLICY))
+        beacon = Beacon(deckr._message_bus.kv_bucket(BEACON_ADVERTISEMENT_STORE_POLICY))
         deckr._test_beacon = beacon
     return beacon
 
@@ -50,9 +50,9 @@ def _concord(deckr) -> Concord:
     concord = getattr(deckr, "_test_concord", None)
     if concord is None:
         concord = Concord(
-            deckr._substrate.kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY),
-            deckr._substrate.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
-            deckr._substrate.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY),
+            deckr._message_bus.kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY),
+            deckr._message_bus.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
+            deckr._message_bus.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY),
         )
         deckr._test_concord = concord
     return concord
@@ -65,8 +65,7 @@ async def _runtime(
     reset_handler=None,
 ):
     deckr = memory_deckr()
-    lane = deckr.lane("hardware_messages")
-    endpoint_cm = lane.register_endpoint(hardware_manager_address("manager-main"))
+    endpoint_cm = deckr.endpoint(hardware_manager_address("manager-main"))
     endpoint = await endpoint_cm.__aenter__()
     runtime = HardwareManagerRuntime(
         endpoint=endpoint,
@@ -148,9 +147,7 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         return True
 
     deckr, endpoint_cm, runtime = await _runtime(command_handler=command_handler)
-    controller_cm = deckr.lane("hardware_messages").register_endpoint(
-        controller_address("controller-main")
-    )
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
     controller_endpoint = await controller_cm.__aenter__()
     concord = _concord(deckr)
     try:
@@ -159,7 +156,7 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         contract = await _claim(runtime, concord)
         await concord._attach(
             contract,
-            controller_endpoint.endpoint,
+            controller_endpoint.address,
             controller_endpoint.session_id,
         )
 
@@ -176,7 +173,7 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         assert capacity.claimed_instances == 1
         assert capacity.available_instances == 0
 
-        async with controller_endpoint.subscribe() as stream:
+        async with controller_endpoint.subscribe("hardware_messages") as stream:
             await runtime.handle_hardware_message(
                 hw_messages.control_input_message(
                     manager_id="manager-main",
@@ -191,7 +188,7 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
             )
             with anyio.fail_after(1):
                 routed = await stream.receive()
-        assert routed.recipient.endpoint == controller_endpoint.endpoint
+        assert routed.recipient.endpoint == controller_endpoint.address
         assert routed.recipient_session_id == controller_endpoint.session_id
 
         command = hw_messages.control_command_message(
@@ -230,9 +227,7 @@ async def test_noop_claim_reconcile_does_not_refresh_hardware_beacon() -> None:
 
 async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
-    controller_cm = deckr.lane("hardware_messages").register_endpoint(
-        controller_address("controller-main")
-    )
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
     controller_endpoint = await controller_cm.__aenter__()
     concord = _concord(deckr)
     try:
@@ -241,7 +236,7 @@ async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None
         contract = await _claim(runtime, concord)
         await concord._attach(
             contract,
-            controller_endpoint.endpoint,
+            controller_endpoint.address,
             controller_endpoint.session_id,
         )
 
@@ -260,9 +255,7 @@ async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None
 
 async def test_unclaimed_commands_are_rejected() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
-    controller_cm = deckr.lane("hardware_messages").register_endpoint(
-        controller_address("controller-main")
-    )
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
     controller_endpoint = await controller_cm.__aenter__()
     try:
         await runtime.publish_advertisement()
@@ -276,7 +269,7 @@ async def test_unclaimed_commands_are_rejected() -> None:
             capability_id="raster.bitmap",
             command_type="clear",
         )
-        async with controller_endpoint.subscribe() as stream:
+        async with controller_endpoint.subscribe("hardware_messages") as stream:
             assert not await runtime.handle_command(command)
             with anyio.fail_after(1):
                 rejected = await stream.receive()
@@ -296,9 +289,7 @@ async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
         reset_devices.append(device_id)
 
     deckr, endpoint_cm, runtime = await _runtime(reset_handler=reset_handler)
-    controller_cm = deckr.lane("hardware_messages").register_endpoint(
-        controller_address("controller-main")
-    )
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
     controller_endpoint = await controller_cm.__aenter__()
     concord = _concord(deckr)
     try:
@@ -307,13 +298,13 @@ async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
         contract = await _claim(runtime, concord)
         await concord._attach(
             contract,
-            controller_endpoint.endpoint,
+            controller_endpoint.address,
             controller_endpoint.session_id,
         )
         await runtime.reconcile_claims(reason="test live")
         assert len(runtime.live_claims) == 1
 
-        await concord._cancel(contract, controller_endpoint.endpoint, reason="test")
+        await concord._cancel(contract, controller_endpoint.address, reason="test")
         await runtime.reconcile_claims(reason="test cancel")
         assert reset_devices == ["stream-deck-mini"]
         assert runtime.live_claims == ()
@@ -331,9 +322,7 @@ async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
 
 async def test_remove_device_cancels_live_claim_contract_without_lane_event() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
-    controller_cm = deckr.lane("hardware_messages").register_endpoint(
-        controller_address("controller-main")
-    )
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
     controller_endpoint = await controller_cm.__aenter__()
     concord = _concord(deckr)
     try:
@@ -342,7 +331,7 @@ async def test_remove_device_cancels_live_claim_contract_without_lane_event() ->
         contract = await _claim(runtime, concord)
         await concord._attach(
             contract,
-            controller_endpoint.endpoint,
+            controller_endpoint.address,
             controller_endpoint.session_id,
         )
         await runtime.reconcile_claims(reason="test live")
@@ -350,7 +339,7 @@ async def test_remove_device_cancels_live_claim_contract_without_lane_event() ->
             await concord._validate(contract)
         ).status == ContractValidityStatus.VALID
 
-        async with controller_endpoint.subscribe() as stream:
+        async with controller_endpoint.subscribe("hardware_messages") as stream:
             await runtime.remove_device("stream-deck-mini", reason="disconnected")
             with anyio.move_on_after(0.05) as scope:
                 await stream.receive()
@@ -373,9 +362,7 @@ async def test_remove_device_cancels_live_claim_contract_without_lane_event() ->
 
 async def test_replace_devices_cancels_live_claim_contract_for_removed_device() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
-    controller_cm = deckr.lane("hardware_messages").register_endpoint(
-        controller_address("controller-main")
-    )
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
     controller_endpoint = await controller_cm.__aenter__()
     concord = _concord(deckr)
     try:
@@ -384,7 +371,7 @@ async def test_replace_devices_cancels_live_claim_contract_for_removed_device() 
         contract = await _claim(runtime, concord)
         await concord._attach(
             contract,
-            controller_endpoint.endpoint,
+            controller_endpoint.address,
             controller_endpoint.session_id,
         )
         await runtime.reconcile_claims(reason="test live")
@@ -406,9 +393,8 @@ async def test_replace_devices_cancels_live_claim_contract_for_removed_device() 
 
 async def test_competing_claims_choose_existing_or_lowest_contract_key() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
-    lane = deckr.lane("hardware_messages")
-    controller_a_cm = lane.register_endpoint(controller_address("controller-a"))
-    controller_b_cm = lane.register_endpoint(controller_address("controller-b"))
+    controller_a_cm = deckr.endpoint(controller_address("controller-a"))
+    controller_b_cm = deckr.endpoint(controller_address("controller-b"))
     controller_a = await controller_a_cm.__aenter__()
     controller_b = await controller_b_cm.__aenter__()
     concord = _concord(deckr)
@@ -427,8 +413,8 @@ async def test_competing_claims_choose_existing_or_lowest_contract_key() -> None
             contract_id="claim-a",
             controller_id="controller-a",
         )
-        await concord._attach(claim_b, controller_b.endpoint, controller_b.session_id)
-        await concord._attach(claim_a, controller_a.endpoint, controller_a.session_id)
+        await concord._attach(claim_b, controller_b.address, controller_b.session_id)
+        await concord._attach(claim_a, controller_a.address, controller_a.session_id)
 
         await runtime.reconcile_claims(reason="test competing")
         assert [claim.terms.claim_id for claim in runtime.live_claims] == ["claim-a"]

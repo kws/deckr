@@ -33,8 +33,8 @@ The two external realities shaping this architecture are:
 
 The shared APIs and runtime primitives for this architecture belong in `deckr`.
 That includes the core message specifications, endpoint identity rules,
-lane-level delivery metadata, and wire-safe contracts that move across event
-lanes and across the distributed lane substrate.
+message contract metadata, and wire-safe contracts that move across event lanes
+and across the distributed message bus.
 
 ## Architectural Model
 
@@ -118,10 +118,10 @@ The current core lane set includes:
 - `hardware_messages`
 - `services`
 
-The distributed lane substrate is NATS. This document owns the generic component
+The distributed message bus is NATS. This document owns the generic component
 and lane model. Beacon/Concord protocol semantics are specified in
 [`beacon-concord.md`](beacon-concord.md). The NATS bus specification owns
-endpoint-bound lane handles, recipient filtering, Beacon/Concord KV stores,
+endpoint sessions, recipient filtering, Beacon/Concord KV stores,
 broker-resource ownership, and broker diagnostics in [`nats-bus.md`](nats-bus.md).
 The v1 device, control, and capability descriptor contracts are implemented in
 `deckr.hardware.descriptors`.
@@ -149,22 +149,22 @@ Named event lanes are logical buses, not process-local implementation details.
 A lane may exist:
 
 - locally and in-memory within one process
-- across process boundaries via the distributed lane substrate
-- across host or network boundaries via the distributed lane substrate
+- across process boundaries via the distributed message bus
+- across host or network boundaries via the distributed message bus
 
-The v1 distributed lane substrate is NATS. The old home-grown WebSocket and
+The v1 distributed message bus is NATS. The old home-grown WebSocket and
 MQTT lane transports are removed architecture, not parallel runtime paths.
 
 The shared lane implementation is the application-facing bus for one Deckr
-runtime. Components use `register_endpoint(...)` to acquire endpoint-session lane
-handles so the bus layer can stamp envelope senders, fence sessions, and filter
-recipients centrally.
+runtime. Components use `Deckr.endpoint(...)` to acquire endpoint sessions so the
+bus layer can stamp envelope senders, fence sessions, and filter recipients
+centrally.
 
 NATS may provide broker fan-out, request/reply inboxes, queue groups, ops-only
 Services, JetStream, KV watches, TTL, duplicate windows, WebSocket/MQTT-facing
 network edges, and leaf topology below Deckr. Application components still use
-Deckr lane handles, Deckr envelopes, Deckr endpoint addresses, and Deckr
-subjects.
+Deckr endpoint sessions, lane views, Deckr envelopes, Deckr endpoint addresses,
+and Deckr subjects.
 
 Adapter-private WebSocket or MQTT protocols may still exist behind action
 provider, hardware, or third-party protocol boundaries. They are not Deckr lane
@@ -178,8 +178,8 @@ lanes usable.
 It includes:
 
 - the lane registry
-- one application-facing event bus per lane
-- endpoint-bound lane handles
+- one application-facing message bus
+- endpoint sessions
 - recipient filtering for local endpoints
 - managed Beacon discovery backed by a materialized KV view
 - managed Concord agreements backed by materialized KV views
@@ -208,15 +208,17 @@ async with Deckr() as deckr:
     actions = deckr.lane("actions")
     hardware_messages = deckr.lane("hardware_messages")
     services = deckr.lane("services")
+    async with deckr.endpoint("controller:main") as endpoint:
+        ...
 ```
 
 That object is a runtime host helper around the managed lane runtime. It should:
 
 - create the core lane set by default
 - accept extension lane contracts explicitly
-- expose lane handles through one obvious API such as `lane(name)` or
+- expose lane contract views through one obvious API such as `lane(name)` or
   `lanes.require(name)`
-- expose endpoint-bound lane handles, recipient filtering diagnostics, and
+- expose endpoint sessions and recipient filtering diagnostics
 - managed protocol runtimes such as `beacon`
 - expose explicit KV buckets for protocol-owned state
 - start required generic bus infrastructure exactly once
@@ -248,18 +250,18 @@ These modes are deployment shapes, not different architectures.
   - may use lane messaging directly, start components manually, or use component
     discovery
 - skinny action provider runtime
-  - runs only the managed lane runtime, an action provider runtime, and the lane
-    substrate
+  - runs only the managed lane runtime, an action provider runtime, and the
+    message bus
     needed to reach a controller domain
   - does not require a local controller or hardware manager
 - remote hardware manager runtime
   - runs only the managed lane runtime, one or more hardware manager components,
-    and the lane substrate needed to reach a controller domain
+    and the message bus needed to reach a controller domain
   - does not require a local controller or action provider runtime
 
 Every mode must use the same managed lane runtime, lane contracts,
-endpoint-bound send/subscribe API, recipient filtering, protocol-store behavior,
-component model, and substrate binding rules. A "skinny" runtime omits
+endpoint-session send/subscribe API, recipient filtering, protocol-store behavior,
+component model, and message bus binding rules. A "skinny" runtime omits
 components; it does not get a thinner protocol, a different bus, or a
 role-specific discovery path.
 
@@ -285,10 +287,10 @@ valid.
 
 Parent runtimes that register resources and pass them into hosted children must
 keep those resources alive until all children using them have stopped. This is
-especially important for registered endpoint lane handles: a parent must close
-or withdraw an endpoint only after hosted child cleanup that may publish on that
-endpoint has completed. Do not hide shutdown ordering bugs by catching and
-ignoring "endpoint closed" failures during cleanup; fix the ownership order.
+especially important for endpoint sessions: a parent must close or withdraw an
+endpoint only after hosted child cleanup that may publish on that endpoint has
+completed. Do not hide shutdown ordering bugs by catching and ignoring "endpoint
+closed" failures during cleanup; fix the ownership order.
 
 The bundled launcher may expose convenient presets or examples for these modes,
 but presets must be expressed as ordinary component composition and explicit
@@ -305,7 +307,7 @@ AnyIO is part of the Python hosting contract for:
 - component lifecycle and `RunContext`
 - task groups, cancellation, and stop signals
 - in-process lane fan-out
-- endpoint-bound lane subscription streams
+- endpoint-session lane subscription streams
 - local backpressure and timeout behavior
 
 Python hosts should either run Deckr inside an existing AnyIO-compatible async
@@ -430,7 +432,7 @@ The shared runtime context may provide generic runtime-host metadata such as:
 - `instance_id`
 - resolved configuration
 - `base_dir`
-- named lane handles
+- named lane contract views
 
 That runtime context must not become a second general-purpose dependency
 injection system.
@@ -821,15 +823,15 @@ Removed targets include the home-grown WebSocket/MQTT lane transports,
 trusted-bridge configuration. Those concepts should not be kept alive as a
 parallel lane transport architecture.
 
-The built-in NATS lane substrate is configured as runtime infrastructure, for
+The built-in NATS message bus is configured as runtime infrastructure, for
 example through the bundled launcher's `[deckr.runtime.substrate]` table. It is
 not discovered, instantiated, or supervised as a Deckr component. The runtime
 host may either connect to an external broker or supervise a private local
 `nats-server` child process through `SupervisedNatsSubstrate`; both forms expose
 the same NATS-backed lane and protocol-store contract. A component or external
 adapter may still use WebSocket, MQTT, USB, HID, HTTP, vendor framing, or even a
-substrate-like package name at a real protocol boundary, but that does not make
-it the generic Deckr lane substrate.
+bus-like package name at a real protocol boundary, but that does not make it the
+generic Deckr message bus.
 
 The live design is:
 
@@ -837,9 +839,9 @@ The live design is:
 - NATS carries distributed lane traffic.
 - KV carries Beacon advertisements, Concord contracts, Concord participant
   tokens, and owner-qualified service-view/private buckets where appropriate.
-- Lane listeners register with their Deckr endpoint address.
-- The lane layer stamps envelope senders and filters received envelopes for the
-  local endpoint before application code sees them.
+- Endpoint sessions subscribe with their Deckr endpoint address.
+- The endpoint session layer stamps envelope senders and filters received
+  envelopes for the local endpoint before application code sees them.
 - NATS subject, reply inbox, queue group, ops-only Service, JetStream, and KV
   concepts remain substrate mechanics below the Deckr lane contract.
 
@@ -935,9 +937,9 @@ to understand component-specific settings.
 - Core lane names belong in `deckr`.
 - Lanes are logical runtime contracts and may be transported across transport
   boundaries.
-- The v1 distributed lane substrate is NATS.
+- The v1 distributed message bus is NATS.
 - Home-grown WebSocket/MQTT Deckr lane transports are removed runtime paths.
-- Shared lane infrastructure owns the application-facing endpoint-bound
+- Shared lane infrastructure owns the application-facing endpoint-session
   send/subscribe/fan-out API.
 - Required lane infrastructure must not depend on the bundled Deckr launcher.
 - Core bus infrastructure is not an auto-discovered component.
@@ -952,7 +954,7 @@ to understand component-specific settings.
   message contract.
 - NATS must not replace Deckr lanes, envelopes, endpoint addresses, subjects,
   Beacon, Concord, or component lifecycle semantics.
-- Substrate-local identity must not leak into application-level addressing or
+- Message-bus-local identity must not leak into application-level addressing or
   delivery.
 - Endpoint identity is distinct from component lifecycle identity.
 - Endpoint addresses are distinct from the domain entity subjects carried by
@@ -963,14 +965,14 @@ to understand component-specific settings.
 - Components parse only their own resolved configuration mapping.
 - Installed component definitions do not activate components.
 - The runtime host does not provide a generic component `enabled` flag.
-- Runtime context may carry only generic runtime-host metadata and lane handles
-  as a generic primitive.
+- Runtime context may carry only generic runtime-host metadata and lane contract
+  views as a generic primitive.
 - External protocol adapters may be components, but they must not preserve the
   old generic transport-route model.
-- Distributed lane substrate configuration must be explicit runtime
+- Distributed message bus configuration must be explicit runtime
   infrastructure, not component discovery.
-- The runtime host must not infer lane bindings from substrate kind, role name, or
-  config path.
+- The runtime host must not infer lane bindings from message bus kind, role name,
+  or config path.
 - Implicit parent-prefix inheritance is forbidden.
 - Type identity and instance identity are separate.
 - Lifecycle identity and protocol address identity are separate.

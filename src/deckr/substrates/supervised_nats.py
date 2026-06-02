@@ -17,7 +17,7 @@ from typing import Any
 
 import anyio
 
-from deckr.contracts.lanes import LaneContractRegistry
+from deckr.contracts.lanes import MessageContractRegistry
 from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.lanes import ReplyPredicate
 from deckr.substrates.nats import NatsSubstrate
@@ -401,7 +401,7 @@ class SupervisedNatsSubstrate:
     def __init__(
         self,
         *,
-        lane_contracts: LaneContractRegistry,
+        lane_contracts: MessageContractRegistry,
         supervisor: NatsServerSupervisor | None = None,
         server_path: Path | str | None = None,
         minimum_server_version: str = _DEFAULT_MINIMUM_VERSION,

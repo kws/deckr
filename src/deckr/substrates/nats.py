@@ -8,9 +8,10 @@ from contextlib import asynccontextmanager
 import anyio
 from pydantic import ValidationError
 
-from deckr.contracts.keys import encode_key_token
-from deckr.contracts.lanes import LaneContractRegistry
+from deckr.contracts.keys import decode_key_token, encode_key_token
+from deckr.contracts.lanes import MessageContractRegistry
 from deckr.contracts.messages import (
+    BroadcastTarget,
     DeckrMessage,
     EndpointAddress,
     EndpointTarget,
@@ -25,7 +26,7 @@ from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
 
 logger = logging.getLogger(__name__)
 
-_LANE_PREFIX = "deckr.lane"
+_LANE_PREFIX = "deckr.msg"
 
 
 class NatsSubstrate:
@@ -34,7 +35,7 @@ class NatsSubstrate:
         *,
         url: str = "nats://127.0.0.1:4222",
         auth_token: str | None = None,
-        lane_contracts: LaneContractRegistry,
+        lane_contracts: MessageContractRegistry,
         buffer_size: int = 100,
     ) -> None:
         self.url = url
@@ -129,7 +130,7 @@ class NatsSubstrate:
             max_buffer_size=self._buffer_size
         )
         contract = self._lane_contracts.contract_for(lane)
-        subscription = None
+        subscriptions = []
         subscriber_closed = False
 
         async def close_subscriber_for_backpressure() -> None:
@@ -145,7 +146,7 @@ class NatsSubstrate:
                 endpoint_session_id,
             )
             await send.aclose()
-            if subscription is not None:
+            for subscription in tuple(subscriptions):
                 try:
                     await subscription.unsubscribe()
                 except Exception:
@@ -157,6 +158,7 @@ class NatsSubstrate:
                         endpoint_session_id,
                         exc_info=True,
                     )
+            subscriptions.clear()
 
         async def callback(msg) -> None:
             try:
@@ -178,14 +180,35 @@ class NatsSubstrate:
             except Exception:
                 logger.exception("Dropped invalid NATS Deckr lane message")
 
-        subscription = await self._nc.subscribe(
-            f"{_LANE_PREFIX}.{encode_key_token(lane)}.>",
-            cb=callback,
+        lane_token = encode_key_token(lane)
+        endpoint_family_token = encode_key_token(endpoint.family)
+        direct_subject = ".".join(
+            (
+                _LANE_PREFIX,
+                lane_token,
+                "to",
+                endpoint_family_token,
+                encode_key_token(endpoint.endpoint_id),
+            )
         )
+        broadcast_subject = ".".join(
+            (
+                _LANE_PREFIX,
+                lane_token,
+                "broadcast",
+                "*",
+                endpoint_family_token,
+            )
+        )
+        subscriptions = [
+            await self._nc.subscribe(direct_subject, cb=callback),
+            await self._nc.subscribe(broadcast_subject, cb=callback),
+        ]
         try:
             yield receive
         finally:
-            await subscription.unsubscribe()
+            for subscription in tuple(subscriptions):
+                await subscription.unsubscribe()
             await send.aclose()
             await receive.aclose()
 
@@ -223,12 +246,24 @@ class NatsSubstrate:
 
 
 def _subject_for(message: DeckrMessage) -> str:
+    recipient = message.recipient
+    if isinstance(recipient, EndpointTarget):
+        return ".".join(
+            (
+                _LANE_PREFIX,
+                encode_key_token(message.lane),
+                "to",
+                encode_key_token(recipient.endpoint.family),
+                encode_key_token(recipient.endpoint.endpoint_id),
+            )
+        )
     return ".".join(
         (
             _LANE_PREFIX,
             encode_key_token(message.lane),
-            encode_key_token(message.sender.family),
-            encode_key_token(message.sender.endpoint_id),
+            "broadcast",
+            encode_key_token(recipient.scope),
+            encode_key_token(recipient.endpoint_family),
         )
     )
 
@@ -273,15 +308,33 @@ def _validate_subject_hint(subject: str, message: DeckrMessage) -> None:
     if not subject.startswith(f"{_LANE_PREFIX}."):
         return
     tokens = subject.split(".")
-    expected = [
-        "deckr",
-        "lane",
-        encode_key_token(message.lane),
-        encode_key_token(message.sender.family),
-        encode_key_token(message.sender.endpoint_id),
-    ]
-    if tokens[:5] != expected:
-        raise ValueError("NATS subject disagrees with Deckr envelope sender")
+    if len(tokens) != 6:
+        raise ValueError("NATS subject has invalid Deckr message shape")
+    if tokens[:2] != ["deckr", "msg"]:
+        raise ValueError("NATS subject has invalid Deckr message prefix")
+    if decode_key_token(tokens[2]) != message.lane:
+        raise ValueError("NATS subject disagrees with Deckr envelope lane")
+    route = tokens[3]
+    recipient = message.recipient
+    if route == "to":
+        if not isinstance(recipient, EndpointTarget):
+            raise ValueError("NATS direct subject disagrees with broadcast envelope")
+        if (
+            decode_key_token(tokens[4]) != recipient.endpoint.family
+            or decode_key_token(tokens[5]) != recipient.endpoint.endpoint_id
+        ):
+            raise ValueError("NATS subject disagrees with Deckr envelope recipient")
+        return
+    if route == "broadcast":
+        if not isinstance(recipient, BroadcastTarget):
+            raise ValueError("NATS broadcast subject disagrees with direct envelope")
+        if (
+            decode_key_token(tokens[4]) != recipient.scope
+            or decode_key_token(tokens[5]) != recipient.endpoint_family
+        ):
+            raise ValueError("NATS subject disagrees with Deckr envelope broadcast")
+        return
+    raise ValueError("NATS subject has invalid Deckr message route")
 
 
 __all__ = [

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import pytest
-from memory_lane_substrate import memory_deckr
+from memory_message_bus import memory_deckr
 
-from deckr.contracts.lanes import LaneContract, LaneContractRegistry
+from deckr.contracts.lanes import MessageContract, MessageContractRegistry
 from deckr.lanes import Lane
 from deckr.runtime import Deckr
 
@@ -32,7 +32,7 @@ async def test_deckr_rejects_duplicate_start() -> None:
 
 def test_extension_lanes_require_matching_explicit_contracts() -> None:
     lane = "acme.metrics.events"
-    contract = LaneContract(
+    contract = MessageContract(
         lane=lane,
         schema_id="acme.metrics.events.v1",
         allowed_sender_families=frozenset({"acme_worker"}),
@@ -49,11 +49,11 @@ def test_extension_lanes_require_matching_explicit_contracts() -> None:
     assert deckr.lane_contracts.contract_for(lane) == contract
 
 
-def test_lane_contract_registry_rejects_duplicates_and_unknown_lanes() -> None:
-    contract = LaneContract(lane="acme.metrics.events")
+def test_message_contract_registry_rejects_duplicates_and_unknown_lanes() -> None:
+    contract = MessageContract(lane="acme.metrics.events")
 
-    with pytest.raises(ValueError, match="Duplicate lane contract"):
-        LaneContractRegistry((contract, contract))
+    with pytest.raises(ValueError, match="Duplicate message contract"):
+        MessageContractRegistry((contract, contract))
 
     with pytest.raises(LookupError, match="not registered"):
-        LaneContractRegistry().contract_for("acme.metrics.events")
+        MessageContractRegistry().contract_for("acme.metrics.events")

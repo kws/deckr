@@ -7,7 +7,7 @@ from pathlib import Path
 import anyio
 import pytest
 from memory_kv_bucket import MemoryJsonKvBucket
-from memory_lane_substrate import memory_deckr
+from memory_message_bus import memory_deckr
 
 from deckr.components import ComponentContext
 from deckr.concord import (
@@ -396,7 +396,7 @@ def test_component_factory_wires_default_stores_and_config_overrides() -> None:
 
     def kv_bucket_for(policy):
         calls.append((policy.bucket, policy))
-        return deckr._substrate.kv_bucket(policy)
+        return deckr._message_bus.kv_bucket(policy)
 
     context = ComponentContext(
         component_id=CONCORD_REAPER_COMPONENT_ID,

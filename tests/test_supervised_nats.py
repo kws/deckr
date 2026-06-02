@@ -6,7 +6,7 @@ from pathlib import Path
 import anyio
 import pytest
 
-from deckr.contracts.lanes import DEFAULT_LANE_CONTRACT_REGISTRY
+from deckr.contracts.lanes import DEFAULT_MESSAGE_CONTRACT_REGISTRY
 from deckr.core.config import ConfigDocument
 from deckr.launcher import build_runtime_substrate
 from deckr.substrates.nats import NatsSubstrate
@@ -97,7 +97,7 @@ def test_runtime_substrate_config_builds_supervised_nats(
 
     substrate = build_runtime_substrate(
         document,
-        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     )
 
     assert isinstance(substrate, SupervisedNatsSubstrate)
@@ -129,7 +129,7 @@ def test_runtime_substrate_config_builds_supervised_nats_without_auth(
 
     substrate = build_runtime_substrate(
         document,
-        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     )
 
     assert isinstance(substrate, SupervisedNatsSubstrate)
@@ -157,7 +157,7 @@ def test_runtime_substrate_config_builds_supervised_nats_with_dev_token(
 
     substrate = build_runtime_substrate(
         document,
-        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     )
 
     assert isinstance(substrate, SupervisedNatsSubstrate)
@@ -186,7 +186,7 @@ def test_runtime_substrate_config_rejects_invalid_supervised_nats_auth(
     with pytest.raises(ValueError, match="auth must be false"):
         build_runtime_substrate(
             document,
-            lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+            lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
         )
 
 
@@ -211,7 +211,7 @@ def test_runtime_substrate_config_rejects_url_for_supervised_nats(
     with pytest.raises(ValueError, match="url is not used"):
         build_runtime_substrate(
             document,
-            lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+            lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
         )
 
 
@@ -235,7 +235,7 @@ def test_runtime_substrate_config_builds_external_nats_with_auth_token(
 
     substrate = build_runtime_substrate(
         document,
-        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     )
 
     assert isinstance(substrate, NatsSubstrate)
@@ -290,7 +290,7 @@ async def test_supervised_substrate_starts_supervisor_before_nats(
         FakeNatsSubstrate,
     )
     substrate = SupervisedNatsSubstrate(
-        lane_contracts=DEFAULT_LANE_CONTRACT_REGISTRY,
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
         supervisor=FakeSupervisor(),
     )
 
@@ -307,6 +307,6 @@ async def test_supervised_substrate_starts_supervisor_before_nats(
     assert captured["nats_kwargs"] == {
         "url": "nats://127.0.0.1:4321",
         "auth_token": "secret-token",
-        "lane_contracts": DEFAULT_LANE_CONTRACT_REGISTRY,
+        "lane_contracts": DEFAULT_MESSAGE_CONTRACT_REGISTRY,
         "buffer_size": 100,
     }

@@ -8,10 +8,10 @@ from typing import TypeAlias
 import anyio
 
 from deckr.components import resolve_component_host_plan, start_components
-from deckr.contracts.lanes import LaneContractRegistry
+from deckr.contracts.lanes import MessageContractRegistry
 from deckr.core.config import ConfigDocument, load_config_document
 from deckr.core.util.anyio import add_signal_handler
-from deckr.lanes import LaneSubstrate
+from deckr.lanes import MessageBus
 from deckr.runtime import Deckr
 from deckr.substrates.nats import NatsSubstrate
 from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
@@ -39,11 +39,11 @@ _DEFAULT_CONFIG_DOCUMENT_TEXT = """# Deckr configuration document
 
 async def run_configured_deckr(document: ConfigDocument) -> None:
     plan = resolve_component_host_plan(document)
-    substrate = build_runtime_substrate(document, lane_contracts=plan.lane_contracts)
+    message_bus = build_runtime_substrate(document, lane_contracts=plan.lane_contracts)
     async with Deckr(
         lane_contracts=plan.lane_contracts,
         lanes=plan.lane_names,
-        substrate=substrate,
+        message_bus=message_bus,
     ) as deckr, start_components(deckr, plan):
         await anyio.sleep_forever()
 
@@ -51,8 +51,8 @@ async def run_configured_deckr(document: ConfigDocument) -> None:
 def build_runtime_substrate(
     document: ConfigDocument,
     *,
-    lane_contracts: LaneContractRegistry,
-) -> LaneSubstrate:
+    lane_contracts: MessageContractRegistry,
+) -> MessageBus:
     source = document.namespace("deckr.runtime.substrate")
     if source is None:
         return NatsSubstrate(lane_contracts=lane_contracts)
