@@ -11,10 +11,10 @@ from deckr.beacon import (
     Beacon,
 )
 from deckr.concord import (
-    DEFAULT_CONCORD_CONTRACT_STORE_NAME,
-    DEFAULT_CONCORD_TOKEN_STORE_NAME,
-    ConcordCoordinator,
-    ConcordService,
+    CONCORD_CONTRACT_BUCKET_POLICY,
+    CONCORD_MAINTENANCE_BUCKET_POLICY,
+    CONCORD_TOKEN_BUCKET_POLICY,
+    Concord,
     ContractValidityStatus,
 )
 from deckr.contracts.messages import controller_address, hardware_manager_address
@@ -46,13 +46,16 @@ def _beacon(deckr) -> Beacon:
     return beacon
 
 
-def _concord(deckr) -> ConcordService:
-    return ConcordService(
-        ConcordCoordinator(
-            deckr.state(DEFAULT_CONCORD_CONTRACT_STORE_NAME),
-            deckr.state(DEFAULT_CONCORD_TOKEN_STORE_NAME),
+def _concord(deckr) -> Concord:
+    concord = getattr(deckr, "_test_concord", None)
+    if concord is None:
+        concord = Concord(
+            deckr._substrate.kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY),
+            deckr._substrate.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
+            deckr._substrate.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY),
         )
-    )
+        deckr._test_concord = concord
+    return concord
 
 
 async def _runtime(
@@ -83,7 +86,7 @@ async def _add_device(runtime: HardwareManagerRuntime, descriptor: DeviceDescrip
 
 async def _claim(
     runtime: HardwareManagerRuntime,
-    concord: ConcordService,
+    concord: Concord,
     *,
     contract_id: str = "claim-a",
     controller_id: str = "controller-main",

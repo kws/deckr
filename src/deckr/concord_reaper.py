@@ -10,16 +10,12 @@ from deckr.components import (
     RunContext,
 )
 from deckr.concord import (
-    CONCORD_CONTRACT_STORE_POLICY,
-    CONCORD_MAINTENANCE_STORE_POLICY,
-    CONCORD_TOKEN_STORE_POLICY,
-    DEFAULT_CONCORD_CONTRACT_STORE_NAME,
-    DEFAULT_CONCORD_MAINTENANCE_STORE_NAME,
-    DEFAULT_CONCORD_TOKEN_STORE_NAME,
-    ConcordCoordinator,
+    CONCORD_CONTRACT_BUCKET_POLICY,
+    CONCORD_MAINTENANCE_BUCKET_POLICY,
+    CONCORD_TOKEN_BUCKET_POLICY,
+    Concord,
     ConcordReaperConfig,
     ConcordReaperService,
-    ConcordService,
 )
 
 CONCORD_REAPER_COMPONENT_ID = "dev.deckr.concord.reaper"
@@ -40,6 +36,7 @@ class ConcordReaperComponent(BaseComponent):
         return self._service
 
     async def start(self, ctx: RunContext) -> None:
+        self._service.start(ctx.tg)
         ctx.start_task(
             self._run,
             ctx.stopping,
@@ -64,26 +61,12 @@ class ConcordReaperComponent(BaseComponent):
 
 def component_factory(context: ComponentContext) -> ConcordReaperComponent:
     config = ConcordReaperConfig.model_validate(dict(context.config))
-    contract_state = context.state(
-        DEFAULT_CONCORD_CONTRACT_STORE_NAME,
-        policy=CONCORD_CONTRACT_STORE_POLICY,
+    concord = Concord(
+        context.kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY),
+        context.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
+        context.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY),
     )
-    token_state = context.state(
-        DEFAULT_CONCORD_TOKEN_STORE_NAME,
-        policy=CONCORD_TOKEN_STORE_POLICY,
-    )
-    maintenance_state = context.state(
-        DEFAULT_CONCORD_MAINTENANCE_STORE_NAME,
-        policy=CONCORD_MAINTENANCE_STORE_POLICY,
-    )
-    concord = ConcordService(ConcordCoordinator(contract_state, token_state))
-    service = ConcordReaperService(
-        concord,
-        contract_state=contract_state,
-        token_state=token_state,
-        maintenance_state=maintenance_state,
-        config=config,
-    )
+    service = ConcordReaperService(concord, config=config)
     return ConcordReaperComponent(
         runtime_name=context.runtime_name,
         service=service,

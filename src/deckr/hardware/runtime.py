@@ -18,8 +18,10 @@ from deckr.beacon import (
 )
 from deckr.concord import (
     DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
-    ConcordParticipantManager,
-    ConcordService,
+    Concord,
+    ConcordConflict,
+    ConcordParticipant,
+    ConcordUnavailable,
     ContractHandle,
     ContractState,
     ContractValidityStatus,
@@ -36,13 +38,12 @@ from deckr.hardware.profiles import (
     HardwareClaimTerms,
     ProfileCapacity,
 )
-from deckr.state import DEFAULT_STATE_RECONCILE_SECONDS, StateConflict, StateUnavailable
 from deckr.substrates.nats_kv import KvConflict, KvUnavailable
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS = 5.0
-DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS = DEFAULT_STATE_RECONCILE_SECONDS
+DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS = 15.0
 DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
 DEFAULT_HARDWARE_WATCH_RETRY_SECONDS = 1.0
 
@@ -92,7 +93,7 @@ class _ClaimCandidate:
 class HardwareManagerRuntime:
     endpoint: HardwareEndpoint
     beacon: Beacon
-    concord: ConcordService
+    concord: Concord
     manager_id: str
     labels: Mapping[str, str] | None = None
     command_handler: HardwareCommandHandler | None = None
@@ -115,7 +116,7 @@ class HardwareManagerRuntime:
         default_factory=dict,
     )
     _claim_selection_device_ids: set[str] = field(init=False, default_factory=set)
-    _claim_manager: ConcordParticipantManager = field(init=False)
+    _claim_manager: ConcordParticipant = field(init=False)
     _lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
     _advertisement_lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
     _task_group: anyio.abc.TaskGroup | None = field(init=False, default=None)
@@ -136,7 +137,7 @@ class HardwareManagerRuntime:
         if self.watch_retry_seconds <= 0:
             raise ValueError("watch_retry_seconds must be greater than zero")
         self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
-        self._claim_manager = self.concord.participant_manager(
+        self._claim_manager = self.concord.participant(
             participant=self.endpoint.endpoint,
             session_id=self.endpoint.session_id,
             profile=HARDWARE_CLAIM_PROFILE_ID,
@@ -384,7 +385,7 @@ class HardwareManagerRuntime:
         while True:
             try:
                 await self.reconcile_claims(reason="contract snapshot")
-            except StateUnavailable:
+            except ConcordUnavailable:
                 logger.warning(
                     "Hardware claim contracts unavailable; reconciliation will retry",
                     exc_info=True,
@@ -521,7 +522,7 @@ class HardwareManagerRuntime:
                     claim.contract,
                     reason=reason,
                 )
-            except (StateConflict, StateUnavailable):
+            except (ConcordConflict, ConcordUnavailable):
                 logger.debug(
                     "Could not cancel hardware claim %s for unavailable device %s",
                     claim.contract.contract_id,

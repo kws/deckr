@@ -182,7 +182,8 @@ It includes:
 - endpoint-bound lane handles
 - recipient filtering for local endpoints
 - managed Beacon discovery backed by a materialized KV view
-- explicit StateStore access for Concord and application-owned state
+- managed Concord agreements backed by materialized KV views
+- explicit StateStore access for application-owned state
 
 The managed lane runtime belongs in `deckr`. It is not a transport, controller,
 hardware manager, action provider runtime, or special discovered component.
@@ -926,7 +927,7 @@ to understand component-specific settings.
   [`beacon-concord.md`](beacon-concord.md).
 - After a Concord agreement is negotiated, Beacon no longer participates in that
   agreement's lifecycle, validity, or withdrawal.
-- Runtime components use `Beacon` and `ConcordService`; raw Beacon/Concord
+- Runtime components use `Beacon` and `Concord`; raw Beacon/Concord
   authority state watches belong only inside those core services and substrate
   internals.
 - Lane contracts are the only generic wiring primitive.
@@ -982,7 +983,7 @@ to understand component-specific settings.
 Cross-runtime note:
 `deckr-adapter-elgato-node` and the Rust hardware managers are still behind on
 the new managed Beacon/Concord lifecycle model. They are tracked as follow-up work
-and should be updated to consume `Beacon`/`ConcordService` APIs in the
+and should be updated to consume `Beacon`/`Concord` APIs in the
 same ownership style as the Python reference before claiming Beacon/Concord parity.
 
 If the implementation drifts from this model, fix the implementation. Do not

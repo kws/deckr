@@ -17,7 +17,6 @@ from deckr.beacon import (
     parse_beacon_advertisement_key,
 )
 from deckr.concord import (
-    CONCORD_TOKEN_STORE_POLICY,
     concord_contract_key,
     concord_participant_token_key,
     parse_concord_contract_key,
@@ -534,7 +533,7 @@ def test_nats_substrate_rejects_same_bucket_with_conflicting_policy() -> None:
     with pytest.raises(ValueError, match="already opened"):
         substrate.state(
             "dev_deckr_controller_config_v1",
-            policy=CONCORD_TOKEN_STORE_POLICY,
+            policy=TTL_STATE_STORE_POLICY,
         )
 
 

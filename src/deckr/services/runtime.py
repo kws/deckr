@@ -28,9 +28,11 @@ from deckr.beacon import (
 )
 from deckr.concord import (
     DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
-    ConcordAgreement,
+    Concord,
+    ConcordAgreementLease,
     ConcordAgreementSpec,
-    ConcordService,
+    ConcordConflict,
+    ConcordUnavailable,
     ContractHandle,
     ContractState,
     ContractValidityStatus,
@@ -56,16 +58,12 @@ from deckr.services.messages import (
     ServiceError,
     service_body,
 )
-from deckr.state import (
-    DEFAULT_STATE_RECONCILE_SECONDS,
-    StateConflict,
-    StateUnavailable,
-)
+from deckr.state import StateUnavailable
 from deckr.substrates.nats_kv import KvConflict, KvUnavailable
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SERVICE_CONTRACT_RECONCILE_SECONDS = DEFAULT_STATE_RECONCILE_SECONDS
+DEFAULT_SERVICE_CONTRACT_RECONCILE_SECONDS = 15.0
 DEFAULT_SERVICE_ADVERTISEMENT_REFRESH_SECONDS = 5.0
 DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
 _CLIENT_CONTRACT_WAIT_INTERVAL_SECONDS = 0.05
@@ -361,7 +359,7 @@ class ServiceUseRequest:
 
 @dataclass(slots=True)
 class ServiceUseLease:
-    agreement: ConcordAgreement
+    agreement: ConcordAgreementLease
     descriptor: ServiceDescriptor
     terms: ServiceUseTerms
 
@@ -372,7 +370,7 @@ class ServiceUseLease:
     async def refresh(self) -> None:
         try:
             validity = await self.agreement.refresh()
-        except StateConflict as exc:
+        except ConcordConflict as exc:
             raise _service_use_conflict_unavailable(exc) from exc
         if validity.valid:
             return
@@ -511,7 +509,7 @@ class ServiceUseLeaseManager:
         self,
         *,
         endpoint: RegisteredEndpointLane,
-        concord: ConcordService,
+        concord: Concord,
         task_group: anyio.abc.TaskGroup | None = None,
         log_label: str = "ServiceUseLeaseManager",
         refresh_interval: float = DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS,
@@ -672,7 +670,7 @@ class ServiceUseLeaseManager:
         descriptor: ServiceDescriptor,
         terms: ServiceUseTerms,
     ) -> ServiceUseLease:
-        agreement = await self._concord.ensure_agreement(
+        agreement = await self._concord.propose(
             ConcordAgreementSpec(
                 profile=descriptor.use_profile,
                 participants=(descriptor.endpoint, self._endpoint.endpoint),
@@ -703,7 +701,7 @@ class ServiceUseLeaseManager:
         while True:
             try:
                 validity = await lease.agreement.refresh()
-            except StateConflict as exc:
+            except ConcordConflict as exc:
                 raise _service_use_conflict_unavailable(exc) from exc
             if validity.valid:
                 return lease
@@ -724,7 +722,7 @@ class ServiceUseLeaseManager:
     async def _cancel_lease(self, lease: ServiceUseLease, *, reason: str) -> None:
         try:
             await lease.agreement.cancel(reason=reason)
-        except (StateConflict, StateUnavailable):
+        except (ConcordConflict, ConcordUnavailable):
             logger.debug("Could not cancel service-use contract")
 
     async def _drop_lease(self, lease: ServiceUseLease, *, reason: str) -> None:
@@ -819,7 +817,7 @@ class ServiceUseAuthorizer:
         protocol: ServiceProtocol,
         service_id: str,
         endpoint: RegisteredEndpointLane,
-        concord: ConcordService,
+        concord: Concord,
         log_label: str = "service",
         reconcile_interval: float = DEFAULT_SERVICE_CONTRACT_RECONCILE_SECONDS,
         refresh_interval: float = DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS,
@@ -829,7 +827,7 @@ class ServiceUseAuthorizer:
         self.endpoint = endpoint
         self._log_label = log_label
         self._reconcile_interval = reconcile_interval
-        self._manager = concord.participant_manager(
+        self._manager = concord.participant(
             participant=endpoint.endpoint,
             session_id=endpoint.session_id,
             profile=protocol.use_profile,
@@ -1056,7 +1054,7 @@ def _stale_service_use_error(exc: ServiceUnavailable) -> bool:
     }
 
 
-def _service_use_conflict_unavailable(exc: StateConflict) -> ServiceUnavailable:
+def _service_use_conflict_unavailable(exc: ConcordConflict) -> ServiceUnavailable:
     return ServiceUnavailable(
         f"contract_{ContractValidityStatus.INVALID_TOKEN.value}",
         "Service-use contract could not be refreshed",

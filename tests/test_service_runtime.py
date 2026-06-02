@@ -6,13 +6,12 @@ from typing import Any
 import anyio
 import pytest
 from memory_kv_bucket import MemoryJsonKvBucket
-from memory_lane_substrate import MemoryStateStore, memory_deckr
+from memory_lane_substrate import memory_deckr
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import Beacon, BeaconAdvertisementSpec
 from deckr.concord import (
-    ConcordCoordinator,
-    ConcordService,
+    Concord,
     ContractValidityStatus,
 )
 from deckr.contracts.messages import SERVICES_LANE, entity_subject, service_address
@@ -72,6 +71,17 @@ def _protocol(
 
 def _memory_beacon() -> Beacon:
     return Beacon(MemoryJsonKvBucket(bucket="beacon"))
+
+
+def _memory_concord(
+    *,
+    token_bucket: MemoryJsonKvBucket | None = None,
+) -> Concord:
+    return Concord(
+        MemoryJsonKvBucket(bucket="contracts"),
+        token_bucket or MemoryJsonKvBucket(bucket="tokens"),
+        MemoryJsonKvBucket(bucket="maintenance"),
+    )
 
 
 async def _publish_service_advertisement(
@@ -277,12 +287,7 @@ async def test_service_use_terms_grant_only_requested_scope() -> None:
 @pytest.mark.asyncio
 async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> None:
     beacon = _memory_beacon()
-    concord = ConcordService(
-        ConcordCoordinator(
-            MemoryStateStore(name="contracts"),
-            MemoryStateStore(name="tokens"),
-        )
-    )
+    concord = _memory_concord()
     view_store = ServiceViewStore(
         bucket=MemoryJsonKvBucket(bucket="deckr_openhab_service_view_v1")
     )
@@ -398,12 +403,7 @@ async def test_explicit_service_lease_command_and_view_survive_beacon_loss() -> 
 @pytest.mark.asyncio
 async def test_service_use_manager_replaces_closed_cached_agreement() -> None:
     beacon = _memory_beacon()
-    concord = ConcordService(
-        ConcordCoordinator(
-            MemoryStateStore(name="contracts"),
-            MemoryStateStore(name="tokens"),
-        )
-    )
+    concord = _memory_concord()
     protocol = _protocol()
 
     async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
@@ -427,6 +427,8 @@ async def test_service_use_manager_replaces_closed_cached_agreement() -> None:
         descriptor = await _descriptor(beacon, protocol)
 
         async with anyio.create_task_group() as tg:
+            concord.start(tg)
+            await concord.wait_ready()
             authorizer.start(tg)
             leases = ServiceUseLeaseManager(
                 endpoint=client_endpoint,
@@ -464,13 +466,8 @@ async def test_service_use_stale_contract_is_cancelled_and_superseded(
     missing_participant: str,
 ) -> None:
     beacon = _memory_beacon()
-    token_store = MemoryStateStore(name="tokens")
-    concord = ConcordService(
-        ConcordCoordinator(
-            MemoryStateStore(name="contracts"),
-            token_store,
-        )
-    )
+    token_store = MemoryJsonKvBucket(bucket="tokens")
+    concord = _memory_concord(token_bucket=token_store)
     protocol = _protocol()
 
     async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(
@@ -494,6 +491,8 @@ async def test_service_use_stale_contract_is_cancelled_and_superseded(
         descriptor = await _descriptor(beacon, protocol)
 
         async with anyio.create_task_group() as tg:
+            concord.start(tg)
+            await concord.wait_ready()
             authorizer.start(tg)
             leases = ServiceUseLeaseManager(
                 endpoint=client_endpoint,
@@ -540,12 +539,7 @@ async def test_service_use_stale_contract_is_cancelled_and_superseded(
 
 @pytest.mark.asyncio
 async def test_service_authorizer_not_applicable_for_wrong_target() -> None:
-    concord = ConcordService(
-        ConcordCoordinator(
-            MemoryStateStore(name="contracts"),
-            MemoryStateStore(name="tokens"),
-        )
-    )
+    concord = _memory_concord()
     protocol = _protocol()
 
     async with memory_deckr() as deckr, deckr.lane(SERVICES_LANE).register_endpoint(

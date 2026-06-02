@@ -29,19 +29,18 @@ The supported shared stores are:
 | Concord participant tokens | `deckr_concord_token_v1` | TTL-bound |
 | Concord maintenance observations | `deckr_concord_maintenance_v1` | persistent |
 
-`StateStore` remains the generic CAS/watch abstraction for Concord and
-application state paths, but Beacon no longer uses it. Production runtime code
-does not subscribe directly to Beacon or Concord authority state. Python runtime
-participants use the shared `Beacon` and `ConcordService` APIs; Beacon owns a
-materialized KV view, semantic lifecycle events, advertisement leases,
-heartbeats, freshness checks, and lifecycle logging. Non-Python implementations
-must follow the same protocol semantics in
+`StateStore` remains the generic CAS/watch abstraction for application state
+paths, but Beacon and Concord use explicit KV bucket policies and materialized
+views. Production runtime code does not subscribe directly to Beacon or Concord
+authority state. Python runtime participants use the shared `Beacon` and
+`Concord` APIs; both own materialized KV views, semantic lifecycle events,
+leases, heartbeats, freshness checks, and lifecycle logging. Non-Python
+implementations must follow the same protocol semantics in
 [`beacon-concord.md`](beacon-concord.md).
 Retired shared coordination buckets are not part of the v1 surface. Opening a
-store without an explicit policy creates a persistent generic store. Concord
-services pass their own `StateStorePolicy` values; Beacon opens its explicit
-JetStream KV bucket policy directly and serves hot reads from its materialized
-view.
+generic state store without an explicit policy creates a persistent generic
+store. Beacon and Concord open their explicit JetStream KV bucket policies
+directly and serve normal reads from materialized views.
 Concord participant-token TTL defaults to 30 seconds. Runtime participants may
 call their lease heartbeat more often, but the shared lease policy refreshes the
 token write only when a token must be attached or the default 15-second Concord
@@ -163,22 +162,50 @@ key:    stale.<contract-id-token>.<generation>
 schema: dev.deckr.concord.stale-observation.v1
 ```
 
-The runtime-facing Python API is `deckr.concord.ConcordService`.
+The runtime-facing Python API is `deckr.concord.Concord`.
 
 ```python
-concord = ConcordService(ConcordCoordinator(contract_state, token_state))
-contract = await concord.create_contract(
-    ("controller:main", "hardware_manager:mirabox-main"),
-    profile="dev.deckr.profile.hardware_claim.v1",
-    terms=terms,
+concord = deckr.concord
+agreement = await concord.propose(
+    ConcordAgreementSpec(
+        participants=("controller:main", "hardware_manager:mirabox-main"),
+        local_participant="controller:main",
+        local_session_id="controller-session",
+        stable_contract_id="hardware-claim-main",
+        profile="dev.deckr.profile.hardware_claim.v1",
+        terms=terms,
+    )
 )
-lease = concord.participant_lease(
-    contract=contract,
-    participant="controller:main",
-    session_id="controller-session",
+lease = await concord.attach(
+    agreement.contract,
+    participant="hardware_manager:mirabox-main",
+    session_id="manager-session",
 )
-await lease.attach_or_refresh()
-validity = await concord.validate(contract)
+validity = await concord.validate(agreement.contract)
+await lease.aclose()
+```
+
+Lower-level tests and maintenance code can still create a `Concord` instance
+directly from materialized or raw KV buckets:
+
+```python
+concord = Concord(contract_bucket, token_bucket, maintenance_bucket)
+agreement = await concord.propose(
+    ConcordAgreementSpec(
+        participants=("controller:main", "hardware_manager:mirabox-main"),
+        local_participant="controller:main",
+        local_session_id="controller-session",
+        profile="dev.deckr.profile.hardware_claim.v1",
+        terms=terms,
+    )
+)
+lease = await concord.attach(
+    agreement.contract,
+    participant="hardware_manager:mirabox-main",
+    session_id="manager-session",
+)
+validity = await concord.validate(agreement.contract)
+await lease.aclose()
 ```
 
 A Concord contract is valid only while the contract is open and every named
@@ -220,7 +247,7 @@ not a withdrawal of an existing claim or provider session. Python hardware
 managers use the shared `deckr.hardware.runtime.HardwareManagerRuntime`
 implementation to advertise hardware through managed
 `Beacon.advertise` leases, maintain claim tokens through
-`ConcordParticipantManager`, and route input only for live claims.
+`ConcordParticipant`, and route input only for live claims.
 Hardware device inventory is published through the hardware Beacon profile only.
 The `hardware_messages` lane is for control input, commands, capability state,
 and replies; it must not be treated as the inventory authority. If a claimed
@@ -274,26 +301,26 @@ Concord contracts must be validated through Concord.
 
 NATS-backed protocol stores are opened with explicit policies. Beacon is opened
 by the managed runtime as `deckr.beacon`; callers should not construct a Beacon
-state store through `Deckr.state(...)`.
+state store through `Deckr.state(...)`. Concord is opened by the managed runtime
+as `deckr.concord`; callers should not construct Concord state stores through
+`Deckr.state(...)`.
 
 ```python
 beacon = deckr.beacon
-contract_state = deckr.state(
-    "deckr_concord_contract_v1",
-    policy=CONCORD_CONTRACT_STORE_POLICY,
-)
-token_state = deckr.state(
-    "deckr_concord_token_v1",
-    policy=CONCORD_TOKEN_STORE_POLICY,
-)
-maintenance_state = deckr.state(
-    "deckr_concord_maintenance_v1",
-    policy=CONCORD_MAINTENANCE_STORE_POLICY,
-)
+concord = deckr.concord
 ```
 
-TTL-bound stores are configured with broker-owned bucket TTL and one retained
-message per subject. Persistent stores reject per-write TTL. Reopening the same
+Component factories that need raw KV buckets, such as the Concord reaper, receive
+them from `ComponentContext`:
+
+```python
+contract_bucket = context.kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY)
+token_bucket = context.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY)
+maintenance_bucket = context.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY)
+```
+
+TTL-bound buckets are configured with broker-owned bucket TTL and one retained
+message per subject. Persistent buckets reject per-write TTL. Reopening the same
 bucket with a conflicting policy is an error.
 
 Package-owned private buckets must be owner-qualified and versioned, for

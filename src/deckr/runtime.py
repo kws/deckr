@@ -7,6 +7,12 @@ from types import TracebackType
 import anyio
 
 from deckr.beacon import BEACON_ADVERTISEMENT_STORE_POLICY, Beacon
+from deckr.concord import (
+    CONCORD_CONTRACT_BUCKET_POLICY,
+    CONCORD_MAINTENANCE_BUCKET_POLICY,
+    CONCORD_TOKEN_BUCKET_POLICY,
+    Concord,
+)
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     LaneContract,
@@ -44,6 +50,7 @@ class Deckr:
         )
         self._task_group: anyio.abc.TaskGroup | None = None
         self._beacon: Beacon | None = None
+        self._concord: Concord | None = None
 
     @property
     def lane_contracts(self) -> LaneContractRegistry:
@@ -65,6 +72,12 @@ class Deckr:
         if self._beacon is None:
             raise RuntimeError("Deckr runtime does not provide Beacon")
         return self._beacon
+
+    @property
+    def concord(self) -> Concord:
+        if self._concord is None:
+            raise RuntimeError("Deckr runtime does not provide Concord")
+        return self._concord
 
     def state(
         self,
@@ -117,6 +130,12 @@ class Deckr:
         if kv_bucket is not None:
             self._beacon = Beacon(kv_bucket(BEACON_ADVERTISEMENT_STORE_POLICY))
             self._beacon.start(self._task_group)
+            self._concord = Concord(
+                kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY),
+                kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
+                kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY),
+            )
+            self._concord.start(self._task_group)
         return self
 
     async def __aexit__(
@@ -127,6 +146,8 @@ class Deckr:
     ) -> bool | None:
         if self._beacon is not None:
             await self._beacon.aclose()
+        if self._concord is not None:
+            await self._concord.aclose()
         if self._task_group is not None:
             self._task_group.cancel_scope.cancel()
         result = None
@@ -137,6 +158,7 @@ class Deckr:
             await aclose()
         self._service_view_stores.clear()
         self._beacon = None
+        self._concord = None
         self._task_group = None
         self._task_group_cm = None
         return result

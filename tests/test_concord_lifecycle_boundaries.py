@@ -4,18 +4,16 @@ import ast
 from pathlib import Path
 
 _LOW_LEVEL_ALWAYS = {
-    "_attach",
     "_contract_record",
     "_create_contract",
     "_find_contracts",
     "_participant_lease",
     "_refresh_token",
-    "attach",
     "create_contract",
     "participant_lease",
     "refresh_token",
 }
-_LOW_LEVEL_ON_CONCORD = {"_cancel", "_validate", "cancel", "validate"}
+_LOW_LEVEL_ON_CONCORD = {"_attach", "_cancel", "_validate"}
 _LOW_LEVEL_ON_BEACON = {
     "_advertise",
     "_refresh",
@@ -25,7 +23,8 @@ _LOW_LEVEL_ON_BEACON = {
 }
 _DIRECT_LIFECYCLE_CONSTRUCTORS = {
     "BeaconAdvertisementLease",
-    "ConcordParticipantManager",
+    "ConcordParticipant",
+    "ConcordParticipantLease",
 }
 
 
@@ -57,6 +56,24 @@ def test_production_code_uses_concord_lifecycle_apis() -> None:
                     f"{path.relative_to(workspace)}:{node.lineno} .{name}()"
                 )
     assert violations == []
+
+
+def test_removed_concord_names_are_not_public() -> None:
+    import deckr.concord as concord
+
+    removed = {
+        "ConcordCoordinator",
+        "ConcordService",
+        "ConcordParticipantManager",
+        "ConcordContractNotification",
+        "ConcordContractEvent",
+        "CONCORD_CONTRACT_STORE_POLICY",
+        "CONCORD_MAINTENANCE_STORE_POLICY",
+        "CONCORD_TOKEN_STORE_POLICY",
+    }
+    assert all(not hasattr(concord, name) for name in removed)
+    assert hasattr(concord, "Concord")
+    assert hasattr(concord, "CONCORD_CONTRACT_BUCKET_POLICY")
 
 
 def _production_python_files(workspace: Path) -> tuple[Path, ...]:

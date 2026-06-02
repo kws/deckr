@@ -48,6 +48,7 @@ from deckr.state import (
     StateStore,
     StateStorePolicy,
 )
+from deckr.substrates.nats_kv import KvBucketPolicy
 
 if TYPE_CHECKING:
     from deckr.runtime import Deckr
@@ -117,6 +118,7 @@ class ComponentContext:
     base_dir: Path
     lanes: LaneRegistry
     state_for: Callable[..., StateStore]
+    kv_bucket_for: Callable[[KvBucketPolicy], Any] | None = None
 
     def require_lane(self, name: str) -> Lane:
         return self.lanes.require(name)
@@ -136,6 +138,11 @@ class ComponentContext:
         policy: StateStorePolicy | None = None,
     ) -> StateStore:
         return self.state_for(name, policy=policy)
+
+    def kv_bucket(self, policy: KvBucketPolicy) -> Any:
+        if self.kv_bucket_for is None:
+            raise RuntimeError("Deckr component context does not provide KV buckets")
+        return self.kv_bucket_for(policy)
 
 
 class ComponentFactory(Protocol):
@@ -1486,6 +1493,7 @@ async def _activate_component_plan(
             base_dir=plan.base_dir,
             lanes=deckr.lanes,
             state_for=deckr.state,
+            kv_bucket_for=getattr(deckr._substrate, "kv_bucket", None),  # noqa: SLF001
         )
         component = spec.definition.factory(context)
         if not isinstance(component, Component):
