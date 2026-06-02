@@ -139,7 +139,9 @@ contracts and participant tokens, not by continued Beacon advertisement
 presence.
 The Python runtime owns Beacon/Concord materialized KV views, reconciles watch
 recovery snapshots, and coalesces no-op heartbeat writes behind TTL-derived
-cadence rules.
+cadence rules. The optional Concord reaper is the maintenance exception: it runs
+infrequently and uses exact raw KV scans to clear orphaned stale observations and
+bound the cancelled-contract archive.
 
 If you are looking for the design rules around discovery, lane ownership,
 lane substrate configuration, wire-safe schemas, component planning, and alpha

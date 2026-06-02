@@ -23,6 +23,14 @@ class MemoryJsonKvBucket:
         async with self._lock:
             return self._entries.get(key)
 
+    async def items(self, prefix: str = "") -> tuple[KvEntry, ...]:
+        async with self._lock:
+            return tuple(
+                entry
+                for key, entry in sorted(self._entries.items())
+                if key.startswith(prefix)
+            )
+
     async def put(
         self,
         key: str,

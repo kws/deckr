@@ -244,13 +244,16 @@ contract is never resumed; recovery uses a successor contract.
 
 Core Concord maintenance is optional and Concord-only. The lane-less component
 `dev.deckr.concord.reaper` and reusable `ConcordReaperService` scan Concord
-contract and participant-token stores. They never consult Beacon advertisements,
+contract, participant-token, and maintenance stores with exact raw KV reads. The
+reaper is a low-frequency maintenance scanner, not a materialized-view runtime
+or immediate notification service. It never consults Beacon advertisements,
 endpoint presence, catalogs, lane subscriptions, or any other parallel
 authority.
 
 The reaper records `firstObservedStaleAt` in the persistent
 `deckr_concord_maintenance_v1` store for each `contractId:generation`. Open
-contracts count as stale only when Concord validation reports
+contracts count as stale only when scan-time Concord validation over the current
+contract and participant-token keys reports
 `not_yet_fulfilled`, `missing_token`, `invalid_token`, `session_mismatch`,
 `terms_hash_mismatch`, `generation_mismatch`, or `invalid_contract`.
 `unavailable` is not a stale signal.
@@ -269,6 +272,9 @@ After the contract record is deleted, any remaining participant-token keys for
 that contract generation are deleted. If the contract record changes during a
 delete attempt, maintenance logs the conflict and leaves the record for a later
 scan.
+
+At the end of each scan, orphaned `stale.*` maintenance observations whose
+contract record no longer exists are removed with revision-guarded deletes.
 
 ## Profiles
 

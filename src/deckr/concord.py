@@ -699,6 +699,12 @@ class _ConcordBucketAdapter:
     async def items(self, prefix: str = "") -> tuple[KvEntry, ...]:
         return self.items_cached(prefix)
 
+    async def items_exact(self, prefix: str = "") -> tuple[KvEntry, ...]:
+        try:
+            return await self._bucket.items_exact(prefix)
+        except KvUnavailable as exc:
+            raise ConcordUnavailable(str(exc)) from exc
+
     async def create(
         self,
         key: str,
@@ -772,6 +778,7 @@ def _is_materialized_bucket(value: Any) -> bool:
             "get_exact",
             "get_cached",
             "items_cached",
+            "items_exact",
             "subscribe",
             "create",
             "update",
@@ -2924,7 +2931,7 @@ class ConcordReaperService:
         return self._config
 
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
-        self._concord.start(task_group)
+        del task_group
 
     async def aclose(self) -> None:
         self._closed = True
@@ -2959,7 +2966,7 @@ class ConcordReaperService:
             "contracts_deleted": 0,
             "token_keys_deleted": 0,
         }
-        for entry in await self._contract_bucket.items(concord_contracts_prefix()):
+        for entry in await self._contract_bucket.items_exact(concord_contracts_prefix()):
             parsed = parse_concord_contract_key(entry.key)
             if parsed is None:
                 continue
@@ -2977,7 +2984,7 @@ class ConcordReaperService:
             await self._clear_orphaned_stale_observations()
         )
         stale_observation_count = len(
-            await self._maintenance_bucket.items("stale.")
+            await self._maintenance_bucket.items_exact("stale.")
         )
         return ConcordReaperScanResult(
             scanned_contract_count=counts["scanned_contract_count"],
@@ -3027,10 +3034,8 @@ class ConcordReaperService:
         now: datetime,
     ) -> dict[str, int]:
         counts = _empty_reaper_counts()
-        validity = await self._concord._validate(  # noqa: SLF001
+        validity = await self._concord._coordinator.validate(  # noqa: SLF001
             contract,
-            log_label=self._config.log_label,
-            log_invalid=False,
         )
         if validity.status in STALE_OPEN_CONTRACT_STATUSES:
             first_observed, created = await self._observe_stale(
@@ -3243,7 +3248,7 @@ class ConcordReaperService:
 
     async def _clear_orphaned_stale_observations(self) -> int:
         cleared = 0
-        for entry in await self._maintenance_bucket.items("stale."):
+        for entry in await self._maintenance_bucket.items_exact("stale."):
             try:
                 observation = ConcordStaleObservationRecord.model_validate(entry.value)
             except ValueError:
@@ -4310,13 +4315,13 @@ def _actor_log_value(value: EndpointAddress | str | None) -> str | None:
 
 
 async def _concord_participant_token_entries(
-    token_bucket: NatsKvMaterializedBucket,
+    token_bucket: _ConcordBucketAdapter,
     *,
     contract_id: str,
     generation: int,
 ) -> tuple[ConcordTokenMaintenanceEntry, ...]:
     token_entries: list[ConcordTokenMaintenanceEntry] = []
-    for entry in await token_bucket.items(
+    for entry in await token_bucket.items_exact(
         concord_contract_prefix(contract_id=contract_id, generation=generation)
     ):
         parsed = parse_concord_participant_token_key(entry.key)
@@ -4334,7 +4339,7 @@ async def _concord_participant_token_entries(
 
 
 async def _delete_concord_participant_token_entries(
-    token_bucket: NatsKvMaterializedBucket,
+    token_bucket: _ConcordBucketAdapter,
     token_entries: tuple[ConcordTokenMaintenanceEntry, ...],
 ) -> int:
     deleted = 0

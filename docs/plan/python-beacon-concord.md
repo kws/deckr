@@ -126,6 +126,12 @@ src/deckr/substrates/nats_kv.py
 These helpers are for NATS mechanics only. They must not become a public generic
 state abstraction and must not be exposed as a replacement `StateStore`.
 
+The module may expose a thin raw JSON KV helper for exact maintenance operations,
+for example `NatsJsonKvBucket`. That helper may support `get`, prefix
+`items(...)`, `create`, revision-guarded `update`, revision-guarded `delete`,
+and `watch`. It is still an internal NATS adapter, not a public generic state
+API.
+
 Define a small internal entry/change shape for materialized buckets:
 
 ```python
@@ -202,9 +208,13 @@ The primitive must:
 4. Subscribe to raw `$KV.<bucket>.<prefix>` changes and update the local map
    continuously.
 5. Emit `KvChange` events to subscribers.
-6. Avoid repeat full scans in normal operation.
+6. Avoid repeat full scans in normal hot-path operation.
 7. Trigger a full resync only on startup, explicit recovery, or subscription
    failure.
+
+This full-scan restriction is for long-lived runtime views. The Concord reaper
+is a low-frequency maintenance service and is explicitly allowed to scan raw KV
+keys as described below.
 
 ### Hydration algorithm
 
@@ -442,8 +452,8 @@ class Concord:
 
 No normal read path should call a full KV prefix scan. `contracts(...)`,
 `get_contract(...)`, and `validate(...)` should use materialized indexes. Exact
-KV reads are allowed for write conflict recovery, audit, and explicit
-refresh/resync paths.
+KV reads are allowed for write conflict recovery, audit, explicit
+refresh/resync paths, and low-frequency Concord reaper maintenance.
 
 ### Internal indexes
 
@@ -558,6 +568,11 @@ async def validate_exact(...) -> ContractValidity
 ```
 
 Do not make exact reads the default hot path.
+
+`ConcordReaperService` must not use cached `validate(...)` for cancellation or
+deletion decisions. It should use `validate_exact(...)` or equivalent scan-time
+raw KV reads so stale observations and maintenance cancellations are based on
+current contract/token bucket contents.
 
 ### Agreement lease and participant lease
 
@@ -916,8 +931,28 @@ Do:
 
 ```text
 - Remove StateStore constructor dependencies.
-- Operate through Concord's direct maintenance/contract/token bucket access or a
-  Concord-owned maintenance API.
+- Operate through Concord's direct raw maintenance/contract/token bucket access
+  or a Concord-owned maintenance API.
+- Do not maintain contract, token, or maintenance materialized views or watches
+  for the standalone reaper.
+- `scan_once()` may do a full `contracts.` key scan and a full `stale.` key scan
+  on each run.
+- Validate open contracts from exact scan-time contract/token KV reads, not from
+  Concord's cached `validate(...)` hot path.
+- Persist `firstObservedStaleAt` in `deckr_concord_maintenance_v1` only for
+  stale open-contract statuses. `unavailable` is not stale.
+- After the stale grace period, cancel stale open contracts with a
+  revision-guarded contract update using
+  `cancelReason=concord_reaper_stale_contract` and
+  `cancelledBy=concord:maintenance`.
+- Delete cancelled contracts only after `cancelledAt` plus retention. Before
+  deleting, audit identity, profile, participants, lifecycle timestamps,
+  cancellation metadata, supersession, terms hash, current validation status,
+  and participant-token summaries without logging full `terms` by default.
+- After deleting a contract record, delete remaining participant-token keys for
+  that contract generation.
+- If a revision-guarded maintenance write/delete conflicts, log and leave the
+  entry for a later scan.
 ```
 
 ### `src/deckr/services/`
@@ -971,6 +1006,9 @@ service_views.get(...)
 service_views.watch(...) after initial subscription setup
 ```
 
+Do not include `ConcordReaperService` in this no-scan assertion. The reaper is
+the intentional full-scan maintenance path.
+
 ### Beacon tests
 
 Add tests:
@@ -1000,6 +1038,24 @@ Add tests:
 - stable contract id generation selection uses indexes, not scans
 - validation uses cached materialized view
 - exact validation remains available for explicit strict checks
+```
+
+### Concord reaper tests
+
+Add tests:
+
+```text
+- scan_once can list contracts. and stale. without starting materialized watches
+- pending open contract creates stale observation and cancels only after grace
+- missing token exact validation creates stale observation and cancels only after
+  grace
+- unavailable does not create or advance stale observation
+- stale observation survives reaper restart
+- stale observation clears when the contract is cancelled, deleted, or no longer
+  stale
+- cancelled contract is deleted only after retention and remaining participant
+  tokens are removed
+- delete/cancel conflicts leave the entry for a later scan
 ```
 
 ### Service-view tests
@@ -1101,9 +1157,14 @@ The refactor is complete when:
    by core Beacon/Concord leases.
 10. Service-like behavior is expressible as Beacon + Concord + lanes +
     direct JetStream/KV service views.
-11. Tests prove no repeated full key scans occur on normal hot paths.
-12. Existing wire compatibility is preserved for non-Python implementations.
-13. No shims, aliases, deprecated wrappers, backwards-compatible constructors,
+11. `ConcordReaperService` uses exact raw KV scans, not materialized watches,
+    and bounds the Concord archive by cancelling stale open contracts, deleting
+    retained cancelled contracts, clearing orphaned stale observations, and
+    deleting leftover participant-token keys.
+12. Tests prove no repeated full key scans occur on normal hot paths and that
+    the reaper full-scan exception is intentional.
+13. Existing wire compatibility is preserved for non-Python implementations.
+14. No shims, aliases, deprecated wrappers, backwards-compatible constructors,
     or compatibility functions remain for removed Python APIs.
 ```
 

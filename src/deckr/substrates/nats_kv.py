@@ -93,6 +93,21 @@ class NatsJsonKvBucket:
             return None
         return kv_entry_from_raw(self.bucket, entry)
 
+    async def items(self, prefix: str = "") -> tuple[KvEntry, ...]:
+        kv = await self._available_kv()
+        try:
+            keys = await kv_keys(kv, prefix)
+        except Exception as exc:
+            if is_key_missing(exc):
+                return ()
+            raise KvUnavailable(f"Could not list KV prefix {prefix!r}") from exc
+        entries: list[KvEntry] = []
+        for key in sorted(str(item) for item in keys if str(item).startswith(prefix)):
+            entry = await self.get(key)
+            if entry is not None:
+                entries.append(entry)
+        return tuple(entries)
+
     async def put(
         self,
         key: str,
@@ -389,6 +404,9 @@ class NatsKvMaterializedBucket:
     async def get_exact(self, key: str) -> KvEntry | None:
         return await self._bucket.get(key)
 
+    async def items_exact(self, prefix: str = "") -> tuple[KvEntry, ...]:
+        return await self._bucket.items(prefix)
+
     async def put(
         self,
         key: str,
@@ -615,6 +633,23 @@ def kv_watch_pattern(prefix: str) -> str:
     if prefix.endswith("."):
         return f"{prefix}>"
     return prefix
+
+
+async def kv_keys(kv, prefix: str) -> tuple[str, ...]:
+    pattern = kv_watch_pattern(prefix)
+    try:
+        keys = await kv.keys(filters=[pattern])
+    except TypeError:
+        try:
+            keys = await kv.keys(filters=pattern)
+        except TypeError:
+            try:
+                keys = await kv.keys(pattern)
+            except TypeError:
+                keys = await kv.keys()
+    if keys is None:
+        return ()
+    return tuple(str(key) for key in keys)
 
 
 def _raw_header(entry, key: str) -> str | None:

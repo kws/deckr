@@ -36,6 +36,9 @@ authority state. Python runtime participants use the shared `Beacon` and
 leases, heartbeats, freshness checks, recovery reconciliation, and lifecycle
 logging. Non-Python implementations must follow the same protocol semantics in
 [`beacon-concord.md`](beacon-concord.md).
+The optional Concord reaper is the maintenance exception. It is a standalone,
+low-frequency component that uses exact raw KV scans instead of long-lived
+materialized views.
 Retired shared coordination buckets are not part of the v1 surface. Opening a
 generic state store is no longer part of the Python runtime. Beacon and Concord
 open their explicit JetStream KV bucket policies directly and serve normal reads
@@ -232,7 +235,9 @@ advertisements are TTL-bound and are not reaped. The reaper persists first stale
 observations, cancels stale open contracts after the configured grace period,
 logs deletion context without full `terms`, deletes cancelled records after
 retention, and cleans any remaining participant-token keys for deleted contract
-generations.
+generations. Its `scan_once()` path intentionally lists `contracts.` and `stale.`
+KV keys and exact-reads participant-token keys; it does not start Concord
+materialized watches.
 
 ## Deckr Profiles
 
@@ -334,6 +339,11 @@ token_bucket = context.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY)
 maintenance_bucket = context.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY)
 ```
 
+The reaper wraps these buckets in Concord maintenance logic for CAS
+cancellation, retention deletion, token cleanup, and orphaned stale-observation
+cleanup. Other components should prefer managed `deckr.beacon` and
+`deckr.concord` for normal protocol authority.
+
 TTL-bound buckets are configured with broker-owned bucket TTL and one retained
 message per subject. Persistent buckets reject per-write TTL. Reopening the same
 bucket with a conflicting policy is an error.
@@ -398,6 +408,10 @@ served from cached maps rather than per-query native bucket scans. Temporary
 watch/list consumers must be explicitly deleted or avoided once the read is
 complete; server-side inactive cleanup is a fallback, not the steady-state
 cleanup path.
+
+`ConcordReaperService` is allowed to use list-style raw scans because it runs
+infrequently and does not provide immediate notification. It avoids materialized
+watches entirely, so it should not leave watch consumers behind.
 
 Treat watch events as wakeups and exact KV reads as authority, but remember that
 every watch still consumes broker resources. Use `scripts/nats_state_report.py`

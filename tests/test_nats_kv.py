@@ -13,6 +13,7 @@ from deckr.substrates.nats_kv import (
     KvEntry,
     NatsJsonKvBucket,
     NatsKvMaterializedBucket,
+    kv_entry_is_absent_marker,
     kv_value,
 )
 
@@ -92,6 +93,27 @@ async def test_nats_json_kv_watch_maps_put_delete_and_expire_markers() -> None:
     assert expired.operation == "expire"
     assert ready is None
     assert fake_js.deleted_consumers == [("KV_deckr_concord_contract_v1", "consumer-1")]
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_items_lists_current_entries_by_prefix() -> None:
+    fake_js = _FakeJs()
+    fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
+    fake_js.kv.add_entry("contracts.main.2.meta", b'{"state":"cancelled"}')
+    fake_js.kv.add_marker("contracts.main.3.meta", operation="DEL")
+    fake_js.kv.add_entry("other.main.1.meta", b'{"state":"open"}')
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
+    )
+
+    entries = await bucket.items("contracts.")
+
+    assert [entry.key for entry in entries] == [
+        "contracts.main.1.meta",
+        "contracts.main.2.meta",
+    ]
+    assert entries[0].value == {"state": "open"}
 
 
 @pytest.mark.asyncio
@@ -258,6 +280,20 @@ class _FakeKv:
         if entry is None:
             raise RuntimeError("missing")
         return entry
+
+    async def keys(self, filters=None) -> tuple[str, ...]:
+        if filters is None:
+            prefixes = ("",)
+        elif isinstance(filters, str):
+            prefixes = (filters.rstrip(">"),)
+        else:
+            prefixes = tuple(str(item).rstrip(">") for item in filters)
+        return tuple(
+            key
+            for key, entry in sorted(self._entries.items())
+            if not kv_entry_is_absent_marker(entry)
+            and any(key.startswith(prefix) for prefix in prefixes)
+        )
 
     async def put(self, key: str, value: bytes) -> int:
         return self.add_entry(key, value).revision

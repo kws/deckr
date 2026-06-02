@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import anyio
 import pytest
 from memory_kv_bucket import MemoryJsonKvBucket
 from memory_lane_substrate import memory_deckr
@@ -69,6 +70,21 @@ class UnavailableGetKvBucket:
 
     def watch(self, *args, **kwargs):
         return self._inner.watch(*args, **kwargs)
+
+
+class CountingNoWatchKvBucket(MemoryJsonKvBucket):
+    def __init__(self, *, bucket: str) -> None:
+        super().__init__(bucket=bucket)
+        self.items_prefixes: list[str] = []
+        self.watch_called = False
+
+    async def items(self, prefix: str = ""):
+        self.items_prefixes.append(prefix)
+        return await super().items(prefix)
+
+    def watch(self, *args, **kwargs):
+        self.watch_called = True
+        raise AssertionError("reaper scan must not start a materialized KV watch")
 
 
 def _stores():
@@ -142,6 +158,30 @@ async def _assert_no_stale_observation(maintenance_state, contract) -> None:
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_reaper_scan_uses_raw_items_without_materialized_watches() -> None:
+    clock = ManualClock()
+    contract_state = CountingNoWatchKvBucket(bucket="contracts")
+    token_state = CountingNoWatchKvBucket(bucket="tokens")
+    maintenance_state = CountingNoWatchKvBucket(bucket="maintenance")
+    coordinator = _concord(contract_state, token_state, maintenance_state)
+    await _contract(coordinator, contract_id="raw-scan-contract")
+    reaper = _reaper(coordinator, clock)
+
+    async with anyio.create_task_group() as task_group:
+        reaper.start(task_group)
+        result = await reaper.scan_once()
+        task_group.cancel_scope.cancel()
+
+    assert result.scanned_contract_count == 1
+    assert result.stale_observations_created == 1
+    assert contract_state.items_prefixes == ["contracts."]
+    assert maintenance_state.items_prefixes == ["stale.", "stale."]
+    assert not contract_state.watch_called
+    assert not token_state.watch_called
+    assert not maintenance_state.watch_called
 
 
 @pytest.mark.asyncio
