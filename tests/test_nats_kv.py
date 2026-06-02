@@ -6,6 +6,7 @@ from typing import Any
 
 import anyio
 import pytest
+from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.substrates.nats_kv import (
     KvBucketPolicy,
@@ -154,6 +155,26 @@ async def test_nats_json_kv_create_keeps_live_entry_conflict() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nats_json_kv_delete_returns_real_marker_revision_after_stream_gap() -> None:
+    fake_js = _FakeJs()
+    current = fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
+    gap = fake_js.kv.add_entry("contracts.main.2.meta", b'{"state":"open"}')
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
+    )
+
+    marker_revision = await bucket.delete(
+        "contracts.main.1.meta",
+        revision=current.revision,
+    )
+
+    assert marker_revision == gap.revision + 1
+    assert marker_revision != current.revision + 1
+    assert kv_entry_is_absent_marker(await fake_js.kv.get("contracts.main.1.meta"))
+
+
+@pytest.mark.asyncio
 async def test_materialized_bucket_status_tracks_stale_and_current_recovery() -> None:
     raw = _RecoveringWatchBucket(bucket="recovering")
     raw.add("items.a", {"value": "a"})
@@ -223,6 +244,36 @@ async def test_materialized_bucket_reconciles_absent_keys_on_watch_recovery() ->
             KvChange(raw.bucket, fresh.key, fresh.revision, "put", fresh)
         )
         assert materialized.get_cached("items.b") == fresh
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_delete_uses_exact_marker_revision_after_stream_gap() -> None:
+    raw = MemoryJsonKvBucket(bucket="materialized")
+    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        await materialized.wait_current()
+        current = await materialized.put("items.a", {"value": "a"})
+        gap = await raw.put("other.a", {"value": "gap"})
+
+        async with materialized.subscribe() as changes:
+            marker_revision = await materialized.delete(
+                "items.a",
+                revision=current.revision,
+            )
+            with anyio.fail_after(1):
+                deleted = await changes.receive()
+            with anyio.move_on_after(0.05) as duplicate_scope:
+                await changes.receive()
+
+        assert marker_revision == gap.revision + 1
+        assert marker_revision != current.revision + 1
+        assert deleted.operation == "delete"
+        assert deleted.key == "items.a"
+        assert deleted.revision == marker_revision
+        assert duplicate_scope.cancelled_caught
         task_group.cancel_scope.cancel()
 
 

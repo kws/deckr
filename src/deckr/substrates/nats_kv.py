@@ -203,7 +203,7 @@ class NatsJsonKvBucket:
             raise KvUnavailable(f"Could not update KV key {key!r}") from exc
         return KvEntry(self.bucket, key, normalized, int(new_revision))
 
-    async def delete(self, key: str, *, revision: int | None = None) -> None:
+    async def delete(self, key: str, *, revision: int | None = None) -> int | None:
         kv = await self._available_kv()
         try:
             if revision is None:
@@ -212,10 +212,22 @@ class NatsJsonKvBucket:
                 await kv.delete(key, last=revision)
         except Exception as exc:
             if is_key_missing(exc):
-                return
+                return None
             if is_revision_conflict(exc):
                 raise KvConflict(f"KV key {key!r} revision changed") from exc
             raise KvUnavailable(f"Could not delete KV key {key!r}") from exc
+        try:
+            return await kv_absent_marker_revision(kv, key)
+        except Exception as exc:
+            if is_key_missing(exc):
+                return None
+            logger.debug(
+                "Could not confirm KV delete marker bucket=%s key=%s",
+                self.bucket,
+                key,
+                exc_info=True,
+            )
+            return None
 
     @asynccontextmanager
     async def watch(
@@ -500,17 +512,15 @@ class NatsKvMaterializedBucket:
         await self._apply_change(KvChange(self.bucket, key, entry.revision, "put", entry))
         return entry
 
-    async def delete(self, key: str, *, revision: int | None = None) -> None:
+    async def delete(self, key: str, *, revision: int | None = None) -> int | None:
         previous_revision = self._revision_by_key.get(key, 0)
-        await self._bucket.delete(key, revision=revision)
+        marker_revision = await self._bucket.delete(key, revision=revision)
         if previous_revision == 0 and revision is None:
-            return
-        marker_revision = (
-            revision
-            if revision is not None and revision > previous_revision
-            else previous_revision + 1
-        )
+            return None
+        if marker_revision is None:
+            return None
         await self._apply_change(KvChange(self.bucket, key, marker_revision, "delete"))
+        return marker_revision
 
     @asynccontextmanager
     async def subscribe(

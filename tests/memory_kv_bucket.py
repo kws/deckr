@@ -71,11 +71,11 @@ class MemoryJsonKvBucket:
                 raise KvConflict(f"KV key {key!r} revision changed")
         return await self.put(key, value)
 
-    async def delete(self, key: str, *, revision: int | None = None) -> None:
+    async def delete(self, key: str, *, revision: int | None = None) -> int | None:
         async with self._lock:
             current = self._entries.get(key)
             if current is None:
-                return
+                return None
             if revision is not None and current.revision != revision:
                 raise KvConflict(f"KV key {key!r} revision changed")
             self._revision += 1
@@ -86,6 +86,7 @@ class MemoryJsonKvBucket:
             watchers,
             KvChange(self.bucket, key, delete_revision, "delete"),
         )
+        return delete_revision
 
     async def expire(self, key: str) -> None:
         async with self._lock:

@@ -233,17 +233,9 @@ class ServiceViewStore:
                 f"Service view store {view.store_name!r} does not match bucket "
                 f"{self.bucket!r}"
             )
-        previous_revision = self._bucket.revision_cached(view.key) or (
-            self._revision_by_key.get(view.key, 0)
-        )
-        await self._bucket.delete(view.key, revision=revision)
-        if previous_revision == 0 and revision is None:
+        marker_revision = await self._bucket.delete(view.key, revision=revision)
+        if marker_revision is None:
             return
-        marker_revision = self._bucket.revision_cached(view.key) or (
-            revision
-            if revision is not None and revision > previous_revision
-            else previous_revision + 1
-        )
         await self._apply_service_change(
             ServiceViewChange("delete", self.bucket, view.key, marker_revision)
         )
