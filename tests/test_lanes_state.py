@@ -24,7 +24,10 @@ from deckr.concord import (
     parse_concord_participant_token_key,
 )
 from deckr.contracts.keys import decode_key_token, encode_key_token
-from deckr.contracts.lanes import DEFAULT_MESSAGE_CONTRACT_REGISTRY
+from deckr.contracts.lanes import (
+    DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+    SERVICE_LANE_CONTRACT,
+)
 from deckr.contracts.messages import (
     ACTIONS_LANE,
     SERVICES_LANE,
@@ -98,7 +101,10 @@ async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> Non
 @pytest.mark.asyncio
 async def test_endpoint_session_id_is_reused_across_lanes() -> None:
     async with (
-        mock_deckr() as deckr,
+        mock_deckr(
+            lane_contracts=(SERVICE_LANE_CONTRACT,),
+            lanes=(SERVICES_LANE,),
+        ) as deckr,
         deckr.endpoint(controller_address("main"), session_id="controller-fixed") as controller,
         deckr.endpoint(action_provider_address("python")) as provider,
         deckr.endpoint(service_address("media")) as service,

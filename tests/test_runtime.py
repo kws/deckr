@@ -5,10 +5,11 @@ from message_bus_mocks import mock_deckr
 
 from deckr.contracts.lanes import (
     DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+    SERVICE_LANE_CONTRACT,
     MessageContract,
     MessageContractRegistry,
 )
-from deckr.contracts.messages import ACTIONS_LANE
+from deckr.contracts.messages import ACTIONS_LANE, HARDWARE_MESSAGES_LANE, SERVICES_LANE
 from deckr.lanes import Lane
 from deckr.runtime import Deckr
 from deckr.substrates.nats import NatsSubstrate
@@ -18,12 +19,27 @@ from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
 @pytest.mark.asyncio
 async def test_deckr_creates_core_endpoint_bound_lanes() -> None:
     async with mock_deckr() as deckr:
-        actions_lane = deckr.lane("actions")
-        hardware_lane = deckr.lane("hardware_messages")
+        actions_lane = deckr.lane(ACTIONS_LANE)
+        hardware_lane = deckr.lane(HARDWARE_MESSAGES_LANE)
 
     assert isinstance(actions_lane, Lane)
     assert isinstance(hardware_lane, Lane)
-    assert deckr.lanes.require("actions") is actions_lane
+    assert deckr.lanes.require(ACTIONS_LANE) is actions_lane
+    assert SERVICES_LANE not in deckr.lanes.names
+    with pytest.raises(LookupError, match="Required lane 'services' is not available"):
+        deckr.lane(SERVICES_LANE)
+
+
+def test_services_lane_requires_explicit_opt_in() -> None:
+    with pytest.raises(LookupError, match="not registered"):
+        DEFAULT_MESSAGE_CONTRACT_REGISTRY.contract_for(SERVICES_LANE)
+
+    deckr = mock_deckr(
+        lane_contracts=(SERVICE_LANE_CONTRACT,),
+        lanes=(SERVICES_LANE,),
+    )
+
+    assert deckr.lane(SERVICES_LANE).contract == SERVICE_LANE_CONTRACT
 
 
 @pytest.mark.asyncio

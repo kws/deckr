@@ -1,4 +1,4 @@
-"""Body contracts for the core ``services`` lane."""
+"""Body contracts for the optional ``services`` lane."""
 
 from __future__ import annotations
 

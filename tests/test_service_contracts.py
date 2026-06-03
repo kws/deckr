@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from deckr.contracts.lanes import CORE_LANE_CONTRACTS
+from deckr.contracts.lanes import SERVICE_LANE_CONTRACT
 from deckr.contracts.messages import (
     SERVICES_LANE,
     EndpointAddress,
@@ -34,7 +34,7 @@ def test_service_endpoint_helpers_round_trip() -> None:
 
 
 def test_services_lane_contract_accepts_direct_command_reply() -> None:
-    contract = CORE_LANE_CONTRACTS[SERVICES_LANE]
+    contract = SERVICE_LANE_CONTRACT
     command = service_command_message(
         sender=controller_address("controller-main"),
         sender_session_id="controller-session",
@@ -92,7 +92,7 @@ def test_service_message_schema_exports_typed_bodies() -> None:
 
 
 def test_services_lane_validation_thaws_frozen_json_body() -> None:
-    contract = CORE_LANE_CONTRACTS[SERVICES_LANE]
+    contract = SERVICE_LANE_CONTRACT
     command = service_command_message(
         sender=controller_address("controller-main"),
         sender_session_id="controller-session",
@@ -142,7 +142,7 @@ def test_services_lane_rejects_hardware_manager_participants() -> None:
     )
 
     with pytest.raises(ValueError, match="Sender family"):
-        validate_message_for_contract(message, CORE_LANE_CONTRACTS[SERVICES_LANE])
+        validate_message_for_contract(message, SERVICE_LANE_CONTRACT)
 
 
 def test_service_command_body_rejects_sender_authority_fields() -> None:
@@ -158,4 +158,3 @@ def test_service_command_body_rejects_sender_authority_fields() -> None:
                 "senderSessionId": "not-body-authority",
             },
         )
-

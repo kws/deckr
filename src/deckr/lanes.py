@@ -384,7 +384,7 @@ def validate_message_for_contract(
             f"Message type {message.message_type!r} is not supported on "
             f"lane {message.lane!r}"
         )
-    _validate_core_lane_body(message)
+    _validate_known_lane_body(message)
     if (
         contract.allowed_sender_families is not None
         and message.sender.family not in contract.allowed_sender_families
@@ -469,7 +469,7 @@ def _validate_recipient_family(
         raise ValueError(f"Recipient family {family!r} is not allowed on lane {lane!r}")
 
 
-def _validate_core_lane_body(message: DeckrMessage) -> None:
+def _validate_known_lane_body(message: DeckrMessage) -> None:
     if message.lane == ACTIONS_LANE:
         from deckr.actions.messages import action_body
 

@@ -7,6 +7,7 @@ from deckr.contracts.messages import (
     ACTIONS_LANE,
     CORE_LANE_SCHEMA_IDS,
     HARDWARE_MESSAGES_LANE,
+    SERVICE_MESSAGES_SCHEMA_ID,
     SERVICES_LANE,
 )
 
@@ -87,6 +88,16 @@ SERVICE_MESSAGE_TYPES = frozenset(
     }
 )
 
+SERVICE_LANE_CONTRACT = MessageContract(
+    lane=SERVICES_LANE,
+    schema_id=SERVICE_MESSAGES_SCHEMA_ID,
+    message_types=SERVICE_MESSAGE_TYPES,
+    allowed_sender_families=frozenset({"action_provider", "controller", "service"}),
+    allowed_recipient_families=frozenset(
+        {"action_provider", "controller", "service"}
+    ),
+)
+
 CORE_LANE_CONTRACTS: Mapping[str, MessageContract] = {
     ACTIONS_LANE: MessageContract(
         lane=ACTIONS_LANE,
@@ -110,15 +121,6 @@ CORE_LANE_CONTRACTS: Mapping[str, MessageContract] = {
             "controllers": "controller",
         },
         default_broadcast_hop_limit=1,
-    ),
-    SERVICES_LANE: MessageContract(
-        lane=SERVICES_LANE,
-        schema_id=CORE_LANE_SCHEMA_IDS[SERVICES_LANE],
-        message_types=SERVICE_MESSAGE_TYPES,
-        allowed_sender_families=frozenset({"action_provider", "controller", "service"}),
-        allowed_recipient_families=frozenset(
-            {"action_provider", "controller", "service"}
-        ),
     ),
 }
 

@@ -1,5 +1,6 @@
 """Shared service endpoint and message contracts."""
 
+from deckr.contracts.lanes import SERVICE_LANE_CONTRACT
 from deckr.services.messages import (
     SERVICE_COMMAND,
     SERVICE_COMMAND_REPLY,
@@ -39,6 +40,7 @@ from deckr.services.views import ServiceViewChange, ServiceViewEntry, ServiceVie
 __all__ = [
     "SERVICE_COMMAND",
     "SERVICE_COMMAND_REPLY",
+    "SERVICE_LANE_CONTRACT",
     "ServiceAdvertisementPayload",
     "ServiceBackendStatus",
     "ServiceCommandBody",

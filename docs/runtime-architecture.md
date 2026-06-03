@@ -116,7 +116,9 @@ The current core lane set includes:
 
 - `actions`
 - `hardware_messages`
-- `services`
+
+`services` is an optional service/profile-provided lane. `deckr` still owns the
+shared service wire contract, but runtimes must opt into that lane explicitly.
 
 The distributed message bus is NATS. This document owns the generic component
 and lane model. Beacon/Concord protocol semantics are specified in
@@ -211,7 +213,6 @@ The public Python API should make this the normal path:
 async with Deckr() as deckr:
     actions = deckr.lane("actions")
     hardware_messages = deckr.lane("hardware_messages")
-    services = deckr.lane("services")
     async with deckr.endpoint("controller:main") as endpoint:
         ...
 ```
@@ -358,7 +359,7 @@ the lane message contract.
 Python is expected to author these core contracts using Pydantic models.
 
 The interoperability artifact for non-Python implementations is the JSON Schema
-generated from those same core contracts.
+generated from those same standardized contracts.
 
 Node, Rust, and other implementations should consume the JSON Schema
 descriptions, not reverse-engineer Python implementation details.
@@ -775,11 +776,10 @@ For that first-party source, omitted `block` defaults to an empty list,
 `endpoint_id_templates.action_provider` defaults to `python-{provider_id}`.
 
 Each Python action-provider runtime instance registers
-`action_provider:<provider-instance-id>` on both `actions` and `services`.
-The `actions` endpoint carries controller/action traffic. The
-`services` endpoint lets hosted action instances use service command/reply lane
-messages and Concord-authorized service views without becoming service
-components themselves.
+`action_provider:<provider-instance-id>` on `actions`. When a host enables the
+optional `services` lane, the provider runtime may also register on `services`
+so hosted action instances can use service command/reply lane messages and
+Concord-authorized service views without becoming service components themselves.
 
 ### Runtime-Local Component Status
 
@@ -941,6 +941,8 @@ to understand component-specific settings.
   internals.
 - Lane contracts are the only generic wiring primitive.
 - The runtime host creates the full core lane set before component startup.
+- Optional/profile-provided lanes, including `services`, require explicit lane
+  contracts and lane registration.
 - Core lane names belong in `deckr`.
 - Lanes are logical runtime contracts and may be transported across transport
   boundaries.

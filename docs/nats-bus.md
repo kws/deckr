@@ -292,11 +292,11 @@ The service API is intentionally layered instead of one broad runtime helper.
 `ServiceUseTerms`, `ServiceViewFamily`, `ServiceViewRef`, service command
 schemas, descriptor parsing, terms construction, and service-view key helpers.
 Services advertise descriptors through Beacon, negotiate service-use authority
-through Concord, and carry service command/reply messages on the `services`
-lane as ordinary lane traffic. A service keeps its own advertisement fresh,
-skips unchanged refresh writes when possible, best-effort withdraws on clean
-shutdown, and removes stale same-endpoint advertisements left by an earlier
-crashed session or changed configuration.
+through Concord, and, when the host explicitly enables the optional `services`
+lane, carry service command/reply messages as ordinary lane traffic. A service
+keeps its own advertisement fresh, skips unchanged refresh writes when possible,
+best-effort withdraws on clean shutdown, and removes stale same-endpoint
+advertisements left by an earlier crashed session or changed configuration.
 
 Protected service views are direct JetStream/KV views. Service/application code
 opens them by constructing `ServiceViewStore` from an explicit KV bucket and
@@ -462,9 +462,11 @@ If a runtime cannot find hardware, actions, or services:
 1. Check the relevant Beacon feature id.
 2. Check the advertisement endpoint and session id.
 3. Check whether the advertisement bucket TTL is expiring records.
-4. If a live agreement is expected, validate the Concord contract and every
+4. For `services` lane traffic, check that the host registered the optional
+   service lane contract and lane name.
+5. If a live agreement is expected, validate the Concord contract and every
    participant token; do not treat Beacon disappearance as withdrawal.
-5. For profile-specific behavior, validate the Beacon payload or Concord terms
+6. For profile-specific behavior, validate the Beacon payload or Concord terms
    with `deckr.hardware.profiles` or `deckr.profiles`, depending on the profile.
 
 If lane messages are not delivered:

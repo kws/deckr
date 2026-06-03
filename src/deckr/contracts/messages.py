@@ -20,7 +20,7 @@ from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_jso
 HARDWARE_MESSAGES_LANE = "hardware_messages"
 ACTIONS_LANE = "actions"
 SERVICES_LANE = "services"
-CORE_LANE_NAMES = (ACTIONS_LANE, HARDWARE_MESSAGES_LANE, SERVICES_LANE)
+CORE_LANE_NAMES = (ACTIONS_LANE, HARDWARE_MESSAGES_LANE)
 
 DECKR_MESSAGE_PROTOCOL_VERSION = "1"
 HARDWARE_MESSAGES_SCHEMA_ID = "dev.deckr.message.hardware_messages.v1"
@@ -29,6 +29,9 @@ SERVICE_MESSAGES_SCHEMA_ID = "dev.deckr.message.services.v1"
 CORE_LANE_SCHEMA_IDS = {
     ACTIONS_LANE: ACTION_MESSAGES_SCHEMA_ID,
     HARDWARE_MESSAGES_LANE: HARDWARE_MESSAGES_SCHEMA_ID,
+}
+MESSAGE_LANE_SCHEMA_IDS = {
+    **CORE_LANE_SCHEMA_IDS,
     SERVICES_LANE: SERVICE_MESSAGES_SCHEMA_ID,
 }
 
@@ -408,7 +411,7 @@ def is_direct_message(message: DeckrMessage) -> bool:
 
 
 def message_schema_id_for_lane(lane: str) -> str | None:
-    return CORE_LANE_SCHEMA_IDS.get(lane)
+    return MESSAGE_LANE_SCHEMA_IDS.get(lane)
 
 
 def message_expires_at(message: DeckrMessage) -> datetime | None:

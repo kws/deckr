@@ -11,6 +11,7 @@ from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+    SERVICE_LANE_CONTRACT,
     MessageContract,
     MessageContractRegistry,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "MessageTarget",
     "SERVICES_LANE",
     "SERVICE_MESSAGES_SCHEMA_ID",
+    "SERVICE_LANE_CONTRACT",
     "TraceContext",
     "broadcast_target",
     "controller_address",

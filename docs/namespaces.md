@@ -82,7 +82,8 @@ ids. They intentionally stay short:
 - Python entry point group names, such as `deckr.components`, `deckr.plugins`,
   `deckr.config_sources`, and `deckr.component_instance_sources`
 - the TOML root, `[deckr.*]`
-- core lane names, currently `actions`, `hardware_messages`, and `services`
+- core lane names, currently `actions` and `hardware_messages`
+- optional shared lane names, currently `services`
 - core endpoint families, such as `controller`, `action_provider`,
   `hardware_manager`, and `service`
 - core NATS subject roots and shared buckets, such as `deckr.msg.*`,
