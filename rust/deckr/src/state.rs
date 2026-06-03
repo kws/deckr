@@ -6,8 +6,10 @@ use std::time::Duration;
 
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_core::Stream;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::task::JoinHandle;
 
 use crate::{Error, Result};
 
@@ -207,6 +209,267 @@ pub async fn observe_prefix_current<S: StateStore>(
         entries: observed.into_values().collect(),
         confirmed_missing,
     })
+}
+
+const MAX_MATERIALIZED_SUBSCRIBERS: usize = 128;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MaterializedStateStatus {
+    Starting,
+    Ready,
+    Stale,
+    Closed,
+}
+
+#[derive(Clone)]
+pub struct MaterializedStateStore<S: StateStore> {
+    state: S,
+    prefix: String,
+    inner: Arc<Mutex<MaterializedStateInner>>,
+    watch_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+}
+
+#[derive(Debug)]
+struct MaterializedStateInner {
+    status: MaterializedStateStatus,
+    entries: BTreeMap<String, StateEntry>,
+    subscribers: Vec<UnboundedSender<Result<StateChange>>>,
+}
+
+impl<S: StateStore> MaterializedStateStore<S> {
+    pub async fn start(state: S, prefix: impl Into<String>) -> Result<Self> {
+        let prefix = prefix.into();
+        let entries = state
+            .items(&prefix)
+            .await?
+            .into_iter()
+            .map(|entry| (entry.key.clone(), entry))
+            .collect::<BTreeMap<_, _>>();
+        let mut watch = state.watch(&prefix).await?;
+        let inner = Arc::new(Mutex::new(MaterializedStateInner {
+            status: MaterializedStateStatus::Ready,
+            entries,
+            subscribers: Vec::new(),
+        }));
+        let watch_inner = inner.clone();
+        let watch_prefix = prefix.clone();
+        let watch_task = tokio::spawn(async move {
+            while let Some(change) = watch.next().await {
+                let change = match change {
+                    Ok(change) => change,
+                    Err(error) => {
+                        let mut inner = watch_inner
+                            .lock()
+                            .expect("materialized state mutex poisoned");
+                        inner.status = MaterializedStateStatus::Stale;
+                        inner.notify(StateChange {
+                            operation: StateOperation::Delete,
+                            key: format!("{watch_prefix}<watch-error>"),
+                            entry: Some(StateEntry {
+                                key: "<error>".to_string(),
+                                value: Value::String(error.to_string()),
+                                revision: 0,
+                            }),
+                        });
+                        return;
+                    }
+                };
+                let mut inner = watch_inner
+                    .lock()
+                    .expect("materialized state mutex poisoned");
+                inner.apply_change(change);
+            }
+            watch_inner
+                .lock()
+                .expect("materialized state mutex poisoned")
+                .status = MaterializedStateStatus::Closed;
+        });
+        Ok(Self {
+            state,
+            prefix,
+            inner,
+            watch_task: Arc::new(Mutex::new(Some(watch_task))),
+        })
+    }
+
+    pub fn status(&self) -> MaterializedStateStatus {
+        self.inner
+            .lock()
+            .expect("materialized state mutex poisoned")
+            .status
+    }
+
+    pub fn close(&self) {
+        if let Some(task) = self
+            .watch_task
+            .lock()
+            .expect("materialized watch task mutex poisoned")
+            .take()
+        {
+            task.abort();
+        }
+        self.inner
+            .lock()
+            .expect("materialized state mutex poisoned")
+            .status = MaterializedStateStatus::Closed;
+    }
+
+    pub fn get_cached(&self, key: &str) -> Result<Option<StateEntry>> {
+        let inner = self
+            .inner
+            .lock()
+            .expect("materialized state mutex poisoned");
+        check_materialized_status(inner.status)?;
+        Ok(inner.entries.get(key).cloned())
+    }
+
+    pub fn items_cached(&self, prefix: &str) -> Result<Vec<StateEntry>> {
+        let inner = self
+            .inner
+            .lock()
+            .expect("materialized state mutex poisoned");
+        check_materialized_status(inner.status)?;
+        Ok(inner
+            .entries
+            .iter()
+            .filter_map(|(key, entry)| key.starts_with(prefix).then_some(entry.clone()))
+            .collect())
+    }
+
+    pub fn cached_keys(&self) -> Result<BTreeSet<String>> {
+        let inner = self
+            .inner
+            .lock()
+            .expect("materialized state mutex poisoned");
+        check_materialized_status(inner.status)?;
+        Ok(inner.entries.keys().cloned().collect())
+    }
+
+    pub fn subscribe_cached(&self) -> StateWatchStream {
+        let (sender, receiver) = unbounded();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("materialized state mutex poisoned");
+        if inner.subscribers.len() >= MAX_MATERIALIZED_SUBSCRIBERS {
+            inner.subscribers.remove(0);
+        }
+        inner.subscribers.push(sender);
+        Box::pin(receiver)
+    }
+
+    pub async fn reconcile_snapshot(
+        &self,
+        known_keys: impl IntoIterator<Item = String>,
+    ) -> Result<PrefixObservation> {
+        let observation = observe_prefix_current(&self.state, &self.prefix, known_keys).await?;
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("materialized state mutex poisoned");
+        for key in &observation.confirmed_missing {
+            inner.entries.remove(key);
+        }
+        for entry in &observation.entries {
+            inner.entries.insert(entry.key.clone(), entry.clone());
+        }
+        inner.status = MaterializedStateStatus::Ready;
+        Ok(observation)
+    }
+
+    pub async fn get_exact(&self, key: &str) -> Result<Option<StateEntry>> {
+        self.state.get(key).await
+    }
+
+    pub async fn items_exact(&self, prefix: &str) -> Result<Vec<StateEntry>> {
+        self.state.items(prefix).await
+    }
+
+    pub async fn put(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
+        let entry = self.state.put(key, value, ttl).await?;
+        self.apply_entry(entry.clone());
+        Ok(entry)
+    }
+
+    pub async fn create(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
+        let entry = self.state.create(key, value, ttl).await?;
+        self.apply_entry(entry.clone());
+        Ok(entry)
+    }
+
+    pub async fn update(
+        &self,
+        key: &str,
+        value: Value,
+        revision: u64,
+        ttl: Option<u64>,
+    ) -> Result<StateEntry> {
+        let entry = self.state.update(key, value, revision, ttl).await?;
+        self.apply_entry(entry.clone());
+        Ok(entry)
+    }
+
+    pub async fn delete(&self, key: &str, revision: Option<u64>) -> Result<()> {
+        self.state.delete(key, revision).await?;
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("materialized state mutex poisoned");
+        inner.apply_change(StateChange {
+            operation: StateOperation::Delete,
+            key: key.to_string(),
+            entry: None,
+        });
+        Ok(())
+    }
+
+    fn apply_entry(&self, entry: StateEntry) {
+        self.inner
+            .lock()
+            .expect("materialized state mutex poisoned")
+            .apply_change(StateChange {
+                operation: StateOperation::Put,
+                key: entry.key.clone(),
+                entry: Some(entry),
+            });
+    }
+}
+
+impl MaterializedStateInner {
+    fn apply_change(&mut self, change: StateChange) {
+        match change.operation {
+            StateOperation::Put => {
+                if let Some(entry) = &change.entry {
+                    self.entries.insert(change.key.clone(), entry.clone());
+                }
+            }
+            StateOperation::Delete | StateOperation::Expire => {
+                self.entries.remove(&change.key);
+            }
+        }
+        self.notify(change);
+    }
+
+    fn notify(&mut self, change: StateChange) {
+        self.subscribers
+            .retain(|subscriber| subscriber.unbounded_send(Ok(change.clone())).is_ok());
+    }
+}
+
+fn check_materialized_status(status: MaterializedStateStatus) -> Result<()> {
+    match status {
+        MaterializedStateStatus::Ready => Ok(()),
+        MaterializedStateStatus::Starting => Err(Error::MaterializedViewStale(
+            "materialized state is still starting".to_string(),
+        )),
+        MaterializedStateStatus::Stale => Err(Error::MaterializedViewStale(
+            "materialized state watch is stale".to_string(),
+        )),
+        MaterializedStateStatus::Closed => Err(Error::Closed(
+            "materialized state store is closed".to_string(),
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -433,6 +696,79 @@ mod tests {
         assert_eq!(change.operation, StateOperation::Delete);
         assert_eq!(change.key, "matched.key");
         assert_eq!(change.entry, None);
+    }
+
+    #[tokio::test]
+    async fn materialized_state_store_caches_watch_and_exact_writes() {
+        let state = MemoryStateStore::new();
+        state
+            .put("matched.initial", json!({"value": 1}), None)
+            .await
+            .unwrap();
+        let materialized = MaterializedStateStore::start(state.clone(), "matched.")
+            .await
+            .unwrap();
+
+        assert_eq!(materialized.status(), MaterializedStateStatus::Ready);
+        assert_eq!(
+            materialized
+                .get_cached("matched.initial")
+                .unwrap()
+                .unwrap()
+                .value,
+            json!({"value": 1})
+        );
+
+        let mut cached_watch = materialized.subscribe_cached();
+        let created = materialized
+            .create("matched.created", json!({"value": 2}), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            materialized
+                .get_cached("matched.created")
+                .unwrap()
+                .unwrap()
+                .revision,
+            created.revision
+        );
+        let change = cached_watch.next().await.unwrap().unwrap();
+        assert_eq!(change.operation, StateOperation::Put);
+        assert_eq!(change.key, "matched.created");
+
+        state
+            .put("matched.external", json!({"value": 3}), None)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if materialized
+                    .get_cached("matched.external")
+                    .unwrap()
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        materialized
+            .delete("matched.created", Some(created.revision))
+            .await
+            .unwrap();
+        assert!(materialized
+            .get_cached("matched.created")
+            .unwrap()
+            .is_none());
+
+        materialized.close();
+        assert!(matches!(
+            materialized.get_cached("matched.initial"),
+            Err(Error::Closed(_))
+        ));
     }
 
     #[test]

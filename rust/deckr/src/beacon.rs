@@ -10,12 +10,13 @@ use crate::keys::{
     beacon_advertisement_key as make_beacon_advertisement_key, beacon_feature_prefix,
     parse_beacon_advertisement_key,
 };
-use crate::state::{StateEntry, StateStore, StateStorePolicy};
+use crate::state::{MaterializedStateStore, StateEntry, StateStore, StateStorePolicy};
 use crate::{Error, Result};
 
 pub const BEACON_ADVERTISEMENT_SCHEMA_ID: &str = "dev.deckr.beacon.advertisement.v1";
 pub const DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME: &str = "deckr_beacon_advertisement_v1";
 pub const DEFAULT_BEACON_TTL_SECONDS: u64 = 30;
+pub const BEACON_ADVERTISEMENT_PREFIX: &str = "advertisements.";
 
 pub fn beacon_advertisement_store_policy() -> StateStorePolicy {
     StateStorePolicy::ttl(DEFAULT_BEACON_TTL_SECONDS, "Beacon advertisement state")
@@ -138,6 +139,58 @@ pub struct BeaconAdvertiser<S: StateStore> {
     labels: BTreeMap<String, String>,
     hints: BTreeMap<String, Value>,
     payload: Option<Value>,
+}
+
+#[derive(Clone)]
+pub struct Beacon<S: StateStore> {
+    advertisements: MaterializedStateStore<S>,
+}
+
+impl<S: StateStore> Beacon<S> {
+    pub async fn start(state: S) -> Result<Self> {
+        Ok(Self {
+            advertisements: MaterializedStateStore::start(state, BEACON_ADVERTISEMENT_PREFIX)
+                .await?,
+        })
+    }
+
+    pub fn materialized_store(&self) -> &MaterializedStateStore<S> {
+        &self.advertisements
+    }
+
+    pub fn candidate_by_key(&self, key: &str) -> Result<Option<Candidate>> {
+        Ok(self
+            .advertisements
+            .get_cached(key)?
+            .and_then(candidate_from_entry))
+    }
+
+    pub fn candidates(&self, feature_id: &str) -> Result<Vec<Candidate>> {
+        let prefix = beacon_feature_prefix(feature_id);
+        sorted_candidates(
+            self.advertisements
+                .items_cached(&prefix)?
+                .into_iter()
+                .filter_map(candidate_from_entry)
+                .filter(|candidate| candidate.advertisement.feature_id == feature_id),
+        )
+    }
+
+    pub fn candidates_for_endpoint(
+        &self,
+        feature_id: &str,
+        advertiser: &EndpointAddress,
+        endpoint: &EndpointAddress,
+    ) -> Result<Vec<Candidate>> {
+        sorted_candidates(
+            self.candidates(feature_id)?
+                .into_iter()
+                .filter(|candidate| {
+                    &candidate.advertisement.advertiser == advertiser
+                        && &candidate.advertisement.endpoint == endpoint
+                }),
+        )
+    }
 }
 
 impl<S: StateStore> BeaconAdvertiser<S> {
@@ -320,13 +373,18 @@ pub fn candidate_from_entry(entry: StateEntry) -> Option<Candidate> {
 
 pub async fn find_candidates<S: StateStore>(state: &S, feature_id: &str) -> Result<Vec<Candidate>> {
     let prefix = beacon_feature_prefix(feature_id);
-    let mut candidates = state
-        .items(&prefix)
-        .await?
-        .into_iter()
-        .filter_map(candidate_from_entry)
-        .filter(|candidate| candidate.advertisement.feature_id == feature_id)
-        .collect::<Vec<_>>();
+    sorted_candidates(
+        state
+            .items(&prefix)
+            .await?
+            .into_iter()
+            .filter_map(candidate_from_entry)
+            .filter(|candidate| candidate.advertisement.feature_id == feature_id),
+    )
+}
+
+fn sorted_candidates(candidates: impl IntoIterator<Item = Candidate>) -> Result<Vec<Candidate>> {
+    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
     candidates.sort_by(|left, right| left.key.cmp(&right.key));
     Ok(candidates)
 }

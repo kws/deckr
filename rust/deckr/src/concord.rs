@@ -23,6 +23,7 @@ pub const CONCORD_CONTRACT_SCHEMA_ID: &str = "dev.deckr.concord.contract.v1";
 pub const CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID: &str = "dev.deckr.concord.participant-token.v1";
 pub const DEFAULT_CONCORD_CONTRACT_STORE_NAME: &str = "deckr_concord_contract_v1";
 pub const DEFAULT_CONCORD_TOKEN_STORE_NAME: &str = "deckr_concord_token_v1";
+pub const DEFAULT_CONCORD_MAINTENANCE_STORE_NAME: &str = "deckr_concord_maintenance_v1";
 pub const DEFAULT_CONCORD_TOKEN_TTL_SECONDS: u64 = 30;
 
 pub fn concord_contract_store_policy() -> StateStorePolicy {
@@ -35,6 +36,10 @@ pub fn concord_token_store_policy() -> StateStorePolicy {
         "Concord participant token state",
     )
     .expect("default Concord token TTL should be valid")
+}
+
+pub fn concord_maintenance_store_policy() -> StateStorePolicy {
+    StateStorePolicy::persistent("Concord maintenance state")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

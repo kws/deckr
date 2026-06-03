@@ -5,19 +5,172 @@ use std::time::Duration;
 use async_nats::jetstream::kv::{Config as KvConfig, Entry, Operation, Store, WatcherError};
 use async_nats::jetstream::Context as JetStreamContext;
 use async_nats::{HeaderMap, Message, Subscriber};
+use futures_util::future::{select, Either};
+use futures_util::pin_mut;
 use futures_util::{StreamExt, TryStreamExt};
 use serde_json::Value;
 
 use crate::beacon::{beacon_advertisement_store_policy, DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME};
 use crate::concord::{
-    concord_contract_store_policy, concord_token_store_policy, DEFAULT_CONCORD_CONTRACT_STORE_NAME,
-    DEFAULT_CONCORD_TOKEN_STORE_NAME,
+    concord_contract_store_policy, concord_maintenance_store_policy, concord_token_store_policy,
+    ConcordCoordinator, DEFAULT_CONCORD_CONTRACT_STORE_NAME,
+    DEFAULT_CONCORD_MAINTENANCE_STORE_NAME, DEFAULT_CONCORD_TOKEN_STORE_NAME,
 };
+use crate::endpoint::EndpointAddress;
 use crate::lanes::{headers_for, validate_subject_hint, DeckrMessage, HARDWARE_MESSAGES_LANE};
 use crate::state::{
     StateChange, StateEntry, StateOperation, StateStore, StateStorePolicy, StateWatchStream,
 };
 use crate::{Error, Result};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeckrRuntimeConfig {
+    pub nats_url: String,
+    pub beacon_advertisement_bucket: String,
+    pub concord_contract_bucket: String,
+    pub concord_token_bucket: String,
+    pub concord_maintenance_bucket: String,
+}
+
+impl DeckrRuntimeConfig {
+    pub fn new(nats_url: impl Into<String>) -> Self {
+        Self {
+            nats_url: nats_url.into(),
+            beacon_advertisement_bucket: DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME.to_string(),
+            concord_contract_bucket: DEFAULT_CONCORD_CONTRACT_STORE_NAME.to_string(),
+            concord_token_bucket: DEFAULT_CONCORD_TOKEN_STORE_NAME.to_string(),
+            concord_maintenance_bucket: DEFAULT_CONCORD_MAINTENANCE_STORE_NAME.to_string(),
+        }
+    }
+}
+
+impl From<&str> for DeckrRuntimeConfig {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for DeckrRuntimeConfig {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeBucket {
+    BeaconAdvertisements,
+    ConcordContracts,
+    ConcordTokens,
+    ConcordMaintenance,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeckrRuntime {
+    inner: NatsDeckrRuntime,
+}
+
+impl DeckrRuntime {
+    pub async fn connect(config: impl Into<DeckrRuntimeConfig>) -> Result<Self> {
+        let config = config.into();
+        Ok(Self {
+            inner: NatsDeckrRuntime::connect_with_config(config).await?,
+        })
+    }
+
+    pub fn nats(&self) -> &NatsDeckrRuntime {
+        &self.inner
+    }
+
+    pub fn beacon(&self) -> &NatsStateStore {
+        self.inner.beacon_advertisements()
+    }
+
+    pub fn concord(&self) -> ConcordCoordinator<NatsStateStore, NatsStateStore> {
+        ConcordCoordinator::new(
+            self.inner.concord_contracts().clone(),
+            self.inner.concord_tokens().clone(),
+        )
+    }
+
+    pub fn endpoint(
+        &self,
+        endpoint: EndpointAddress,
+        session_id: impl Into<String>,
+    ) -> Result<EndpointSession> {
+        let session_id = session_id.into();
+        if session_id.trim() != session_id || session_id.is_empty() {
+            return Err(Error::Invalid(
+                "endpoint session id must be non-empty with no leading or trailing whitespace"
+                    .to_string(),
+            ));
+        }
+        Ok(EndpointSession {
+            runtime: self.inner.clone(),
+            endpoint,
+            session_id,
+        })
+    }
+
+    pub fn kv_bucket(&self, bucket: RuntimeBucket) -> &NatsStateStore {
+        match bucket {
+            RuntimeBucket::BeaconAdvertisements => self.inner.beacon_advertisements(),
+            RuntimeBucket::ConcordContracts => self.inner.concord_contracts(),
+            RuntimeBucket::ConcordTokens => self.inner.concord_tokens(),
+            RuntimeBucket::ConcordMaintenance => self.inner.concord_maintenance(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EndpointSession {
+    runtime: NatsDeckrRuntime,
+    endpoint: EndpointAddress,
+    session_id: String,
+}
+
+impl EndpointSession {
+    pub fn endpoint(&self) -> &EndpointAddress {
+        &self.endpoint
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub async fn send(&self, message: &DeckrMessage) -> Result<()> {
+        if message.sender != self.endpoint.to_string()
+            || message.sender_session_id != self.session_id
+        {
+            return Err(Error::Invalid(
+                "endpoint session can only send messages from its endpoint and session".to_string(),
+            ));
+        }
+        self.runtime.publish(message).await
+    }
+
+    pub async fn reply_to(&self, request: &DeckrMessage, mut reply: DeckrMessage) -> Result<()> {
+        reply.sender = self.endpoint.to_string();
+        reply.sender_session_id = self.session_id.clone();
+        reply.recipient = crate::lanes::MessageTarget::Endpoint {
+            endpoint: request.sender.clone(),
+        };
+        reply.recipient_session_id = Some(request.sender_session_id.clone());
+        reply.in_reply_to = Some(request.message_id.clone());
+        self.send(&reply).await
+    }
+
+    pub async fn subscribe_lane(&self, lane: &str) -> Result<EndpointLaneSubscriber> {
+        self.runtime
+            .subscribe_endpoint_lane(lane, &self.endpoint)
+            .await
+    }
+
+    pub async fn subscribe_hardware_messages(&self) -> Result<EndpointLaneSubscriber> {
+        self.runtime
+            .subscribe_endpoint_hardware_messages(&self.endpoint)
+            .await
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct NatsDeckrRuntime {
@@ -25,17 +178,12 @@ pub struct NatsDeckrRuntime {
     beacon_advertisements: NatsStateStore,
     concord_contracts: NatsStateStore,
     concord_tokens: NatsStateStore,
+    concord_maintenance: NatsStateStore,
 }
 
 impl NatsDeckrRuntime {
     pub async fn connect(url: &str) -> Result<Self> {
-        Self::connect_with_buckets(
-            url,
-            DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-            DEFAULT_CONCORD_CONTRACT_STORE_NAME,
-            DEFAULT_CONCORD_TOKEN_STORE_NAME,
-        )
-        .await
+        Self::connect_with_config(DeckrRuntimeConfig::new(url)).await
     }
 
     pub async fn connect_with_buckets(
@@ -44,26 +192,45 @@ impl NatsDeckrRuntime {
         concord_contract_bucket: &str,
         concord_token_bucket: &str,
     ) -> Result<Self> {
-        let client = async_nats::connect(url).await.map_err(|error| {
-            Error::StateUnavailable(format!("connecting to NATS {url}: {error}"))
-        })?;
+        Self::connect_with_config(DeckrRuntimeConfig {
+            nats_url: url.to_string(),
+            beacon_advertisement_bucket: beacon_advertisement_bucket.to_string(),
+            concord_contract_bucket: concord_contract_bucket.to_string(),
+            concord_token_bucket: concord_token_bucket.to_string(),
+            concord_maintenance_bucket: DEFAULT_CONCORD_MAINTENANCE_STORE_NAME.to_string(),
+        })
+        .await
+    }
+
+    pub async fn connect_with_config(config: DeckrRuntimeConfig) -> Result<Self> {
+        let client = async_nats::connect(config.nats_url.as_str())
+            .await
+            .map_err(|error| {
+                Error::StateUnavailable(format!("connecting to NATS {}: {error}", config.nats_url))
+            })?;
         let jetstream = async_nats::jetstream::new(client.clone());
         let beacon_advertisements = open_state_bucket(
             &jetstream,
-            beacon_advertisement_bucket,
+            &config.beacon_advertisement_bucket,
             beacon_advertisement_store_policy(),
         )
         .await?;
         let concord_contracts = open_state_bucket(
             &jetstream,
-            concord_contract_bucket,
+            &config.concord_contract_bucket,
             concord_contract_store_policy(),
         )
         .await?;
         let concord_tokens = open_state_bucket(
             &jetstream,
-            concord_token_bucket,
+            &config.concord_token_bucket,
             concord_token_store_policy(),
+        )
+        .await?;
+        let concord_maintenance = open_state_bucket(
+            &jetstream,
+            &config.concord_maintenance_bucket,
+            concord_maintenance_store_policy(),
         )
         .await?;
         Ok(Self {
@@ -71,6 +238,7 @@ impl NatsDeckrRuntime {
             beacon_advertisements,
             concord_contracts,
             concord_tokens,
+            concord_maintenance,
         })
     }
 
@@ -84,6 +252,10 @@ impl NatsDeckrRuntime {
 
     pub fn concord_tokens(&self) -> &NatsStateStore {
         &self.concord_tokens
+    }
+
+    pub fn concord_maintenance(&self) -> &NatsStateStore {
+        &self.concord_maintenance
     }
 
     pub async fn publish(&self, message: &DeckrMessage) -> Result<()> {
@@ -111,6 +283,42 @@ impl NatsDeckrRuntime {
             })
     }
 
+    pub async fn subscribe_endpoint_lane(
+        &self,
+        lane: &str,
+        endpoint: &crate::endpoint::EndpointAddress,
+    ) -> Result<EndpointLaneSubscriber> {
+        let [direct_subject, broadcast_subject] =
+            crate::lanes::endpoint_subscription_subjects(lane, endpoint)?;
+        let direct = self
+            .client
+            .subscribe(direct_subject.clone())
+            .await
+            .map_err(|error| {
+                Error::StateUnavailable(format!(
+                    "subscribing to direct lane subject {direct_subject}: {error}"
+                ))
+            })?;
+        let broadcast = self
+            .client
+            .subscribe(broadcast_subject.clone())
+            .await
+            .map_err(|error| {
+                Error::StateUnavailable(format!(
+                    "subscribing to broadcast lane subject {broadcast_subject}: {error}"
+                ))
+            })?;
+        Ok(EndpointLaneSubscriber { direct, broadcast })
+    }
+
+    pub async fn subscribe_endpoint_hardware_messages(
+        &self,
+        endpoint: &crate::endpoint::EndpointAddress,
+    ) -> Result<EndpointLaneSubscriber> {
+        self.subscribe_endpoint_lane(HARDWARE_MESSAGES_LANE, endpoint)
+            .await
+    }
+
     pub fn message_from_nats(&self, message: Message) -> Result<DeckrMessage> {
         let envelope = DeckrMessage::from_bytes(&message.payload)?;
         validate_subject_hint(message.subject.as_str(), &envelope)?;
@@ -118,6 +326,24 @@ impl NatsDeckrRuntime {
             validate_nats_headers(headers, &envelope)?;
         }
         Ok(envelope)
+    }
+}
+
+#[derive(Debug)]
+pub struct EndpointLaneSubscriber {
+    direct: Subscriber,
+    broadcast: Subscriber,
+}
+
+impl EndpointLaneSubscriber {
+    pub async fn next(&mut self) -> Option<Message> {
+        let direct = self.direct.next();
+        let broadcast = self.broadcast.next();
+        pin_mut!(direct);
+        pin_mut!(broadcast);
+        match select(direct, broadcast).await {
+            Either::Left((message, _)) | Either::Right((message, _)) => message,
+        }
     }
 }
 

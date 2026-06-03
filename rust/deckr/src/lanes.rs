@@ -13,7 +13,7 @@ use crate::endpoint::{
 use crate::keys::encode_key_token;
 use crate::{Error, Result};
 
-pub const LANE_SUBJECT_PREFIX: &str = "deckr.lane";
+pub const LANE_SUBJECT_PREFIX: &str = "deckr.msg";
 pub const HARDWARE_MESSAGES_LANE: &str = "hardware_messages";
 pub const HARDWARE_MESSAGES_SCHEMA_ID: &str = "dev.deckr.message.hardware_messages.v1";
 pub const DECKR_PROTOCOL_VERSION: &str = "1";
@@ -772,6 +772,34 @@ impl DeckrMessage {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSourceReference {
+    pub source_id: String,
+    #[serde(rename = "type")]
+    pub source_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub facts: serde_json::Map<String, Value>,
+}
+
+impl DeviceSourceReference {
+    pub fn validate(&self) -> Result<()> {
+        require_non_empty(&self.source_id, "device source reference")?;
+        require_non_empty(&self.source_type, "device source reference")?;
+        if let Some(label) = &self.label {
+            require_non_empty(label, "device source reference")?;
+        }
+        if let Some(connection_id) = &self.connection_id {
+            require_non_empty(connection_id, "device source reference")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum HardwareMessageBody {
     ControlInput {
@@ -780,6 +808,9 @@ pub enum HardwareMessageBody {
         capability_id: String,
         event_type: String,
         value: Option<Value>,
+        occurred_at: Option<String>,
+        sequence: Option<u64>,
+        sources: Vec<DeviceSourceReference>,
     },
     ControlCommand {
         device_ref: DeviceRef,
@@ -788,6 +819,53 @@ pub enum HardwareMessageBody {
         command_type: String,
         params: serde_json::Map<String, Value>,
     },
+    CapabilityStateChanged {
+        device_ref: DeviceRef,
+        control_id: Option<String>,
+        capability_id: String,
+        state_type: Option<String>,
+        value: Option<Value>,
+        occurred_at: Option<String>,
+        sequence: Option<u64>,
+    },
+    CapabilityStateRequest {
+        device_ref: DeviceRef,
+        control_id: Option<String>,
+        capability_id: String,
+        state_type: Option<String>,
+        params: serde_json::Map<String, Value>,
+    },
+    CapabilityStateReply {
+        device_ref: DeviceRef,
+        control_id: Option<String>,
+        capability_id: String,
+        state_type: Option<String>,
+        status: String,
+        value: Option<Value>,
+        error: Option<String>,
+    },
+    CommandAccepted {
+        device_ref: DeviceRef,
+        control_id: Option<String>,
+        capability_id: String,
+        command_type: String,
+        accepted_at: Option<String>,
+    },
+    CommandRejected {
+        device_ref: DeviceRef,
+        control_id: Option<String>,
+        capability_id: String,
+        command_type: String,
+        reason: String,
+        message: Option<String>,
+    },
+    CommandReply {
+        device_ref: DeviceRef,
+        control_id: Option<String>,
+        capability_id: String,
+        command_type: String,
+        result: Option<Value>,
+    },
 }
 
 impl HardwareMessageBody {
@@ -795,25 +873,59 @@ impl HardwareMessageBody {
         match self {
             Self::ControlInput { .. } => "controlInput",
             Self::ControlCommand { .. } => "controlCommand",
+            Self::CapabilityStateChanged { .. } => "capabilityStateChanged",
+            Self::CapabilityStateRequest { .. } => "capabilityStateRequest",
+            Self::CapabilityStateReply { .. } => "capabilityStateReply",
+            Self::CommandAccepted { .. } => "commandAccepted",
+            Self::CommandRejected { .. } => "commandRejected",
+            Self::CommandReply { .. } => "commandReply",
         }
     }
 
     pub fn control_id(&self) -> Option<&str> {
         match self {
             Self::ControlInput { control_id, .. } => Some(control_id),
-            Self::ControlCommand { control_id, .. } => control_id.as_deref(),
+            Self::ControlCommand { control_id, .. }
+            | Self::CapabilityStateChanged { control_id, .. }
+            | Self::CapabilityStateRequest { control_id, .. }
+            | Self::CapabilityStateReply { control_id, .. }
+            | Self::CommandAccepted { control_id, .. }
+            | Self::CommandRejected { control_id, .. }
+            | Self::CommandReply { control_id, .. } => control_id.as_deref(),
         }
     }
 
     pub fn capability_id(&self) -> Option<&str> {
         match self {
             Self::ControlInput { capability_id, .. }
-            | Self::ControlCommand { capability_id, .. } => Some(capability_id),
+            | Self::ControlCommand { capability_id, .. }
+            | Self::CapabilityStateChanged { capability_id, .. }
+            | Self::CapabilityStateRequest { capability_id, .. }
+            | Self::CapabilityStateReply { capability_id, .. }
+            | Self::CommandAccepted { capability_id, .. }
+            | Self::CommandRejected { capability_id, .. }
+            | Self::CommandReply { capability_id, .. } => Some(capability_id),
+        }
+    }
+
+    pub fn device_ref(&self) -> &DeviceRef {
+        match self {
+            Self::ControlInput { device_ref, .. }
+            | Self::ControlCommand { device_ref, .. }
+            | Self::CapabilityStateChanged { device_ref, .. }
+            | Self::CapabilityStateRequest { device_ref, .. }
+            | Self::CapabilityStateReply { device_ref, .. }
+            | Self::CommandAccepted { device_ref, .. }
+            | Self::CommandRejected { device_ref, .. }
+            | Self::CommandReply { device_ref, .. } => device_ref,
         }
     }
 
     pub fn is_command(&self) -> bool {
-        matches!(self, Self::ControlCommand { .. })
+        matches!(
+            self,
+            Self::ControlCommand { .. } | Self::CapabilityStateRequest { .. }
+        )
     }
 
     pub fn to_value(&self) -> Result<Value> {
@@ -824,13 +936,22 @@ impl HardwareMessageBody {
                 capability_id,
                 event_type,
                 value,
-            } => json!({
-                "deviceRef": device_ref,
-                "controlId": control_id,
-                "capabilityId": capability_id,
-                "eventType": event_type,
-                "value": value
-            }),
+                occurred_at,
+                sequence,
+                sources,
+            } => {
+                let mut value = json!({
+                    "deviceRef": device_ref,
+                    "controlId": control_id,
+                    "capabilityId": capability_id,
+                    "eventType": event_type,
+                    "sources": sources,
+                    "value": value
+                });
+                insert_optional_string(&mut value, "occurredAt", occurred_at);
+                insert_optional_u64(&mut value, "sequence", *sequence);
+                value
+            }
             Self::ControlCommand {
                 device_ref,
                 control_id,
@@ -849,6 +970,112 @@ impl HardwareMessageBody {
                 }
                 value
             }
+            Self::CapabilityStateChanged {
+                device_ref,
+                control_id,
+                capability_id,
+                state_type,
+                value,
+                occurred_at,
+                sequence,
+            } => {
+                let mut body = json!({
+                    "deviceRef": device_ref,
+                    "capabilityId": capability_id,
+                    "value": value
+                });
+                insert_optional_string(&mut body, "controlId", control_id);
+                insert_optional_string(&mut body, "stateType", state_type);
+                insert_optional_string(&mut body, "occurredAt", occurred_at);
+                insert_optional_u64(&mut body, "sequence", *sequence);
+                body
+            }
+            Self::CapabilityStateRequest {
+                device_ref,
+                control_id,
+                capability_id,
+                state_type,
+                params,
+            } => {
+                let mut body = json!({
+                    "deviceRef": device_ref,
+                    "capabilityId": capability_id,
+                    "params": params
+                });
+                insert_optional_string(&mut body, "controlId", control_id);
+                insert_optional_string(&mut body, "stateType", state_type);
+                body
+            }
+            Self::CapabilityStateReply {
+                device_ref,
+                control_id,
+                capability_id,
+                state_type,
+                status,
+                value,
+                error,
+            } => {
+                let mut body = json!({
+                    "deviceRef": device_ref,
+                    "capabilityId": capability_id,
+                    "status": status,
+                    "value": value
+                });
+                insert_optional_string(&mut body, "controlId", control_id);
+                insert_optional_string(&mut body, "stateType", state_type);
+                insert_optional_string(&mut body, "error", error);
+                body
+            }
+            Self::CommandAccepted {
+                device_ref,
+                control_id,
+                capability_id,
+                command_type,
+                accepted_at,
+            } => {
+                let mut body = json!({
+                    "deviceRef": device_ref,
+                    "capabilityId": capability_id,
+                    "commandType": command_type
+                });
+                insert_optional_string(&mut body, "controlId", control_id);
+                insert_optional_string(&mut body, "acceptedAt", accepted_at);
+                body
+            }
+            Self::CommandRejected {
+                device_ref,
+                control_id,
+                capability_id,
+                command_type,
+                reason,
+                message,
+            } => {
+                let mut body = json!({
+                    "deviceRef": device_ref,
+                    "capabilityId": capability_id,
+                    "commandType": command_type,
+                    "reason": reason
+                });
+                insert_optional_string(&mut body, "controlId", control_id);
+                insert_optional_string(&mut body, "message", message);
+                body
+            }
+            Self::CommandReply {
+                device_ref,
+                control_id,
+                capability_id,
+                command_type,
+                result,
+            } => {
+                let mut body = json!({
+                    "deviceRef": device_ref,
+                    "capabilityId": capability_id,
+                    "commandType": command_type,
+                    "result": result
+                });
+                insert_optional_string(&mut body, "controlId", control_id);
+                body
+            }
         })
     }
 
@@ -856,6 +1083,22 @@ impl HardwareMessageBody {
         let parsed: Self = match message_type {
             "controlInput" => serde_json::from_value::<ControlInputBody>(body.clone())?.into(),
             "controlCommand" => serde_json::from_value::<ControlCommandBody>(body.clone())?.into(),
+            "capabilityStateChanged" => {
+                serde_json::from_value::<CapabilityStateChangedBody>(body.clone())?.into()
+            }
+            "capabilityStateRequest" => {
+                serde_json::from_value::<CapabilityStateRequestBody>(body.clone())?.into()
+            }
+            "capabilityStateReply" => {
+                serde_json::from_value::<CapabilityStateReplyBody>(body.clone())?.into()
+            }
+            "commandAccepted" => {
+                serde_json::from_value::<CommandAcceptedBody>(body.clone())?.into()
+            }
+            "commandRejected" => {
+                serde_json::from_value::<CommandRejectedBody>(body.clone())?.into()
+            }
+            "commandReply" => serde_json::from_value::<CommandReplyBody>(body.clone())?.into(),
             other => {
                 return Err(Error::Invalid(format!(
                     "unknown hardware message type {other}"
@@ -873,12 +1116,19 @@ impl HardwareMessageBody {
                 control_id,
                 capability_id,
                 event_type,
+                occurred_at,
+                sources,
                 ..
             } => {
                 device_ref.validate()?;
                 require_non_empty(control_id, "control input target")?;
                 require_non_empty(capability_id, "control input target")?;
-                require_non_empty(event_type, "control input target")
+                require_non_empty(event_type, "control input target")?;
+                validate_optional_datetime(occurred_at.as_deref(), "control input occurredAt")?;
+                for source in sources {
+                    source.validate()?;
+                }
+                Ok(())
             }
             Self::ControlCommand {
                 device_ref,
@@ -894,6 +1144,116 @@ impl HardwareMessageBody {
                 require_non_empty(capability_id, "control command target")?;
                 require_non_empty(command_type, "control command target")
             }
+            Self::CapabilityStateChanged {
+                device_ref,
+                control_id,
+                capability_id,
+                state_type,
+                occurred_at,
+                ..
+            } => validate_capability_state_fields(
+                device_ref,
+                control_id.as_deref(),
+                capability_id,
+                state_type.as_deref(),
+                occurred_at.as_deref(),
+            ),
+            Self::CapabilityStateRequest {
+                device_ref,
+                control_id,
+                capability_id,
+                state_type,
+                ..
+            } => validate_capability_state_fields(
+                device_ref,
+                control_id.as_deref(),
+                capability_id,
+                state_type.as_deref(),
+                None,
+            ),
+            Self::CapabilityStateReply {
+                device_ref,
+                control_id,
+                capability_id,
+                state_type,
+                status,
+                error,
+                ..
+            } => {
+                validate_capability_state_fields(
+                    device_ref,
+                    control_id.as_deref(),
+                    capability_id,
+                    state_type.as_deref(),
+                    None,
+                )?;
+                if !matches!(
+                    status.as_str(),
+                    "ok" | "unavailable" | "unsupported" | "rejected"
+                ) {
+                    return Err(Error::Invalid(
+                        "capability state reply status must be ok, unavailable, unsupported, or rejected".to_string(),
+                    ));
+                }
+                if let Some(error) = error {
+                    require_non_empty(error, "capability state reply error")?;
+                }
+                Ok(())
+            }
+            Self::CommandAccepted {
+                device_ref,
+                control_id,
+                capability_id,
+                command_type,
+                accepted_at,
+            } => validate_command_status_fields(
+                device_ref,
+                control_id.as_deref(),
+                capability_id,
+                command_type,
+                accepted_at.as_deref(),
+            ),
+            Self::CommandRejected {
+                device_ref,
+                control_id,
+                capability_id,
+                command_type,
+                reason,
+                message,
+            } => {
+                validate_command_status_fields(
+                    device_ref,
+                    control_id.as_deref(),
+                    capability_id,
+                    command_type,
+                    None,
+                )?;
+                if !matches!(
+                    reason.as_str(),
+                    "malformed" | "unsupported" | "expired" | "unauthorized" | "stale" | "rejected"
+                ) {
+                    return Err(Error::Invalid(
+                        "command rejection reason must be a standard hardware reason".to_string(),
+                    ));
+                }
+                if let Some(message) = message {
+                    require_non_empty(message, "command rejection message")?;
+                }
+                Ok(())
+            }
+            Self::CommandReply {
+                device_ref,
+                control_id,
+                capability_id,
+                command_type,
+                ..
+            } => validate_command_status_fields(
+                device_ref,
+                control_id.as_deref(),
+                capability_id,
+                command_type,
+                None,
+            ),
         }
     }
 }
@@ -905,7 +1265,14 @@ struct ControlInputBody {
     control_id: String,
     capability_id: String,
     event_type: String,
+    #[serde(default)]
     value: Option<Value>,
+    #[serde(default)]
+    occurred_at: Option<String>,
+    #[serde(default)]
+    sequence: Option<u64>,
+    #[serde(default)]
+    sources: Vec<DeviceSourceReference>,
 }
 
 impl From<ControlInputBody> for HardwareMessageBody {
@@ -916,6 +1283,9 @@ impl From<ControlInputBody> for HardwareMessageBody {
             capability_id: body.capability_id,
             event_type: body.event_type,
             value: body.value,
+            occurred_at: body.occurred_at,
+            sequence: body.sequence,
+            sources: body.sources,
         }
     }
 }
@@ -943,6 +1313,209 @@ impl From<ControlCommandBody> for HardwareMessageBody {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityStateChangedBody {
+    device_ref: DeviceRef,
+    control_id: Option<String>,
+    capability_id: String,
+    state_type: Option<String>,
+    value: Option<Value>,
+    occurred_at: Option<String>,
+    sequence: Option<u64>,
+}
+
+impl From<CapabilityStateChangedBody> for HardwareMessageBody {
+    fn from(body: CapabilityStateChangedBody) -> Self {
+        Self::CapabilityStateChanged {
+            device_ref: body.device_ref,
+            control_id: body.control_id,
+            capability_id: body.capability_id,
+            state_type: body.state_type,
+            value: body.value,
+            occurred_at: body.occurred_at,
+            sequence: body.sequence,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityStateRequestBody {
+    device_ref: DeviceRef,
+    control_id: Option<String>,
+    capability_id: String,
+    state_type: Option<String>,
+    #[serde(default)]
+    params: serde_json::Map<String, Value>,
+}
+
+impl From<CapabilityStateRequestBody> for HardwareMessageBody {
+    fn from(body: CapabilityStateRequestBody) -> Self {
+        Self::CapabilityStateRequest {
+            device_ref: body.device_ref,
+            control_id: body.control_id,
+            capability_id: body.capability_id,
+            state_type: body.state_type,
+            params: body.params,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityStateReplyBody {
+    device_ref: DeviceRef,
+    control_id: Option<String>,
+    capability_id: String,
+    state_type: Option<String>,
+    #[serde(default = "default_ok_status")]
+    status: String,
+    value: Option<Value>,
+    error: Option<String>,
+}
+
+impl From<CapabilityStateReplyBody> for HardwareMessageBody {
+    fn from(body: CapabilityStateReplyBody) -> Self {
+        Self::CapabilityStateReply {
+            device_ref: body.device_ref,
+            control_id: body.control_id,
+            capability_id: body.capability_id,
+            state_type: body.state_type,
+            status: body.status,
+            value: body.value,
+            error: body.error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandAcceptedBody {
+    device_ref: DeviceRef,
+    control_id: Option<String>,
+    capability_id: String,
+    command_type: String,
+    accepted_at: Option<String>,
+}
+
+impl From<CommandAcceptedBody> for HardwareMessageBody {
+    fn from(body: CommandAcceptedBody) -> Self {
+        Self::CommandAccepted {
+            device_ref: body.device_ref,
+            control_id: body.control_id,
+            capability_id: body.capability_id,
+            command_type: body.command_type,
+            accepted_at: body.accepted_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandRejectedBody {
+    device_ref: DeviceRef,
+    control_id: Option<String>,
+    capability_id: String,
+    command_type: String,
+    reason: String,
+    message: Option<String>,
+}
+
+impl From<CommandRejectedBody> for HardwareMessageBody {
+    fn from(body: CommandRejectedBody) -> Self {
+        Self::CommandRejected {
+            device_ref: body.device_ref,
+            control_id: body.control_id,
+            capability_id: body.capability_id,
+            command_type: body.command_type,
+            reason: body.reason,
+            message: body.message,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandReplyBody {
+    device_ref: DeviceRef,
+    control_id: Option<String>,
+    capability_id: String,
+    command_type: String,
+    result: Option<Value>,
+}
+
+impl From<CommandReplyBody> for HardwareMessageBody {
+    fn from(body: CommandReplyBody) -> Self {
+        Self::CommandReply {
+            device_ref: body.device_ref,
+            control_id: body.control_id,
+            capability_id: body.capability_id,
+            command_type: body.command_type,
+            result: body.result,
+        }
+    }
+}
+
+fn default_ok_status() -> String {
+    "ok".to_string()
+}
+
+fn insert_optional_string(value: &mut Value, key: &str, field: &Option<String>) {
+    if let Some(field) = field {
+        value[key] = json!(field);
+    }
+}
+
+fn insert_optional_u64(value: &mut Value, key: &str, field: Option<u64>) {
+    if let Some(field) = field {
+        value[key] = json!(field);
+    }
+}
+
+fn validate_optional_datetime(value: Option<&str>, field_name: &str) -> Result<()> {
+    if let Some(value) = value {
+        require_non_empty(value, field_name)?;
+        parse_datetime(value)
+            .ok_or_else(|| Error::Invalid(format!("{field_name} must be an RFC 3339 datetime")))?;
+    }
+    Ok(())
+}
+
+fn validate_capability_state_fields(
+    device_ref: &DeviceRef,
+    control_id: Option<&str>,
+    capability_id: &str,
+    state_type: Option<&str>,
+    occurred_at: Option<&str>,
+) -> Result<()> {
+    device_ref.validate()?;
+    if let Some(control_id) = control_id {
+        require_non_empty(control_id, "capability state target")?;
+    }
+    require_non_empty(capability_id, "capability state target")?;
+    if let Some(state_type) = state_type {
+        require_non_empty(state_type, "capability state type")?;
+    }
+    validate_optional_datetime(occurred_at, "capability state occurredAt")
+}
+
+fn validate_command_status_fields(
+    device_ref: &DeviceRef,
+    control_id: Option<&str>,
+    capability_id: &str,
+    command_type: &str,
+    accepted_at: Option<&str>,
+) -> Result<()> {
+    device_ref.validate()?;
+    if let Some(control_id) = control_id {
+        require_non_empty(control_id, "command status target")?;
+    }
+    require_non_empty(capability_id, "command status target")?;
+    require_non_empty(command_type, "command status target")?;
+    validate_optional_datetime(accepted_at, "command acceptedAt")
+}
+
 pub fn load_fixture(path: &Path) -> Result<DeckrMessage> {
     DeckrMessage::from_text(
         &std::fs::read_to_string(path).map_err(|error| {
@@ -953,13 +1526,67 @@ pub fn load_fixture(path: &Path) -> Result<DeckrMessage> {
 
 pub fn subject_for(message: &DeckrMessage) -> Result<String> {
     message.validate()?;
-    let sender = EndpointAddress::parse(&message.sender)?;
+    match &message.recipient {
+        MessageTarget::Endpoint { endpoint } => {
+            direct_subject(&message.lane, &EndpointAddress::parse(endpoint)?)
+        }
+        MessageTarget::Broadcast {
+            scope,
+            endpoint_family,
+            ..
+        } => broadcast_subject(&message.lane, scope, endpoint_family),
+    }
+}
+
+pub fn direct_subject(lane: &str, recipient: &EndpointAddress) -> Result<String> {
+    require_non_empty(lane, "lane")?;
     Ok(format!(
-        "{LANE_SUBJECT_PREFIX}.{}.{}.{}",
-        encode_key_token(&message.lane),
-        encode_key_token(sender.family()),
-        encode_key_token(sender.endpoint_id())
+        "{LANE_SUBJECT_PREFIX}.{}.to.{}.{}",
+        encode_key_token(lane),
+        encode_key_token(recipient.family()),
+        encode_key_token(recipient.endpoint_id())
     ))
+}
+
+pub fn broadcast_subject(lane: &str, scope: &str, endpoint_family: &str) -> Result<String> {
+    require_non_empty(lane, "lane")?;
+    require_non_empty(scope, "broadcast scope")?;
+    validate_endpoint_family(endpoint_family, "broadcast endpoint family")?;
+    Ok(format!(
+        "{LANE_SUBJECT_PREFIX}.{}.broadcast.{}.{}",
+        encode_key_token(lane),
+        encode_key_token(scope),
+        encode_key_token(endpoint_family)
+    ))
+}
+
+pub fn endpoint_direct_subscription_subject(
+    lane: &str,
+    endpoint: &EndpointAddress,
+) -> Result<String> {
+    direct_subject(lane, endpoint)
+}
+
+pub fn endpoint_broadcast_subscription_subject(
+    lane: &str,
+    endpoint: &EndpointAddress,
+) -> Result<String> {
+    require_non_empty(lane, "lane")?;
+    Ok(format!(
+        "{LANE_SUBJECT_PREFIX}.{}.broadcast.*.{}",
+        encode_key_token(lane),
+        encode_key_token(endpoint.family())
+    ))
+}
+
+pub fn endpoint_subscription_subjects(
+    lane: &str,
+    endpoint: &EndpointAddress,
+) -> Result<[String; 2]> {
+    Ok([
+        endpoint_direct_subscription_subject(lane, endpoint)?,
+        endpoint_broadcast_subscription_subject(lane, endpoint)?,
+    ])
 }
 
 pub fn headers_for(message: &DeckrMessage) -> BTreeMap<String, String> {
@@ -1007,22 +1634,10 @@ pub fn validate_subject_hint(subject: &str, message: &DeckrMessage) -> Result<()
     if !subject.starts_with(&format!("{LANE_SUBJECT_PREFIX}.")) {
         return Ok(());
     }
-    let sender = EndpointAddress::parse(&message.sender)?;
-    let expected = [
-        "deckr".to_string(),
-        "lane".to_string(),
-        encode_key_token(&message.lane),
-        encode_key_token(sender.family()),
-        encode_key_token(sender.endpoint_id()),
-    ];
-    let tokens = subject
-        .split('.')
-        .take(5)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    if tokens != expected {
+    let expected = subject_for(message)?;
+    if subject != expected {
         return Err(Error::Invalid(
-            "NATS subject disagrees with Deckr envelope sender".to_string(),
+            "NATS subject disagrees with Deckr envelope recipient".to_string(),
         ));
     }
     Ok(())

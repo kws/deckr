@@ -12,7 +12,8 @@ use deckr::concord::{
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
 use deckr::lanes::{
-    headers_for, message_is_deliverable_to, subject_for, DeckrMessage, HardwareMessageBody,
+    broadcast_subject, direct_subject, endpoint_subscription_subjects, headers_for,
+    message_is_deliverable_to, subject_for, DeckrMessage, HardwareMessageBody,
 };
 use deckr::profiles::hardware::{
     hardware_payload_from_advertisement, HardwareBeaconPayload, HardwareClaimTerms,
@@ -220,6 +221,27 @@ fn nats_lane_vectors_match_contract_artifacts() {
 }
 
 #[test]
+fn nats_subject_helpers_are_recipient_scoped() {
+    let controller = EndpointAddress::parse("controller:controller-main").unwrap();
+
+    assert_eq!(
+        direct_subject("actions", &controller).unwrap(),
+        "deckr.msg.actions.to.controller.controller-main"
+    );
+    assert_eq!(
+        broadcast_subject("hardware_messages", "controllers", "controller").unwrap(),
+        "deckr.msg.hardware_messages.broadcast.controllers.controller"
+    );
+    assert_eq!(
+        endpoint_subscription_subjects("hardware_messages", &controller).unwrap(),
+        [
+            "deckr.msg.hardware_messages.to.controller.controller-main".to_string(),
+            "deckr.msg.hardware_messages.broadcast.*.controller".to_string()
+        ]
+    );
+}
+
+#[test]
 fn contract_fixtures_parse_and_enforce_profile_semantics() {
     let hardware_ad: Value = fixture("fixtures/valid/beacon/hardware-advertisement.v1.json");
     let hardware_ad = AdvertisementRecord::from_value(hardware_ad).unwrap();
@@ -268,6 +290,86 @@ fn hardware_body_rejects_inventory_message_types() {
     for suffix in ["Available", "DescriptorChanged", "Unavailable"] {
         let message_type = format!("device{suffix}");
         assert!(HardwareMessageBody::from_message(&message_type, &json!({})).is_err());
+    }
+}
+
+#[test]
+fn hardware_body_accepts_all_v1_runtime_message_types() {
+    let device_ref = json!({
+        "managerId": "mirabox-main",
+        "deviceId": "deck",
+        "fingerprint": "fingerprint:deck"
+    });
+    let cases = [
+        (
+            "capabilityStateChanged",
+            json!({
+                "deviceRef": device_ref.clone(),
+                "controlId": "screen",
+                "capabilityId": "raster.bitmap",
+                "stateType": "frame",
+                "value": null,
+                "occurredAt": "2026-04-29T10:00:00Z",
+                "sequence": 1
+            }),
+        ),
+        (
+            "capabilityStateRequest",
+            json!({
+                "deviceRef": device_ref.clone(),
+                "controlId": "screen",
+                "capabilityId": "raster.bitmap",
+                "stateType": "frame",
+                "params": {}
+            }),
+        ),
+        (
+            "capabilityStateReply",
+            json!({
+                "deviceRef": device_ref.clone(),
+                "controlId": "screen",
+                "capabilityId": "raster.bitmap",
+                "stateType": "frame",
+                "status": "ok",
+                "value": null
+            }),
+        ),
+        (
+            "commandAccepted",
+            json!({
+                "deviceRef": device_ref.clone(),
+                "controlId": "screen",
+                "capabilityId": "raster.bitmap",
+                "commandType": "clear",
+                "acceptedAt": "2026-04-29T10:00:00Z"
+            }),
+        ),
+        (
+            "commandRejected",
+            json!({
+                "deviceRef": device_ref.clone(),
+                "controlId": "screen",
+                "capabilityId": "raster.bitmap",
+                "commandType": "clear",
+                "reason": "unauthorized",
+                "message": "not claimed"
+            }),
+        ),
+        (
+            "commandReply",
+            json!({
+                "deviceRef": device_ref.clone(),
+                "controlId": "screen",
+                "capabilityId": "raster.bitmap",
+                "commandType": "clear",
+                "result": null
+            }),
+        ),
+    ];
+
+    for (message_type, body) in cases {
+        let parsed = HardwareMessageBody::from_message(message_type, &body).unwrap();
+        assert_eq!(parsed.message_type(), message_type);
     }
 }
 
