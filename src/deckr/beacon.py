@@ -324,6 +324,8 @@ class _BeaconSubscriber:
     feature_id: str | None
     selector: AdvertisementFilter | None
     known_keys: set[str] = field(default_factory=set)
+    replay_pending: bool = False
+    pending_events: list[BeaconFeatureEvent] = field(default_factory=list)
 
 
 class Beacon:
@@ -503,30 +505,53 @@ class Beacon:
         send, receive = anyio.create_memory_object_stream[BeaconFeatureEvent](
             max_buffer_size=self._buffer_size
         )
-        subscriber = _BeaconSubscriber(send, feature_id, selector)
+        subscriber = _BeaconSubscriber(
+            send,
+            feature_id,
+            selector,
+            replay_pending=replay_current,
+        )
         initial: tuple[BeaconFeatureEvent, ...] = ()
-        if replay_current:
-            initial_candidates = self._matching_candidates(feature_id, selector)
-            subscriber.known_keys.update(candidate.key for candidate in initial_candidates)
-            initial = tuple(
-                BeaconFeatureEvent(
-                    BeaconFeatureEventType.ADVERTISED,
-                    candidate.advertisement.feature_id,
-                    candidate.key,
-                    candidate=candidate,
-                )
-                for candidate in initial_candidates
-            )
         async with self._lock:
             self._subscribers.add(subscriber)
+            if replay_current:
+                initial_candidates = self._matching_candidates(feature_id, selector)
+                subscriber.known_keys.update(
+                    candidate.key for candidate in initial_candidates
+                )
+                initial = tuple(
+                    BeaconFeatureEvent(
+                        BeaconFeatureEventType.ADVERTISED,
+                        candidate.advertisement.feature_id,
+                        candidate.key,
+                        candidate=candidate,
+                    )
+                    for candidate in initial_candidates
+                )
         try:
             async with send, receive:
                 for event in initial:
                     await send.send(event)
+                if replay_current:
+                    await self._finish_subscriber_replay(subscriber)
                 yield receive
         finally:
             async with self._lock:
                 self._subscribers.discard(subscriber)
+
+    async def _finish_subscriber_replay(
+        self,
+        subscriber: _BeaconSubscriber,
+    ) -> None:
+        while True:
+            async with self._lock:
+                pending = tuple(subscriber.pending_events)
+                subscriber.pending_events.clear()
+                if not pending:
+                    subscriber.replay_pending = False
+                    return
+            for event in pending:
+                await subscriber.send.send(event)
 
     async def remove_stale_advertisements(
         self,
@@ -810,19 +835,21 @@ class Beacon:
             change=change,
         )
         _log_beacon_feature_event(base_event)
-        return tuple(
-            (subscriber, item)
-            for subscriber in tuple(self._subscribers)
-            if (
-                item := _event_for_subscriber(
-                    subscriber,
-                    base_event,
-                    candidate=candidate,
-                    previous=previous,
-                )
+        deliveries: list[tuple[_BeaconSubscriber, BeaconFeatureEvent]] = []
+        for subscriber in tuple(self._subscribers):
+            item = _event_for_subscriber(
+                subscriber,
+                base_event,
+                candidate=candidate,
+                previous=previous,
             )
-            is not None
-        )
+            if item is None:
+                continue
+            if subscriber.replay_pending:
+                subscriber.pending_events.append(item)
+                continue
+            deliveries.append((subscriber, item))
+        return tuple(deliveries)
 
     def _remove_candidate(self, candidate: Candidate) -> None:
         key = candidate.key

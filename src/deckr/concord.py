@@ -1421,6 +1421,8 @@ class _ConcordSubscriber:
     send: anyio.abc.ObjectSendStream[ConcordEvent]
     profile: str | None
     participant: EndpointAddress | None
+    replay_pending: bool = False
+    pending_events: list[ConcordEvent] = field(default_factory=list)
 
 
 class Concord:
@@ -1735,12 +1737,14 @@ class Concord:
     async def _apply_contract_change(self, change: KvChange) -> None:
         async with self._lock:
             events = self._apply_contract_change_locked(change)
-        await self._publish_events(events)
+            deliveries = self._subscriber_deliveries_locked(events)
+        await self._publish_events(events, deliveries)
 
     async def _apply_token_change(self, change: KvChange) -> None:
         async with self._lock:
             events = self._apply_token_change_locked(change)
-        await self._publish_events(events)
+            deliveries = self._subscriber_deliveries_locked(events)
+        await self._publish_events(events, deliveries)
 
     async def _apply_maintenance_change(self, change: KvChange) -> None:
         async with self._lock:
@@ -2030,26 +2034,40 @@ class Concord:
             change=change,
         )
 
-    async def _publish_events(self, events: tuple[ConcordEvent, ...]) -> None:
+    def _subscriber_deliveries_locked(
+        self,
+        events: tuple[ConcordEvent, ...],
+    ) -> tuple[tuple[_ConcordSubscriber, ConcordEvent], ...]:
+        deliveries: list[tuple[_ConcordSubscriber, ConcordEvent]] = []
         for event in events:
-            _log_concord_event(event)
-        async with self._lock:
-            subscribers = tuple(self._subscribers)
-        for event in events:
-            for subscriber in subscribers:
+            for subscriber in tuple(self._subscribers):
                 if not _event_matches_subscriber(subscriber, event):
                     continue
-                try:
-                    subscriber.send.send_nowait(event)
-                except anyio.WouldBlock:
-                    logger.warning(
-                        "Concord watcher buffer full profile=%s event=%s",
-                        subscriber.profile,
-                        event.event_type.value,
-                    )
-                except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                    async with self._lock:
-                        self._subscribers.discard(subscriber)
+                if subscriber.replay_pending:
+                    subscriber.pending_events.append(event)
+                    continue
+                deliveries.append((subscriber, event))
+        return tuple(deliveries)
+
+    async def _publish_events(
+        self,
+        events: tuple[ConcordEvent, ...],
+        deliveries: tuple[tuple[_ConcordSubscriber, ConcordEvent], ...],
+    ) -> None:
+        for event in events:
+            _log_concord_event(event)
+        for subscriber, event in deliveries:
+            try:
+                subscriber.send.send_nowait(event)
+            except anyio.WouldBlock:
+                logger.warning(
+                    "Concord watcher buffer full profile=%s event=%s",
+                    subscriber.profile,
+                    event.event_type.value,
+                )
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                async with self._lock:
+                    self._subscribers.discard(subscriber)
 
     def _validate_from_cache_locked(
         self,
@@ -2924,10 +2942,16 @@ class Concord:
         send, receive = anyio.create_memory_object_stream[ConcordEvent](
             max_buffer_size=self._buffer_size
         )
-        subscriber = _ConcordSubscriber(send, profile, parsed_participant)
+        subscriber = _ConcordSubscriber(
+            send,
+            profile,
+            parsed_participant,
+            replay_pending=replay_current,
+        )
         initial: tuple[ConcordEvent, ...] = ()
-        if replay_current:
-            async with self._lock:
+        async with self._lock:
+            self._subscribers.add(subscriber)
+            if replay_current:
                 initial = tuple(
                     event
                     for event in (
@@ -2944,16 +2968,30 @@ class Concord:
                     )
                     if _event_matches_subscriber(subscriber, event)
                 )
-        async with self._lock:
-            self._subscribers.add(subscriber)
         try:
             async with send, receive:
                 for event in initial:
                     await send.send(event)
+                if replay_current:
+                    await self._finish_subscriber_replay(subscriber)
                 yield receive
         finally:
             async with self._lock:
                 self._subscribers.discard(subscriber)
+
+    async def _finish_subscriber_replay(
+        self,
+        subscriber: _ConcordSubscriber,
+    ) -> None:
+        while True:
+            async with self._lock:
+                pending = tuple(subscriber.pending_events)
+                subscriber.pending_events.clear()
+                if not pending:
+                    subscriber.replay_pending = False
+                    return
+            for event in pending:
+                await subscriber.send.send(event)
 
 
 STALE_OPEN_CONTRACT_STATUSES = frozenset(

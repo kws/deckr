@@ -9,6 +9,8 @@ from descriptor_fixtures import stream_deck_bitmap_grid
 from memory_kv_bucket import MemoryJsonKvBucket
 from pydantic import ValidationError
 
+import deckr.beacon as beacon_module
+import deckr.concord as concord_module
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import (
     AdvertisementRecord,
@@ -22,6 +24,7 @@ from deckr.concord import (
     Concord,
     ConcordAgreementSpec,
     ConcordConflict,
+    ConcordEvent,
     ConcordEventType,
     ConcordManagedContractEventType,
     ConcordParticipant,
@@ -463,6 +466,83 @@ async def test_beacon_watch_replays_current_candidate() -> None:
     assert event.event_type == BeaconFeatureEventType.ADVERTISED
     assert event.candidate is not None
     assert event.candidate.key == advertisement.handle.key
+
+
+@pytest.mark.asyncio
+async def test_beacon_watch_defers_live_events_until_replay_finishes() -> None:
+    beacon, _raw = _beacon()
+    advertisement = await beacon.advertise(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="manager-session",
+            advertisement_id="advertisement-1",
+            payload=_hardware_payload().to_dict(),
+        )
+    )
+    send, receive = anyio.create_memory_object_stream[
+        beacon_module.BeaconFeatureEvent
+    ](10)
+    subscriber = beacon_module._BeaconSubscriber(  # noqa: SLF001
+        send,
+        HARDWARE_FEATURE_ID,
+        None,
+        replay_pending=True,
+    )
+
+    try:
+        async with send, receive:
+            async with beacon._lock:  # noqa: SLF001
+                beacon._subscribers.add(subscriber)  # noqa: SLF001
+                initial_candidates = beacon._matching_candidates(  # noqa: SLF001
+                    HARDWARE_FEATURE_ID,
+                    None,
+                )
+                subscriber.known_keys.update(
+                    candidate.key for candidate in initial_candidates
+                )
+                initial = tuple(
+                    beacon_module.BeaconFeatureEvent(
+                        BeaconFeatureEventType.ADVERTISED,
+                        candidate.advertisement.feature_id,
+                        candidate.key,
+                        candidate=candidate,
+                    )
+                    for candidate in initial_candidates
+                )
+                assert len(initial) == 1
+
+                candidate = initial_candidates[0]
+                value = candidate.advertisement.to_dict()
+                value["refreshSeq"] = candidate.advertisement.refresh_seq + 1
+                value["hints"] = {"race": "live"}
+                entry = KvEntry(
+                    beacon.bucket,
+                    candidate.key,
+                    value,
+                    candidate.revision + 1,
+                )
+                deliveries = beacon._apply_kv_change_locked(  # noqa: SLF001
+                    KvChange(beacon.bucket, candidate.key, entry.revision, "put", entry)
+                )
+
+            assert deliveries == ()
+            assert len(subscriber.pending_events) == 1
+
+            await send.send(initial[0])
+            await beacon._finish_subscriber_replay(subscriber)  # noqa: SLF001
+            replay = await _receive(receive)
+            live = await _receive(receive)
+    finally:
+        async with beacon._lock:  # noqa: SLF001
+            beacon._subscribers.discard(subscriber)  # noqa: SLF001
+
+    assert replay.event_type == BeaconFeatureEventType.ADVERTISED
+    assert replay.candidate is not None
+    assert replay.candidate.revision == advertisement.handle.revision
+    assert live.event_type == BeaconFeatureEventType.UPDATED
+    assert live.candidate is not None
+    assert live.candidate.revision == advertisement.handle.revision + 1
 
 
 @pytest.mark.asyncio
@@ -1506,6 +1586,126 @@ async def test_concord_watch_emits_single_event_stream(caplog) -> None:
     assert event.contract is not None
     assert event.contract.contract_id == contract.contract_id
     assert "Concord contract contract_pending" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_concord_watch_replay_skips_pre_registration_publication() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    publish_entered = anyio.Event()
+    release_publish = anyio.Event()
+    publish_done = anyio.Event()
+    original_publish = service._publish_events  # noqa: SLF001
+    paused = False
+
+    async def paused_publish(events, deliveries):
+        nonlocal paused
+        if not paused and any(
+            event.event_type == ConcordEventType.CONTRACT_PROPOSED
+            for event in events
+        ):
+            paused = True
+            publish_entered.set()
+            await release_publish.wait()
+        await original_publish(events, deliveries)
+        if paused:
+            publish_done.set()
+
+    service._publish_events = paused_publish  # noqa: SLF001
+
+    async def create_contract() -> None:
+        await service._create_contract(  # noqa: SLF001
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(),
+            created_by=controller,
+        )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(create_contract)
+        with anyio.fail_after(1):
+            await publish_entered.wait()
+
+        async with service.watch(HARDWARE_CLAIM_PROFILE_ID) as events:
+            replay = await _receive_event_type(
+                events,
+                ConcordEventType.CONTRACT_PENDING,
+            )
+            release_publish.set()
+            with anyio.fail_after(1):
+                await publish_done.wait()
+            with pytest.raises(anyio.WouldBlock):
+                events.receive_nowait()
+
+    assert replay.contract is not None
+    assert replay.contract.contract_id == "hardware-contract-1"
+
+
+@pytest.mark.asyncio
+async def test_concord_watch_defers_live_events_until_replay_finishes() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(  # noqa: SLF001
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    send, receive = anyio.create_memory_object_stream[ConcordEvent](10)
+    subscriber = concord_module._ConcordSubscriber(  # noqa: SLF001
+        send,
+        HARDWARE_CLAIM_PROFILE_ID,
+        None,
+        replay_pending=True,
+    )
+
+    try:
+        async with send, receive:
+            async with service._lock:  # noqa: SLF001
+                service._subscribers.add(subscriber)  # noqa: SLF001
+                validity = service._validate_from_cache_locked(contract)  # noqa: SLF001
+                initial = ConcordEvent(
+                    concord_module._concord_event_type(validity),  # noqa: SLF001
+                    contract=contract,
+                    record=validity.contract,
+                    validity=validity,
+                    profile=contract.profile,
+                )
+                live = ConcordEvent(
+                    ConcordEventType.CONTRACT_UPDATED,
+                    contract=contract,
+                    profile=contract.profile,
+                    change=KvChange(
+                        service.contract_bucket,
+                        contract.key,
+                        contract.revision + 1,
+                        "put",
+                    ),
+                )
+                deliveries = service._subscriber_deliveries_locked((live,))  # noqa: SLF001
+
+            assert deliveries == ()
+            assert subscriber.pending_events == [live]
+
+            await send.send(initial)
+            await service._finish_subscriber_replay(subscriber)  # noqa: SLF001
+            replay = await _receive(receive)
+            deferred = await _receive(receive)
+    finally:
+        async with service._lock:  # noqa: SLF001
+            service._subscribers.discard(subscriber)  # noqa: SLF001
+
+    assert replay.event_type == ConcordEventType.CONTRACT_PENDING
+    assert replay.contract == contract
+    assert deferred == live
 
 
 @pytest.mark.asyncio
