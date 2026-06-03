@@ -1848,6 +1848,47 @@ async def test_concord_watch_replay_skips_pre_registration_publication() -> None
 
 
 @pytest.mark.asyncio
+async def test_concord_watch_replay_validates_each_contract_once(monkeypatch) -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(  # noqa: SLF001
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    other = await service._create_contract(  # noqa: SLF001
+        (manager, controller),
+        contract_id="other-contract-1",
+        profile="dev.deckr.profile.other.v1",
+        created_by=controller,
+    )
+    calls: list[str] = []
+    original_validate = service._validate_from_cache_locked  # noqa: SLF001
+
+    def count_validate(contract, *, current_sessions=None):
+        calls.append(contract.key)
+        return original_validate(contract, current_sessions=current_sessions)
+
+    monkeypatch.setattr(service, "_validate_from_cache_locked", count_validate)
+
+    async with service.watch(HARDWARE_CLAIM_PROFILE_ID) as events:
+        replay = await _receive_event_type(
+            events,
+            ConcordEventType.CONTRACT_PENDING,
+        )
+        with pytest.raises(anyio.WouldBlock):
+            events.receive_nowait()
+
+    assert replay.contract == contract
+    assert sorted(calls) == sorted((contract.key, other.key))
+
+
+@pytest.mark.asyncio
 async def test_concord_watch_defers_live_events_until_replay_finishes() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")

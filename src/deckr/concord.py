@@ -2952,22 +2952,19 @@ class Concord:
         async with self._lock:
             self._subscribers.add(subscriber)
             if replay_current:
-                initial = tuple(
-                    event
-                    for event in (
-                        ConcordEvent(
-                            _concord_event_type(
-                                self._validate_from_cache_locked(contract)
-                            ),
-                            contract=contract,
-                            record=self._contract_records_by_key.get(contract.key),
-                            validity=self._validate_from_cache_locked(contract),
-                            profile=contract.profile,
-                        )
-                        for contract in self._contract_handles_by_key.values()
+                initial_events: list[ConcordEvent] = []
+                for contract in self._contract_handles_by_key.values():
+                    validity = self._validate_from_cache_locked(contract)
+                    event = ConcordEvent(
+                        _concord_event_type(validity),
+                        contract=contract,
+                        record=self._contract_records_by_key.get(contract.key),
+                        validity=validity,
+                        profile=contract.profile,
                     )
-                    if _event_matches_subscriber(subscriber, event)
-                )
+                    if _event_matches_subscriber(subscriber, event):
+                        initial_events.append(event)
+                initial = tuple(initial_events)
         try:
             async with send, receive:
                 for event in initial:
