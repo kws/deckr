@@ -3726,10 +3726,11 @@ class ConcordParticipant:
         contract: ContractHandle | str,
         *,
         reason: str = "released",
+        withdraw: bool = True,
     ) -> None:
         key = contract.key if isinstance(contract, ContractHandle) else contract
         async with self._lock:
-            await self._release_locked(key, reason=reason)
+            await self._release_locked(key, reason=reason, withdraw=withdraw)
 
     async def watch_loop(self) -> None:
         while not self._closed:
@@ -3818,7 +3819,11 @@ class ConcordParticipant:
 
             for key in tuple(self._leases):
                 if key not in next_leases:
-                    await self._release_locked(key, reason="not_selected")
+                    await self._release_locked(
+                        key,
+                        reason="not_selected",
+                        withdraw=True,
+                    )
 
             self._managed = next_managed
             self._leases = next_leases
@@ -3842,7 +3847,11 @@ class ConcordParticipant:
         reason: str,
     ) -> ConcordManagedContract | None:
         if self.participant not in contract.participants:
-            await self._release_locked(contract.key, reason="participant_not_named")
+            await self._release_locked(
+                contract.key,
+                reason="participant_not_named",
+                withdraw=True,
+            )
             return None
 
         try:
@@ -3851,16 +3860,22 @@ class ConcordParticipant:
             await self._release_locked(
                 contract.key,
                 reason=ContractValidityStatus.INVALID_CONTRACT.value,
+                withdraw=False,
             )
             return None
         if record is None:
             await self._release_locked(
                 contract.key,
                 reason=ContractValidityStatus.MISSING_CONTRACT.value,
+                withdraw=False,
             )
             return None
         if self.profile is not None and record.profile != self.profile:
-            await self._release_locked(contract.key, reason="profile_mismatch")
+            await self._release_locked(
+                contract.key,
+                reason="profile_mismatch",
+                withdraw=True,
+            )
             return None
 
         if record.state == ContractState.CANCELLED:
@@ -3872,11 +3887,19 @@ class ConcordParticipant:
                 token=None,
                 reason=reason,
             )
-            await self._release_locked(contract.key, reason=ContractState.CANCELLED.value)
+            await self._release_locked(
+                contract.key,
+                reason=ContractState.CANCELLED.value,
+                withdraw=False,
+            )
             return None
 
         if not await _maybe_await(self._accept_contract(contract, record)):
-            await self._release_locked(contract.key, reason="policy_rejected")
+            await self._release_locked(
+                contract.key,
+                reason="policy_rejected",
+                withdraw=True,
+            )
             return None
 
         sessions = await self._current_sessions_for(contract)
@@ -3909,7 +3932,11 @@ class ConcordParticipant:
                 token=existing,
                 reason=reason,
             )
-            await self._release_locked(contract.key, reason=validity.status.value)
+            await self._release_locked(
+                contract.key,
+                reason=validity.status.value,
+                withdraw=False,
+            )
             return None
 
         lease = self._leases.get(contract.key)
@@ -3943,6 +3970,7 @@ class ConcordParticipant:
                 await self._release_locked(
                     contract.key,
                     reason=ContractValidityStatus.SESSION_MISMATCH.value,
+                    withdraw=False,
                 )
                 return None
             lease.adopt(existing)
@@ -3964,7 +3992,11 @@ class ConcordParticipant:
                 reason=reason,
             )
             if _terminal_managed_status(validity.status):
-                await self._release_locked(contract.key, reason=validity.status.value)
+                await self._release_locked(
+                    contract.key,
+                    reason=validity.status.value,
+                    withdraw=False,
+                )
             return None
 
         validity = await self._concord._validate(
@@ -3987,7 +4019,11 @@ class ConcordParticipant:
                 token=token,
                 reason=reason,
             )
-            await self._release_locked(contract.key, reason=validity.status.value)
+            await self._release_locked(
+                contract.key,
+                reason=validity.status.value,
+                withdraw=False,
+            )
             return None
         self._publish_status(managed, reason=reason)
         return managed
@@ -4004,11 +4040,17 @@ class ConcordParticipant:
         sessions[str(self.participant)] = self.session_id
         return sessions
 
-    async def _release_locked(self, key: str, *, reason: str) -> None:
+    async def _release_locked(
+        self,
+        key: str,
+        *,
+        reason: str,
+        withdraw: bool,
+    ) -> None:
         managed = self._managed.pop(key, None)
         lease = self._leases.pop(key, None)
         if lease is not None:
-            await lease.aclose(withdraw=False)
+            await lease.aclose(withdraw=withdraw)
         self._last_status.pop(key, None)
         if managed is None:
             return

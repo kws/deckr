@@ -1494,6 +1494,208 @@ async def test_concord_participant_manager_releases_on_token_expiry_and_cancel()
 
 
 @pytest.mark.asyncio
+async def test_concord_participant_manager_release_withdraws_owned_token_by_default() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    managed = (await lifecycle.reconcile(reason="test live"))[0]
+    manager_token = managed.token
+    assert manager_token is not None
+
+    await lifecycle.release(contract)
+
+    assert await token_state.get(manager_token.key) is None
+    assert lifecycle.managed_contracts == ()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_release_can_preserve_owned_token() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    managed = (await lifecycle.reconcile(reason="test live"))[0]
+    manager_token = managed.token
+    assert manager_token is not None
+
+    await lifecycle.release(contract, withdraw=False)
+
+    current = await token_state.get(manager_token.key)
+    assert current is not None
+    record = ParticipantTokenRecord.model_validate(current.value)
+    assert record.token_id == manager_token.token_id
+    assert lifecycle.managed_contracts == ()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_policy_rejection_withdraws_owned_token() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    accepted = True
+
+    def accept_contract(_contract, _record):
+        return accepted
+
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=accept_contract,
+    )
+    managed = (await lifecycle.reconcile(reason="test live"))[0]
+    manager_token = managed.token
+    assert manager_token is not None
+
+    accepted = False
+    assert await lifecycle.reconcile(reason="policy rejection") == ()
+
+    assert await token_state.get(manager_token.key) is None
+    assert lifecycle.managed_contracts == ()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_not_selected_withdraws_owned_token() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    managed = (await lifecycle.reconcile(reason="test live"))[0]
+    manager_token = managed.token
+    assert manager_token is not None
+
+    lifecycle.profile = "dev.deckr.profile.other.v1"
+    assert await lifecycle.reconcile(reason="profile changed") == ()
+
+    assert await token_state.get(manager_token.key) is None
+    assert lifecycle.managed_contracts == ()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_cancelled_contract_preserves_token() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    managed = (await lifecycle.reconcile(reason="test live"))[0]
+    manager_token = managed.token
+    assert manager_token is not None
+
+    await service._cancel(contract, controller, reason="done")
+    assert await lifecycle.reconcile(reason="test cancel") == ()
+
+    current = await token_state.get(manager_token.key)
+    assert current is not None
+    record = ParticipantTokenRecord.model_validate(current.value)
+    assert record.token_id == manager_token.token_id
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_session_mismatch_preserves_token() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    managed = (await lifecycle.reconcile(reason="test live"))[0]
+    manager_token = managed.token
+    assert manager_token is not None
+
+    lifecycle.session_id = "manager-session-new"
+    assert await lifecycle.reconcile(reason="session changed") == ()
+
+    current = await token_state.get(manager_token.key)
+    assert current is not None
+    record = ParticipantTokenRecord.model_validate(current.value)
+    assert record.token_id == manager_token.token_id
+
+
+@pytest.mark.asyncio
 async def test_concord_participant_manager_policy_rejection_does_not_cancel() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
