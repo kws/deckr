@@ -18,6 +18,7 @@ The normative architecture and protocol references now live in:
 
 - [docs/runtime-architecture.md](docs/runtime-architecture.md)
 - [docs/runtime-modes.md](docs/runtime-modes.md)
+- [docs/migration-guide.md](docs/migration-guide.md)
 - [docs/beacon-concord.md](docs/beacon-concord.md)
 - [docs/nats-bus.md](docs/nats-bus.md)
 
@@ -51,6 +52,7 @@ src/deckr/
   runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
 docs/
   beacon-concord.md
+  migration-guide.md
   nats-bus.md
   runtime-architecture.md
   runtime-modes.md

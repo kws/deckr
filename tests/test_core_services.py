@@ -50,6 +50,31 @@ class _ReadyComponent(BaseComponent):
         return
 
 
+class _EndpointContextComponent(BaseComponent):
+    def __init__(self, name: str, context, seen: dict[str, object]) -> None:
+        super().__init__(name=name)
+        self._context = context
+        self._seen = seen
+
+    async def start(self, ctx) -> None:
+        ctx.start_task(self._run, ctx)
+
+    async def stop(self) -> None:
+        return
+
+    async def _run(self, ctx) -> None:
+        async with self._context.open_endpoint(
+            "controller",
+            session_id="controller-session",
+            metadata={"custom": "value"},
+        ) as endpoint:
+            self._seen["endpoint"] = endpoint
+            self._seen["endpoint_address"] = endpoint.address
+            self._seen["endpoint_metadata"] = endpoint.metadata
+            await ctx.report_ready()
+            await ctx.stopping.wait()
+
+
 def _document(raw: dict) -> ConfigDocument:
     return ConfigDocument(raw=raw, source_path=None, base_dir=Path.cwd())
 
@@ -575,6 +600,67 @@ async def test_start_components_passes_kv_bucket_and_endpoints() -> None:
     ) as deckr, start_components(deckr, plan):
         assert seen["bucket"] is deckr.kv_bucket(policy)
         assert seen["endpoint"] == "controller-main"
+
+
+@pytest.mark.asyncio
+async def test_start_components_passes_slot_endpoint_opener_and_protocols() -> None:
+    seen: dict[str, object] = {}
+
+    def factory(context):
+        seen["slot_address"] = context.endpoint_address("controller")
+        seen["beacon"] = context.require_beacon()
+        seen["concord"] = context.require_concord()
+        with pytest.raises(KeyError):
+            context.open_endpoint("service")
+        return _EndpointContextComponent(context.runtime_name, context, seen)
+
+    definition = ComponentDefinition(
+        manifest=ComponentManifest(
+            component_id="dev.deckr.controller",
+            endpoint_slots=("controller",),
+        ),
+        factory=factory,
+    )
+    document = _document(
+        {
+            "deckr": {
+                "components": {
+                    "instances": {
+                        "controller": {
+                            "component": "dev.deckr.controller",
+                            "instance_id": "main",
+                            "endpoints": {"controller": "controller-main"},
+                        }
+                    }
+                }
+            }
+        }
+    )
+    plan = resolve_component_host_plan(
+        document,
+        definitions={"dev.deckr.controller": definition},
+    )
+
+    async with mock_deckr(
+        lane_contracts=plan.lane_contracts,
+        lanes=plan.lane_names,
+    ) as deckr, start_components(deckr, plan) as component_host:
+        await _wait_for_readiness(
+            component_host.component_manager,
+            "dev.deckr.controller:main",
+            ReadinessState.READY,
+        )
+        assert seen["beacon"] is deckr.beacon
+        assert seen["concord"] is deckr.concord
+        assert str(seen["slot_address"]) == "controller:controller-main"
+        assert str(seen["endpoint_address"]) == "controller:controller-main"
+        assert seen["endpoint_metadata"] == {
+            "componentId": "dev.deckr.controller",
+            "instanceId": "main",
+            "runtimeName": "dev.deckr.controller:main",
+            "endpointSlot": "controller",
+            "custom": "value",
+        }
 
 
 @pytest.mark.asyncio

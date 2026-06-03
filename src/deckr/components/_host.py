@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib.metadata import entry_points
@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import anyio
 
 from deckr.beacon import (
+    Beacon,
     BeaconFeatureEventType,
     Candidate,
 )
@@ -23,15 +24,16 @@ from deckr.components.dependencies import (
     dependency_effective_readiness,
     dependency_from_mapping,
 )
+from deckr.concord import Concord
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     MessageContract,
     MessageContractRegistry,
 )
-from deckr.contracts.messages import CORE_LANE_NAMES
+from deckr.contracts.messages import CORE_LANE_NAMES, EndpointAddress, endpoint_address
 from deckr.core.config import ConfigDocument
 from deckr.core.util.runtime_id import require_runtime_id
-from deckr.lanes import Lane, LaneRegistry
+from deckr.lanes import EndpointSession, Lane, LaneRegistry
 from deckr.substrates.nats_kv import KvBucketPolicy
 
 if TYPE_CHECKING:
@@ -90,6 +92,16 @@ class ResolvedLaneSet:
     publishes: tuple[str, ...] = ()
 
 
+class ComponentEndpointOpener(Protocol):
+    def __call__(
+        self,
+        slot: str,
+        *,
+        session_id: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> AbstractAsyncContextManager[EndpointSession]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ComponentContext:
     component_id: str
@@ -100,7 +112,10 @@ class ComponentContext:
     endpoints: Mapping[str, str]
     base_dir: Path
     lanes: LaneRegistry
+    beacon: Beacon | None = None
+    concord: Concord | None = None
     kv_bucket_for: Callable[[KvBucketPolicy], Any] | None = None
+    endpoint_for: ComponentEndpointOpener | None = None
 
     def require_lane(self, name: str) -> Lane:
         return self.lanes.require(name)
@@ -112,6 +127,36 @@ class ComponentContext:
                 f"Component {self.runtime_name!r} has no endpoint slot {slot!r}"
             )
         return endpoint_id
+
+    def endpoint_address(self, slot: str) -> EndpointAddress:
+        return endpoint_address(slot, self.require_endpoint_id(slot))
+
+    def open_endpoint(
+        self,
+        slot: str,
+        *,
+        session_id: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> AbstractAsyncContextManager[EndpointSession]:
+        if self.endpoint_for is None:
+            raise RuntimeError(
+                "Deckr component context does not provide endpoint sessions"
+            )
+        return self.endpoint_for(
+            slot,
+            session_id=session_id,
+            metadata=metadata,
+        )
+
+    def require_beacon(self) -> Beacon:
+        if self.beacon is None:
+            raise RuntimeError("Deckr component context does not provide Beacon")
+        return self.beacon
+
+    def require_concord(self) -> Concord:
+        if self.concord is None:
+            raise RuntimeError("Deckr component context does not provide Concord")
+        return self.concord
 
     def kv_bucket(self, policy: KvBucketPolicy) -> Any:
         if self.kv_bucket_for is None:
@@ -1267,12 +1312,59 @@ def _validate_runtime_for_plan(deckr: Deckr, plan: ComponentHostPlan) -> None:
             )
 
 
+def _optional_beacon(deckr: Deckr) -> Beacon | None:
+    try:
+        return deckr.beacon
+    except RuntimeError:
+        return None
+
+
+def _optional_concord(deckr: Deckr) -> Concord | None:
+    try:
+        return deckr.concord
+    except RuntimeError:
+        return None
+
+
+def _endpoint_opener_for_spec(
+    deckr: Deckr,
+    spec: ComponentInstanceSpec,
+) -> ComponentEndpointOpener:
+    def open_endpoint(
+        slot: str,
+        *,
+        session_id: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> AbstractAsyncContextManager[EndpointSession]:
+        endpoint_id = spec.endpoints.get(slot)
+        if endpoint_id is None:
+            raise KeyError(
+                f"Component {spec.runtime_name!r} has no endpoint slot {slot!r}"
+            )
+        merged_metadata = {
+            "componentId": spec.component_id,
+            "instanceId": spec.instance_id,
+            "runtimeName": spec.runtime_name,
+            "endpointSlot": slot,
+            **dict(metadata or {}),
+        }
+        return deckr.endpoint(
+            endpoint_address(slot, endpoint_id),
+            session_id=session_id,
+            metadata=merged_metadata,
+        )
+
+    return open_endpoint
+
+
 async def _activate_component_plan(
     deckr: Deckr,
     plan: ComponentHostPlan,
     component_manager: ComponentManager,
 ) -> ComponentHost:
     created: list[Component] = []
+    beacon = _optional_beacon(deckr)
+    concord = _optional_concord(deckr)
     for spec in plan.specs:
         context = ComponentContext(
             component_id=spec.component_id,
@@ -1283,7 +1375,10 @@ async def _activate_component_plan(
             endpoints=spec.endpoints,
             base_dir=plan.base_dir,
             lanes=deckr.lanes,
+            beacon=beacon,
+            concord=concord,
             kv_bucket_for=deckr.kv_bucket,
+            endpoint_for=_endpoint_opener_for_spec(deckr, spec),
         )
         component = spec.definition.factory(context)
         if not isinstance(component, Component):
