@@ -377,11 +377,7 @@ class Beacon:
         await self._ready.wait()
 
     def is_current(self) -> bool:
-        return (
-            self._ready.is_set()
-            and self._bucket.is_current()
-            and self._cache_matches_materialized_bucket()
-        )
+        return self._ready.is_set() and self._bucket.is_current()
 
     async def wait_current(self) -> None:
         await self.wait_ready()
