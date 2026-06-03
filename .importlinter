@@ -29,6 +29,15 @@ forbidden_modules =
     deckr.actions
     deckr.hardware
 
+[importlinter:contract:runtime_must_not_import_services]
+name = Runtime must not import service APIs
+type = forbidden
+source_modules =
+    deckr.runtime
+forbidden_modules =
+    deckr.services
+allow_indirect_imports = True
+
 [importlinter:contract:hardware_must_not_import_actions]
 name = Hardware must not import action APIs
 type = forbidden

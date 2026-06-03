@@ -298,12 +298,12 @@ skips unchanged refresh writes when possible, best-effort withdraws on clean
 shutdown, and removes stale same-endpoint advertisements left by an earlier
 crashed session or changed configuration.
 
-Protected service views are direct JetStream/KV views. Runtime code opens them
-through `Deckr.service_view_store(bucket, ttl_seconds=...)`, which returns a
-managed `ServiceViewStore` for one service-owned bucket. `ServiceViewStore` uses
-the same materialized KV recovery helper as Beacon and Concord, exposes direct
-`get`, `put`, `create`, `update`, `delete`, and `watch` style behavior, and
-authorizes protected reads and watches with an active Concord service-use lease.
+Protected service views are direct JetStream/KV views. Service/application code
+opens them by constructing `ServiceViewStore` from an explicit KV bucket and
+starting it in a caller-owned task group. `ServiceViewStore` uses the same
+materialized KV recovery helper as Beacon and Concord, exposes direct `get`,
+`put`, `create`, `update`, `delete`, and `watch` style behavior, and authorizes
+protected reads and watches with an active Concord service-use lease.
 Local view state is updated immediately after successful writes and deletes, and
 recovered watch snapshots reconcile missing keys so missed delete/expiry events
 do not leave stale cached view entries. View entries are fenced by `serviceId`,
@@ -346,9 +346,22 @@ as `deckr.concord`; callers should not construct Concord authority directly
 from raw KV buckets.
 
 ```python
+from deckr.services import ServiceViewStore
+from deckr.substrates.nats_kv import KvBucketPolicy
+
 beacon = deckr.beacon
 concord = deckr.concord
-views = deckr.service_view_store("com_example_service_view_v1", ttl_seconds=30)
+views = ServiceViewStore(
+    bucket=deckr.kv_bucket(
+        KvBucketPolicy(
+            bucket="com_example_service_view_v1",
+            ttl_seconds=30,
+            allow_write_ttl=True,
+            description="service view KV",
+        )
+    )
+)
+views.start(task_group)
 ```
 
 Component factories that need raw KV buckets, such as the Concord reaper, receive
@@ -362,9 +375,9 @@ maintenance_bucket = context.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY)
 
 The reaper wraps these buckets in Concord maintenance logic for CAS
 cancellation, retention deletion, token cleanup, and orphaned stale-observation
-cleanup. Other components should prefer managed `deckr.beacon`,
-`deckr.concord`, and `deckr.service_view_store(...)` for normal protocol and
-protected service-view authority.
+cleanup. Other components should prefer managed `deckr.beacon`, `deckr.concord`,
+and explicit `ServiceViewStore` instances opened from `deckr.kv_bucket(...)` for
+normal protocol and protected service-view authority.
 
 TTL-bound buckets are configured with broker-owned bucket TTL and one retained
 message per subject. Persistent buckets reject per-write TTL. Reopening the same

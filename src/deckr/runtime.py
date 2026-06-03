@@ -26,7 +26,6 @@ from deckr.lanes import (
     MessageBus,
     endpoint_session,
 )
-from deckr.services.views import ServiceViewStore
 from deckr.substrates.nats import NatsSubstrate
 from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
 
@@ -50,7 +49,6 @@ class Deckr:
             tuple(sorted(set(CORE_LANE_NAMES) | set(lanes))),
             message_contracts=self._lane_contracts,
         )
-        self._service_view_stores: dict[tuple[str, float | None], ServiceViewStore] = {}
         self._task_group_cm: AbstractAsyncContextManager[anyio.abc.TaskGroup] | None = (
             None
         )
@@ -110,31 +108,6 @@ class Deckr:
             raise RuntimeError("Deckr message bus does not provide NATS KV buckets")
         return kv_bucket(policy)
 
-    def service_view_store(
-        self,
-        bucket: str,
-        *,
-        ttl_seconds: float | None = None,
-    ) -> ServiceViewStore:
-        if self._task_group is None:
-            raise RuntimeError("Deckr runtime must be running")
-        key = (bucket, ttl_seconds)
-        store = self._service_view_stores.get(key)
-        if store is None:
-            store = ServiceViewStore(
-                bucket=self.kv_bucket(
-                    KvBucketPolicy(
-                        bucket=bucket,
-                        ttl_seconds=ttl_seconds,
-                        allow_write_ttl=ttl_seconds is not None,
-                        description="service view KV",
-                    )
-                )
-            )
-            store.start(self._task_group)
-            self._service_view_stores[key] = store
-        return store
-
     async def __aenter__(self) -> Deckr:
         if self._task_group is not None:
             raise RuntimeError("Deckr runtime is already running")
@@ -176,7 +149,6 @@ class Deckr:
         aclose = getattr(self._message_bus, "aclose", None)
         if aclose is not None:
             await aclose()
-        self._service_view_stores.clear()
         self._beacon = None
         self._concord = None
         self._task_group = None

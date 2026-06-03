@@ -76,3 +76,8 @@ def test_nats_substrates_expose_message_bus_contract_lookup() -> None:
 
     assert nats.contract_for(ACTIONS_LANE) == expected
     assert supervised.contract_for(ACTIONS_LANE) == expected
+
+
+def test_deckr_runtime_does_not_expose_service_view_store() -> None:
+    assert not hasattr(Deckr, "service_view_store")
+    assert not hasattr(mock_deckr(), "service_view_store")
