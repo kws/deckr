@@ -35,6 +35,7 @@ export const BINDING_ATTACHED = "bindingAttached";
 export const BINDING_DETACHED = "bindingDetached";
 export const PAGE_SESSION_OPENED = "pageSessionOpened";
 export const PAGE_SESSION_CLOSED = "pageSessionClosed";
+export const ACTION_LIFECYCLE_REJECTED = "actionLifecycleRejected";
 export const CAPABILITY_INPUT = "capabilityInput";
 export const BINDING_OUTPUT = "bindingOutput";
 export const BINDING_OVERLAY = "bindingOverlay";
@@ -187,6 +188,32 @@ export interface PageSessionMetadata {
   templateId?: string;
   ownerBindingId?: string;
   bindings?: BindingMetadata[];
+}
+
+export type ActionLifecycleRejectionTargetKind =
+  | "action_instance"
+  | "binding"
+  | "page_session";
+
+export type ActionLifecycleRejectionReason =
+  | "action_not_available"
+  | "provider_not_ready"
+  | "invalid_settings"
+  | "unsupported_capability"
+  | "resource_unavailable"
+  | "permission_denied"
+  | "stale_lifecycle"
+  | "internal_error";
+
+export interface ActionLifecycleRejectedBody {
+  targetKind: ActionLifecycleRejectionTargetKind;
+  actionInstance?: ActionInstanceMetadata;
+  binding?: BindingMetadata;
+  pageSession?: PageSessionMetadata;
+  reason: ActionLifecycleRejectionReason;
+  message?: string;
+  retryable?: boolean;
+  details?: JsonObject;
 }
 
 export interface CapabilityInputEvent {
@@ -773,6 +800,54 @@ export function validatePageSessionMetadata(value: unknown): PageSessionMetadata
   return session;
 }
 
+export function validateActionLifecycleRejectedBody(
+  value: unknown,
+): ActionLifecycleRejectedBody {
+  const raw = requireJsonObject(value, "action lifecycle rejection");
+  const targetKind = requireText(raw.targetKind, "targetKind");
+  if (!isActionLifecycleRejectionTargetKind(targetKind)) {
+    throw new ValidationError("action lifecycle rejection targetKind is invalid");
+  }
+  const reason = requireText(raw.reason, "reason");
+  if (!isActionLifecycleRejectionReason(reason)) {
+    throw new ValidationError("action lifecycle rejection reason is invalid");
+  }
+  const body: ActionLifecycleRejectedBody = {
+    targetKind,
+    reason,
+    retryable: raw.retryable === undefined ? false : raw.retryable === true,
+    details:
+      raw.details === undefined || raw.details === null
+        ? {}
+        : requireJsonObject(raw.details, "details"),
+  };
+  if (raw.retryable !== undefined && typeof raw.retryable !== "boolean") {
+    throw new ValidationError("retryable must be boolean");
+  }
+  setOptionalTextValue(body, "message", raw.message, "message");
+  if (raw.actionInstance !== undefined && raw.actionInstance !== null) {
+    body.actionInstance = validateActionInstanceMetadata(raw.actionInstance);
+  }
+  if (raw.binding !== undefined && raw.binding !== null) {
+    body.binding = validateBindingMetadata(raw.binding);
+  }
+  if (raw.pageSession !== undefined && raw.pageSession !== null) {
+    body.pageSession = validatePageSessionMetadata(raw.pageSession);
+  }
+  const present = [
+    body.actionInstance === undefined ? undefined : "action_instance",
+    body.binding === undefined ? undefined : "binding",
+    body.pageSession === undefined ? undefined : "page_session",
+  ].filter((item) => item !== undefined);
+  if (present.length !== 1 || present[0] !== targetKind) {
+    throw new ValidationError(
+      "action lifecycle rejection requires exactly one target matching targetKind",
+    );
+  }
+  body.details = cloneJson(body.details);
+  return body;
+}
+
 export function validateCapabilityInputEvent(value: unknown): CapabilityInputEvent {
   const raw = requireJsonObject(value, "capability input event");
   const event: CapabilityInputEvent = {
@@ -1102,4 +1177,25 @@ function isCapabilityDirection(
   value: string,
 ): value is MatchedCapability["direction"] {
   return ["input", "output", "state", "command"].includes(value);
+}
+
+function isActionLifecycleRejectionTargetKind(
+  value: string,
+): value is ActionLifecycleRejectionTargetKind {
+  return ["action_instance", "binding", "page_session"].includes(value);
+}
+
+function isActionLifecycleRejectionReason(
+  value: string,
+): value is ActionLifecycleRejectionReason {
+  return [
+    "action_not_available",
+    "provider_not_ready",
+    "invalid_settings",
+    "unsupported_capability",
+    "resource_unavailable",
+    "permission_denied",
+    "stale_lifecycle",
+    "internal_error",
+  ].includes(value);
 }

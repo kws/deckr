@@ -12,7 +12,7 @@ import { ValidationError } from "./errors.ts";
 import { cloneJson, requireJsonObject, requireText, type JsonObject } from "./json.ts";
 import { encodeKeyToken } from "./keys.ts";
 
-const LANE_PREFIX = "deckr.lane";
+const LANE_PREFIX = "deckr.msg";
 
 export interface EntitySubject {
   kind: string;
@@ -142,12 +142,22 @@ export function validateDeckrMessage(value: unknown): DeckrMessage {
 }
 
 export function subjectFor(message: DeckrMessage): string {
-  const sender = parseEndpointAddress(message.sender);
+  if (message.recipient.targetType === "broadcast") {
+    return [
+      LANE_PREFIX,
+      encodeKeyToken(message.lane),
+      "broadcast",
+      encodeKeyToken(message.recipient.scope),
+      encodeKeyToken(message.recipient.endpointFamily),
+    ].join(".");
+  }
+  const recipient = parseEndpointAddress(message.recipient.endpoint);
   return [
     LANE_PREFIX,
     encodeKeyToken(message.lane),
-    encodeKeyToken(sender.family),
-    encodeKeyToken(sender.endpointId),
+    "to",
+    encodeKeyToken(recipient.family),
+    encodeKeyToken(recipient.endpointId),
   ].join(".");
 }
 
@@ -203,7 +213,7 @@ export function validateSubjectHint(subject: string, message: DeckrMessage): voi
   }
   const expected = subjectFor(message).split(".");
   if (subject.split(".").slice(0, expected.length).join(".") !== expected.join(".")) {
-    throw new ValidationError("NATS subject disagrees with Deckr envelope sender");
+    throw new ValidationError("NATS subject disagrees with Deckr envelope recipient");
   }
 }
 

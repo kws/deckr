@@ -163,6 +163,21 @@ CapabilityViewKind = Literal["raw", "native", "projected", "derived", "extension
 CapabilityProvenance = Literal["native", "projection", "derivation", "extension"]
 SettingsScope = Literal["action_provider_instance", "action_instance"]
 PageChildBindingTargetKind = Literal["self", "action"]
+ActionLifecycleRejectionTargetKind = Literal[
+    "action_instance",
+    "binding",
+    "page_session",
+]
+ActionLifecycleRejectionReason = Literal[
+    "action_not_available",
+    "provider_not_ready",
+    "invalid_settings",
+    "unsupported_capability",
+    "resource_unavailable",
+    "permission_denied",
+    "stale_lifecycle",
+    "internal_error",
+]
 SettingsProvenance = Literal[
     "config_default",
     "user_override",
@@ -587,6 +602,56 @@ class BindingDetachedBody(ActionMessageBody):
 class PageSessionLifecycleBody(ActionMessageBody):
     page_session: PageSessionMetadata = Field(alias="pageSession")
     reason: str | None = None
+
+
+class ActionLifecycleRejectedBody(ActionMessageBody):
+    target_kind: ActionLifecycleRejectionTargetKind = Field(alias="targetKind")
+    action_instance: ActionInstanceMetadata | None = Field(
+        default=None,
+        alias="actionInstance",
+    )
+    binding: BindingMetadata | None = None
+    page_session: PageSessionMetadata | None = Field(
+        default=None,
+        alias="pageSession",
+    )
+    reason: ActionLifecycleRejectionReason
+    message: str | None = None
+    retryable: bool = False
+    details: JsonObject = Field(default_factory=dict)
+
+    @field_validator("message")
+    @classmethod
+    def _validate_message(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="rejection message")
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def _thaw_details(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("details", mode="after")
+    @classmethod
+    def _freeze_details(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze_json(value)
+
+    @field_serializer("details")
+    def _serialize_details(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+    @model_validator(mode="after")
+    def _validate_target(self) -> ActionLifecycleRejectedBody:
+        targets = {
+            "action_instance": self.action_instance,
+            "binding": self.binding,
+            "page_session": self.page_session,
+        }
+        present = [kind for kind, target in targets.items() if target is not None]
+        if present != [self.target_kind]:
+            raise ValueError(
+                "action lifecycle rejection requires exactly one target matching targetKind"
+            )
+        return self
 
 
 class CapabilityInputBody(ActionMessageBody):
@@ -1375,6 +1440,7 @@ BINDING_ATTACHED = "bindingAttached"
 BINDING_DETACHED = "bindingDetached"
 PAGE_SESSION_OPENED = "pageSessionOpened"
 PAGE_SESSION_CLOSED = "pageSessionClosed"
+ACTION_LIFECYCLE_REJECTED = "actionLifecycleRejected"
 CAPABILITY_INPUT = "capabilityInput"
 BINDING_OUTPUT = "bindingOutput"
 BINDING_OVERLAY = "bindingOverlay"
@@ -1402,6 +1468,7 @@ ACTION_PROVIDER_COMMAND_MESSAGE_TYPES = frozenset(
 
 CONTROLLER_EXTENSION_COMMAND_MESSAGE_TYPES = frozenset(
     {
+        ACTION_LIFECYCLE_REJECTED,
         OPEN_PAGE,
         REPLACE_PAGE,
         CLOSE_PAGE,
@@ -1421,6 +1488,7 @@ ACTION_BODY_BY_MESSAGE_TYPE: dict[str, type[ActionMessageBody]] = {
     BINDING_DETACHED: BindingDetachedBody,
     PAGE_SESSION_OPENED: PageSessionLifecycleBody,
     PAGE_SESSION_CLOSED: PageSessionLifecycleBody,
+    ACTION_LIFECYCLE_REJECTED: ActionLifecycleRejectedBody,
     CAPABILITY_INPUT: CapabilityInputBody,
     BINDING_OUTPUT: BindingOutputBody,
     BINDING_OVERLAY: BindingOverlayBody,

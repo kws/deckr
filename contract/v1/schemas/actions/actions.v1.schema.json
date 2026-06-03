@@ -99,6 +99,97 @@
       "title": "ActionInstanceMetadata",
       "type": "object"
     },
+    "ActionLifecycleRejectedBody": {
+      "additionalProperties": false,
+      "properties": {
+        "actionInstance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionInstanceMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BindingMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "details": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Details",
+          "type": "object"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "pageSession": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageSessionMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "enum": [
+            "action_not_available",
+            "provider_not_ready",
+            "invalid_settings",
+            "unsupported_capability",
+            "resource_unavailable",
+            "permission_denied",
+            "stale_lifecycle",
+            "internal_error"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "targetKind": {
+          "enum": [
+            "action_instance",
+            "binding",
+            "page_session"
+          ],
+          "title": "Targetkind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "targetKind",
+        "reason"
+      ],
+      "title": "ActionLifecycleRejectedBody",
+      "type": "object"
+    },
     "BindingAttachedBody": {
       "additionalProperties": false,
       "properties": {
@@ -1545,6 +1636,32 @@
             },
             "messageType": {
               "const": "pageSessionClosed"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ActionLifecycleRejectedBody"
+            },
+            "lane": {
+              "const": "actions"
+            },
+            "messageType": {
+              "const": "actionLifecycleRejected"
             }
           },
           "required": [

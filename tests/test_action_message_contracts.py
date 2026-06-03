@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from deckr.actions.endpoints import action_provider_address
 from deckr.actions.messages import (
     ACTION_EXTENSION,
+    ACTION_LIFECYCLE_REJECTED,
     BINDING_OUTPUT,
     BINDING_OVERLAY,
     BINDING_OVERLAY_CLEAR,
@@ -18,6 +19,7 @@ from deckr.actions.messages import (
     ActionDescriptor,
     ActionExtensionBody,
     ActionInstanceMetadata,
+    ActionLifecycleRejectedBody,
     BindingMetadata,
     CapabilityInputBody,
     CapabilityInputEvent,
@@ -90,6 +92,37 @@ def _binding_metadata() -> BindingMetadata:
             )
         ],
     )
+
+
+def _action_instance_metadata() -> ActionInstanceMetadata:
+    return ActionInstanceMetadata(
+        providerInstanceId="demo-provider",
+        providerId="demo.provider",
+        actionId="demo.action",
+        actionInstanceId="instance-1",
+        configId="device-config-1",
+        contextId="ctx-1",
+    )
+
+
+def _page_session_metadata() -> dict:
+    return {
+        "providerInstanceId": "demo-provider",
+        "providerId": "demo.provider",
+        "actionInstanceId": "instance-1",
+        "configId": "device-config-1",
+        "pageId": "page-1",
+        "pageSessionId": "page-session-1",
+        "contextId": "page-ctx-1",
+        "ownerBindingId": "binding-1",
+        "bindings": [
+            _binding_metadata().model_dump(
+                by_alias=True,
+                exclude_none=True,
+                mode="json",
+            )
+        ],
+    }
 
 
 def test_core_action_bodies_forbid_stale_routing_identity_fields() -> None:
@@ -638,6 +671,97 @@ def test_v1_binding_overlay_clear_can_be_overlay_id_fenced() -> None:
     assert body.to_dict()["generation"] == 5
 
 
+def test_action_lifecycle_rejected_body_requires_exact_matching_target() -> None:
+    body = action_body_for_type(
+        ACTION_LIFECYCLE_REJECTED,
+        {
+            "targetKind": "binding",
+            "binding": _binding_metadata().model_dump(
+                by_alias=True,
+                exclude_none=True,
+                mode="json",
+            ),
+            "reason": "invalid_settings",
+            "message": "Settings schema rejected the payload",
+            "details": {"field": "title"},
+        },
+    )
+
+    assert isinstance(body, ActionLifecycleRejectedBody)
+    assert body.to_dict() == {
+        "targetKind": "binding",
+        "binding": _binding_metadata().model_dump(
+            by_alias=True,
+            exclude_none=True,
+            mode="json",
+        ),
+        "reason": "invalid_settings",
+        "message": "Settings schema rejected the payload",
+        "retryable": False,
+        "details": {"field": "title"},
+    }
+
+    with pytest.raises(ValidationError, match="exactly one target"):
+        action_body_for_type(
+            ACTION_LIFECYCLE_REJECTED,
+            {
+                "targetKind": "binding",
+                "actionInstance": _action_instance_metadata().model_dump(
+                    by_alias=True,
+                    mode="json",
+                ),
+                "binding": _binding_metadata().model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    mode="json",
+                ),
+                "reason": "invalid_settings",
+            },
+        )
+
+    with pytest.raises(ValidationError, match="exactly one target"):
+        action_body_for_type(
+            ACTION_LIFECYCLE_REJECTED,
+            {
+                "targetKind": "page_session",
+                "binding": _binding_metadata().model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    mode="json",
+                ),
+                "reason": "stale_lifecycle",
+            },
+        )
+
+
+def test_action_lifecycle_rejected_body_reasons_are_v1_enum() -> None:
+    for reason in (
+        "action_not_available",
+        "provider_not_ready",
+        "invalid_settings",
+        "unsupported_capability",
+        "resource_unavailable",
+        "permission_denied",
+        "stale_lifecycle",
+        "internal_error",
+    ):
+        assert (
+            ActionLifecycleRejectedBody(
+                targetKind="action_instance",
+                actionInstance=_action_instance_metadata(),
+                reason=reason,
+            ).reason
+            == reason
+        )
+
+    with pytest.raises(ValidationError):
+        ActionLifecycleRejectedBody(
+            targetKind="page_session",
+            pageSession=_page_session_metadata(),
+            reason="binding_closed",
+        )
+
+
 def test_action_extension_body_has_explicit_non_routing_shape() -> None:
     body = action_body_for_type(
         ACTION_EXTENSION,
@@ -723,6 +847,15 @@ def test_typed_action_body_schemas_are_exportable() -> None:
     }.issubset(extension_schema["properties"])
     assert lane_schema["$id"] == "dev.deckr.message.actions.v1"
     assert lane_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    rejected_variant = next(
+        variant
+        for variant in lane_schema["oneOf"]
+        if variant["allOf"][1]["properties"]["messageType"]["const"]
+        == ACTION_LIFECYCLE_REJECTED
+    )
+    assert rejected_variant["allOf"][1]["properties"]["body"]["$ref"] == (
+        "#/$defs/ActionLifecycleRejectedBody"
+    )
     binding_output_variant = next(
         variant
         for variant in lane_schema["oneOf"]

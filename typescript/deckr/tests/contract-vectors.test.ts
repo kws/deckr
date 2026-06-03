@@ -4,11 +4,13 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  ACTION_LIFECYCLE_REJECTED,
   actionsPayloadFromAdvertisement,
   contextSubject,
   parseSettingsTargetKey,
   settingsTargetKey,
   validateActionInstanceMetadata,
+  validateActionLifecycleRejectedBody,
   validateActionProviderSessionTerms,
   validateActionsBeaconPayload,
   validateSettingsTargetRef,
@@ -162,6 +164,48 @@ test("action instance metadata requires contextId", () => {
       actionId: "dev.deckr.clock.show_time",
       actionInstanceId: "action-instance-1",
       configId: "config-1",
+    }),
+  );
+});
+
+test("action lifecycle rejection body validates exact target and reason enum", () => {
+  const actionInstance = validateActionInstanceMetadata({
+    providerInstanceId: "clock-main",
+    providerId: "dev.deckr.clock",
+    actionId: "dev.deckr.clock.show_time",
+    actionInstanceId: "action-instance-1",
+    configId: "config-1",
+    contextId: "ctx-1",
+  });
+
+  assert.equal(ACTION_LIFECYCLE_REJECTED, "actionLifecycleRejected");
+  assert.deepEqual(
+    validateActionLifecycleRejectedBody({
+      targetKind: "action_instance",
+      actionInstance,
+      reason: "action_not_available",
+      details: { actionId: "dev.deckr.clock.show_time" },
+    }),
+    {
+      targetKind: "action_instance",
+      actionInstance,
+      reason: "action_not_available",
+      retryable: false,
+      details: { actionId: "dev.deckr.clock.show_time" },
+    },
+  );
+  assert.throws(() =>
+    validateActionLifecycleRejectedBody({
+      targetKind: "binding",
+      actionInstance,
+      reason: "action_not_available",
+    }),
+  );
+  assert.throws(() =>
+    validateActionLifecycleRejectedBody({
+      targetKind: "action_instance",
+      actionInstance,
+      reason: "binding_closed",
     }),
   );
 });

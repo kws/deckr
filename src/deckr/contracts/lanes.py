@@ -50,6 +50,7 @@ ACTION_MESSAGE_TYPES = frozenset(
         "actionExtension",
         "actionInstanceCreated",
         "actionInstanceDestroyed",
+        "actionLifecycleRejected",
         "bindingAttached",
         "bindingDetached",
         "bindingOutput",
