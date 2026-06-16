@@ -1344,6 +1344,17 @@ class ConcordParticipantLease:
                     self._last_refresh_at = None
                     if _is_terminal_participant_conflict(exc):
                         self._closed = True
+                        logger.warning(
+                            "%s Concord participant lease closed after token "
+                            "refresh conflict contract=%s generation=%s "
+                            "participant=%s session=%s reason=%s",
+                            self._log_label,
+                            self.contract.contract_id,
+                            self.contract.generation,
+                            self.participant,
+                            self.session_id,
+                            exc,
+                        )
                     else:
                         logger.warning(
                             "%s Concord participant token refresh conflict; "
@@ -1374,6 +1385,17 @@ class ConcordParticipantLease:
             except ConcordConflict as exc:
                 if _is_terminal_participant_conflict(exc):
                     self._closed = True
+                    logger.warning(
+                        "%s Concord participant lease closed after attach "
+                        "conflict contract=%s generation=%s participant=%s "
+                        "session=%s reason=%s",
+                        self._log_label,
+                        self.contract.contract_id,
+                        self.contract.generation,
+                        self.participant,
+                        self.session_id,
+                        exc,
+                    )
                 raise
             return self._token
 
@@ -2349,13 +2371,25 @@ class Concord:
             agreement._lease.adopt(existing)  # noqa: SLF001
         try:
             await agreement._lease.attach_or_refresh()  # noqa: SLF001
-        except ConcordConflict:
+        except ConcordConflict as exc:
             validity = await self._validate(
                 agreement.contract,
                 current_sessions=current_sessions,
                 log_label=spec.log_label,
             )
             agreement._validity = validity  # noqa: SLF001
+            logger.warning(
+                "%s Concord agreement refresh failed contract=%s generation=%s "
+                "participant=%s session=%s status=%s reason=%s conflict=%s",
+                spec.log_label,
+                agreement.contract.contract_id,
+                agreement.contract.generation,
+                spec.local_participant,
+                spec.local_session_id,
+                validity.status.value,
+                validity.reason,
+                exc,
+            )
             if _agreement_successor_status(validity.status):
                 await agreement._lease.aclose()  # noqa: SLF001
             raise

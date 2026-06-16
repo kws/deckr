@@ -331,13 +331,33 @@ class ServiceUseLease:
         try:
             validity = await self.agreement.refresh()
         except ConcordConflict as exc:
-            raise _service_use_conflict_unavailable(exc) from exc
+            raise ServiceUnavailable(
+                f"contract_{ContractValidityStatus.INVALID_TOKEN.value}",
+                "Service-use contract could not be refreshed",
+                {
+                    "status": ContractValidityStatus.INVALID_TOKEN.value,
+                    "reason": str(exc),
+                    "contractId": self.contract.contract_id,
+                    "generation": self.contract.generation,
+                    "profile": self.contract.profile,
+                    "serviceId": self.descriptor.service_id,
+                    "serviceSessionId": self.descriptor.session_id,
+                },
+            ) from exc
         if validity.valid:
             return
         raise ServiceUnavailable(
             f"contract_{validity.status.value}",
             "Service-use contract is not valid",
-            {"status": validity.status.value, "reason": validity.reason},
+            {
+                "status": validity.status.value,
+                "reason": validity.reason,
+                "contractId": self.contract.contract_id,
+                "generation": self.contract.generation,
+                "profile": self.contract.profile,
+                "serviceId": self.descriptor.service_id,
+                "serviceSessionId": self.descriptor.session_id,
+            },
         )
 
 
@@ -460,17 +480,6 @@ def newest_service_descriptor(
     if not descriptors:
         return None
     return max(descriptors, key=service_descriptor_sort_key)
-
-
-def _service_use_conflict_unavailable(exc: ConcordConflict) -> ServiceUnavailable:
-    return ServiceUnavailable(
-        f"contract_{ContractValidityStatus.INVALID_TOKEN.value}",
-        "Service-use contract could not be refreshed",
-        {
-            "status": ContractValidityStatus.INVALID_TOKEN.value,
-            "reason": str(exc),
-        },
-    )
 
 
 def _normalize_operations(

@@ -206,6 +206,49 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         await controller_cm.__aexit__(None, None, None)
 
 
+async def test_command_authorization_reconciles_fresh_claim_before_rejecting() -> None:
+    delivered_commands = []
+
+    async def command_handler(message):
+        delivered_commands.append(message)
+        return True
+
+    deckr, endpoint_cm, runtime = await _runtime(command_handler=command_handler)
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
+    controller_endpoint = await controller_cm.__aenter__()
+    concord = _concord(deckr)
+    try:
+        await runtime.publish_advertisement()
+        await _add_device(runtime, _descriptor())
+        contract = await _claim(runtime, concord)
+        await concord._attach(
+            contract,
+            controller_endpoint.address,
+            controller_endpoint.session_id,
+        )
+        assert runtime.live_claims == ()
+
+        command = hw_messages.control_command_message(
+            controller_id="controller-main",
+            sender_session_id=controller_endpoint.session_id,
+            manager_id="manager-main",
+            device_id="stream-deck-mini",
+            control_id="0,0",
+            capability_id="raster.bitmap",
+            command_type="clear",
+        )
+        deckr._message_bus.publish_reply.reset_mock()
+
+        assert await runtime.handle_command(command)
+        assert delivered_commands == [command]
+        assert len(runtime.live_claims) == 1
+        deckr._message_bus.publish_reply.assert_not_called()
+    finally:
+        await runtime.stop()
+        await endpoint_cm.__aexit__(None, None, None)
+        await controller_cm.__aexit__(None, None, None)
+
+
 async def test_noop_claim_reconcile_does_not_refresh_hardware_beacon() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
     try:

@@ -300,13 +300,22 @@ class HardwareManagerRuntime:
         if ref.device_id not in self._devices:
             await self._reject_command(envelope, body, reason="stale")
             return False
-        claim = self._claims_by_device.get(ref.device_id)
-        if claim is None or envelope.sender != claim.controller_endpoint:
+        claim = await self._command_claim(ref.device_id, envelope)
+        if claim is None:
             await self._reject_command(envelope, body, reason="unauthorized")
             return False
         if envelope.sender_session_id != claim.controller_session_id:
-            await self._reject_command(envelope, body, reason="stale")
-            return False
+            claim = await self._command_claim(
+                ref.device_id,
+                envelope,
+                refresh=True,
+            )
+            if claim is None:
+                await self._reject_command(envelope, body, reason="unauthorized")
+                return False
+            if envelope.sender_session_id != claim.controller_session_id:
+                await self._reject_command(envelope, body, reason="stale")
+                return False
         if self.command_handler is None:
             await self._reject_command(envelope, body, reason="unsupported")
             return False
@@ -321,6 +330,21 @@ class HardwareManagerRuntime:
             await self._reject_command(envelope, body, reason="stale")
             return False
         return True
+
+    async def _command_claim(
+        self,
+        device_id: str,
+        envelope: DeckrMessage,
+        *,
+        refresh: bool = False,
+    ) -> LiveHardwareClaim | None:
+        claim = self._claims_by_device.get(device_id)
+        if refresh or claim is None or envelope.sender != claim.controller_endpoint:
+            await self.reconcile_claims(reason="command authorization")
+            claim = self._claims_by_device.get(device_id)
+        if claim is None or envelope.sender != claim.controller_endpoint:
+            return None
+        return claim
 
     async def publish_advertisement(self) -> None:
         async with self._advertisement_lock:
