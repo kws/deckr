@@ -1,5 +1,288 @@
 {
   "$defs": {
+    "ActionAvailabilityChangedBody": {
+      "additionalProperties": false,
+      "description": "Provider-direct availability change event.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ActionAvailabilityEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "providerId": {
+          "title": "Providerid",
+          "type": "string"
+        },
+        "providerInstanceId": {
+          "title": "Providerinstanceid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerInstanceId",
+        "providerId",
+        "entries"
+      ],
+      "title": "ActionAvailabilityChangedBody",
+      "type": "object"
+    },
+    "ActionAvailabilityEntry": {
+      "additionalProperties": false,
+      "description": "Provider-direct availability for one action descriptor.",
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "descriptor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "unavailable",
+            "probing"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "status"
+      ],
+      "title": "ActionAvailabilityEntry",
+      "type": "object"
+    },
+    "ActionAvailabilityRequestBody": {
+      "additionalProperties": false,
+      "description": "Controller request for a provider-direct availability snapshot.",
+      "properties": {
+        "requestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requestid"
+        },
+        "selectors": {
+          "items": {
+            "$ref": "#/$defs/ActionAvailabilitySelector"
+          },
+          "title": "Selectors",
+          "type": "array"
+        }
+      },
+      "title": "ActionAvailabilityRequestBody",
+      "type": "object"
+    },
+    "ActionAvailabilitySelector": {
+      "additionalProperties": false,
+      "description": "Controller request selector for one provider action.",
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId"
+      ],
+      "title": "ActionAvailabilitySelector",
+      "type": "object"
+    },
+    "ActionAvailabilitySnapshotBody": {
+      "additionalProperties": false,
+      "description": "Provider-direct availability snapshot response.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ActionAvailabilityEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "providerId": {
+          "title": "Providerid",
+          "type": "string"
+        },
+        "providerInstanceId": {
+          "title": "Providerinstanceid",
+          "type": "string"
+        },
+        "requestId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requestid"
+        }
+      },
+      "required": [
+        "providerInstanceId",
+        "providerId"
+      ],
+      "title": "ActionAvailabilitySnapshotBody",
+      "type": "object"
+    },
+    "ActionDescriptor": {
+      "additionalProperties": false,
+      "description": "Action identity advertised by an action provider.",
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "controllers": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Controllers"
+        },
+        "manifestDefaults": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifestdefaults"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "propertyInspectorPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Propertyinspectorpath"
+        },
+        "providerId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providerid"
+        },
+        "providerSettingsSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providersettingsschema"
+        },
+        "requirements": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CapabilityRequirement"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requirements"
+        },
+        "settingsSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Settingsschema"
+        }
+      },
+      "required": [
+        "actionId"
+      ],
+      "title": "ActionDescriptor",
+      "type": "object"
+    },
     "ActionExtensionBody": {
       "additionalProperties": false,
       "description": "Explicit extension body for action lane extension traffic.",
@@ -97,6 +380,57 @@
         "contextId"
       ],
       "title": "ActionInstanceMetadata",
+      "type": "object"
+    },
+    "ActionInterestEntry": {
+      "additionalProperties": false,
+      "description": "Controller interest in one provider action.",
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "strong",
+            "warm"
+          ],
+          "title": "Level",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "level"
+      ],
+      "title": "ActionInterestEntry",
+      "type": "object"
+    },
+    "ActionInterestUpdateBody": {
+      "additionalProperties": false,
+      "description": "Aggregated controller interest sent to one provider instance.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ActionInterestEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "providerId": {
+          "title": "Providerid",
+          "type": "string"
+        },
+        "providerInstanceId": {
+          "title": "Providerinstanceid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerInstanceId",
+        "providerId"
+      ],
+      "title": "ActionInterestUpdateBody",
       "type": "object"
     },
     "ActionLifecycleRejectedBody": {
@@ -651,6 +985,138 @@
         "capabilityId"
       ],
       "title": "CapabilityRef",
+      "type": "object"
+    },
+    "CapabilityRequirement": {
+      "additionalProperties": false,
+      "description": "A named action input, output, state, config, or diagnostic requirement.",
+      "properties": {
+        "commandTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commandtypes",
+          "type": "array"
+        },
+        "eventTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Eventtypes",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "preferences": {
+          "items": {
+            "$ref": "#/$defs/CapabilityRequirementSelector"
+          },
+          "title": "Preferences",
+          "type": "array"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "views": {
+          "items": {
+            "enum": [
+              "raw",
+              "native",
+              "projected",
+              "derived",
+              "extension"
+            ],
+            "type": "string"
+          },
+          "title": "Views",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "preferences"
+      ],
+      "title": "CapabilityRequirement",
+      "type": "object"
+    },
+    "CapabilityRequirementSelector": {
+      "additionalProperties": false,
+      "description": "One acceptable capability shape for an action requirement.",
+      "properties": {
+        "capabilityId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capabilityid"
+        },
+        "commandTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commandtypes",
+          "type": "array"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "input",
+                "output",
+                "state",
+                "command"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Direction"
+        },
+        "eventTypes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Eventtypes",
+          "type": "array"
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Family"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "title": "CapabilityRequirementSelector",
       "type": "object"
     },
     "ControlRef": {
@@ -1491,6 +1957,110 @@
   "$id": "dev.deckr.message.actions.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "oneOf": [
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ActionAvailabilityRequestBody"
+            },
+            "lane": {
+              "const": "actions"
+            },
+            "messageType": {
+              "const": "actionAvailabilityRequest"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ActionAvailabilitySnapshotBody"
+            },
+            "lane": {
+              "const": "actions"
+            },
+            "messageType": {
+              "const": "actionAvailabilitySnapshot"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ActionAvailabilityChangedBody"
+            },
+            "lane": {
+              "const": "actions"
+            },
+            "messageType": {
+              "const": "actionAvailabilityChanged"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DeckrMessage"
+        },
+        {
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/ActionInterestUpdateBody"
+            },
+            "lane": {
+              "const": "actions"
+            },
+            "messageType": {
+              "const": "actionInterestUpdate"
+            }
+          },
+          "required": [
+            "lane",
+            "messageType",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     {
       "allOf": [
         {

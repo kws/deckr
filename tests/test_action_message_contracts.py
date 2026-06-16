@@ -9,16 +9,27 @@ from pydantic import ValidationError
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.actions.messages import (
+    ACTION_AVAILABILITY_CHANGED,
+    ACTION_AVAILABILITY_REQUEST,
+    ACTION_AVAILABILITY_SNAPSHOT,
     ACTION_EXTENSION,
+    ACTION_INTEREST_UPDATE,
     ACTION_LIFECYCLE_REJECTED,
     BINDING_OUTPUT,
     BINDING_OVERLAY,
     BINDING_OVERLAY_CLEAR,
     CAPABILITY_INPUT,
     SETTINGS_PATCH,
+    ActionAvailabilityChangedBody,
+    ActionAvailabilityEntry,
+    ActionAvailabilityRequestBody,
+    ActionAvailabilitySelector,
+    ActionAvailabilitySnapshotBody,
     ActionDescriptor,
     ActionExtensionBody,
     ActionInstanceMetadata,
+    ActionInterestEntry,
+    ActionInterestUpdateBody,
     ActionLifecycleRejectedBody,
     BindingMetadata,
     CapabilityInputBody,
@@ -37,6 +48,7 @@ from deckr.actions.messages import (
     action_body_for_type,
     action_message,
     action_message_schema,
+    action_provider_instance_subject,
     context_subject,
     parse_settings_target_key,
     subject_action_instance_id,
@@ -44,6 +56,7 @@ from deckr.actions.messages import (
     subject_config_id,
     subject_page_session_id,
 )
+from deckr.contracts.messages import controller_address
 from deckr.profiles import ActionsBeaconPayload
 
 
@@ -251,6 +264,129 @@ def test_action_descriptor_carries_capability_requirements_and_settings_schema()
     assert descriptor.to_dict()["providerSettingsSchema"]["properties"]["token"]["type"] == (
         "string"
     )
+
+
+def test_action_availability_request_uses_provider_instance_subject() -> None:
+    body = ActionAvailabilityRequestBody(
+        requestId="request-1",
+        selectors=[
+            ActionAvailabilitySelector(actionId="demo.provider.action.weather"),
+            ActionAvailabilitySelector(actionId="demo.provider.action.clock"),
+        ],
+    )
+
+    msg = action_message(
+        sender=controller_address("controller-main"),
+        sender_session_id="controller-session",
+        recipient=action_provider_address("demo-provider"),
+        recipient_session_id="provider-session",
+        message_type=ACTION_AVAILABILITY_REQUEST,
+        body=body,
+        subject=action_provider_instance_subject(
+            "demo-provider",
+            provider_id="demo.provider",
+        ),
+    )
+
+    parsed = action_body(msg)
+
+    assert isinstance(parsed, ActionAvailabilityRequestBody)
+    assert msg.subject.kind == "action_provider_instance"
+    assert parsed.to_dict() == {
+        "selectors": [
+            {"actionId": "demo.provider.action.weather"},
+            {"actionId": "demo.provider.action.clock"},
+        ],
+        "requestId": "request-1",
+    }
+
+
+def test_action_availability_snapshot_and_changes_validate_entries() -> None:
+    descriptor = ActionDescriptor(
+        actionId="demo.provider.action.weather",
+        name="Weather",
+        providerId="demo.provider",
+    )
+    available = ActionAvailabilityEntry(
+        actionId="demo.provider.action.weather",
+        status="available",
+        descriptor=descriptor,
+    )
+    unavailable = ActionAvailabilityEntry(
+        actionId="demo.provider.action.missing",
+        status="unavailable",
+        reason="not registered",
+    )
+    snapshot = action_body_for_type(
+        ACTION_AVAILABILITY_SNAPSHOT,
+        {
+            "providerInstanceId": "demo-provider",
+            "providerId": "demo.provider",
+            "requestId": "request-1",
+            "entries": [
+                available.model_dump(by_alias=True, exclude_none=True, mode="json"),
+                unavailable.model_dump(by_alias=True, exclude_none=True, mode="json"),
+            ],
+        },
+    )
+
+    assert isinstance(snapshot, ActionAvailabilitySnapshotBody)
+    assert snapshot.to_dict()["entries"][0]["status"] == "available"
+    assert snapshot.to_dict()["entries"][1] == {
+        "actionId": "demo.provider.action.missing",
+        "status": "unavailable",
+        "reason": "not registered",
+    }
+
+    changed = action_body_for_type(
+        ACTION_AVAILABILITY_CHANGED,
+        {
+            "providerInstanceId": "demo-provider",
+            "providerId": "demo.provider",
+            "entries": [
+                available.model_dump(by_alias=True, exclude_none=True, mode="json")
+            ],
+        },
+    )
+    assert isinstance(changed, ActionAvailabilityChangedBody)
+
+    with pytest.raises(ValidationError, match="requires descriptor"):
+        ActionAvailabilityEntry(
+            actionId="demo.provider.action.weather",
+            status="available",
+        )
+
+    with pytest.raises(ValidationError, match="at least one entry"):
+        ActionAvailabilityChangedBody(
+            providerInstanceId="demo-provider",
+            providerId="demo.provider",
+            entries=[],
+        )
+
+
+def test_action_interest_update_body_round_trips() -> None:
+    body = action_body_for_type(
+        ACTION_INTEREST_UPDATE,
+        {
+            "providerInstanceId": "demo-provider",
+            "providerId": "demo.provider",
+            "entries": [
+                {"actionId": "demo.provider.action.weather", "level": "strong"},
+                {"actionId": "demo.provider.action.clock", "level": "warm"},
+            ],
+        },
+    )
+
+    assert isinstance(body, ActionInterestUpdateBody)
+    assert all(isinstance(entry, ActionInterestEntry) for entry in body.entries)
+    assert body.to_dict() == {
+        "providerInstanceId": "demo-provider",
+        "providerId": "demo.provider",
+        "entries": [
+            {"actionId": "demo.provider.action.weather", "level": "strong"},
+            {"actionId": "demo.provider.action.clock", "level": "warm"},
+        ],
+    }
 
 
 def test_settings_target_and_snapshot_are_target_based() -> None:

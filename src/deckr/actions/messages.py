@@ -185,6 +185,8 @@ SettingsProvenance = Literal[
     "runtime",
     "stale_schema",
 ]
+ActionAvailabilityStatus = Literal["available", "unavailable", "probing"]
+ActionInterestLevel = Literal["strong", "warm"]
 
 
 def _require_text(value: str, *, field_name: str) -> str:
@@ -1274,6 +1276,138 @@ class ActionDescriptor(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
+class ActionAvailabilitySelector(DeckrModel):
+    """Controller request selector for one provider action."""
+
+    action_id: str = Field(alias="actionId")
+
+    @field_validator("action_id")
+    @classmethod
+    def _validate_action_id(cls, value: str) -> str:
+        return _require_text(value, field_name="availability action id")
+
+
+class ActionAvailabilityEntry(DeckrModel):
+    """Provider-direct availability for one action descriptor."""
+
+    action_id: str = Field(alias="actionId")
+    status: ActionAvailabilityStatus
+    descriptor: ActionDescriptor | None = None
+    reason: str | None = None
+
+    @field_validator("action_id")
+    @classmethod
+    def _validate_action_id(cls, value: str) -> str:
+        return _require_text(value, field_name="availability action id")
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="availability reason")
+
+    @model_validator(mode="after")
+    def _validate_descriptor_identity(self) -> ActionAvailabilityEntry:
+        if self.status == "available" and self.descriptor is None:
+            raise ValueError("available action availability requires descriptor")
+        if self.descriptor is not None and self.descriptor.action_id != self.action_id:
+            raise ValueError("availability descriptor actionId must match entry actionId")
+        return self
+
+
+class ActionAvailabilityRequestBody(ActionMessageBody):
+    """Controller request for a provider-direct availability snapshot."""
+
+    selectors: tuple[ActionAvailabilitySelector, ...] = Field(default_factory=tuple)
+    request_id: str | None = Field(default=None, alias="requestId")
+
+    @field_validator("request_id")
+    @classmethod
+    def _validate_request_id(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="availability request id")
+
+
+class ActionAvailabilitySnapshotBody(ActionMessageBody):
+    """Provider-direct availability snapshot response."""
+
+    provider_instance_id: str = Field(alias="providerInstanceId")
+    provider_id: str = Field(alias="providerId")
+    entries: tuple[ActionAvailabilityEntry, ...] = Field(default_factory=tuple)
+    request_id: str | None = Field(default=None, alias="requestId")
+
+    @field_validator("provider_instance_id")
+    @classmethod
+    def _validate_provider_instance_id(cls, value: str) -> str:
+        return require_provider_instance_id(value, field_name="providerInstanceId")
+
+    @field_validator("provider_id")
+    @classmethod
+    def _validate_provider_id(cls, value: str) -> str:
+        return _require_text(value, field_name="provider id")
+
+    @field_validator("request_id")
+    @classmethod
+    def _validate_request_id(cls, value: str | None) -> str | None:
+        return _require_optional_text(value, field_name="availability request id")
+
+
+class ActionAvailabilityChangedBody(ActionMessageBody):
+    """Provider-direct availability change event."""
+
+    provider_instance_id: str = Field(alias="providerInstanceId")
+    provider_id: str = Field(alias="providerId")
+    entries: tuple[ActionAvailabilityEntry, ...]
+
+    @field_validator("provider_instance_id")
+    @classmethod
+    def _validate_provider_instance_id(cls, value: str) -> str:
+        return require_provider_instance_id(value, field_name="providerInstanceId")
+
+    @field_validator("provider_id")
+    @classmethod
+    def _validate_provider_id(cls, value: str) -> str:
+        return _require_text(value, field_name="provider id")
+
+    @field_validator("entries", mode="after")
+    @classmethod
+    def _validate_entries(
+        cls,
+        value: tuple[ActionAvailabilityEntry, ...],
+    ) -> tuple[ActionAvailabilityEntry, ...]:
+        if not value:
+            raise ValueError("availability change requires at least one entry")
+        return value
+
+
+class ActionInterestEntry(DeckrModel):
+    """Controller interest in one provider action."""
+
+    action_id: str = Field(alias="actionId")
+    level: ActionInterestLevel
+
+    @field_validator("action_id")
+    @classmethod
+    def _validate_action_id(cls, value: str) -> str:
+        return _require_text(value, field_name="interest action id")
+
+
+class ActionInterestUpdateBody(ActionMessageBody):
+    """Aggregated controller interest sent to one provider instance."""
+
+    provider_instance_id: str = Field(alias="providerInstanceId")
+    provider_id: str = Field(alias="providerId")
+    entries: tuple[ActionInterestEntry, ...] = Field(default_factory=tuple)
+
+    @field_validator("provider_instance_id")
+    @classmethod
+    def _validate_provider_instance_id(cls, value: str) -> str:
+        return require_provider_instance_id(value, field_name="providerInstanceId")
+
+    @field_validator("provider_id")
+    @classmethod
+    def _validate_provider_id(cls, value: str) -> str:
+        return _require_text(value, field_name="provider id")
+
+
 class PageChildBindingTarget(DeckrModel):
     """Action target for one dynamic-page child binding."""
 
@@ -1449,6 +1583,10 @@ SETTINGS_REQUEST = "settingsRequest"
 SETTINGS_PATCH = "settingsPatch"
 SETTINGS_REPLACE = "settingsReplace"
 SETTINGS_SNAPSHOT = "settingsSnapshot"
+ACTION_AVAILABILITY_REQUEST = "actionAvailabilityRequest"
+ACTION_AVAILABILITY_SNAPSHOT = "actionAvailabilitySnapshot"
+ACTION_AVAILABILITY_CHANGED = "actionAvailabilityChanged"
+ACTION_INTEREST_UPDATE = "actionInterestUpdate"
 OPEN_PAGE = "openPage"
 REPLACE_PAGE = "replacePage"
 CLOSE_PAGE = "closePage"
@@ -1482,6 +1620,10 @@ COMMAND_MESSAGE_TYPES = (
 
 
 ACTION_BODY_BY_MESSAGE_TYPE: dict[str, type[ActionMessageBody]] = {
+    ACTION_AVAILABILITY_REQUEST: ActionAvailabilityRequestBody,
+    ACTION_AVAILABILITY_SNAPSHOT: ActionAvailabilitySnapshotBody,
+    ACTION_AVAILABILITY_CHANGED: ActionAvailabilityChangedBody,
+    ACTION_INTEREST_UPDATE: ActionInterestUpdateBody,
     ACTION_INSTANCE_CREATED: ActionInstanceLifecycleBody,
     ACTION_INSTANCE_DESTROYED: ActionInstanceLifecycleBody,
     BINDING_ATTACHED: BindingAttachedBody,
