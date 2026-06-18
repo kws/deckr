@@ -185,6 +185,28 @@ async def test_reaper_scan_uses_raw_items_without_materialized_watches() -> None
 
 
 @pytest.mark.asyncio
+async def test_reaper_logs_scan_completion_counts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="deckr.concord")
+    clock = ManualClock()
+    contract_state, token_state, maintenance_state = _stores()
+    coordinator = _concord(contract_state, token_state, maintenance_state)
+    await _contract(coordinator, contract_id="logged-scan-contract")
+    reaper = _reaper(coordinator, clock)
+
+    result = await reaper.scan_once()
+
+    assert result.scanned_contract_count == 1
+    assert "Concord reaper scan completed" in caplog.text
+    assert "scanned=1" in caplog.text
+    assert "cancelled=0" in caplog.text
+    assert "deleted=0" in caplog.text
+    assert "token_keys_deleted=0" in caplog.text
+    assert "elapsed_ms=" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_pending_open_contract_cancelled_only_after_stale_grace() -> None:
     clock = ManualClock()
     contract_state, token_state, maintenance_state = _stores()

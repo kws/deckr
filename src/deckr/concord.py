@@ -30,6 +30,9 @@ from deckr.substrates.nats_kv import (
 
 CONCORD_CONTRACT_SCHEMA_ID = "dev.deckr.concord.contract.v1"
 CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID = "dev.deckr.concord.participant-token.v1"
+CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID = (
+    "dev.deckr.concord.participant-profile-proposal-ref.v1"
+)
 CONCORD_STALE_OBSERVATION_SCHEMA_ID = "dev.deckr.concord.stale-observation.v1"
 DEFAULT_CONCORD_CONTRACT_BUCKET_NAME = "deckr_concord_contract_v1"
 DEFAULT_CONCORD_TOKEN_BUCKET_NAME = "deckr_concord_token_v1"
@@ -244,6 +247,73 @@ def concord_contract_id_prefix(*, contract_id: str) -> str:
     return ".".join(("contracts", encode_key_token(contract_id), ""))
 
 
+def concord_participant_profile_index_key(
+    *,
+    participant: str | EndpointAddress,
+    profile: str | None,
+    contract_id: str,
+    generation: int,
+) -> str:
+    parsed_participant = parse_endpoint_address(participant)
+    return ".".join(
+        (
+            "contracts",
+            "by_participant",
+            encode_key_token(str(parsed_participant)),
+            "by_profile",
+            encode_key_token(profile or ""),
+            encode_key_token(contract_id),
+            str(generation),
+            "ref",
+        )
+    )
+
+
+def concord_participant_profile_index_prefix(
+    *,
+    participant: str | EndpointAddress,
+    profile: str | None = None,
+) -> str:
+    parsed_participant = parse_endpoint_address(participant)
+    prefix = ".".join(
+        (
+            "contracts",
+            "by_participant",
+            encode_key_token(str(parsed_participant)),
+            "by_profile",
+            "",
+        )
+    )
+    if profile is None:
+        return prefix
+    return prefix + encode_key_token(profile) + "."
+
+
+def parse_concord_participant_profile_index_key(
+    key: str,
+) -> tuple[EndpointAddress, str | None, str, int] | None:
+    parts = key.split(".")
+    if (
+        len(parts) != 8
+        or parts[0] != "contracts"
+        or parts[1] != "by_participant"
+        or parts[3] != "by_profile"
+        or parts[7] != "ref"
+    ):
+        return None
+    try:
+        generation = int(parts[6])
+    except ValueError:
+        return None
+    profile = decode_key_token(parts[4])
+    return (
+        parse_endpoint_address(decode_key_token(parts[2])),
+        profile or None,
+        decode_key_token(parts[5]),
+        generation,
+    )
+
+
 def concord_stale_observation_key(*, contract_id: str, generation: int) -> str:
     return ".".join(("stale", encode_key_token(contract_id), str(generation)))
 
@@ -350,6 +420,61 @@ class ConcordStaleObservationRecord(DeckrModel):
 
     @field_serializer("first_observed_stale_at")
     def _serialize_first_observed_stale_at(self, value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+class ConcordParticipantProfileIndexRecord(DeckrModel):
+    schema_id: Literal[CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID] = Field(
+        default=CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID,
+        alias="schema",
+    )
+    contract_id: str = Field(alias="contractId")
+    generation: int
+    contract_key: str = Field(alias="contractKey")
+    profile: str | None = None
+    participant: EndpointAddress
+    contract_revision: int = Field(alias="contractRevision")
+    state: ContractState
+    updated_at: datetime = Field(alias="updatedAt")
+
+    @field_validator("contract_id", "contract_key")
+    @classmethod
+    def _validate_identity(cls, value: str) -> str:
+        return _require_text(value, field_name="Concord participant profile index")
+
+    @field_validator("generation")
+    @classmethod
+    def _validate_generation(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("generation must be greater than zero")
+        return value
+
+    @field_validator("profile")
+    @classmethod
+    def _validate_profile(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_text(value, field_name="Concord participant profile index")
+
+    @field_validator("contract_revision")
+    @classmethod
+    def _validate_contract_revision(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("contractRevision must be non-negative")
+        return value
+
+    @field_validator("updated_at")
+    @classmethod
+    def _validate_updated_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("updatedAt must be timezone-aware")
+        return value.astimezone(UTC)
+
+    @field_serializer("updated_at")
+    def _serialize_updated_at(self, value: datetime) -> str:
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     def to_dict(self) -> dict[str, Any]:
@@ -728,6 +853,18 @@ class _ConcordBucketAdapter:
         except KvUnavailable as exc:
             raise ConcordUnavailable(str(exc)) from exc
 
+    async def put(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        ttl: float | None = None,
+    ) -> KvEntry:
+        try:
+            return await self._bucket.put(key, value, ttl=ttl)
+        except KvUnavailable as exc:
+            raise ConcordUnavailable(str(exc)) from exc
+
     async def update(
         self,
         key: str,
@@ -852,6 +989,11 @@ class _ConcordKvStore:
             generation=record.generation,
         )
         entry = await self._contract_bucket.create(key, record)
+        await self._put_participant_profile_indexes(
+            record,
+            contract_key=key,
+            contract_revision=entry.revision,
+        )
         return _contract_handle(key, record, entry.revision)
 
     async def get_contract(
@@ -980,13 +1122,18 @@ class _ConcordKvStore:
             attached = tuple(sorted((*record.attached_participants, participant), key=str))
             updated = record.model_copy(update={"attached_participants": attached})
             try:
-                await self._contract_bucket.update(
+                entry = await self._contract_bucket.update(
                     contract_key,
                     updated,
                     revision=current.revision,
                 )
             except ConcordConflict:
                 continue
+            await self._put_participant_profile_indexes(
+                updated,
+                contract_key=contract_key,
+                contract_revision=entry.revision,
+            )
             return
 
     async def refresh(self, handle: ParticipantHandle) -> ParticipantHandle:
@@ -1088,10 +1235,15 @@ class _ConcordKvStore:
                 "cancel_reason": reason,
             }
         )
-        await self._contract_bucket.update(
+        entry = await self._contract_bucket.update(
             contract.key,
             cancelled,
             revision=current.revision,
+        )
+        await self._put_participant_profile_indexes(
+            cancelled,
+            contract_key=contract.key,
+            contract_revision=entry.revision,
         )
         return True
 
@@ -1123,10 +1275,15 @@ class _ConcordKvStore:
                 "cancel_reason": reason,
             }
         )
-        await self._contract_bucket.update(
+        entry = await self._contract_bucket.update(
             contract.key,
             cancelled,
             revision=current.revision,
+        )
+        await self._put_participant_profile_indexes(
+            cancelled,
+            contract_key=contract.key,
+            contract_revision=entry.revision,
         )
         return True
 
@@ -1226,6 +1383,117 @@ class _ConcordKvStore:
                 generation=contract.generation,
             )
         )
+
+    async def participant_profile_contracts(
+        self,
+        *,
+        participant: str | EndpointAddress,
+        profile: str | None,
+    ) -> tuple[ContractHandle, ...]:
+        parsed_participant = parse_endpoint_address(participant)
+        prefix = concord_participant_profile_index_prefix(
+            participant=parsed_participant,
+            profile=profile,
+        )
+        handles: dict[str, ContractHandle] = {}
+        for entry in await self._contract_bucket.items_exact(prefix):
+            parsed = parse_concord_participant_profile_index_key(entry.key)
+            if parsed is None:
+                continue
+            key_participant, key_profile, key_contract_id, key_generation = parsed
+            if key_participant != parsed_participant:
+                continue
+            if profile is not None and key_profile != profile:
+                continue
+            try:
+                reference = ConcordParticipantProfileIndexRecord.model_validate(
+                    entry.value
+                )
+            except ValueError:
+                continue
+            if (
+                reference.participant != parsed_participant
+                or reference.contract_id != key_contract_id
+                or reference.generation != key_generation
+                or reference.profile != key_profile
+            ):
+                continue
+            if reference.state == ContractState.CANCELLED:
+                continue
+            contract_entry = await self._contract_bucket.get(reference.contract_key)
+            if contract_entry is None:
+                continue
+            handle = _contract_handle_from_entry(contract_entry)
+            if handle is None:
+                continue
+            if handle.contract_id != key_contract_id or handle.generation != key_generation:
+                continue
+            if profile is not None and handle.profile != profile:
+                continue
+            if parsed_participant not in handle.participants:
+                continue
+            handles[handle.key] = handle
+        return tuple(handles[key] for key in sorted(handles))
+
+    async def participant_profile_contract_notification_changes(
+        self,
+        *,
+        participant: str | EndpointAddress,
+        profile: str | None,
+    ) -> Any:
+        parsed_participant = parse_endpoint_address(participant)
+        return self._contract_bucket.watch(
+            concord_participant_profile_index_prefix(
+                participant=parsed_participant,
+                profile=profile,
+            )
+        )
+
+    async def _put_participant_profile_indexes(
+        self,
+        record: ContractRecord,
+        *,
+        contract_key: str,
+        contract_revision: int,
+    ) -> None:
+        updated_at = _now_utc()
+        for participant in record.participants:
+            key = concord_participant_profile_index_key(
+                participant=participant,
+                profile=record.profile,
+                contract_id=record.contract_id,
+                generation=record.generation,
+            )
+            index = ConcordParticipantProfileIndexRecord(
+                contractId=record.contract_id,
+                generation=record.generation,
+                contractKey=contract_key,
+                profile=record.profile,
+                participant=participant,
+                contractRevision=contract_revision,
+                state=record.state,
+                updatedAt=updated_at,
+            )
+            await self._contract_bucket.put(key, index)
+
+    async def delete_participant_profile_indexes(
+        self,
+        record: ContractRecord,
+    ) -> int:
+        deleted = 0
+        for participant in record.participants:
+            key = concord_participant_profile_index_key(
+                participant=participant,
+                profile=record.profile,
+                contract_id=record.contract_id,
+                generation=record.generation,
+            )
+            try:
+                await self._contract_bucket.delete(key)
+            except ConcordConflict:
+                continue
+            deleted += 1
+        return deleted
 
 
 class ConcordParticipantLease:
@@ -1785,6 +2053,8 @@ class Concord:
             handle = self._index_contract_entry_locked(change.entry)
             record = self._contract_records_by_key.get(change.key)
             if handle is None or record is None:
+                if change.key not in self._invalid_contracts_by_key:
+                    return ()
                 parsed = parse_concord_contract_key(change.key)
                 contract_id, generation = parsed if parsed is not None else ("", 0)
                 events.append(
@@ -1819,6 +2089,12 @@ class Concord:
                 events.append(status_event)
             return tuple(events)
         if change.operation in {"delete", "expire"}:
+            if (
+                previous is None
+                and parse_concord_participant_profile_index_key(change.key) is not None
+            ):
+                self._last_status_by_contract_key.pop(change.key, None)
+                return ()
             self._last_status_by_contract_key.pop(change.key, None)
             events.append(
                 ConcordEvent(
@@ -1922,6 +2198,8 @@ class Concord:
         self._contract_revision_by_key[entry.key] = entry.revision
         parsed = parse_concord_contract_key(entry.key)
         if parsed is None:
+            if parse_concord_participant_profile_index_key(entry.key) is not None:
+                return None
             self._invalid_contracts_by_key[entry.key] = (
                 entry,
                 "contract key is not a Concord contract key",
@@ -2407,13 +2685,13 @@ class Concord:
         *,
         reason: str | None,
     ) -> bool:
-        await agreement.aclose()
         cancelled = await self._cancel(
             agreement.contract,
             agreement.spec.local_participant,
             reason=reason,
             log_label=agreement.spec.log_label,
         )
+        await agreement.aclose()
         cache_key = _agreement_cache_key(agreement.spec)
         if cache_key is not None and self._agreements.get(cache_key) is agreement:
             self._agreements.pop(cache_key, None)
@@ -2678,6 +2956,7 @@ class Concord:
             )
             return ConcordMaintenanceDeletionResult(deleted=False)
 
+        await self._coordinator.delete_participant_profile_indexes(record)  # noqa: SLF001
         deleted_token_count = await _delete_concord_participant_token_entries(
             self._coordinator._token_bucket,  # noqa: SLF001
             token_entries,
@@ -2736,6 +3015,17 @@ class Concord:
                 for key in sorted(keys)
                 if key in self._contract_handles_by_key
             )
+
+    async def _participant_profile_contracts(
+        self,
+        *,
+        participant: str | EndpointAddress,
+        profile: str | None,
+    ) -> tuple[ContractHandle, ...]:
+        return await self._coordinator.participant_profile_contracts(
+            participant=participant,
+            profile=profile,
+        )
 
     async def _attach(
         self,
@@ -3091,6 +3381,7 @@ class ConcordReaperService:
                 return
 
     async def scan_once(self) -> ConcordReaperScanResult:
+        started_at = monotonic()
         now = _ensure_utc(self._clock())
         counts: dict[str, int] = {
             "scanned_contract_count": 0,
@@ -3120,7 +3411,7 @@ class ConcordReaperService:
         stale_observation_count = len(
             await self._maintenance_bucket.items_exact("stale.")
         )
-        return ConcordReaperScanResult(
+        result = ConcordReaperScanResult(
             scanned_contract_count=counts["scanned_contract_count"],
             stale_observation_count=stale_observation_count,
             stale_observations_created=counts["stale_observations_created"],
@@ -3129,6 +3420,21 @@ class ConcordReaperService:
             contracts_deleted=counts["contracts_deleted"],
             token_keys_deleted=counts["token_keys_deleted"],
         )
+        logger.info(
+            "%s Concord reaper scan completed scanned=%s cancelled=%s "
+            "deleted=%s token_keys_deleted=%s stale_observations=%s "
+            "stale_created=%s stale_cleared=%s elapsed_ms=%.1f",
+            self._config.log_label,
+            result.scanned_contract_count,
+            result.contracts_cancelled,
+            result.contracts_deleted,
+            result.token_keys_deleted,
+            result.stale_observation_count,
+            result.stale_observations_created,
+            result.stale_observations_cleared,
+            (monotonic() - started_at) * 1000,
+        )
+        return result
 
     async def _scan_contract_entry(
         self,
@@ -3866,10 +4172,16 @@ class ConcordParticipant:
         rebuild_index: bool,
     ) -> tuple[ContractHandle, ...]:
         del rebuild_index
-        return await self._concord._find_contracts(
-            self.profile,
+        indexed = await self._concord._participant_profile_contracts(
             participant=self.participant,
+            profile=self.profile,
         )
+        candidates = {contract.key: contract for contract in indexed}
+        for managed in self._managed.values():
+            candidates.setdefault(managed.contract.key, managed.contract)
+        for lease in self._leases.values():
+            candidates.setdefault(lease.contract.key, lease.contract)
+        return tuple(candidates[key] for key in sorted(candidates))
 
     async def _reconcile_contract_locked(
         self,
@@ -4275,6 +4587,20 @@ def _contract_handle(
     )
 
 
+def _contract_handle_from_entry(entry: KvEntry) -> ContractHandle | None:
+    parsed = parse_concord_contract_key(entry.key)
+    if parsed is None:
+        return None
+    contract_id, generation = parsed
+    try:
+        record = ContractRecord.model_validate(entry.value)
+    except ValueError:
+        return None
+    if record.contract_id != contract_id or record.generation != generation:
+        return None
+    return _contract_handle(entry.key, record, entry.revision)
+
+
 def _participant_handle(
     key: str,
     record: ParticipantTokenRecord,
@@ -4652,6 +4978,7 @@ __all__ = [
     "CONCORD_CONTRACT_BUCKET_POLICY",
     "CONCORD_MAINTENANCE_ACTOR",
     "CONCORD_MAINTENANCE_BUCKET_POLICY",
+    "CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID",
     "CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID",
     "CONCORD_REAPER_STALE_CONTRACT_REASON",
     "CONCORD_STALE_OBSERVATION_SCHEMA_ID",
@@ -4681,6 +5008,7 @@ __all__ = [
     "ConcordManagedContractEvent",
     "ConcordManagedContractEventType",
     "ConcordParticipant",
+    "ConcordParticipantProfileIndexRecord",
     "ConcordReaperConfig",
     "ConcordReaperScanResult",
     "ConcordReaperService",
@@ -4696,8 +5024,11 @@ __all__ = [
     "concord_contract_key",
     "concord_contract_prefix",
     "concord_contracts_prefix",
+    "concord_participant_profile_index_key",
+    "concord_participant_profile_index_prefix",
     "concord_participant_token_key",
     "concord_stale_observation_key",
     "parse_concord_contract_key",
+    "parse_concord_participant_profile_index_key",
     "parse_concord_participant_token_key",
 ]

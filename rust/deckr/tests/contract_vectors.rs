@@ -5,9 +5,10 @@ use std::time::Duration;
 use deckr::beacon::{beacon_advertisement_key, AdvertisementRecord};
 use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_value};
 use deckr::concord::{
-    concord_contract_key, concord_participant_token_key, ConcordCoordinator,
-    ConcordNotificationSource, ConcordParticipantLease, ConcordParticipantManager, ContractHandle,
-    ContractRecord, ContractValidityStatus, ParticipantTokenRecord,
+    concord_contract_key, concord_participant_profile_index_prefix, concord_participant_token_key,
+    ConcordCoordinator, ConcordNotificationSource, ConcordParticipantLease,
+    ConcordParticipantManager, ContractHandle, ContractRecord, ContractValidityStatus,
+    ParticipantTokenRecord,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
@@ -53,6 +54,92 @@ impl RacingUpdateStore {
 
     fn raced(&self) -> bool {
         *self.raced.lock().expect("racing update mutex poisoned")
+    }
+}
+
+#[derive(Clone)]
+struct RecordingStateStore {
+    inner: MemoryStateStore,
+    items_prefixes: Arc<Mutex<Vec<String>>>,
+    get_keys: Arc<Mutex<Vec<String>>>,
+}
+
+impl RecordingStateStore {
+    fn new(inner: MemoryStateStore) -> Self {
+        Self {
+            inner,
+            items_prefixes: Arc::new(Mutex::new(Vec::new())),
+            get_keys: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn clear_observations(&self) {
+        self.items_prefixes
+            .lock()
+            .expect("items_prefixes mutex poisoned")
+            .clear();
+        self.get_keys
+            .lock()
+            .expect("get_keys mutex poisoned")
+            .clear();
+    }
+
+    fn items_prefixes(&self) -> Vec<String> {
+        self.items_prefixes
+            .lock()
+            .expect("items_prefixes mutex poisoned")
+            .clone()
+    }
+
+    fn get_keys(&self) -> Vec<String> {
+        self.get_keys
+            .lock()
+            .expect("get_keys mutex poisoned")
+            .clone()
+    }
+}
+
+impl StateStore for RecordingStateStore {
+    async fn get(&self, key: &str) -> Result<Option<StateEntry>> {
+        self.get_keys
+            .lock()
+            .expect("get_keys mutex poisoned")
+            .push(key.to_string());
+        self.inner.get(key).await
+    }
+
+    async fn items(&self, prefix: &str) -> Result<Vec<StateEntry>> {
+        self.items_prefixes
+            .lock()
+            .expect("items_prefixes mutex poisoned")
+            .push(prefix.to_string());
+        self.inner.items(prefix).await
+    }
+
+    async fn put(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
+        self.inner.put(key, value, ttl).await
+    }
+
+    async fn create(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
+        self.inner.create(key, value, ttl).await
+    }
+
+    async fn update(
+        &self,
+        key: &str,
+        value: Value,
+        revision: u64,
+        ttl: Option<u64>,
+    ) -> Result<StateEntry> {
+        self.inner.update(key, value, revision, ttl).await
+    }
+
+    async fn delete(&self, key: &str, revision: Option<u64>) -> Result<()> {
+        self.inner.delete(key, revision).await
+    }
+
+    async fn watch(&self, prefix: &str) -> Result<StateWatchStream> {
+        self.inner.watch(prefix).await
     }
 }
 
@@ -554,6 +641,100 @@ async fn concord_participant_manager_does_not_resurrect_lost_authority() {
         .await
         .unwrap();
     assert!(managed.is_empty());
+}
+
+#[tokio::test]
+async fn concord_participant_manager_discovers_from_participant_profile_index() {
+    let contracts = RecordingStateStore::new(MemoryStateStore::new());
+    let tokens = MemoryStateStore::new();
+    let concord = ConcordCoordinator::new(contracts.clone(), tokens.clone());
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let other_manager = EndpointAddress::parse("hardware_manager:other").unwrap();
+    let contract = concord
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some("hardware-contract-1".to_string()),
+            1,
+            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": "claim-1",
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:mirabox-main",
+                "devices": []
+            })),
+            Some(controller.clone()),
+        )
+        .await
+        .unwrap();
+    concord
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some("other-profile-contract".to_string()),
+            1,
+            Some("dev.deckr.profile.other.v1".to_string()),
+            None,
+            Some(controller.clone()),
+        )
+        .await
+        .unwrap();
+    concord
+        .create_contract(
+            vec![controller.clone(), other_manager],
+            Some("other-participant-contract".to_string()),
+            1,
+            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": "claim-2",
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:other",
+                "devices": []
+            })),
+            Some(controller.clone()),
+        )
+        .await
+        .unwrap();
+    concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some("controller-token".into()),
+        )
+        .await
+        .unwrap();
+    let mut lifecycle =
+        ConcordParticipantManager::new(concord.clone(), manager.clone(), "manager-session".into())
+            .unwrap()
+            .profile(HARDWARE_CLAIM_PROFILE_ID.to_string());
+    contracts.clear_observations();
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+
+    assert_eq!(
+        managed
+            .iter()
+            .map(|managed| managed.contract.contract_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hardware-contract-1"]
+    );
+    assert_eq!(
+        contracts.items_prefixes(),
+        vec![concord_participant_profile_index_prefix(
+            &manager,
+            Some(HARDWARE_CLAIM_PROFILE_ID)
+        )]
+    );
+    assert!(!contracts
+        .items_prefixes()
+        .iter()
+        .any(|prefix| prefix == "contracts."));
+    assert!(
+        contracts.get_keys().iter().all(|key| key == &contract.key),
+        "participant discovery should exact-read only referenced contracts"
+    );
 }
 
 #[tokio::test]

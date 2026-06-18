@@ -117,6 +117,44 @@ async def test_nats_json_kv_items_lists_current_entries_by_prefix() -> None:
         "contracts.main.2.meta",
     ]
     assert entries[0].value == {"state": "open"}
+    assert fake_js.kv.watch_patterns == ["contracts.>"]
+    assert fake_js.kv.key_filters == []
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_items_does_not_use_substring_key_filters() -> None:
+    fake_js = _FakeJs()
+    fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
+    fake_js.kv.add_entry("other.main.1.meta", b'{"state":"open"}')
+    fake_js.kv.raise_no_keys_for_filters = True
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
+    )
+
+    entries = await bucket.items("contracts.")
+
+    assert [entry.key for entry in entries] == ["contracts.main.1.meta"]
+    assert fake_js.kv.watch_patterns == ["contracts.>"]
+    assert fake_js.kv.key_filters == []
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_items_falls_back_to_unfiltered_keys_without_watch() -> None:
+    fake_js = _FakeJs()
+    fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
+    fake_js.kv.add_entry("other.main.1.meta", b'{"state":"open"}')
+    fake_js.kv.watch_unsupported = True
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
+    )
+
+    entries = await bucket.items("contracts.")
+
+    assert [entry.key for entry in entries] == ["contracts.main.1.meta"]
+    assert fake_js.kv.watch_patterns == []
+    assert fake_js.kv.key_filters == [None]
 
 
 @pytest.mark.asyncio
@@ -393,12 +431,20 @@ class _FakeKeyDeleted(RuntimeError):
         self.entry = entry
 
 
+class NoKeysError(RuntimeError):
+    pass
+
+
 class _FakeKv:
     def __init__(self, js: _FakeJs) -> None:
         self._js = js
         self._stream = f"KV_{js.bucket}"
         self._revision = 0
         self._entries: dict[str, _FakeKvEntry] = {}
+        self.raise_no_keys_for_filters = False
+        self.watch_unsupported = False
+        self.key_filters: list[object] = []
+        self.watch_patterns: list[str] = []
 
     def add_entry(self, key: str, value: bytes) -> _FakeKvEntry:
         self._revision += 1
@@ -437,6 +483,9 @@ class _FakeKv:
         return entry
 
     async def keys(self, filters=None) -> tuple[str, ...]:
+        self.key_filters.append(filters)
+        if filters is not None and self.raise_no_keys_for_filters:
+            raise NoKeysError("no keys")
         if filters is None:
             prefixes = ("",)
         elif isinstance(filters, str):
@@ -474,6 +523,9 @@ class _FakeKv:
 
     async def watch(self, keys, **kwargs):
         del kwargs
+        if self.watch_unsupported:
+            raise TypeError("watch is unavailable")
+        self.watch_patterns.append(keys)
         entries = [
             entry
             for key, entry in sorted(self._entries.items())

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::time::Duration;
 
+use async_nats::jetstream::consumer::{push::OrderedConfig, DeliverPolicy, ReplayPolicy};
 use async_nats::jetstream::kv::{Config as KvConfig, Entry, Operation, Store, WatcherError};
 use async_nats::jetstream::Context as JetStreamContext;
 use async_nats::{HeaderMap, Message, Subscriber};
@@ -9,6 +10,7 @@ use futures_util::future::{select, Either};
 use futures_util::pin_mut;
 use futures_util::{StreamExt, TryStreamExt};
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::beacon::{beacon_advertisement_store_policy, DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME};
 use crate::concord::{
@@ -399,30 +401,76 @@ impl StateStore for NatsStateStore {
     }
 
     async fn items(&self, prefix: &str) -> Result<Vec<StateEntry>> {
-        let mut keys = match self.kv.keys().await {
-            Ok(keys) => keys,
-            Err(error) if is_no_keys_error(&error) => return Ok(Vec::new()),
-            Err(error) => {
-                return Err(Error::StateUnavailable(format!(
-                    "listing state keys: {error}"
-                )))
-            }
-        };
+        let subject = format!("{}{}>", self.kv.prefix, prefix);
+        let mut consumer = self
+            .kv
+            .stream
+            .create_consumer(OrderedConfig {
+                deliver_subject: format!("_INBOX.deckr.{}", Uuid::new_v4().simple()),
+                description: Some("deckr prefix state listing".to_string()),
+                filter_subject: subject,
+                headers_only: true,
+                replay_policy: ReplayPolicy::Instant,
+                deliver_policy: DeliverPolicy::LastPerSubject,
+                ..Default::default()
+            })
+            .await
+            .map_err(|error| {
+                Error::StateUnavailable(format!("listing state prefix {prefix:?}: {error}"))
+            })?;
+        let consumer_info = consumer.info().await.map_err(|error| {
+            Error::StateUnavailable(format!(
+                "reading state prefix {prefix:?} consumer info: {error}"
+            ))
+        })?;
+        if consumer_info.num_pending == 0 {
+            return Ok(Vec::new());
+        }
+        let mut messages = consumer.messages().await.map_err(|error| {
+            Error::StateUnavailable(format!("reading state prefix {prefix:?}: {error}"))
+        })?;
         let mut entries = Vec::new();
-        while let Some(key) = match keys.try_next().await {
-            Ok(key) => key,
-            Err(error) if is_no_keys_error(&error) => None,
+        while let Some(message) = match messages.try_next().await {
+            Ok(message) => message,
             Err(error) => {
                 return Err(Error::StateUnavailable(format!(
-                    "reading state key list: {error}"
+                    "reading state prefix {prefix:?}: {error}"
                 )))
             }
         } {
+            let info = message.info().map_err(|error| {
+                Error::StateUnavailable(format!(
+                    "reading state prefix {prefix:?} message metadata: {error}"
+                ))
+            })?;
+            let operation = kv_operation_from_message(&message.message);
+            if matches!(operation, Operation::Delete | Operation::Purge) {
+                if info.pending == 0 {
+                    break;
+                }
+                continue;
+            }
+            let Some(key) = message
+                .subject
+                .strip_prefix(&self.kv.prefix)
+                .map(str::to_string)
+            else {
+                if info.pending == 0 {
+                    break;
+                }
+                continue;
+            };
             if !key.starts_with(prefix) {
+                if info.pending == 0 {
+                    break;
+                }
                 continue;
             }
             if let Some(entry) = self.get(&key).await? {
                 entries.push(entry);
+            }
+            if info.pending == 0 {
+                break;
             }
         }
         Ok(entries)
@@ -538,6 +586,20 @@ fn map_nats_watch_entry(entry: std::result::Result<Entry, WatcherError>) -> Resu
     })
 }
 
+fn kv_operation_from_message(message: &Message) -> Operation {
+    let Some(headers) = &message.headers else {
+        return Operation::Put;
+    };
+    let Some(operation) = headers.get("KV-Operation") else {
+        return Operation::Put;
+    };
+    match operation.as_str() {
+        "DEL" => Operation::Delete,
+        "PURGE" => Operation::Purge,
+        _ => Operation::Put,
+    }
+}
+
 pub fn nats_headers_for(message: &DeckrMessage) -> HeaderMap {
     let mut headers = HeaderMap::new();
     for (key, value) in headers_for(message) {
@@ -628,11 +690,6 @@ async fn validate_bucket(store: &Store, bucket: &str, policy: &StateStorePolicy)
         )));
     }
     Ok(())
-}
-
-fn is_no_keys_error(error: &impl Display) -> bool {
-    let message = error.to_string().to_lowercase();
-    message.contains("no keys") || message.contains("no messages")
 }
 
 fn is_revision_conflict(error: &impl Display) -> bool {

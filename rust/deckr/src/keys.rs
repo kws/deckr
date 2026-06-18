@@ -102,6 +102,56 @@ pub fn concord_contracts_prefix() -> &'static str {
     "contracts."
 }
 
+pub fn concord_participant_profile_index_key(
+    participant: &EndpointAddress,
+    profile: Option<&str>,
+    contract_id: &str,
+    generation: u64,
+) -> String {
+    format!(
+        "contracts.by_participant.{}.by_profile.{}.{}.{}.ref",
+        encode_key_token(participant.as_str()),
+        encode_key_token(profile.unwrap_or("")),
+        encode_key_token(contract_id),
+        generation
+    )
+}
+
+pub fn concord_participant_profile_index_prefix(
+    participant: &EndpointAddress,
+    profile: Option<&str>,
+) -> String {
+    let base = format!(
+        "contracts.by_participant.{}.by_profile.",
+        encode_key_token(participant.as_str())
+    );
+    match profile {
+        Some(profile) => format!("{}{}.", base, encode_key_token(profile)),
+        None => base,
+    }
+}
+
+pub fn parse_concord_participant_profile_index_key(
+    key: &str,
+) -> Option<(EndpointAddress, Option<String>, String, u64)> {
+    let parts = key.split('.').collect::<Vec<_>>();
+    if parts.len() != 8
+        || parts[0] != "contracts"
+        || parts[1] != "by_participant"
+        || parts[3] != "by_profile"
+        || parts[7] != "ref"
+    {
+        return None;
+    }
+    let profile = decode_key_token(parts[4]).ok()?;
+    Some((
+        EndpointAddress::parse(decode_key_token(parts[2]).ok()?).ok()?,
+        (!profile.is_empty()).then_some(profile),
+        decode_key_token(parts[5]).ok()?,
+        parts[6].parse().ok()?,
+    ))
+}
+
 fn is_safe_token(raw: &str) -> bool {
     let mut chars = raw.chars();
     let Some(first) = chars.next() else {

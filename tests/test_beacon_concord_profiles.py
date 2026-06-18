@@ -34,6 +34,7 @@ from deckr.concord import (
     ContractValidityStatus,
     ParticipantTokenRecord,
     canonical_json_hash,
+    concord_participant_profile_index_prefix,
 )
 from deckr.contracts.messages import (
     controller_address,
@@ -213,6 +214,16 @@ class CountingItemsKvBucket(MemoryJsonKvBucket):
     async def items(self, prefix: str = ""):
         self.items_prefixes.append(prefix)
         return ()
+
+
+class RecordingItemsKvBucket(MemoryJsonKvBucket):
+    def __init__(self, *, bucket: str) -> None:
+        super().__init__(bucket=bucket)
+        self.items_prefixes: list[str] = []
+
+    async def items(self, prefix: str = ""):
+        self.items_prefixes.append(prefix)
+        return await super().items(prefix)
 
 
 def _concord(
@@ -1240,8 +1251,58 @@ async def test_concord_participant_manager_attaches_adopts_and_filters() -> None
 
 
 @pytest.mark.asyncio
+async def test_concord_participant_manager_discovers_claims_from_participant_profile_index() -> None:
+    contract_state = RecordingItemsKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    other_manager = hardware_manager_address("other-manager")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._create_contract(
+        (manager, controller),
+        contract_id="other-profile-contract",
+        profile="dev.deckr.profile.other.v1",
+        created_by=controller,
+    )
+    await service._create_contract(
+        (other_manager, controller),
+        contract_id="other-participant-contract",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(claim_id="claim-2"),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    contract_state.items_prefixes.clear()
+
+    managed = await lifecycle.reconcile(reason="indexed discovery")
+
+    assert [item.contract.contract_id for item in managed] == ["hardware-contract-1"]
+    assert contract_state.items_prefixes == [
+        concord_participant_profile_index_prefix(
+            participant=manager,
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+        )
+    ]
+    assert "contracts." not in contract_state.items_prefixes
+
+
+@pytest.mark.asyncio
 async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -> None:
-    contract_state = CountingItemsKvBucket(bucket="contracts")
+    contract_state = RecordingItemsKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
     service = _concord(contract_state, token_state, token_ttl_seconds=1)
     controller = controller_address("controller-main")
@@ -1272,7 +1333,12 @@ async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -
                     break
                 await anyio.sleep(0.01)
 
-        assert contract_state.items_prefixes == []
+        index_prefix = concord_participant_profile_index_prefix(
+            participant=manager,
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+        )
+        assert "contracts." not in contract_state.items_prefixes
+        assert set(contract_state.items_prefixes) <= {index_prefix}
         contract_state.items_prefixes.clear()
         refresh_seq = managed.token.refresh_seq
 
@@ -1284,7 +1350,7 @@ async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -
     assert managed is not None
     assert managed.token is not None
     assert managed.token.refresh_seq == refresh_seq
-    assert contract_state.items_prefixes == []
+    assert contract_state.items_prefixes == [index_prefix, index_prefix]
 
 
 @pytest.mark.asyncio
@@ -2231,6 +2297,42 @@ async def test_concord_ensure_agreement_generated_id_is_fresh() -> None:
     assert second.generation == 1
     assert first.local_token is not None
     assert second.local_token is not None
+
+
+@pytest.mark.asyncio
+async def test_concord_agreement_cancel_preserves_token_until_cancel(
+    monkeypatch,
+) -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    spec = ConcordAgreementSpec(
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        participants=(controller, manager),
+        local_participant=controller,
+        local_session_id="controller-session",
+        terms=_hardware_claim_terms(),
+    )
+    agreement = await service.propose(spec)
+    token = agreement.local_token
+    assert token is not None
+    original_cancel = service._cancel
+    observed: dict[str, bool] = {}
+
+    async def wrapped_cancel(*args, **kwargs):
+        observed["token_present"] = await token_state.get(token.key) is not None
+        return await original_cancel(*args, **kwargs)
+
+    monkeypatch.setattr(service, "_cancel", wrapped_cancel)
+
+    assert await agreement.cancel("test cancellation")
+    assert observed == {"token_present": True}
+    assert await token_state.get(token.key) is None
+    record = await service.contract_record(agreement.contract)
+    assert record is not None
+    assert record.state == ContractState.CANCELLED
 
 
 @pytest.mark.asyncio

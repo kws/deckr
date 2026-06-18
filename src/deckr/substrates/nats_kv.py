@@ -736,20 +736,55 @@ def kv_watch_pattern(prefix: str) -> str:
 
 
 async def kv_keys(kv, prefix: str) -> tuple[str, ...]:
-    pattern = kv_watch_pattern(prefix)
+    if not prefix:
+        return await kv_keys_unfiltered(kv, prefix)
+
     try:
-        keys = await kv.keys(filters=[pattern])
-    except TypeError:
+        return await kv_keys_by_watch(kv, prefix)
+    except (AttributeError, TypeError):
+        return await kv_keys_unfiltered(kv, prefix)
+    except Exception as exc:
+        if is_key_missing(exc):
+            return ()
+        raise
+
+
+async def kv_keys_by_watch(kv, prefix: str) -> tuple[str, ...]:
+    watcher = await kv.watch(
+        kv_watch_pattern(prefix),
+        ignore_deletes=True,
+        meta_only=True,
+        inactive_threshold=5 * 60,
+    )
+    keys: list[str] = []
+    try:
+        async for entry in watcher:
+            if entry is None:
+                break
+            key = str(entry.key)
+            if key.startswith(prefix):
+                keys.append(key)
+    finally:
         try:
-            keys = await kv.keys(filters=pattern)
-        except TypeError:
-            try:
-                keys = await kv.keys(pattern)
-            except TypeError:
-                keys = await kv.keys()
+            await watcher.stop()
+        finally:
+            await delete_ephemeral_consumer(
+                getattr(watcher, "_sub", None),
+                reason=f"KV keys prefix {prefix!r}",
+            )
+    return tuple(keys)
+
+
+async def kv_keys_unfiltered(kv, prefix: str) -> tuple[str, ...]:
+    try:
+        keys = await kv.keys()
+    except Exception as exc:
+        if is_key_missing(exc):
+            return ()
+        raise
     if keys is None:
         return ()
-    return tuple(str(key) for key in keys)
+    return tuple(str(key) for key in keys if str(key).startswith(prefix))
 
 
 def _raw_header(entry, key: str) -> str | None:
