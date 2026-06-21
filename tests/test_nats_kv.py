@@ -316,6 +316,59 @@ async def test_materialized_bucket_delete_uses_exact_marker_revision_after_strea
 
 
 @pytest.mark.asyncio
+async def test_materialized_bucket_changes_carry_view_generation() -> None:
+    raw = MemoryJsonKvBucket(bucket="materialized")
+    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        await materialized.wait_current()
+        initial_generation = materialized.generation
+
+        async with materialized.subscribe() as changes:
+            entry = await materialized.put("items.a", {"value": "a"})
+            delivered = await changes.receive()
+
+        assert materialized.generation == initial_generation + 1
+        assert delivered.key == entry.key
+        assert delivered.revision == entry.revision
+        assert delivered.view_generation == materialized.generation
+
+        await materialized._apply_change(  # noqa: SLF001
+            KvChange(raw.bucket, entry.key, entry.revision, "put", entry)
+        )
+        assert materialized.generation == initial_generation + 1
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_generation_advances_when_subscriber_drops_change() -> None:
+    raw = MemoryJsonKvBucket(bucket="materialized")
+    materialized = NatsKvMaterializedBucket(
+        bucket=raw,
+        key_prefix="items.",
+        buffer_size=1,
+    )
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        await materialized.wait_current()
+        initial_generation = materialized.generation
+
+        async with materialized.subscribe() as changes:
+            await materialized.put("items.a", {"value": "a"})
+            await materialized.put("items.b", {"value": "b"})
+            delivered = await changes.receive()
+            with anyio.move_on_after(0.05) as scope:
+                await changes.receive()
+
+        assert delivered.view_generation == initial_generation + 1
+        assert scope.cancelled_caught
+        assert materialized.generation == initial_generation + 2
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_materialized_bucket_cached_reads_do_not_scan_native_bucket() -> None:
     raw = _RecoveringWatchBucket(bucket="recovering")
     raw.add("items.a", {"value": "a"})

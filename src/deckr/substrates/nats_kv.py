@@ -4,7 +4,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -68,6 +68,7 @@ class KvChange:
     operation: Literal["put", "delete", "expire"]
     entry: KvEntry | None = None
     marker_reason: str | None = None
+    view_generation: int | None = None
 
 
 class NatsJsonKvBucket:
@@ -424,6 +425,7 @@ class NatsKvMaterializedBucket:
         self._started = False
         self._entries: dict[str, KvEntry] = {}
         self._revision_by_key: dict[str, int] = {}
+        self._generation = 0
         self._subscribers: set[anyio.abc.ObjectSendStream[KvChange]] = set()
         self._lock = anyio.Lock()
 
@@ -434,6 +436,10 @@ class NatsKvMaterializedBucket:
     @property
     def status(self) -> KvViewStatus:
         return self._status
+
+    @property
+    def generation(self) -> int:
+        return self._generation
 
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
         if self._started:
@@ -631,10 +637,13 @@ class NatsKvMaterializedBucket:
                 self._entries[change.key] = change.entry
             else:
                 self._entries.pop(change.key, None)
+            self._generation += 1
+            view_generation = self._generation
+            delivered = replace(change, view_generation=view_generation)
             subscribers = tuple(self._subscribers)
         for subscriber in subscribers:
             try:
-                subscriber.send_nowait(change)
+                subscriber.send_nowait(delivered)
             except anyio.WouldBlock:
                 logger.warning(
                     "NATS KV materialized subscriber buffer full bucket=%s key=%s",

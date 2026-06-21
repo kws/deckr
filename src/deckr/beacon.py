@@ -356,6 +356,7 @@ class Beacon:
         self._invalid_by_key: dict[str, tuple[int, str]] = {}
         self._keys_by_feature: dict[str, set[str]] = {}
         self._keys_by_feature_endpoint: dict[tuple[str, str, str], set[str]] = {}
+        self._bucket_generation = 0
         self._subscribers: set[_BeaconSubscriber] = set()
         self._leases: set[BeaconAdvertisementLease] = set()
         self._lock = anyio.Lock()
@@ -377,12 +378,19 @@ class Beacon:
         await self._ready.wait()
 
     def is_current(self) -> bool:
-        return self._ready.is_set() and self._bucket.is_current()
+        return (
+            self._ready.is_set()
+            and self._bucket.is_current()
+            and self._bucket_generation == _bucket_generation_cached(self._bucket)
+        )
 
     async def wait_current(self) -> None:
         await self.wait_ready()
-        await self._bucket.wait_current()
-        while not self._cache_matches_materialized_bucket():
+        while True:
+            await self._bucket.wait_current()
+            if self._bucket_generation == _bucket_generation_cached(self._bucket):
+                return
+            await self._rebuild_from_bucket()
             await anyio.sleep(0)
 
     async def aclose(self) -> None:
@@ -595,22 +603,13 @@ class Beacon:
         if self._started and self._ready.is_set() and not self.is_current():
             raise KvUnavailable("Beacon materialized view is not current")
 
-    def _cache_matches_materialized_bucket(self) -> bool:
-        for entry in self._bucket.items_cached():
-            if self._revision_by_key.get(entry.key, 0) < entry.revision:
-                return False
-        for key, revision in self._revision_by_key.items():
-            bucket_revision = self._bucket.revision_cached(key)
-            if bucket_revision is not None and revision < bucket_revision:
-                return False
-        return True
-
     async def _rebuild_from_bucket(self) -> None:
         entries_by_key: dict[str, Candidate] = {}
         revision_by_key: dict[str, int] = {}
         invalid_by_key: dict[str, tuple[int, str]] = {}
         keys_by_feature: dict[str, set[str]] = {}
         keys_by_feature_endpoint: dict[tuple[str, str, str], set[str]] = {}
+        bucket_generation = _bucket_generation_cached(self._bucket)
         for entry in self._bucket.items_cached():
             revision_by_key[entry.key] = entry.revision
             candidate, reason = _candidate_from_entry(entry)
@@ -629,6 +628,7 @@ class Beacon:
             self._invalid_by_key = invalid_by_key
             self._keys_by_feature = keys_by_feature
             self._keys_by_feature_endpoint = keys_by_feature_endpoint
+            self._bucket_generation = bucket_generation
 
     async def _create_advertisement(
         self,
@@ -646,7 +646,16 @@ class Beacon:
             advertisement_id=record.advertisement_id,
         )
         entry = await self._bucket.create(key, record, ttl=record.ttl_seconds)
-        await self._apply_kv_change(KvChange(self.bucket, key, entry.revision, "put", entry))
+        await self._apply_kv_change(
+            KvChange(
+                self.bucket,
+                key,
+                entry.revision,
+                "put",
+                entry,
+                view_generation=_bucket_generation_cached(self._bucket),
+            )
+        )
         return _advertisement_handle(key, record, entry.revision)
 
     async def _refresh_advertisement(
@@ -715,7 +724,14 @@ class Beacon:
                 ttl=refreshed.ttl_seconds,
             )
         await self._apply_kv_change(
-            KvChange(self.bucket, handle.key, entry.revision, "put", entry)
+            KvChange(
+                self.bucket,
+                handle.key,
+                entry.revision,
+                "put",
+                entry,
+                view_generation=_bucket_generation_cached(self._bucket),
+            )
         )
         return _advertisement_handle(handle.key, refreshed, entry.revision)
 
@@ -733,7 +749,13 @@ class Beacon:
             current.revision + 1
         )
         await self._apply_kv_change(
-            KvChange(self.bucket, handle.key, marker_revision, "delete")
+            KvChange(
+                self.bucket,
+                handle.key,
+                marker_revision,
+                "delete",
+                view_generation=_bucket_generation_cached(self._bucket),
+            )
         )
         return True
 
@@ -743,7 +765,13 @@ class Beacon:
             candidate.revision + 1
         )
         await self._apply_kv_change(
-            KvChange(self.bucket, candidate.key, marker_revision, "delete")
+            KvChange(
+                self.bucket,
+                candidate.key,
+                marker_revision,
+                "delete",
+                view_generation=_bucket_generation_cached(self._bucket),
+            )
         )
 
     async def _forget_lease(self, lease: BeaconAdvertisementLease) -> None:
@@ -770,8 +798,14 @@ class Beacon:
         self,
         change: KvChange,
     ) -> tuple[tuple[_BeaconSubscriber, BeaconFeatureEvent], ...]:
+        if change.view_generation is not None:
+            if change.view_generation <= self._bucket_generation:
+                return ()
+            if change.view_generation != self._bucket_generation + 1:
+                return ()
         current_revision = self._revision_by_key.get(change.key, 0)
         if change.revision <= current_revision:
+            self._advance_bucket_generation_locked(change)
             return ()
         previous = self._entries_by_key.get(change.key)
         feature_id = (
@@ -818,6 +852,7 @@ class Beacon:
                 else BeaconFeatureEventType.WITHDRAWN
             )
             reason = change.operation
+        self._advance_bucket_generation_locked(change)
         if event_type is None:
             return ()
 
@@ -846,6 +881,12 @@ class Beacon:
                 continue
             deliveries.append((subscriber, item))
         return tuple(deliveries)
+
+    def _advance_bucket_generation_locked(self, change: KvChange) -> None:
+        generation = change.view_generation
+        if generation is None:
+            generation = _bucket_generation_cached(self._bucket)
+        self._bucket_generation = max(self._bucket_generation, generation)
 
     def _remove_candidate(self, candidate: Candidate) -> None:
         key = candidate.key
@@ -1077,6 +1118,10 @@ def _bucket_revision_cached(bucket: Any, key: str) -> int | None:
     if revision_cached is None:
         return None
     return revision_cached(key)
+
+
+def _bucket_generation_cached(bucket: Any) -> int:
+    return int(getattr(bucket, "generation", 0))
 
 
 def _record_from_spec(

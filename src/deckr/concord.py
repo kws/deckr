@@ -803,6 +803,10 @@ class _ConcordBucketAdapter:
     def is_current(self) -> bool:
         return self._bucket.is_current()
 
+    @property
+    def generation(self) -> int:
+        return int(getattr(self._bucket, "generation", 0))
+
     async def wait_ready(self) -> None:
         await self._bucket.wait_ready()
 
@@ -1763,6 +1767,9 @@ class Concord:
         self._maintenance_entries_by_key: dict[str, KvEntry] = {}
         self._maintenance_records_by_key: dict[str, ConcordStaleObservationRecord] = {}
         self._maintenance_revision_by_key: dict[str, int] = {}
+        self._contract_bucket_generation = 0
+        self._token_bucket_generation = 0
+        self._maintenance_bucket_generation = 0
         self._last_status_by_contract_key: dict[str, ContractValidityStatus] = {}
 
     @property
@@ -1795,14 +1802,18 @@ class Concord:
         return (
             self._ready.is_set()
             and self._state_views_current()
-            and self._state_cache_matches_materialized_buckets()
+            and self._state_cache_generations_current()
         )
 
     async def wait_current(self) -> None:
         await self.wait_ready()
-        await self._coordinator._contract_bucket.wait_current()  # noqa: SLF001
-        await self._coordinator._token_bucket.wait_current()  # noqa: SLF001
-        while not self._state_cache_matches_materialized_buckets():
+        while True:
+            await self._coordinator._contract_bucket.wait_current()  # noqa: SLF001
+            await self._coordinator._token_bucket.wait_current()  # noqa: SLF001
+            await self._maintenance_bucket.wait_current()
+            if self._state_cache_generations_current():
+                return
+            await self._rebuild_from_buckets()
             await anyio.sleep(0)
 
     async def aclose(self) -> None:
@@ -1953,6 +1964,9 @@ class Concord:
             concord_contracts_prefix()
         )
         maintenance_entries = self._maintenance_bucket.items_cached("stale.")
+        contract_generation = self._coordinator._contract_bucket.generation  # noqa: SLF001
+        token_generation = self._coordinator._token_bucket.generation  # noqa: SLF001
+        maintenance_generation = self._maintenance_bucket.generation
         async with self._lock:
             self._clear_indexes_locked()
             for entry in contract_entries:
@@ -1965,42 +1979,25 @@ class Concord:
                 key: self._validate_from_cache_locked(handle).status
                 for key, handle in self._contract_handles_by_key.items()
             }
+            self._contract_bucket_generation = contract_generation
+            self._token_bucket_generation = token_generation
+            self._maintenance_bucket_generation = maintenance_generation
 
     def _state_views_current(self) -> bool:
         return (
             self._coordinator._contract_bucket.is_current()  # noqa: SLF001
             and self._coordinator._token_bucket.is_current()  # noqa: SLF001
+            and self._maintenance_bucket.is_current()
         )
 
-    def _state_cache_matches_materialized_buckets(self) -> bool:
-        prefix = concord_contracts_prefix()
-        return self._cache_matches_materialized_bucket(
-            self._coordinator._contract_bucket,  # noqa: SLF001
-            self._contract_revision_by_key,
-            prefix=prefix,
-        ) and self._cache_matches_materialized_bucket(
-            self._coordinator._token_bucket,  # noqa: SLF001
-            self._token_revision_by_key,
-            prefix=prefix,
+    def _state_cache_generations_current(self) -> bool:
+        return (
+            self._contract_bucket_generation
+            == self._coordinator._contract_bucket.generation  # noqa: SLF001
+            and self._token_bucket_generation
+            == self._coordinator._token_bucket.generation  # noqa: SLF001
+            and self._maintenance_bucket_generation == self._maintenance_bucket.generation
         )
-
-    @staticmethod
-    def _cache_matches_materialized_bucket(
-        bucket: _ConcordBucketAdapter,
-        revision_by_key: Mapping[str, int],
-        *,
-        prefix: str,
-    ) -> bool:
-        for entry in bucket.items_cached(prefix):
-            if revision_by_key.get(entry.key, 0) < entry.revision:
-                return False
-        for key, revision in revision_by_key.items():
-            if not key.startswith(prefix):
-                continue
-            bucket_revision = bucket.revision_cached(key)
-            if bucket_revision is not None and revision < bucket_revision:
-                return False
-        return True
 
     def _clear_indexes_locked(self) -> None:
         self._contract_entries_by_key.clear()
@@ -2041,8 +2038,11 @@ class Concord:
             self._apply_maintenance_change_locked(change)
 
     def _apply_contract_change_locked(self, change: KvChange) -> tuple[ConcordEvent, ...]:
+        if not self._should_apply_contract_change_locked(change):
+            return ()
         current_revision = self._contract_revision_by_key.get(change.key, 0)
         if change.revision <= current_revision:
+            self._advance_contract_bucket_generation_locked(change)
             return ()
         previous = self._contract_handles_by_key.get(change.key)
         previous_record = self._contract_records_by_key.get(change.key)
@@ -2066,6 +2066,7 @@ class Concord:
                 )
                 if contract_id and generation:
                     self._last_status_by_contract_key.pop(change.key, None)
+                self._advance_contract_bucket_generation_locked(change)
                 return tuple(events)
             event_type = (
                 ConcordEventType.CONTRACT_PROPOSED
@@ -2087,6 +2088,7 @@ class Concord:
             status_event = self._status_event_locked(handle, change=change)
             if status_event is not None:
                 events.append(status_event)
+            self._advance_contract_bucket_generation_locked(change)
             return tuple(events)
         if change.operation in {"delete", "expire"}:
             if (
@@ -2094,6 +2096,7 @@ class Concord:
                 and parse_concord_participant_profile_index_key(change.key) is not None
             ):
                 self._last_status_by_contract_key.pop(change.key, None)
+                self._advance_contract_bucket_generation_locked(change)
                 return ()
             self._last_status_by_contract_key.pop(change.key, None)
             events.append(
@@ -2106,11 +2109,15 @@ class Concord:
                     change=change,
                 )
             )
+        self._advance_contract_bucket_generation_locked(change)
         return tuple(events)
 
     def _apply_token_change_locked(self, change: KvChange) -> tuple[ConcordEvent, ...]:
+        if not self._should_apply_token_change_locked(change):
+            return ()
         current_revision = self._token_revision_by_key.get(change.key, 0)
         if change.revision <= current_revision:
+            self._advance_token_bucket_generation_locked(change)
             return ()
         previous = self._tokens_by_key.get(change.key)
         parsed = parse_concord_participant_token_key(change.key)
@@ -2181,17 +2188,64 @@ class Concord:
             status_event = self._status_event_locked(contract, change=change)
             if status_event is not None:
                 events.append(status_event)
+        self._advance_token_bucket_generation_locked(change)
         return tuple(events)
 
     def _apply_maintenance_change_locked(self, change: KvChange) -> None:
+        if not self._should_apply_maintenance_change_locked(change):
+            return
         current_revision = self._maintenance_revision_by_key.get(change.key, 0)
         if change.revision <= current_revision:
+            self._advance_maintenance_bucket_generation_locked(change)
             return
         self._maintenance_entries_by_key.pop(change.key, None)
         self._maintenance_records_by_key.pop(change.key, None)
         self._maintenance_revision_by_key[change.key] = change.revision
         if change.operation == "put" and change.entry is not None:
             self._index_maintenance_entry_locked(change.entry)
+        self._advance_maintenance_bucket_generation_locked(change)
+
+    def _should_apply_contract_change_locked(self, change: KvChange) -> bool:
+        return _change_is_next_generation(
+            change,
+            current_generation=self._contract_bucket_generation,
+        )
+
+    def _should_apply_token_change_locked(self, change: KvChange) -> bool:
+        return _change_is_next_generation(
+            change,
+            current_generation=self._token_bucket_generation,
+        )
+
+    def _should_apply_maintenance_change_locked(self, change: KvChange) -> bool:
+        return _change_is_next_generation(
+            change,
+            current_generation=self._maintenance_bucket_generation,
+        )
+
+    def _advance_contract_bucket_generation_locked(self, change: KvChange) -> None:
+        generation = _change_generation(
+            change,
+            self._coordinator._contract_bucket,  # noqa: SLF001
+        )
+        self._contract_bucket_generation = max(
+            self._contract_bucket_generation,
+            generation,
+        )
+
+    def _advance_token_bucket_generation_locked(self, change: KvChange) -> None:
+        generation = _change_generation(
+            change,
+            self._coordinator._token_bucket,  # noqa: SLF001
+        )
+        self._token_bucket_generation = max(self._token_bucket_generation, generation)
+
+    def _advance_maintenance_bucket_generation_locked(self, change: KvChange) -> None:
+        generation = _change_generation(change, self._maintenance_bucket)
+        self._maintenance_bucket_generation = max(
+            self._maintenance_bucket_generation,
+            generation,
+        )
 
     def _index_contract_entry_locked(self, entry: KvEntry) -> ContractHandle | None:
         self._contract_entries_by_key[entry.key] = entry
@@ -2728,7 +2782,13 @@ class Concord:
         entry = self._coordinator._contract_bucket.get_cached(contract.key)  # noqa: SLF001
         if entry is not None:
             await self._apply_contract_change(
-                KvChange(self.contract_bucket, contract.key, entry.revision, "put", entry)
+                KvChange(
+                    self.contract_bucket,
+                    contract.key,
+                    entry.revision,
+                    "put",
+                    entry,
+                )
             )
         logger.log(
             _contract_lifecycle_log_level(contract.profile),
@@ -3060,7 +3120,13 @@ class Concord:
         token_entry = self._coordinator._token_bucket.get_cached(token.key)  # noqa: SLF001
         if token_entry is not None:
             await self._apply_token_change(
-                KvChange(self.token_bucket, token.key, token_entry.revision, "put", token_entry)
+                KvChange(
+                    self.token_bucket,
+                    token.key,
+                    token_entry.revision,
+                    "put",
+                    token_entry,
+                )
             )
         logger.log(
             _contract_lifecycle_log_level(contract.profile),
@@ -3126,7 +3192,12 @@ class Concord:
             handle.key
         ) or (handle.revision + 1)
         await self._apply_token_change(
-            KvChange(self.token_bucket, handle.key, marker_revision, "delete")
+            KvChange(
+                self.token_bucket,
+                handle.key,
+                marker_revision,
+                "delete",
+            )
         )
         logger.debug(
             "%s Concord participant token withdrawn contract=%s generation=%s "
@@ -4484,6 +4555,24 @@ def _discard_index_key(index: dict[Any, set[str]], value: Any, key: str) -> None
     keys.discard(key)
     if not keys:
         index.pop(value, None)
+
+
+def _change_is_next_generation(
+    change: KvChange,
+    *,
+    current_generation: int,
+) -> bool:
+    if change.view_generation is None:
+        return True
+    if change.view_generation <= current_generation:
+        return False
+    return change.view_generation == current_generation + 1
+
+
+def _change_generation(change: KvChange, bucket: Any) -> int:
+    if change.view_generation is not None:
+        return change.view_generation
+    return int(getattr(bucket, "generation", 0))
 
 
 def _event_matches_subscriber(

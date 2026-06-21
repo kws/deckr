@@ -497,6 +497,34 @@ async def test_service_view_store_get_waits_while_materialized_view_stale() -> N
 
 
 @pytest.mark.asyncio
+async def test_service_view_store_get_rebuilds_generation_stale_cache() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_current()
+        created = await view_store.put(
+            view=view_ref,
+            payload={"item": "Kitchen Light", "state": "ON"},
+            service_id="openhab-home",
+            service_namespace=protocol.namespace,
+            session_id="service-session",
+        )
+        assert await view_store.get(lease, view_ref) == created
+
+        async with view_store._lock:  # noqa: SLF001
+            view_store._entries.clear()  # noqa: SLF001
+            view_store._revision_by_key.clear()  # noqa: SLF001
+            view_store._bucket_generation = 0  # noqa: SLF001
+
+        assert not view_store.is_current()
+        assert await view_store.get(lease, view_ref) == created
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_service_view_store_delete_updates_cache_immediately() -> None:
     protocol, lease, view_ref = await _service_view_context()
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)

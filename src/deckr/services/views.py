@@ -74,6 +74,7 @@ class ServiceViewStore:
         self._started = False
         self._entries: dict[str, ServiceViewEntry] = {}
         self._revision_by_key: dict[str, int] = {}
+        self._bucket_generation = 0
         self._subscribers: dict[
             anyio.abc.ObjectSendStream[ServiceViewChange],
             _ServiceViewSubscriber,
@@ -98,13 +99,16 @@ class ServiceViewStore:
         return (
             self._ready.is_set()
             and self._bucket.is_current()
-            and self._cache_matches_materialized_bucket()
+            and self._bucket_generation == _bucket_generation_cached(self._bucket)
         )
 
     async def wait_current(self) -> None:
         await self.wait_ready()
-        await self._bucket.wait_current()
-        while not self._cache_matches_materialized_bucket():
+        while True:
+            await self._bucket.wait_current()
+            if self._bucket_generation == _bucket_generation_cached(self._bucket):
+                return
+            await self._rebuild_from_bucket()
             await anyio.sleep(0)
 
     async def get(
@@ -139,6 +143,8 @@ class ServiceViewStore:
                 f"Service view store {view.store_name!r} does not match bucket "
                 f"{self.bucket!r}"
             )
+        if self._started:
+            await self.wait_current()
         value = _fenced_payload(
             payload,
             service_id=service_id,
@@ -163,7 +169,8 @@ class ServiceViewStore:
                 view.key,
                 entry.revision,
                 service_entry,
-            )
+            ),
+            view_generation=_bucket_generation_cached(self._bucket),
         )
         return service_entry
 
@@ -182,6 +189,8 @@ class ServiceViewStore:
                 f"Service view store {view.store_name!r} does not match bucket "
                 f"{self.bucket!r}"
             )
+        if self._started:
+            await self.wait_current()
         value = _fenced_payload(
             payload,
             service_id=service_id,
@@ -197,7 +206,8 @@ class ServiceViewStore:
                 view.key,
                 entry.revision,
                 service_entry,
-            )
+            ),
+            view_generation=_bucket_generation_cached(self._bucket),
         )
         return service_entry
 
@@ -233,11 +243,14 @@ class ServiceViewStore:
                 f"Service view store {view.store_name!r} does not match bucket "
                 f"{self.bucket!r}"
             )
+        if self._started:
+            await self.wait_current()
         marker_revision = await self._bucket.delete(view.key, revision=revision)
         if marker_revision is None:
             return
         await self._apply_service_change(
-            ServiceViewChange("delete", self.bucket, view.key, marker_revision)
+            ServiceViewChange("delete", self.bucket, view.key, marker_revision),
+            view_generation=_bucket_generation_cached(self._bucket),
         )
 
     @asynccontextmanager
@@ -275,19 +288,10 @@ class ServiceViewStore:
             async for change in changes:
                 await self._apply_kv_change(change)
 
-    def _cache_matches_materialized_bucket(self) -> bool:
-        for entry in self._bucket.items_cached():
-            if self._revision_by_key.get(entry.key, 0) < entry.revision:
-                return False
-        for key, revision in self._revision_by_key.items():
-            bucket_revision = self._bucket.revision_cached(key)
-            if bucket_revision is not None and revision < bucket_revision:
-                return False
-        return True
-
     async def _rebuild_from_bucket(self) -> None:
         entries: dict[str, ServiceViewEntry] = {}
         revisions: dict[str, int] = {}
+        bucket_generation = _bucket_generation_cached(self._bucket)
         for entry in self._bucket.items_cached():
             revisions[entry.key] = entry.revision
             try:
@@ -298,11 +302,9 @@ class ServiceViewStore:
         async with self._lock:
             self._entries = entries
             self._revision_by_key = revisions
+            self._bucket_generation = bucket_generation
 
     async def _apply_kv_change(self, change: KvChange) -> None:
-        current_revision = self._revision_by_key.get(change.key, 0)
-        if change.revision <= current_revision:
-            return
         if change.operation == "put" and change.entry is not None:
             try:
                 entry = _service_view_entry_from_kv(change.entry)
@@ -315,7 +317,8 @@ class ServiceViewStore:
                     change.key,
                     change.revision,
                     entry,
-                )
+                ),
+                view_generation=change.view_generation,
             )
             return
         await self._apply_service_change(
@@ -324,19 +327,32 @@ class ServiceViewStore:
                 self.bucket,
                 change.key,
                 change.revision,
-            )
+            ),
+            view_generation=change.view_generation,
         )
 
-    async def _apply_service_change(self, change: ServiceViewChange) -> None:
+    async def _apply_service_change(
+        self,
+        change: ServiceViewChange,
+        *,
+        view_generation: int | None = None,
+    ) -> None:
         async with self._lock:
+            if not _change_generation_is_next(
+                view_generation,
+                current_generation=self._bucket_generation,
+            ):
+                return
             current_revision = self._revision_by_key.get(change.key, 0)
             if change.revision <= current_revision:
+                self._advance_bucket_generation_locked(view_generation)
                 return
             self._revision_by_key[change.key] = change.revision
             if change.operation == "put" and change.entry is not None:
                 self._entries[change.key] = change.entry
             else:
                 self._entries.pop(change.key, None)
+            self._advance_bucket_generation_locked(view_generation)
             deliveries: list[
                 tuple[
                     anyio.abc.ObjectSendStream[ServiceViewChange],
@@ -357,6 +373,11 @@ class ServiceViewStore:
             except (anyio.BrokenResourceError, anyio.ClosedResourceError):
                 async with self._lock:
                     self._subscribers.pop(subscriber, None)
+
+    def _advance_bucket_generation_locked(self, view_generation: int | None) -> None:
+        if view_generation is None:
+            view_generation = _bucket_generation_cached(self._bucket)
+        self._bucket_generation = max(self._bucket_generation, view_generation)
 
     def _assert_authorized(self, lease: ServiceUseLease, view: ServiceViewRef) -> None:
         if view.store_name != self.bucket:
@@ -462,6 +483,22 @@ def _subscriber_delivery(
         state.visible = False
         return change
     return None
+
+
+def _change_generation_is_next(
+    view_generation: int | None,
+    *,
+    current_generation: int,
+) -> bool:
+    if view_generation is None:
+        return True
+    if view_generation <= current_generation:
+        return False
+    return view_generation == current_generation + 1
+
+
+def _bucket_generation_cached(bucket: Any) -> int:
+    return int(getattr(bucket, "generation", 0))
 
 
 def _is_materialized_bucket(value: Any) -> bool:

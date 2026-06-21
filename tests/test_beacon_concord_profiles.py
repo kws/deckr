@@ -330,6 +330,53 @@ def _beacon() -> tuple[Beacon, MemoryJsonKvBucket]:
     return Beacon(raw, default_ttl_seconds=30), raw
 
 
+@pytest.mark.asyncio
+async def test_beacon_wait_current_rebuilds_generation_stale_cache() -> None:
+    beacon, raw = _beacon()
+    endpoint = hardware_manager_address("manager-main")
+    record = AdvertisementRecord(
+        advertisementId="advertisement-1",
+        featureId=HARDWARE_FEATURE_ID,
+        advertiser=endpoint,
+        endpoint=endpoint,
+        sessionId="manager-session",
+        refreshSeq=1,
+        ttlSeconds=30,
+        payload=_hardware_payload().to_dict(),
+    )
+    key = beacon_advertisement_key(
+        feature_id=record.feature_id,
+        advertisement_id=record.advertisement_id,
+    )
+    await raw.put(key, record.to_dict())
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await beacon.wait_current()
+        assert [candidate.key for candidate in beacon.candidates(HARDWARE_FEATURE_ID)] == [
+            key
+        ]
+
+        async with beacon._lock:  # noqa: SLF001
+            beacon._entries_by_key.clear()  # noqa: SLF001
+            beacon._revision_by_key.clear()  # noqa: SLF001
+            beacon._invalid_by_key.clear()  # noqa: SLF001
+            beacon._keys_by_feature.clear()  # noqa: SLF001
+            beacon._keys_by_feature_endpoint.clear()  # noqa: SLF001
+            beacon._bucket_generation = 0  # noqa: SLF001
+
+        assert not beacon.is_current()
+        with pytest.raises(KvUnavailable):
+            beacon.candidates(HARDWARE_FEATURE_ID)
+
+        await beacon.wait_current()
+
+        assert [candidate.key for candidate in beacon.candidates(HARDWARE_FEATURE_ID)] == [
+            key
+        ]
+        tg.cancel_scope.cancel()
+
+
 def test_beacon_removes_statestore_construction_layer() -> None:
     import deckr.beacon as beacon_module
 
@@ -2076,6 +2123,44 @@ async def test_concord_watch_defers_live_events_until_replay_finishes() -> None:
     assert replay.event_type == ConcordEventType.CONTRACT_PENDING
     assert replay.contract == contract
     assert deferred == live
+
+
+@pytest.mark.asyncio
+async def test_concord_wait_current_rebuilds_generation_stale_cache() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(  # noqa: SLF001
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+
+    async with anyio.create_task_group() as tg:
+        service.start(tg)
+        await service.wait_current()
+        pointer = {"contractId": contract.contract_id, "generation": contract.generation}
+        assert await service.get_contract(pointer) == contract
+
+        async with service._lock:  # noqa: SLF001
+            service._clear_indexes_locked()  # noqa: SLF001
+            service._contract_bucket_generation = 0  # noqa: SLF001
+            service._token_bucket_generation = (  # noqa: SLF001
+                service._coordinator._token_bucket.generation  # noqa: SLF001
+            )
+            service._maintenance_bucket_generation = (  # noqa: SLF001
+                service._maintenance_bucket.generation  # noqa: SLF001
+            )
+
+        assert not service.is_current()
+        await service.wait_current()
+
+        assert await service.get_contract(pointer) == contract
+        tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
