@@ -7,8 +7,8 @@ use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_valu
 use deckr::concord::{
     concord_contract_key, concord_participant_profile_index_prefix, concord_participant_token_key,
     ConcordCoordinator, ConcordNotificationSource, ConcordParticipantLease,
-    ConcordParticipantManager, ContractHandle, ContractRecord, ContractValidityStatus,
-    ParticipantTokenRecord,
+    ConcordParticipantManager, ContractHandle, ContractRecord, ContractState,
+    ContractValidityStatus, ParticipantTokenRecord,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
@@ -612,7 +612,8 @@ async fn concord_participant_manager_does_not_resurrect_lost_authority() {
         .unwrap();
 
     let mut manager_lifecycle =
-        ConcordParticipantManager::new(concord.clone(), manager, "manager-session".into()).unwrap();
+        ConcordParticipantManager::new(concord.clone(), manager.clone(), "manager-session".into())
+            .unwrap();
     let managed = manager_lifecycle
         .reconcile(|_, _| Ok(true), None)
         .await
@@ -633,14 +634,68 @@ async fn concord_participant_manager_does_not_resurrect_lost_authority() {
     assert!(managed.is_empty());
     assert_eq!(
         concord.validate(&contract, None).await.status,
-        ContractValidityStatus::MissingToken
+        ContractValidityStatus::Cancelled
     );
+    let record = concord.contract_record(&contract).await.unwrap().unwrap();
+    assert_eq!(record.state, ContractState::Cancelled);
+    assert_eq!(
+        record.cancel_reason.as_deref(),
+        Some("concord_managed_missing_token")
+    );
+    assert!(concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_none());
 
     let managed = manager_lifecycle
         .reconcile(|_, _| Ok(true), None)
         .await
         .unwrap();
     assert!(managed.is_empty());
+    assert!(concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn concord_participant_manager_session_mismatch_cancels_before_accept() {
+    let (concord, _tokens, contract, manager, mut lifecycle) =
+        managed_claim_context("contract-1").await;
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    assert_eq!(managed.len(), 1);
+    let manager_token = managed[0].token.clone().unwrap();
+
+    lifecycle.session_id = "manager-session-new".to_string();
+    let managed = lifecycle
+        .reconcile(
+            |_, _| panic!("stale terminal validation should happen before accept"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(managed.is_empty());
+    assert_eq!(
+        concord.validate(&contract, None).await.status,
+        ContractValidityStatus::Cancelled
+    );
+    let record = concord.contract_record(&contract).await.unwrap().unwrap();
+    assert_eq!(record.state, ContractState::Cancelled);
+    assert_eq!(
+        record.cancel_reason.as_deref(),
+        Some("concord_managed_session_mismatch")
+    );
+    let current_token = concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(current_token.token_id, manager_token.token_id);
+    assert_eq!(current_token.session_id, "manager-session");
 }
 
 #[tokio::test]
@@ -892,7 +947,7 @@ async fn concord_participant_manager_reconcile_managed_does_not_discover_new_con
 
 #[tokio::test]
 async fn concord_participant_manager_reconcile_managed_does_not_resurrect_deleted_token() {
-    let (concord, tokens, contract, _manager, mut lifecycle) =
+    let (concord, tokens, contract, manager, mut lifecycle) =
         managed_claim_context("contract-1").await;
 
     let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
@@ -907,8 +962,19 @@ async fn concord_participant_manager_reconcile_managed_does_not_resurrect_delete
     assert!(managed.is_empty());
     assert_eq!(
         concord.validate(&contract, None).await.status,
-        ContractValidityStatus::MissingToken
+        ContractValidityStatus::Cancelled
     );
+    let record = concord.contract_record(&contract).await.unwrap().unwrap();
+    assert_eq!(record.state, ContractState::Cancelled);
+    assert_eq!(
+        record.cancel_reason.as_deref(),
+        Some("concord_managed_missing_token")
+    );
+    assert!(concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]

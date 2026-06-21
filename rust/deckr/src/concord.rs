@@ -1544,7 +1544,11 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
             }
             return Ok(None);
         }
-        if !accept_contract(&contract, &record)? {
+        if self
+            .profile
+            .as_deref()
+            .is_some_and(|profile| record.profile.as_deref() != Some(profile))
+        {
             if let Some(mut lease) = lease {
                 lease.close();
             }
@@ -1555,6 +1559,14 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         let validity = self.concord.validate(&contract, Some(&sessions)).await;
         let record = validity.contract.clone().unwrap_or(record);
         if terminal_managed_status(validity.status) {
+            self.cancel_terminal_contract(&contract, validity.status)
+                .await?;
+            if let Some(mut lease) = lease {
+                lease.close();
+            }
+            return Ok(None);
+        }
+        if !accept_contract(&contract, &record)? {
             if let Some(mut lease) = lease {
                 lease.close();
             }
@@ -1587,6 +1599,8 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
                 let validity = self.concord.validate(&contract, Some(&sessions)).await;
                 let record = validity.contract.clone().unwrap_or(record);
                 if terminal_managed_status(validity.status) {
+                    self.cancel_terminal_contract(&contract, validity.status)
+                        .await?;
                     lease.close();
                     return Ok(None);
                 }
@@ -1606,6 +1620,8 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         let validity = self.concord.validate(&contract, Some(&sessions)).await;
         let record = validity.contract.clone().unwrap_or(record);
         if terminal_managed_status(validity.status) {
+            self.cancel_terminal_contract(&contract, validity.status)
+                .await?;
             lease.close();
             return Ok(None);
         }
@@ -1627,6 +1643,32 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         let mut sessions = current_sessions.cloned().unwrap_or_default();
         sessions.insert(self.participant.to_string(), self.session_id.clone());
         sessions
+    }
+
+    async fn cancel_terminal_contract(
+        &self,
+        contract: &ContractHandle,
+        status: ContractValidityStatus,
+    ) -> Result<()> {
+        if !managed_cancel_terminal_status(status) {
+            return Ok(());
+        }
+        match self
+            .cancel(
+                contract,
+                Some(format!(
+                    "concord_managed_{}",
+                    contract_validity_status_value(status)
+                )),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(Error::StateConflict(_))
+            | Err(Error::StateUnavailable(_))
+            | Err(Error::Invalid(_)) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -1848,6 +1890,33 @@ fn terminal_managed_status(status: ContractValidityStatus) -> bool {
             | ContractValidityStatus::SessionMismatch
             | ContractValidityStatus::TermsHashMismatch
     )
+}
+
+fn managed_cancel_terminal_status(status: ContractValidityStatus) -> bool {
+    matches!(
+        status,
+        ContractValidityStatus::InvalidToken
+            | ContractValidityStatus::MissingToken
+            | ContractValidityStatus::GenerationMismatch
+            | ContractValidityStatus::SessionMismatch
+            | ContractValidityStatus::TermsHashMismatch
+    )
+}
+
+fn contract_validity_status_value(status: ContractValidityStatus) -> &'static str {
+    match status {
+        ContractValidityStatus::Valid => "valid",
+        ContractValidityStatus::NotYetFulfilled => "not_yet_fulfilled",
+        ContractValidityStatus::Cancelled => "cancelled",
+        ContractValidityStatus::MissingContract => "missing_contract",
+        ContractValidityStatus::InvalidContract => "invalid_contract",
+        ContractValidityStatus::InvalidToken => "invalid_token",
+        ContractValidityStatus::MissingToken => "missing_token",
+        ContractValidityStatus::GenerationMismatch => "generation_mismatch",
+        ContractValidityStatus::SessionMismatch => "session_mismatch",
+        ContractValidityStatus::TermsHashMismatch => "terms_hash_mismatch",
+        ContractValidityStatus::Unavailable => "unavailable",
+    }
 }
 
 fn token_matches_attach_request(

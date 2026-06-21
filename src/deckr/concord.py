@@ -3976,7 +3976,11 @@ class ConcordParticipant:
         self._notifications = CoalescedTrigger(
             batch_interval=notification_batch_interval
         )
-        self._cancel_terminal_statuses = frozenset(cancel_terminal_statuses or ())
+        self._cancel_terminal_statuses = (
+            DEFAULT_CONCORD_MANAGED_CANCEL_TERMINAL_STATUSES
+            if cancel_terminal_statuses is None
+            else frozenset(cancel_terminal_statuses)
+        )
         self._log_label = log_label
         self._managed: dict[str, ConcordManagedContract] = {}
         self._leases: dict[str, ConcordParticipantLease] = {}
@@ -4237,14 +4241,6 @@ class ConcordParticipant:
             )
             return None
 
-        if not await _maybe_await(self._accept_contract(contract, record)):
-            await self._release_locked(
-                contract.key,
-                reason="policy_rejected",
-                withdraw=True,
-            )
-            return None
-
         sessions = await self._current_sessions_for(contract)
         validity = await self._concord._validate(
             contract,
@@ -4255,30 +4251,20 @@ class ConcordParticipant:
 
         existing = validity.tokens.get(str(self.participant))
         if _terminal_managed_status(validity.status):
-            if validity.status in self._cancel_terminal_statuses:
-                try:
-                    await self.cancel(
-                        contract,
-                        reason=f"concord_managed_{validity.status.value}",
-                    )
-                except (ConcordConflict, ConcordUnavailable, ValueError):
-                    logger.debug(
-                        "%s could not cancel terminal Concord contract %s",
-                        self._log_label,
-                        contract.contract_id,
-                        exc_info=True,
-                    )
-            await self._publish_terminal_locked(
+            await self._publish_and_release_terminal_locked(
                 contract,
                 record=record,
                 validity=validity,
                 token=existing,
                 reason=reason,
             )
+            return None
+
+        if not await _maybe_await(self._accept_contract(contract, record)):
             await self._release_locked(
                 contract.key,
-                reason=validity.status.value,
-                withdraw=False,
+                reason="policy_rejected",
+                withdraw=True,
             )
             return None
 
@@ -4303,17 +4289,12 @@ class ConcordParticipant:
                     tokens=validity.tokens,
                     reason=str(self.participant),
                 )
-                await self._publish_terminal_locked(
+                await self._publish_and_release_terminal_locked(
                     contract,
                     record=record,
                     validity=validity,
                     token=existing,
                     reason=reason,
-                )
-                await self._release_locked(
-                    contract.key,
-                    reason=ContractValidityStatus.SESSION_MISMATCH.value,
-                    withdraw=False,
                 )
                 return None
             lease.adopt(existing)
@@ -4327,6 +4308,15 @@ class ConcordParticipant:
                 log_label=self._log_label,
             )
             record = validity.contract or record
+            if _terminal_managed_status(validity.status):
+                await self._publish_and_release_terminal_locked(
+                    contract,
+                    record=record,
+                    validity=validity,
+                    token=None,
+                    reason=reason,
+                )
+                return None
             await self._publish_terminal_locked(
                 contract,
                 record=record,
@@ -4334,12 +4324,6 @@ class ConcordParticipant:
                 token=None,
                 reason=reason,
             )
-            if _terminal_managed_status(validity.status):
-                await self._release_locked(
-                    contract.key,
-                    reason=validity.status.value,
-                    withdraw=False,
-                )
             return None
 
         validity = await self._concord._validate(
@@ -4355,17 +4339,12 @@ class ConcordParticipant:
             token=token,
         )
         if _terminal_managed_status(validity.status):
-            await self._publish_terminal_locked(
+            await self._publish_and_release_terminal_locked(
                 contract,
                 record=record,
                 validity=validity,
                 token=token,
                 reason=reason,
-            )
-            await self._release_locked(
-                contract.key,
-                reason=validity.status.value,
-                withdraw=False,
             )
             return None
         self._publish_status(managed, reason=reason)
@@ -4424,6 +4403,41 @@ class ConcordParticipant:
             token=token,
         )
         self._publish_status(managed, reason=reason)
+
+    async def _publish_and_release_terminal_locked(
+        self,
+        contract: ContractHandle,
+        *,
+        record: ContractRecord,
+        validity: ContractValidity,
+        token: ParticipantHandle | None,
+        reason: str,
+    ) -> None:
+        if validity.status in self._cancel_terminal_statuses:
+            try:
+                await self.cancel(
+                    contract,
+                    reason=f"concord_managed_{validity.status.value}",
+                )
+            except (ConcordConflict, ConcordUnavailable, ValueError):
+                logger.debug(
+                    "%s could not cancel terminal Concord contract %s",
+                    self._log_label,
+                    contract.contract_id,
+                    exc_info=True,
+                )
+        await self._publish_terminal_locked(
+            contract,
+            record=record,
+            validity=validity,
+            token=token,
+            reason=reason,
+        )
+        await self._release_locked(
+            contract.key,
+            reason=validity.status.value,
+            withdraw=False,
+        )
 
     def _publish_status(
         self,
@@ -4542,6 +4556,17 @@ def _agreement_successor_status(status: ContractValidityStatus) -> bool:
         ContractValidityStatus.SESSION_MISMATCH,
         ContractValidityStatus.TERMS_HASH_MISMATCH,
     }
+
+
+DEFAULT_CONCORD_MANAGED_CANCEL_TERMINAL_STATUSES = frozenset(
+    {
+        ContractValidityStatus.INVALID_TOKEN,
+        ContractValidityStatus.MISSING_TOKEN,
+        ContractValidityStatus.GENERATION_MISMATCH,
+        ContractValidityStatus.SESSION_MISMATCH,
+        ContractValidityStatus.TERMS_HASH_MISMATCH,
+    }
+)
 
 
 def _terminal_managed_status(status: ContractValidityStatus) -> bool:

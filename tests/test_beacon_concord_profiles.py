@@ -1469,6 +1469,10 @@ async def test_concord_participant_manager_notification_reconciles_expiry_and_ca
             ConcordManagedContractEventType.RELEASED,
         )
         assert released.reason == ContractValidityStatus.MISSING_TOKEN.value
+        record = await service._contract_record(contract)
+        assert record is not None
+        assert record.state == ContractState.CANCELLED
+        assert record.cancel_reason == "concord_managed_missing_token"
 
         contract = await service._create_contract(
             (manager, controller),
@@ -1544,6 +1548,10 @@ async def test_concord_participant_manager_releases_on_token_expiry_and_cancel()
         )
         assert released.reason == ContractValidityStatus.MISSING_TOKEN.value
         assert lifecycle.managed_contracts == ()
+        record = await service._contract_record(contract)
+        assert record is not None
+        assert record.state == ContractState.CANCELLED
+        assert record.cancel_reason == "concord_managed_missing_token"
 
     contract = await service._create_contract(
         (manager, controller),
@@ -1728,7 +1736,56 @@ async def test_concord_participant_manager_cancelled_contract_preserves_token() 
 
 
 @pytest.mark.asyncio
-async def test_concord_participant_manager_session_mismatch_preserves_token() -> None:
+async def test_concord_participant_manager_session_mismatch_cancels_before_accept() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+
+    accepted = True
+
+    def accept_contract(_contract, _record):
+        if not accepted:
+            raise AssertionError(
+                "stale terminal validation should happen before accept"
+            )
+        return True
+
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=accept_contract,
+    )
+    managed = (await lifecycle.reconcile(reason="test live"))[0]
+    manager_token = managed.token
+    assert manager_token is not None
+
+    accepted = False
+    lifecycle.session_id = "manager-session-new"
+    assert await lifecycle.reconcile(reason="session changed") == ()
+
+    contract_record = await service._contract_record(contract)
+    assert contract_record is not None
+    assert contract_record.state == ContractState.CANCELLED
+    assert contract_record.cancel_reason == "concord_managed_session_mismatch"
+    current = await token_state.get(manager_token.key)
+    assert current is not None
+    record = ParticipantTokenRecord.model_validate(current.value)
+    assert record.token_id == manager_token.token_id
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_manager_empty_cancel_statuses_preserves_open() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
     service = _concord(contract_state, token_state)
@@ -1747,6 +1804,7 @@ async def test_concord_participant_manager_session_mismatch_preserves_token() ->
         session_id="manager-session",
         profile=HARDWARE_CLAIM_PROFILE_ID,
         accept_contract=lambda _contract, _record: True,
+        cancel_terminal_statuses=(),
     )
     managed = (await lifecycle.reconcile(reason="test live"))[0]
     manager_token = managed.token
@@ -1755,6 +1813,9 @@ async def test_concord_participant_manager_session_mismatch_preserves_token() ->
     lifecycle.session_id = "manager-session-new"
     assert await lifecycle.reconcile(reason="session changed") == ()
 
+    contract_record = await service._contract_record(contract)
+    assert contract_record is not None
+    assert contract_record.state == ContractState.OPEN
     current = await token_state.get(manager_token.key)
     assert current is not None
     record = ParticipantTokenRecord.model_validate(current.value)
@@ -1790,7 +1851,7 @@ async def test_concord_participant_manager_policy_rejection_does_not_cancel() ->
 
 
 @pytest.mark.asyncio
-async def test_concord_participant_manager_policy_rejection_skips_validation_logs(
+async def test_concord_participant_manager_pre_accept_missing_token_cancels_even_when_rejected(
     caplog,
 ) -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
@@ -1818,11 +1879,11 @@ async def test_concord_participant_manager_policy_rejection_skips_validation_log
     caplog.clear()
     assert await lifecycle.reconcile(reason="policy rejection") == ()
 
-    assert "Concord contract invalid" not in caplog.text
     assert "Concord contract pending" not in caplog.text
     record = await service._contract_record(contract)
     assert record is not None
-    assert record.state == ContractState.OPEN
+    assert record.state == ContractState.CANCELLED
+    assert record.cancel_reason == "concord_managed_missing_token"
 
 
 @pytest.mark.asyncio
