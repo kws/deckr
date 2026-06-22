@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
@@ -17,6 +18,7 @@ from deckr.services import (
     ServiceDescriptor,
     ServiceProtocol,
     ServiceUseTerms,
+    ServiceViewChange,
     ServiceViewEntry,
     ServiceViewFamily,
     ServiceViewRef,
@@ -321,6 +323,48 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
         )
         with pytest.raises(UnsupportedServiceScope):
             await view_store.get(lease, unauthorized)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_store_logs_write_apply_and_stale_revision(caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="deckr.services.views")
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+
+        async with view_store.watch(lease, view_ref) as changes:
+            created = await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "ON"},
+                service_id="openhab-home",
+                service_namespace=protocol.namespace,
+                session_id="service-session",
+            )
+            await _receive_service_change(changes)
+
+        assert "Service view write" in caplog.text
+        assert "Service view change applied" in caplog.text
+        assert "delivery_count=1" in caplog.text
+        assert "payload_hash=" in caplog.text
+
+        caplog.clear()
+        await view_store._apply_service_change(  # noqa: SLF001
+            ServiceViewChange(
+                "put",
+                view_ref.store_name,
+                view_ref.key,
+                created.revision,
+                created,
+            )
+        )
+
+        assert "Service view stale change ignored" in caplog.text
+        assert "reason=revision" in caplog.text
         tg.cancel_scope.cancel()
 
 

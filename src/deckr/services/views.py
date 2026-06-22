@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -19,6 +22,9 @@ from deckr.substrates.nats_kv import (
     NatsJsonKvBucket,
     NatsKvMaterializedBucket,
 )
+
+logger = logging.getLogger(__name__)
+_HASH_SIZE = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +168,18 @@ class ServiceViewStore:
             )
         )
         service_entry = _service_view_entry_from_kv(entry)
+        logger.debug(
+            "Service view write bucket=%s key=%s revision=%s service=%s "
+            "namespace=%s session=%s operation=%s payload_hash=%s",
+            self.bucket,
+            view.key,
+            entry.revision,
+            service_id,
+            service_namespace,
+            session_id,
+            "put" if revision is None else "update",
+            _payload_hash(payload),
+        )
         await self._apply_service_change(
             ServiceViewChange(
                 "put",
@@ -199,6 +217,17 @@ class ServiceViewStore:
         )
         entry = await self._bucket.create(view.key, value, ttl=ttl)
         service_entry = _service_view_entry_from_kv(entry)
+        logger.debug(
+            "Service view write bucket=%s key=%s revision=%s service=%s "
+            "namespace=%s session=%s operation=create payload_hash=%s",
+            self.bucket,
+            view.key,
+            entry.revision,
+            service_id,
+            service_namespace,
+            session_id,
+            _payload_hash(payload),
+        )
         await self._apply_service_change(
             ServiceViewChange(
                 "put",
@@ -248,6 +277,12 @@ class ServiceViewStore:
         marker_revision = await self._bucket.delete(view.key, revision=revision)
         if marker_revision is None:
             return
+        logger.debug(
+            "Service view write bucket=%s key=%s revision=%s operation=delete",
+            self.bucket,
+            view.key,
+            marker_revision,
+        )
         await self._apply_service_change(
             ServiceViewChange("delete", self.bucket, view.key, marker_revision),
             view_generation=_bucket_generation_cached(self._bucket),
@@ -342,10 +377,32 @@ class ServiceViewStore:
                 view_generation,
                 current_generation=self._bucket_generation,
             ):
+                logger.debug(
+                    "Service view stale change ignored bucket=%s key=%s "
+                    "operation=%s revision=%s view_generation=%s "
+                    "current_generation=%s reason=generation",
+                    change.bucket,
+                    change.key,
+                    change.operation,
+                    change.revision,
+                    view_generation,
+                    self._bucket_generation,
+                )
                 return
             current_revision = self._revision_by_key.get(change.key, 0)
             if change.revision <= current_revision:
                 self._advance_bucket_generation_locked(view_generation)
+                logger.debug(
+                    "Service view stale change ignored bucket=%s key=%s "
+                    "operation=%s revision=%s current_revision=%s "
+                    "view_generation=%s reason=revision",
+                    change.bucket,
+                    change.key,
+                    change.operation,
+                    change.revision,
+                    current_revision,
+                    view_generation,
+                )
                 return
             self._revision_by_key[change.key] = change.revision
             if change.operation == "put" and change.entry is not None:
@@ -365,14 +422,31 @@ class ServiceViewStore:
                 delivery = _subscriber_delivery(change, state)
                 if delivery is not None:
                     deliveries.append((subscriber, delivery))
+        delivered_count = 0
         for subscriber, delivery in deliveries:
             try:
                 subscriber.send_nowait(delivery)
+                delivered_count += 1
             except anyio.WouldBlock:
                 continue
             except (anyio.BrokenResourceError, anyio.ClosedResourceError):
                 async with self._lock:
                     self._subscribers.pop(subscriber, None)
+        entry = change.entry
+        logger.debug(
+            "Service view change applied bucket=%s key=%s operation=%s "
+            "revision=%s service=%s namespace=%s session=%s payload_hash=%s "
+            "delivery_count=%s",
+            change.bucket,
+            change.key,
+            change.operation,
+            change.revision,
+            entry.service_id if entry is not None else None,
+            entry.service_namespace if entry is not None else None,
+            entry.session_id if entry is not None else None,
+            _payload_hash(entry.value) if entry is not None else None,
+            delivered_count,
+        )
 
     def _advance_bucket_generation_locked(self, view_generation: int | None) -> None:
         if view_generation is None:
@@ -412,6 +486,16 @@ def _fenced_payload(
             "sessionId": session_id,
         }
     )
+
+
+def _payload_hash(payload: Mapping[str, Any]) -> str:
+    value = json.dumps(
+        thaw_json(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:_HASH_SIZE]
 
 
 def _service_view_entry_from_kv(entry: KvEntry) -> ServiceViewEntry:
