@@ -207,7 +207,7 @@ async def test_reaper_logs_scan_completion_counts(
 
 
 @pytest.mark.asyncio
-async def test_pending_open_contract_cancelled_only_after_stale_grace() -> None:
+async def test_no_token_pending_open_contract_cancelled_only_after_stale_grace() -> None:
     clock = ManualClock()
     contract_state, token_state, maintenance_state = _stores()
     coordinator = _concord(contract_state, token_state, maintenance_state)
@@ -231,6 +231,32 @@ async def test_pending_open_contract_cancelled_only_after_stale_grace() -> None:
     assert record.state == ContractState.CANCELLED
     assert record.cancel_reason == CONCORD_REAPER_STALE_CONTRACT_REASON
     assert record.cancelled_by == CONCORD_MAINTENANCE_ACTOR
+    await _assert_no_stale_observation(maintenance_state, contract)
+
+
+@pytest.mark.asyncio
+async def test_pending_open_contract_with_valid_token_is_not_stale() -> None:
+    clock = ManualClock()
+    contract_state, token_state, maintenance_state = _stores()
+    coordinator = _concord(contract_state, token_state, maintenance_state)
+    contract = await _contract(coordinator, contract_id="pending-with-owner-token")
+    await coordinator._attach(contract, controller_address("controller-main"), "session")
+    reaper = _reaper(coordinator, clock)
+
+    validity = await coordinator.validate_exact(contract)
+    assert validity.status == ContractValidityStatus.NOT_YET_FULFILLED
+    assert validity.tokens
+    result = await reaper.scan_once()
+    assert result.stale_observations_created == 0
+    assert result.contracts_cancelled == 0
+    await _assert_no_stale_observation(maintenance_state, contract)
+
+    clock.advance(900)
+    result = await reaper.scan_once()
+
+    assert result.stale_observations_created == 0
+    assert result.contracts_cancelled == 0
+    assert (await coordinator.contract_record(contract)).state == ContractState.OPEN
     await _assert_no_stale_observation(maintenance_state, contract)
 
 

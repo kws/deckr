@@ -316,8 +316,8 @@ class ServiceViewStore:
                 self._subscribers.pop(send, None)
 
     async def _event_loop(self) -> None:
+        await self._bucket.wait_current()
         async with self._bucket.subscribe() as changes:
-            await self._bucket.wait_current()
             await self._rebuild_from_bucket()
             self._ready.set()
             async for change in changes:
@@ -340,6 +340,8 @@ class ServiceViewStore:
             self._bucket_generation = bucket_generation
 
     async def _apply_kv_change(self, change: KvChange) -> None:
+        if await self._rebuild_if_generation_gap(change):
+            return
         if change.operation == "put" and change.entry is not None:
             try:
                 entry = _service_view_entry_from_kv(change.entry)
@@ -365,6 +367,16 @@ class ServiceViewStore:
             ),
             view_generation=change.view_generation,
         )
+
+    async def _rebuild_if_generation_gap(self, change: KvChange) -> bool:
+        if change.view_generation is None:
+            return False
+        async with self._lock:
+            gap = change.view_generation > self._bucket_generation + 1
+        if not gap:
+            return False
+        await self._rebuild_from_bucket()
+        return True
 
     async def _apply_service_change(
         self,

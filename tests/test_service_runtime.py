@@ -569,6 +569,90 @@ async def test_service_view_store_get_rebuilds_generation_stale_cache() -> None:
 
 
 @pytest.mark.asyncio
+async def test_service_view_store_startup_replay_does_not_overflow_subscriber_queue(
+    caplog,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="deckr.substrates.nats_kv")
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name, buffer_size=40)
+    for index in range(12):
+        item = "Kitchen Light" if index == 0 else f"Kitchen Light {index}"
+        await raw.put(
+            service_view_key("openhab-home", "items", item),
+            {
+                "item": item,
+                "state": "ON",
+                "serviceId": "openhab-home",
+                "serviceNamespace": protocol.namespace,
+                "sessionId": "service-session",
+            },
+        )
+    view_store = ServiceViewStore(bucket=raw, buffer_size=5)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_current()
+
+        assert view_store.is_current()
+        assert await view_store.get(lease, view_ref) is not None
+        assert "materialized subscriber buffer full" not in caplog.text
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_store_generation_gap_rebuilds_from_bucket() -> None:
+    protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    view_store = ServiceViewStore(bucket=raw)
+    other_ref = ServiceViewRef(
+        view_ref.store_name,
+        service_view_key("openhab-home", "items", "Kitchen Fan"),
+    )
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_current()
+        created = await view_store.put(
+            view=view_ref,
+            payload={"item": "Kitchen Light", "state": "ON"},
+            service_id="openhab-home",
+            service_namespace=protocol.namespace,
+            session_id="service-session",
+        )
+        other = await view_store.put(
+            view=other_ref,
+            payload={"item": "Kitchen Fan", "state": "ON"},
+            service_id="openhab-home",
+            service_namespace=protocol.namespace,
+            session_id="service-session",
+        )
+        await view_store.wait_current()
+        bucket_generation = view_store._bucket.generation  # noqa: SLF001
+        other_entry = view_store._bucket.get_cached(other.key)  # noqa: SLF001
+        assert other_entry is not None
+
+        async with view_store._lock:  # noqa: SLF001
+            view_store._entries.clear()  # noqa: SLF001
+            view_store._revision_by_key.clear()  # noqa: SLF001
+            view_store._bucket_generation = 0  # noqa: SLF001
+
+        await view_store._apply_kv_change(  # noqa: SLF001
+            KvChange(
+                view_store.bucket,
+                other.key,
+                other.revision,
+                "put",
+                other_entry,
+                view_generation=bucket_generation,
+            )
+        )
+
+        assert view_store.is_current()
+        assert await view_store.get(lease, view_ref) == created
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_service_view_store_delete_updates_cache_immediately() -> None:
     protocol, lease, view_ref = await _service_view_context()
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)

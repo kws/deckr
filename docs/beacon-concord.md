@@ -262,8 +262,10 @@ The reaper records `firstObservedStaleAt` in the persistent
 `deckr_concord_maintenance_v1` store for each `contractId:generation`. Open
 contracts count as stale only when scan-time Concord validation over the current
 contract and participant-token keys reports
-`not_yet_fulfilled`, `missing_token`, `invalid_token`, `session_mismatch`,
-`terms_hash_mismatch`, `generation_mismatch`, or `invalid_contract`.
+`missing_token`, `invalid_token`, `session_mismatch`, `terms_hash_mismatch`,
+`generation_mismatch`, or `invalid_contract`. `not_yet_fulfilled` is stale only
+when exact validation finds no valid refresh tokens at all; a pending contract
+with any valid participant token remains pending.
 `unavailable` is not a stale signal.
 
 After the stale grace period, 900 seconds by default, maintenance cancels the

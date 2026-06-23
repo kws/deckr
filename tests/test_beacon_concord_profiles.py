@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -34,6 +35,7 @@ from deckr.concord import (
     ContractValidityStatus,
     ParticipantTokenRecord,
     canonical_json_hash,
+    concord_contract_key,
     concord_participant_profile_index_prefix,
 )
 from deckr.contracts.messages import (
@@ -303,6 +305,24 @@ def _hardware_payload(*, session_id: str = "manager-session") -> HardwareBeaconP
     )
 
 
+def _hardware_advertisement_record(
+    advertisement_id: str,
+    *,
+    session_id: str = "manager-session",
+) -> AdvertisementRecord:
+    endpoint = hardware_manager_address("manager-main")
+    return AdvertisementRecord(
+        advertisementId=advertisement_id,
+        featureId=HARDWARE_FEATURE_ID,
+        advertiser=endpoint,
+        endpoint=endpoint,
+        sessionId=session_id,
+        refreshSeq=1,
+        ttlSeconds=30,
+        payload=_hardware_payload(session_id=session_id).to_dict(),
+    )
+
+
 def _hardware_claim_terms(
     *,
     claim_id: str = "claim-1",
@@ -374,6 +394,108 @@ async def test_beacon_wait_current_rebuilds_generation_stale_cache() -> None:
         assert [candidate.key for candidate in beacon.candidates(HARDWARE_FEATURE_ID)] == [
             key
         ]
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_beacon_candidates_exact_reads_bucket_directly() -> None:
+    beacon, raw = _beacon()
+    endpoint = hardware_manager_address("manager-main")
+    record = AdvertisementRecord(
+        advertisementId="advertisement-1",
+        featureId=HARDWARE_FEATURE_ID,
+        advertiser=endpoint,
+        endpoint=endpoint,
+        sessionId="manager-session",
+        refreshSeq=1,
+        ttlSeconds=30,
+        payload=_hardware_payload().to_dict(),
+    )
+    key = beacon_advertisement_key(
+        feature_id=record.feature_id,
+        advertisement_id=record.advertisement_id,
+    )
+    await raw.put(key, record.to_dict())
+
+    candidates = await beacon.candidates_exact(HARDWARE_FEATURE_ID)
+
+    assert [candidate.key for candidate in candidates] == [key]
+    assert candidates[0].advertisement.session_id == "manager-session"
+
+
+@pytest.mark.asyncio
+async def test_beacon_startup_replay_does_not_overflow_subscriber_queue(
+    caplog,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="deckr.substrates.nats_kv")
+    raw = MemoryJsonKvBucket(bucket="beacon", buffer_size=40)
+    beacon = Beacon(raw, default_ttl_seconds=30, buffer_size=5)
+    for index in range(12):
+        record = _hardware_advertisement_record(f"advertisement-{index:02d}")
+        await raw.put(
+            beacon_advertisement_key(
+                feature_id=record.feature_id,
+                advertisement_id=record.advertisement_id,
+            ),
+            record,
+        )
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await beacon.wait_current()
+
+        assert beacon.is_current()
+        assert len(beacon.candidates(HARDWARE_FEATURE_ID)) == 12
+        assert "materialized subscriber buffer full" not in caplog.text
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_beacon_rebuilds_from_bucket_after_generation_gap() -> None:
+    beacon, _raw = _beacon()
+    first = _hardware_advertisement_record("advertisement-1")
+    second = _hardware_advertisement_record("advertisement-2")
+    first_key = beacon_advertisement_key(
+        feature_id=first.feature_id,
+        advertisement_id=first.advertisement_id,
+    )
+    second_key = beacon_advertisement_key(
+        feature_id=second.feature_id,
+        advertisement_id=second.advertisement_id,
+    )
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await beacon.wait_current()
+        await beacon._bucket.put(first_key, first)  # noqa: SLF001
+        second_entry = await beacon._bucket.put(second_key, second)  # noqa: SLF001
+        await beacon.wait_current()
+        bucket_generation = beacon._bucket.generation  # noqa: SLF001
+
+        async with beacon._lock:  # noqa: SLF001
+            beacon._entries_by_key.clear()  # noqa: SLF001
+            beacon._revision_by_key.clear()  # noqa: SLF001
+            beacon._invalid_by_key.clear()  # noqa: SLF001
+            beacon._keys_by_feature.clear()  # noqa: SLF001
+            beacon._keys_by_feature_endpoint.clear()  # noqa: SLF001
+            beacon._bucket_generation = 0  # noqa: SLF001
+
+        await beacon._apply_kv_change(  # noqa: SLF001
+            KvChange(
+                beacon.bucket,
+                second_key,
+                second_entry.revision,
+                "put",
+                second_entry,
+                view_generation=bucket_generation,
+            )
+        )
+
+        assert beacon.is_current()
+        assert {candidate.key for candidate in beacon.candidates(HARDWARE_FEATURE_ID)} == {
+            first_key,
+            second_key,
+        }
         tg.cancel_scope.cancel()
 
 
@@ -1401,6 +1523,68 @@ async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -
 
 
 @pytest.mark.asyncio
+async def test_concord_participant_periodic_reconcile_recovers_missed_notification(
+    monkeypatch,
+) -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    warmup_done = anyio.Event()
+    reconcile_count = 0
+
+    async def prepare_reconcile() -> None:
+        nonlocal reconcile_count
+        reconcile_count += 1
+        warmup_done.set()
+
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        refresh_interval=30.0,
+        reconcile_interval=0.05,
+        prepare_reconcile=prepare_reconcile,
+        accept_contract=lambda _contract, _record: True,
+    )
+
+    async def drop_notification(_reason: str) -> None:
+        return None
+
+    monkeypatch.setattr(lifecycle._notifications, "request", drop_notification)  # noqa: SLF001
+
+    async with anyio.create_task_group() as task_group:
+        lifecycle.start(task_group)
+        with anyio.fail_after(1):
+            await warmup_done.wait()
+
+        contract = await service._create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(),
+            created_by=controller,
+        )
+        await service._attach(contract, controller, "controller-session")
+
+        with anyio.fail_after(1):
+            while True:
+                managed = lifecycle.managed_contract(contract)
+                if (
+                    managed is not None
+                    and managed.token is not None
+                    and managed.validity.status == ContractValidityStatus.VALID
+                ):
+                    break
+                await anyio.sleep(0.01)
+
+        task_group.cancel_scope.cancel()
+
+    assert reconcile_count >= 2
+
+
+@pytest.mark.asyncio
 async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
@@ -2160,6 +2344,153 @@ async def test_concord_wait_current_rebuilds_generation_stale_cache() -> None:
         await service.wait_current()
 
         assert await service.get_contract(pointer) == contract
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_concord_startup_replay_large_contract_bucket_does_not_overflow_subscriber(
+    caplog,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="deckr.substrates.nats_kv")
+    contract_state = MemoryJsonKvBucket(bucket="contracts", buffer_size=160)
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    participants = tuple(
+        sorted(
+            (
+                controller_address("controller-main"),
+                hardware_manager_address("manager-main"),
+            ),
+            key=str,
+        )
+    )
+    for index in range(125):
+        contract_id = f"hardware-contract-{index:03d}"
+        record = ContractRecord(
+            contractId=contract_id,
+            generation=1,
+            participants=participants,
+            attachedParticipants=(),
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+        )
+        await contract_state.put(
+            concord_contract_key(contract_id=contract_id, generation=1),
+            record,
+        )
+
+    async with anyio.create_task_group() as tg:
+        service.start(tg)
+        await service.wait_current()
+        contracts = await service.contracts(HARDWARE_CLAIM_PROFILE_ID)
+
+        assert service.is_current()
+        assert len(contracts) == 125
+        assert "materialized subscriber buffer full" not in caplog.text
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_concord_contract_generation_gap_rebuilds_from_buckets() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(  # noqa: SLF001
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+
+    async with anyio.create_task_group() as tg:
+        service.start(tg)
+        await service.wait_current()
+        bucket_generation = service._coordinator._contract_bucket.generation  # noqa: SLF001
+        pointer = {"contractId": contract.contract_id, "generation": contract.generation}
+
+        async with service._lock:  # noqa: SLF001
+            service._clear_indexes_locked()  # noqa: SLF001
+            service._contract_bucket_generation = 0  # noqa: SLF001
+            service._token_bucket_generation = (  # noqa: SLF001
+                service._coordinator._token_bucket.generation  # noqa: SLF001
+            )
+            service._maintenance_bucket_generation = (  # noqa: SLF001
+                service._maintenance_bucket.generation  # noqa: SLF001
+            )
+
+        await service._apply_contract_change(  # noqa: SLF001
+            KvChange(
+                service.contract_bucket,
+                contract.key,
+                contract.revision,
+                "put",
+                view_generation=bucket_generation,
+            )
+        )
+
+        assert service.is_current()
+        assert await service.get_contract(pointer) == contract
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_attaches_existing_action_provider_session_after_replay() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts", buffer_size=20)
+    token_state = MemoryJsonKvBucket(bucket="tokens", buffer_size=20)
+    creator = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    provider = action_provider_address("provider-main")
+    provider_session_id = "provider-session"
+    terms = ActionProviderSessionTerms(
+        sessionId=provider_session_id,
+        controllerEndpoint=controller,
+        providerEndpoint=provider,
+        providerInstanceId="provider-main",
+        providerId="test.provider",
+    )
+    contract = await creator._create_contract(  # noqa: SLF001
+        (controller, provider),
+        contract_id=action_provider_session_contract_id(controller, provider),
+        profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
+        terms=terms,
+        created_by=controller,
+    )
+    await creator._attach(  # noqa: SLF001
+        contract,
+        controller,
+        "controller-session",
+        token_id="controller-token",
+    )
+
+    service = _concord(contract_state, token_state)
+    lifecycle = service.participant(
+        participant=provider,
+        session_id=provider_session_id,
+        profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
+        refresh_interval=30.0,
+        reconcile_interval=0.05,
+        accept_contract=lambda _contract, _record: True,
+        current_sessions=lambda _contract: {
+            str(controller): "controller-session",
+            str(provider): provider_session_id,
+        },
+    )
+
+    async with anyio.create_task_group() as tg:
+        service.start(tg)
+        lifecycle.start(tg)
+        with anyio.fail_after(1):
+            while True:
+                managed = lifecycle.managed_contract(contract)
+                if (
+                    managed is not None
+                    and managed.token is not None
+                    and managed.validity.status == ContractValidityStatus.VALID
+                ):
+                    break
+                await anyio.sleep(0.01)
         tg.cancel_scope.cancel()
 
 

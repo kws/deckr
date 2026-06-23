@@ -453,6 +453,28 @@ class Beacon:
         ]
         return tuple(sorted(candidates, key=_candidate_newest_sort_key))
 
+    async def candidates_exact(
+        self,
+        feature_id: str,
+        *,
+        selector: AdvertisementFilter | None = None,
+    ) -> tuple[Candidate, ...]:
+        feature_id = _require_text(feature_id, field_name="Beacon feature id")
+        candidates: list[Candidate] = []
+        for entry in await self._bucket.items_exact(beacon_feature_prefix(feature_id)):
+            candidate, _reason = _candidate_from_entry(entry)
+            if candidate is None:
+                continue
+            if candidate.advertisement.feature_id != feature_id:
+                continue
+            if selector is not None and not _selector_accepts(
+                selector,
+                candidate.advertisement,
+            ):
+                continue
+            candidates.append(candidate)
+        return tuple(sorted(candidates, key=_candidate_newest_sort_key))
+
     def get(
         self,
         *,
@@ -589,8 +611,8 @@ class Beacon:
 
     async def _event_loop(self) -> None:
         try:
+            await self._bucket.wait_current()
             async with self._bucket.subscribe() as changes:
-                await self._bucket.wait_current()
                 await self._rebuild_from_bucket()
                 self._ready.set()
                 async for change in changes:
@@ -779,6 +801,8 @@ class Beacon:
             self._leases.discard(lease)
 
     async def _apply_kv_change(self, change: KvChange) -> None:
+        if await self._rebuild_if_generation_gap(change):
+            return
         async with self._lock:
             events = self._apply_kv_change_locked(change)
         for subscriber, event in events:
@@ -793,6 +817,16 @@ class Beacon:
             except (anyio.BrokenResourceError, anyio.ClosedResourceError):
                 async with self._lock:
                     self._subscribers.discard(subscriber)
+
+    async def _rebuild_if_generation_gap(self, change: KvChange) -> bool:
+        if change.view_generation is None:
+            return False
+        async with self._lock:
+            gap = change.view_generation > self._bucket_generation + 1
+        if not gap:
+            return False
+        await self._rebuild_from_bucket()
+        return True
 
     def _apply_kv_change_locked(
         self,
@@ -1103,6 +1137,7 @@ def _is_materialized_bucket(value: Any) -> bool:
             "is_current",
             "wait_current",
             "get_exact",
+            "items_exact",
             "items_cached",
             "revision_cached",
             "subscribe",

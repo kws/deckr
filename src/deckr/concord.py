@@ -1917,15 +1917,15 @@ class Concord:
     async def _event_loop(self) -> None:
         contract_bucket = self._coordinator._contract_bucket  # noqa: SLF001
         token_bucket = self._coordinator._token_bucket  # noqa: SLF001
+        await contract_bucket.wait_current()
+        await token_bucket.wait_current()
+        await self._maintenance_bucket.wait_current()
         async with (
             contract_bucket.subscribe() as contract_changes,
             token_bucket.subscribe() as token_changes,
             self._maintenance_bucket.subscribe() as maintenance_changes,
             anyio.create_task_group() as task_group,
         ):
-            await contract_bucket.wait_current()
-            await token_bucket.wait_current()
-            await self._maintenance_bucket.wait_current()
             await self._rebuild_from_buckets()
             self._ready.set()
             task_group.start_soon(self._consume_contract_changes, contract_changes)
@@ -2022,20 +2022,56 @@ class Concord:
         self._maintenance_revision_by_key.clear()
 
     async def _apply_contract_change(self, change: KvChange) -> None:
+        if await self._rebuild_if_contract_generation_gap(change):
+            return
         async with self._lock:
             events = self._apply_contract_change_locked(change)
             deliveries = self._subscriber_deliveries_locked(events)
         await self._publish_events(events, deliveries)
 
     async def _apply_token_change(self, change: KvChange) -> None:
+        if await self._rebuild_if_token_generation_gap(change):
+            return
         async with self._lock:
             events = self._apply_token_change_locked(change)
             deliveries = self._subscriber_deliveries_locked(events)
         await self._publish_events(events, deliveries)
 
     async def _apply_maintenance_change(self, change: KvChange) -> None:
+        if await self._rebuild_if_maintenance_generation_gap(change):
+            return
         async with self._lock:
             self._apply_maintenance_change_locked(change)
+
+    async def _rebuild_if_contract_generation_gap(self, change: KvChange) -> bool:
+        if change.view_generation is None:
+            return False
+        async with self._lock:
+            gap = change.view_generation > self._contract_bucket_generation + 1
+        if not gap:
+            return False
+        await self._rebuild_from_buckets()
+        return True
+
+    async def _rebuild_if_token_generation_gap(self, change: KvChange) -> bool:
+        if change.view_generation is None:
+            return False
+        async with self._lock:
+            gap = change.view_generation > self._token_bucket_generation + 1
+        if not gap:
+            return False
+        await self._rebuild_from_buckets()
+        return True
+
+    async def _rebuild_if_maintenance_generation_gap(self, change: KvChange) -> bool:
+        if change.view_generation is None:
+            return False
+        async with self._lock:
+            gap = change.view_generation > self._maintenance_bucket_generation + 1
+        if not gap:
+            return False
+        await self._rebuild_from_buckets()
+        return True
 
     def _apply_contract_change_locked(self, change: KvChange) -> tuple[ConcordEvent, ...]:
         if not self._should_apply_contract_change_locked(change):
@@ -3388,7 +3424,6 @@ class Concord:
 
 STALE_OPEN_CONTRACT_STATUSES = frozenset(
     {
-        ContractValidityStatus.NOT_YET_FULFILLED,
         ContractValidityStatus.MISSING_TOKEN,
         ContractValidityStatus.INVALID_TOKEN,
         ContractValidityStatus.SESSION_MISMATCH,
@@ -3548,7 +3583,7 @@ class ConcordReaperService:
         validity = await self._concord._coordinator.validate(  # noqa: SLF001
             contract,
         )
-        if validity.status in STALE_OPEN_CONTRACT_STATUSES:
+        if _open_contract_validity_is_stale(validity):
             first_observed, created = await self._observe_stale(
                 contract_id=contract.contract_id,
                 generation=contract.generation,
@@ -4080,6 +4115,7 @@ class ConcordParticipant:
         self._started = True
         self._start_soon = start_soon
         start_soon(self.watch_loop)
+        start_soon(self.reconcile_loop)
         start_soon(self.notification_reconcile_loop)
 
     @asynccontextmanager
@@ -4885,6 +4921,15 @@ def _log_concord_event(event: ConcordEvent) -> None:
 
 
 ConcordTokenMaintenanceEntry = tuple[KvEntry, ParticipantTokenRecord | None]
+
+
+def _open_contract_validity_is_stale(validity: ContractValidity) -> bool:
+    if validity.status in STALE_OPEN_CONTRACT_STATUSES:
+        return True
+    return (
+        validity.status == ContractValidityStatus.NOT_YET_FULFILLED
+        and not validity.tokens
+    )
 
 
 def _empty_reaper_counts() -> dict[str, int]:
