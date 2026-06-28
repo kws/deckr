@@ -2604,6 +2604,31 @@ async def test_concord_service_use_missing_token_logs_below_info(caplog) -> None
 
 
 @pytest.mark.asyncio
+async def test_concord_service_use_token_refresh_logs_below_info(caplog) -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    service_endpoint = service_address("openhab-home")
+    client = action_provider_address("python-dev.deckr.openhab")
+    contract = await service._create_contract(
+        (service_endpoint, client),
+        contract_id="service-use:openhab",
+        profile="dev.deckr.openhab.service_use.v1",
+        created_by=client,
+    )
+    await service._attach(contract, service_endpoint, "service-session")
+    client_token = await service._attach(contract, client, "client-session")
+
+    caplog.set_level("INFO", logger="deckr.concord")
+    caplog.clear()
+    refreshed = await service._refresh_token(client_token)
+
+    assert refreshed.refresh_seq == client_token.refresh_seq + 1
+    assert "token refreshed" not in caplog.text
+    assert "token_refreshed" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")

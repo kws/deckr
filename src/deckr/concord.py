@@ -96,6 +96,10 @@ def _contract_pending_log_level(profile: str | None) -> int:
     return logging.INFO
 
 
+def _token_refresh_log_level() -> int:
+    return logging.DEBUG
+
+
 def _contract_invalid_log_level(
     profile: str | None,
     status: ContractValidityStatus | None,
@@ -4898,6 +4902,30 @@ def _log_concord_event(event: ConcordEvent) -> None:
             event.participant,
             status,
             event.reason,
+            contract.revision,
+        )
+        return
+    if event.event_type == ConcordEventType.TOKEN_ATTACHED:
+        logger.log(
+            _contract_lifecycle_log_level(event.profile),
+            "Concord participant token attached profile=%s contract=%s generation=%s "
+            "participant=%s revision=%s",
+            event.profile,
+            contract.contract_id,
+            contract.generation,
+            event.participant,
+            contract.revision,
+        )
+        return
+    if event.event_type == ConcordEventType.TOKEN_REFRESHED:
+        logger.log(
+            _token_refresh_log_level(),
+            "Concord participant token refreshed profile=%s contract=%s generation=%s "
+            "participant=%s revision=%s",
+            event.profile,
+            contract.contract_id,
+            contract.generation,
+            event.participant,
             contract.revision,
         )
         return
