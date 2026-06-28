@@ -115,6 +115,28 @@ async def test_nats_json_kv_keeps_existing_ttl_bucket_with_delete_markers() -> N
 
 
 @pytest.mark.asyncio
+async def test_nats_json_kv_exposes_resolved_bucket_ttl() -> None:
+    fake_js = _FakeJs(
+        existing=True,
+        max_age=45.0,
+        allow_msg_ttl=True,
+        subject_delete_marker_ttl=45_000_000_000,
+    )
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(
+            bucket="deckr_concord_token_v1",
+            ttl_seconds=45.0,
+            allow_write_ttl=True,
+        ),
+    )
+    materialized = NatsKvMaterializedBucket(bucket=bucket)
+
+    assert await bucket.ttl_seconds() == 45.0
+    assert await materialized.ttl_seconds() == 45.0
+
+
+@pytest.mark.asyncio
 async def test_nats_json_kv_persistent_bucket_does_not_require_delete_markers() -> None:
     fake_js = _FakeJs(
         existing=True,

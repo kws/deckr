@@ -105,6 +105,9 @@ class RacingUpdateKvBucket:
     def bucket(self) -> str:
         return self._inner.bucket
 
+    async def ttl_seconds(self):
+        return await self._inner.ttl_seconds()
+
     async def get(self, *args, **kwargs):
         return await self._inner.get(*args, **kwargs)
 
@@ -129,6 +132,17 @@ class RacingUpdateKvBucket:
 
     def watch(self, *args, **kwargs):
         return self._inner.watch(*args, **kwargs)
+
+
+class FailingUpdateKvBucket(MemoryJsonKvBucket):
+    def __init__(self, *, bucket: str, ttl_seconds: float | None = None) -> None:
+        super().__init__(bucket=bucket, ttl_seconds=ttl_seconds)
+        self.fail_updates = False
+
+    async def update(self, *args, **kwargs):
+        if self.fail_updates:
+            raise KvUnavailable("broker unavailable")
+        return await super().update(*args, **kwargs)
 
 
 class UnavailableWatch:
@@ -232,13 +246,15 @@ def _concord(
     contract_bucket: MemoryJsonKvBucket | object,
     token_bucket: MemoryJsonKvBucket | object,
     *,
-    token_ttl_seconds: int = 30,
+    token_bucket_ttl_seconds: int = 120,
 ) -> Concord:
+    inner_token_bucket = getattr(token_bucket, "_inner", token_bucket)
+    if isinstance(inner_token_bucket, MemoryJsonKvBucket):
+        inner_token_bucket._ttl_seconds = token_bucket_ttl_seconds
     return Concord(
         contract_bucket,
         token_bucket,
         MemoryJsonKvBucket(bucket=f"maintenance-{id(contract_bucket)}-{id(token_bucket)}"),
-        token_ttl_seconds=token_ttl_seconds,
     )
 
 
@@ -1203,7 +1219,7 @@ async def test_concord_refresh_returns_latest_token_after_revision_race() -> Non
 async def test_concord_participant_lease_closes_after_cancelled_contract() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
@@ -1230,10 +1246,11 @@ async def test_concord_participant_lease_closes_after_cancelled_contract() -> No
 
 
 @pytest.mark.asyncio
-async def test_concord_participant_lease_rate_limits_token_writes() -> None:
+async def test_concord_participant_lease_rate_limits_token_writes(monkeypatch) -> None:
+    monkeypatch.setattr("deckr.concord.random.uniform", lambda lower, _upper: lower)
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -1272,10 +1289,137 @@ async def test_concord_participant_lease_rate_limits_token_writes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concord_participant_lease_adopts_without_immediate_refresh() -> None:
+async def test_concord_participant_token_ttl_and_refresh_delay_use_bucket(
+    monkeypatch,
+) -> None:
+    refresh_ranges: list[tuple[float, float]] = []
+
+    def sample_lower(lower, upper):
+        refresh_ranges.append((lower, upper))
+        return lower
+
+    monkeypatch.setattr("deckr.concord.random.uniform", sample_lower)
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    lease = service._participant_lease(
+        contract=contract,
+        participant=controller,
+        session_id="controller-session",
+        refresh_interval=0.05,
+    )
+
+    first = await lease.attach_or_refresh()
+
+    assert first.ttl_seconds == 1
+    assert refresh_ranges[-1] == (0.5, 0.75)
+
+    token_state._ttl_seconds = 2
+    await anyio.sleep(0.55)
+    refreshed = await lease.attach_or_refresh()
+    refreshed_entry = await token_state.get(refreshed.key)
+
+    assert refreshed.ttl_seconds == 2
+    assert refreshed_entry is not None
+    assert ParticipantTokenRecord.model_validate(refreshed_entry.value).ttl_seconds == 2
+    assert refresh_ranges[-1] == (1.0, 1.5)
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_lease_cancels_on_refresh_unavailable(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("deckr.concord.random.uniform", lambda lower, _upper: lower)
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = FailingUpdateKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    lease = service._participant_lease(
+        contract=contract,
+        participant=controller,
+        session_id="controller-session",
+        refresh_interval=0.05,
+    )
+    await lease.attach_or_refresh()
+
+    token_state.fail_updates = True
+    await anyio.sleep(0.55)
+    with pytest.raises(ConcordUnavailable, match="broker unavailable"):
+        await lease.attach_or_refresh()
+
+    assert lease.token is None
+    with pytest.raises(ConcordConflict, match="closed"):
+        await lease.attach_or_refresh()
+    record = await service._coordinator.contract_record(contract)  # noqa: SLF001
+    assert record is not None
+    assert record.state == ContractState.CANCELLED
+    assert record.cancel_reason == concord_module.CONCORD_REFRESH_UNAVAILABLE_CANCEL_REASON
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_lease_closes_when_refresh_and_cancel_unavailable(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("deckr.concord.random.uniform", lambda lower, _upper: lower)
+    contract_state = FailingUpdateKvBucket(bucket="contracts")
+    token_state = FailingUpdateKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    lease = service._participant_lease(
+        contract=contract,
+        participant=controller,
+        session_id="controller-session",
+        refresh_interval=0.05,
+    )
+    await lease.attach_or_refresh()
+
+    contract_state.fail_updates = True
+    token_state.fail_updates = True
+    await anyio.sleep(0.55)
+    with pytest.raises(ConcordUnavailable, match="broker unavailable"):
+        await lease.attach_or_refresh()
+
+    assert lease.token is None
+    with pytest.raises(ConcordConflict, match="closed"):
+        await lease.attach_or_refresh()
+    record = await service._coordinator.contract_record(contract)  # noqa: SLF001
+    assert record is not None
+    assert record.state == ContractState.OPEN
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_lease_adopts_without_immediate_refresh(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("deckr.concord.random.uniform", lambda lower, _upper: lower)
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -1373,7 +1517,7 @@ async def test_concord_participant_lease_close_does_not_withdraw_changed_owner()
 async def test_concord_participant_manager_attaches_adopts_and_filters() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()
@@ -1423,7 +1567,7 @@ async def test_concord_participant_manager_attaches_adopts_and_filters() -> None
 async def test_concord_participant_manager_discovers_claims_from_participant_profile_index() -> None:
     contract_state = RecordingItemsKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     other_manager = hardware_manager_address("other-manager")
@@ -1473,7 +1617,7 @@ async def test_concord_participant_manager_discovers_claims_from_participant_pro
 async def test_concord_participant_manager_steady_reconcile_uses_watch_index() -> None:
     contract_state = RecordingItemsKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     contract = await service._create_contract(
@@ -1588,7 +1732,7 @@ async def test_concord_participant_periodic_reconcile_recovers_missed_notificati
 async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     lifecycle = service.participant(
@@ -1645,7 +1789,7 @@ async def test_concord_participant_manager_watch_periodic_and_valid_dedupe() -> 
 async def test_concord_participant_manager_notification_reconciles_expiry_and_cancel() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     lifecycle = ConcordParticipant(
@@ -2871,10 +3015,11 @@ async def test_concord_participant_manager_factory_reconciles() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concord_service_lease_events_and_logs(caplog) -> None:
+async def test_concord_service_lease_events_and_logs(caplog, monkeypatch) -> None:
+    monkeypatch.setattr("deckr.concord.random.uniform", lambda lower, _upper: lower)
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
-    service = _concord(contract_state, token_state, token_ttl_seconds=1)
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
     terms = _hardware_claim_terms()

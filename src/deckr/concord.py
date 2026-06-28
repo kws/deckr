@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import random
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping
 from contextlib import asynccontextmanager
@@ -37,8 +38,7 @@ CONCORD_STALE_OBSERVATION_SCHEMA_ID = "dev.deckr.concord.stale-observation.v1"
 DEFAULT_CONCORD_CONTRACT_BUCKET_NAME = "deckr_concord_contract_v1"
 DEFAULT_CONCORD_TOKEN_BUCKET_NAME = "deckr_concord_token_v1"
 DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME = "deckr_concord_maintenance_v1"
-DEFAULT_CONCORD_TOKEN_TTL_SECONDS = 30
-DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS = 15.0
+DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS = 60.0
 DEFAULT_CONCORD_PARTICIPANT_RECONCILE_SECONDS = 15.0
 DEFAULT_CONCORD_NOTIFICATION_BATCH_SECONDS = 0.05
 DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS = 900
@@ -46,6 +46,7 @@ DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS = 3600
 DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS = 60
 CONCORD_MAINTENANCE_ACTOR = "concord:maintenance"
 CONCORD_REAPER_STALE_CONTRACT_REASON = "concord_reaper_stale_contract"
+CONCORD_REFRESH_UNAVAILABLE_CANCEL_REASON = "participant_token_refresh_unavailable"
 ACTION_PROVIDER_SESSION_PROFILE_ID = "dev.deckr.profile.action_provider_session.v1"
 CONCORD_CONTRACT_BUCKET_POLICY = KvBucketPolicy(
     bucket=DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
@@ -59,7 +60,7 @@ CONCORD_MAINTENANCE_BUCKET_POLICY = KvBucketPolicy(
 )
 CONCORD_TOKEN_BUCKET_POLICY = KvBucketPolicy(
     bucket=DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
-    ttl_seconds=float(DEFAULT_CONCORD_TOKEN_TTL_SECONDS),
+    ttl_seconds=120.0,
     allow_write_ttl=True,
     description="Concord participant token KV",
 )
@@ -173,13 +174,30 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def _concord_token_refresh_interval(
+def _concord_token_refresh_delay(
     *,
     requested: float,
     ttl_seconds: int | float,
 ) -> float:
     ttl = float(ttl_seconds)
-    return min(max(float(requested), ttl / 2), ttl * 0.8)
+    upper = ttl * 0.75
+    lower = min(max(float(requested), ttl * 0.5), upper)
+    return random.uniform(lower, upper)
+
+
+def _concord_token_ttl_seconds(value: float | int | None, *, bucket: str) -> int:
+    if value is None:
+        raise ConcordUnavailable(
+            f"Concord participant token bucket {bucket!r} must be TTL-bound"
+        )
+    ttl = float(value)
+    rounded = int(ttl)
+    if ttl <= 0 or abs(ttl - rounded) > 0.001:
+        raise ConcordUnavailable(
+            f"Concord participant token bucket {bucket!r} TTL must be positive "
+            "whole seconds"
+        )
+    return rounded
 
 
 def concord_contract_key(*, contract_id: str, generation: int) -> str:
@@ -811,6 +829,20 @@ class _ConcordBucketAdapter:
     def generation(self) -> int:
         return int(getattr(self._bucket, "generation", 0))
 
+    async def ttl_seconds(self) -> int:
+        ttl_seconds = getattr(self._bucket, "ttl_seconds", None)
+        if ttl_seconds is None:
+            raise ConcordUnavailable(
+                f"Concord KV bucket {self.bucket!r} does not expose TTL metadata"
+            )
+        try:
+            value = ttl_seconds()
+            if hasattr(value, "__await__"):
+                value = await value
+        except KvUnavailable as exc:
+            raise ConcordUnavailable(str(exc)) from exc
+        return _concord_token_ttl_seconds(value, bucket=self.bucket)
+
     async def wait_ready(self) -> None:
         await self._bucket.wait_ready()
 
@@ -950,14 +982,9 @@ class _ConcordKvStore:
         self,
         contract_bucket: NatsKvMaterializedBucket | Any,
         token_bucket: NatsKvMaterializedBucket | Any,
-        *,
-        token_ttl_seconds: int = DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
     ) -> None:
-        if token_ttl_seconds <= 0:
-            raise ValueError("token_ttl_seconds must be greater than zero")
         self._contract_bucket = _ConcordBucketAdapter(contract_bucket)
         self._token_bucket = _ConcordBucketAdapter(token_bucket)
-        self._token_ttl_seconds = token_ttl_seconds
 
     async def create_contract(
         self,
@@ -1047,7 +1074,6 @@ class _ConcordKvStore:
         session_id: str,
         *,
         token_id: str | None = None,
-        ttl_seconds: int | None = None,
     ) -> ParticipantHandle:
         current = await self._contract_bucket.get(contract.key)
         if current is None:
@@ -1060,7 +1086,7 @@ class _ConcordKvStore:
             raise ValueError("participant is not named by the Concord contract")
         if parsed_participant in record.attached_participants:
             raise ConcordConflict("Concord participant is already attached")
-        ttl = ttl_seconds or self._token_ttl_seconds
+        ttl = await self._token_bucket.ttl_seconds()
         token = ParticipantTokenRecord(
             contractId=record.contract_id,
             generation=record.generation,
@@ -1162,7 +1188,13 @@ class _ConcordKvStore:
         token = ParticipantTokenRecord.model_validate(token_entry.value)
         if not _token_matches_handle(token, handle):
             raise ConcordConflict("Concord participant token changed owner")
-        refreshed = token.model_copy(update={"refresh_seq": token.refresh_seq + 1})
+        ttl = await self._token_bucket.ttl_seconds()
+        refreshed = token.model_copy(
+            update={
+                "refresh_seq": token.refresh_seq + 1,
+                "ttl_seconds": ttl,
+            }
+        )
         try:
             entry = await self._token_bucket.update(
                 handle.key,
@@ -1515,7 +1547,6 @@ class ConcordParticipantLease:
         participant: str | EndpointAddress,
         session_id: str,
         token_id: str | None = None,
-        ttl_seconds: int | None = None,
         refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
         log_label: str = "Concord",
     ) -> None:
@@ -1526,12 +1557,8 @@ class ConcordParticipantLease:
         self.participant = parse_endpoint_address(participant)
         self.session_id = _require_text(session_id, field_name="Concord session id")
         self._token_id = token_id
-        self._ttl_seconds = ttl_seconds
         self._requested_refresh_interval = refresh_interval
-        self._refresh_interval = _concord_token_refresh_interval(
-            requested=refresh_interval,
-            ttl_seconds=ttl_seconds or service._coordinator._token_ttl_seconds,  # noqa: SLF001
-        )
+        self._refresh_interval = refresh_interval
         self._log_label = log_label
         self._token: ParticipantHandle | None = None
         self._last_refresh_at: float | None = None
@@ -1589,7 +1616,7 @@ class ConcordParticipantLease:
             raise ValueError("participant token belongs to a different session")
         if self._token == token:
             return
-        self._refresh_interval = _concord_token_refresh_interval(
+        self._refresh_interval = _concord_token_refresh_delay(
             requested=self._requested_refresh_interval,
             ttl_seconds=token.ttl_seconds,
         )
@@ -1612,6 +1639,10 @@ class ConcordParticipantLease:
                     self._token = await self._service._refresh_token(
                         token,
                         log_label=self._log_label,
+                    )
+                    self._refresh_interval = _concord_token_refresh_delay(
+                        requested=self._requested_refresh_interval,
+                        ttl_seconds=self._token.ttl_seconds,
                     )
                     self._last_refresh_at = monotonic()
                     return self._token
@@ -1644,16 +1675,51 @@ class ConcordParticipantLease:
                             exc_info=True,
                         )
                     raise
+                except ConcordUnavailable:
+                    self._token = None
+                    self._last_refresh_at = None
+                    self._closed = True
+                    logger.warning(
+                        "%s Concord participant token refresh unavailable; "
+                        "authority lost contract=%s generation=%s participant=%s "
+                        "session=%s",
+                        self._log_label,
+                        self.contract.contract_id,
+                        self.contract.generation,
+                        self.participant,
+                        self.session_id,
+                        exc_info=True,
+                    )
+                    try:
+                        await self._service._cancel(  # noqa: SLF001
+                            self.contract,
+                            self.participant,
+                            reason=CONCORD_REFRESH_UNAVAILABLE_CANCEL_REASON,
+                            log_label=self._log_label,
+                        )
+                    except (ConcordConflict, ConcordUnavailable, ValueError):
+                        logger.debug(
+                            "%s could not cancel Concord contract after token "
+                            "refresh became unavailable contract=%s generation=%s "
+                            "participant=%s session=%s",
+                            self._log_label,
+                            self.contract.contract_id,
+                            self.contract.generation,
+                            self.participant,
+                            self.session_id,
+                            exc_info=True,
+                        )
+                    await self._service._forget_participant_lease(self)  # noqa: SLF001
+                    raise
             try:
                 self._token = await self._service._attach(
                     self.contract,
                     self.participant,
                     self.session_id,
                     token_id=self._token_id,
-                    ttl_seconds=self._ttl_seconds,
                     log_label=self._log_label,
                 )
-                self._refresh_interval = _concord_token_refresh_interval(
+                self._refresh_interval = _concord_token_refresh_delay(
                     requested=self._requested_refresh_interval,
                     ttl_seconds=self._token.ttl_seconds,
                 )
@@ -1702,6 +1768,8 @@ class ConcordParticipantLease:
                     exc_info=True,
                 )
             except ConcordUnavailable:
+                if self._closed:
+                    return
                 logger.warning(
                     "%s Concord participant token unavailable; heartbeat will retry "
                     "contract=%s generation=%s participant=%s session=%s",
@@ -1732,13 +1800,11 @@ class Concord:
         token_bucket: NatsKvMaterializedBucket | Any,
         maintenance_bucket: NatsKvMaterializedBucket | Any,
         *,
-        token_ttl_seconds: int = DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
         buffer_size: int = 100,
     ) -> None:
         self._coordinator = _ConcordKvStore(
             contract_bucket,
             token_bucket,
-            token_ttl_seconds=token_ttl_seconds,
         )
         self._maintenance_bucket = _ConcordBucketAdapter(maintenance_bucket)
         self._buffer_size = buffer_size
@@ -2911,7 +2977,6 @@ class Concord:
         participant: str | EndpointAddress,
         session_id: str,
         token_id: str | None = None,
-        ttl_seconds: int | None = None,
         refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
         log_label: str = "Concord",
     ) -> ConcordParticipantLease:
@@ -2922,7 +2987,6 @@ class Concord:
             participant=participant,
             session_id=session_id,
             token_id=token_id,
-            ttl_seconds=ttl_seconds,
             refresh_interval=refresh_interval,
             log_label=log_label,
         )
@@ -3134,7 +3198,6 @@ class Concord:
         session_id: str,
         *,
         token_id: str | None = None,
-        ttl_seconds: int | None = None,
         log_label: str = "Concord",
     ) -> ParticipantHandle:
         token = await self._coordinator.attach(
@@ -3142,7 +3205,6 @@ class Concord:
             participant,
             session_id,
             token_id=token_id,
-            ttl_seconds=ttl_seconds,
         )
         contract_entry = self._coordinator._contract_bucket.get_cached(  # noqa: SLF001
             contract.key
@@ -3340,7 +3402,6 @@ class Concord:
         participant: str | EndpointAddress,
         session_id: str,
         token_id: str | None = None,
-        ttl_seconds: int | None = None,
         refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
         log_label: str = "Concord",
     ) -> ConcordParticipantLease:
@@ -3350,7 +3411,6 @@ class Concord:
             participant=participant,
             session_id=session_id,
             token_id=token_id,
-            ttl_seconds=ttl_seconds,
             refresh_interval=refresh_interval,
             log_label=log_label,
         )
@@ -5177,7 +5237,6 @@ __all__ = [
     "DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS",
     "DEFAULT_CONCORD_TOKEN_BUCKET_NAME",
     "DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS",
-    "DEFAULT_CONCORD_TOKEN_TTL_SECONDS",
     "ContractHandle",
     "ContractPointer",
     "ContractRecord",

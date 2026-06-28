@@ -11,13 +11,23 @@ from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
 
 
 class MemoryJsonKvBucket:
-    def __init__(self, *, bucket: str, buffer_size: int = 100) -> None:
+    def __init__(
+        self,
+        *,
+        bucket: str,
+        buffer_size: int = 100,
+        ttl_seconds: float | None = None,
+    ) -> None:
         self.bucket = bucket
         self._buffer_size = buffer_size
+        self._ttl_seconds = ttl_seconds
         self._revision = 0
         self._entries: dict[str, KvEntry] = {}
         self._watchers: dict[anyio.abc.ObjectSendStream[KvChange | None], str] = {}
         self._lock = anyio.Lock()
+
+    async def ttl_seconds(self) -> float | None:
+        return self._ttl_seconds
 
     async def get(self, key: str) -> KvEntry | None:
         async with self._lock:

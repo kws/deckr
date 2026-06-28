@@ -87,10 +87,15 @@ class NatsJsonKvBucket:
         self.policy = policy
         self._buffer_size = buffer_size
         self._kv = None
+        self._resolved_ttl_seconds: float | None = None
 
     @property
     def bucket(self) -> str:
         return self.policy.bucket
+
+    async def ttl_seconds(self) -> float | None:
+        await self._available_kv()
+        return self._resolved_ttl_seconds
 
     async def get(self, key: str) -> KvEntry | None:
         kv = await self._available_kv()
@@ -369,6 +374,10 @@ class NatsJsonKvBucket:
                 != expected_marker_ttl_ns
             )
         if not needs_update:
+            self._resolved_ttl_seconds = _resolved_stream_ttl_seconds(
+                config,
+                raw_config=raw_config,
+            )
             return
         try:
             if raw_config is None:
@@ -391,12 +400,17 @@ class NatsJsonKvBucket:
                     stream_name,
                     updated_config,
                 )
+                raw_config = updated_config
         except Exception as exc:
             raise RuntimeError(
                 f"Existing NATS KV bucket {self.bucket!r} is not configured for "
                 "Deckr's current KV policy. "
                 f"Delete the development bucket/stream KV_{self.bucket} and restart."
             ) from exc
+        self._resolved_ttl_seconds = _resolved_stream_ttl_seconds(
+            config,
+            raw_config=raw_config,
+        )
 
     def _validate_ttl(self, ttl: float | None) -> None:
         if not self.policy.allow_write_ttl:
@@ -479,6 +493,15 @@ class NatsKvMaterializedBucket:
     @property
     def generation(self) -> int:
         return self._generation
+
+    async def ttl_seconds(self) -> float | None:
+        ttl_seconds = getattr(self._bucket, "ttl_seconds", None)
+        if ttl_seconds is None:
+            return None
+        value = ttl_seconds()
+        if hasattr(value, "__await__"):
+            value = await value
+        return value
 
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
         if self._started:
@@ -730,6 +753,22 @@ def _raw_duration_nanoseconds(
     if value is None:
         return None
     return int(value)
+
+
+def _resolved_stream_ttl_seconds(
+    config: Any,
+    *,
+    raw_config: Mapping[str, Any] | None,
+) -> float | None:
+    raw_max_age = _raw_duration_nanoseconds(raw_config, "max_age")
+    if raw_max_age is not None:
+        if raw_max_age == 0:
+            return None
+        return raw_max_age / NATS_NANOSECONDS_PER_SECOND
+    max_age = getattr(config, "max_age", None)
+    if max_age is None or max_age == 0:
+        return None
+    return float(max_age)
 
 
 async def _nats_stream_raw_config(js: Any, stream_name: str) -> Mapping[str, Any]:

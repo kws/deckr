@@ -73,6 +73,7 @@ def mock_message_bus(
             bucket = MemoryJsonKvBucket(
                 bucket=policy.bucket,
                 buffer_size=100,
+                ttl_seconds=policy.ttl_seconds,
             )
             buckets[policy.bucket] = bucket
         return bucket

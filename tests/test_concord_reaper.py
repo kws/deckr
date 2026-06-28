@@ -52,6 +52,9 @@ class UnavailableGetKvBucket:
         self._inner = inner
         self.bucket = inner.bucket
 
+    async def ttl_seconds(self):
+        return await self._inner.ttl_seconds()
+
     async def get(self, key: str):
         del key
         raise ConcordUnavailable("state unavailable")
@@ -90,7 +93,7 @@ class CountingNoWatchKvBucket(MemoryJsonKvBucket):
 def _stores():
     return (
         MemoryJsonKvBucket(bucket="contracts"),
-        MemoryJsonKvBucket(bucket="tokens"),
+        MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120),
         MemoryJsonKvBucket(bucket="maintenance"),
     )
 

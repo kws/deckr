@@ -195,18 +195,25 @@ participant must not write another participant's token.
 
 Refresh a token by exact-reading the contract and token, confirming both still
 match the local handle, incrementing `refreshSeq`, and revision-guarded
-`update(tokenKey, tokenRecord)`. If the contract is cancelled, the token is
-missing, or the token has changed owner/session/token id/terms hash, the
-participant no longer maintains authority for that contract generation.
-The default participant-token TTL is 30 seconds. The default local Concord token
-refresh interval is 15 seconds. Lease implementations treat configured refresh
-intervals as requested cadence, not guaranteed write cadence. Participant-token
-refresh writes are clamped to no faster than `ttlSeconds / 2` and no later than
-`ttlSeconds * 0.8`; with the default 30-second TTL this preserves the 15-second
-write cadence. Leases may validate/adopt the current token more often, but they
-should not write a token refresh until a token must be attached or the effective
-refresh interval is due. If reconciliation observes fresher same-session token
-details, the local lease adopts them without immediately writing again.
+`update(tokenKey, tokenRecord)`. Python Concord derives `ttlSeconds` from the
+token KV bucket TTL instead of a separate participant setting; the default
+Python token bucket TTL is 120 seconds. Python lease implementations treat
+configured refresh intervals as requested cadence, not guaranteed write cadence.
+Participant-token refresh writes are scheduled from the token TTL with jitter
+between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`; with the default Python
+120-second bucket TTL this produces 60-90 second refreshes. Leases may
+validate/adopt the current token more often, but they should not write a token
+refresh until a token must be attached or the effective refresh interval is due.
+If reconciliation observes fresher same-session token details, the local lease
+adopts them without immediately writing again. Rust token refresh behavior is
+unchanged until the Python behavior has landed and stabilized.
+
+If the contract is cancelled, the token is missing, or the token has changed
+owner/session/token id/terms hash, the participant no longer maintains authority
+for that contract generation. In Python, token refresh unavailability is treated
+as loss of authority: the local lease closes immediately, attempts best-effort
+contract cancellation, and relies on token TTL expiry if the same NATS/KV failure
+prevents writing the cancellation.
 
 When a participant lease or owner-side agreement closes cleanly, it should
 best-effort withdraw its owned token by exact-reading the token, confirming
