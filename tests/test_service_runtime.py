@@ -54,7 +54,7 @@ def _protocol(
 
 
 def _memory_beacon() -> Beacon:
-    return Beacon(MemoryJsonKvBucket(bucket="beacon"))
+    return Beacon(MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300))
 
 
 async def _publish_service_advertisement(

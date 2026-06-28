@@ -765,7 +765,7 @@ assert no_unbound_consumers_accumulate_after_idle(timeout = 30)
 Pass criteria: normal hot paths reuse managed materialized views or exact reads
 that clean up after themselves. Consumer count stabilizes.
 
-### DIT-OPS-002: Heartbeat Refresh Cadence Is Clamped
+### DIT-OPS-002: Heartbeat Refresh Cadence Is TTL-Governed
 
 Spec source: `docs/beacon-concord.md#beacon`,
 `docs/beacon-concord.md#concord`
@@ -779,21 +779,23 @@ Pseudocode:
 broker = fresh_broker()
 runtime = start_runtime(ImplA, "hardware_manager:n4")
 
-ad = runtime.beacon.advertise(ttlSeconds = 30, refreshInterval = 0.1)
-token = runtime.concord.attach_token(ttlSeconds = 30, refreshInterval = 0.1)
+ad = runtime.beacon.advertise(refreshInterval = 0.1)
+token = runtime.concord.attach_token(refreshInterval = 0.1)
 
-for duration 45 seconds:
+for duration long_enough_to_observe_two_refreshes:
   ad.refresh()
   token.refresh()
   sleep(0.1)
 
-assert write_rate(ad.key) <= approximately_one_write_per_5_seconds
-assert write_rate(token.key) <= approximately_one_write_per_15_seconds
+assert write_intervals(ad.key) are between 150 and 225 seconds
+assert write_intervals(token.key) are between 60 and 90 seconds
 ```
 
-Pass criteria: unchanged Beacon heartbeat writes are clamped to no faster than
-`ttlSeconds / 6`; unchanged Concord token writes are clamped to no faster than
-`ttlSeconds / 2`.
+Pass criteria: Python Beacon derives `ttlSeconds` from the 300-second Beacon KV
+bucket TTL and schedules unchanged heartbeat writes with jitter between
+`ttlSeconds * 0.5` and `ttlSeconds * 0.75`. Python Concord does the same from
+the 120-second participant-token bucket TTL. Real payload or token changes still
+publish immediately.
 
 ### DIT-OPS-003: Revision Guards Prevent Deleting Another Owner's State
 

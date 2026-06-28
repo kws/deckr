@@ -44,8 +44,11 @@ generic state store is no longer part of the Python runtime. Beacon and Concord
 open their explicit JetStream KV bucket policies directly and serve normal reads
 from materialized views.
 TTL-bound heartbeats are core-governed. Caller-provided refresh intervals are
-requests, not guaranteed write cadences. Beacon advertisement writes are clamped
-to no faster than `ttlSeconds / 6` and no later than `ttlSeconds * 0.8`.
+requests, not guaranteed write cadences. Python Beacon advertisements derive
+`ttlSeconds` from the Beacon KV bucket TTL and schedule managed heartbeat
+refreshes with jitter between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`; with
+the default 300-second Python Beacon bucket TTL this produces 150-225 second
+advertisement refreshes.
 Python Concord participant-token writes derive `ttlSeconds` from the token KV
 bucket TTL and schedule refreshes with jitter between `ttlSeconds * 0.5` and
 `ttlSeconds * 0.75`; with the default 120-second Python token bucket TTL this
@@ -135,7 +138,6 @@ advertisement = await beacon.advertise(
         endpoint="hardware_manager:mirabox-main",
         session_id="manager-session",
         payload=payload,
-        refresh_interval=5.0,
     )
 )
 handle = advertisement.handle
@@ -155,7 +157,7 @@ Managed `Beacon.advertise(...)` performs best-effort same
 feature/advertiser/endpoint startup cleanup by default, using revision-guarded
 deletes for stale advertisements left by crashed sessions or changed
 configuration. Real advertisement content changes still publish immediately;
-unchanged heartbeat refreshes follow the effective TTL-clamped cadence.
+unchanged heartbeat refreshes follow the Python Beacon bucket TTL jitter cadence.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
 

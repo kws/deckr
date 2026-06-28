@@ -29,7 +29,7 @@ async def test_nats_json_kv_creates_bucket_with_policy_ttl() -> None:
         js=fake_js,
         policy=KvBucketPolicy(
             bucket="deckr_beacon_advertisement_v1",
-            ttl_seconds=30.0,
+            ttl_seconds=300.0,
             allow_write_ttl=True,
         ),
     )
@@ -40,11 +40,11 @@ async def test_nats_json_kv_creates_bucket_with_policy_ttl() -> None:
     assert entry.value == {"owner": "hw"}
     assert fake_js.created_config is not None
     assert fake_js.created_config.bucket == "deckr_beacon_advertisement_v1"
-    assert fake_js.created_config.ttl == 30.0
+    assert fake_js.created_config.ttl == 300.0
     assert fake_js.created_config.history == 1
     assert fake_js.updated_raw_config is not None
-    assert fake_js.updated_raw_config["max_age"] == 30_000_000_000
-    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 30_000_000_000
+    assert fake_js.updated_raw_config["max_age"] == 300_000_000_000
+    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 300_000_000_000
 
 
 @pytest.mark.asyncio
@@ -72,7 +72,7 @@ async def test_nats_json_kv_updates_existing_bucket_policy() -> None:
 async def test_nats_json_kv_updates_existing_ttl_bucket_missing_delete_markers() -> None:
     fake_js = _FakeJs(
         existing=True,
-        max_age=30.0,
+        max_age=300.0,
         allow_msg_ttl=True,
         subject_delete_marker_ttl=None,
     )
@@ -80,7 +80,7 @@ async def test_nats_json_kv_updates_existing_ttl_bucket_missing_delete_markers()
         js=fake_js,
         policy=KvBucketPolicy(
             bucket="deckr_beacon_advertisement_v1",
-            ttl_seconds=30.0,
+            ttl_seconds=300.0,
             allow_write_ttl=True,
         ),
     )
@@ -88,22 +88,22 @@ async def test_nats_json_kv_updates_existing_ttl_bucket_missing_delete_markers()
     await bucket.put("advertisements.by_feature.hardware.deck", {"owner": "hw"})
 
     assert fake_js.updated_raw_config is not None
-    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 30_000_000_000
+    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 300_000_000_000
 
 
 @pytest.mark.asyncio
 async def test_nats_json_kv_keeps_existing_ttl_bucket_with_delete_markers() -> None:
     fake_js = _FakeJs(
         existing=True,
-        max_age=30.0,
+        max_age=300.0,
         allow_msg_ttl=True,
-        subject_delete_marker_ttl=30_000_000_000,
+        subject_delete_marker_ttl=300_000_000_000,
     )
     bucket = NatsJsonKvBucket(
         js=fake_js,
         policy=KvBucketPolicy(
             bucket="deckr_beacon_advertisement_v1",
-            ttl_seconds=30.0,
+            ttl_seconds=300.0,
             allow_write_ttl=True,
         ),
     )

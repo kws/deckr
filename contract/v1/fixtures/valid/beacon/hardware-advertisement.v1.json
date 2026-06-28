@@ -145,6 +145,6 @@
   "refreshSeq": 1,
   "schema": "dev.deckr.beacon.advertisement.v1",
   "sessionId": "manager-session",
-  "ttlSeconds": 30,
+  "ttlSeconds": 300,
   "updatedAt": "2026-04-29T10:00:00Z"
 }

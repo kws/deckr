@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -27,8 +28,7 @@ from deckr.substrates.nats_kv import (
 
 BEACON_ADVERTISEMENT_SCHEMA_ID = "dev.deckr.beacon.advertisement.v1"
 DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME = "deckr_beacon_advertisement_v1"
-DEFAULT_BEACON_TTL_SECONDS = 30
-DEFAULT_BEACON_REFRESH_SECONDS = 5.0
+DEFAULT_BEACON_TTL_SECONDS = 300
 BEACON_ADVERTISEMENT_STORE_POLICY = KvBucketPolicy(
     bucket=DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
     ttl_seconds=float(DEFAULT_BEACON_TTL_SECONDS),
@@ -83,9 +83,30 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def _beacon_refresh_interval(*, requested: float, ttl_seconds: int | float) -> float:
+def _beacon_refresh_interval(
+    *,
+    requested: float | None,
+    ttl_seconds: int | float,
+) -> float:
     ttl = float(ttl_seconds)
-    return min(max(float(requested), ttl / 6), ttl * 0.8)
+    upper = ttl * 0.75
+    lower = ttl * 0.5
+    if requested is not None:
+        lower = min(max(float(requested), lower), upper)
+    return random.uniform(lower, upper)
+
+
+def _beacon_ttl_seconds(value: float | int | None, *, bucket: str) -> int:
+    if value is None:
+        raise KvUnavailable(f"Beacon advertisement bucket {bucket!r} must be TTL-bound")
+    ttl = float(value)
+    rounded = int(ttl)
+    if ttl <= 0 or abs(ttl - rounded) > 0.001:
+        raise KvUnavailable(
+            f"Beacon advertisement bucket {bucket!r} TTL must be positive "
+            "whole seconds"
+        )
+    return rounded
 
 
 def beacon_advertisement_key(*, feature_id: str, advertisement_id: str) -> str:
@@ -278,8 +299,7 @@ class BeaconAdvertisementSpec:
     labels: Mapping[str, str] | None = None
     hints: Mapping[str, Any] | None = None
     payload: Mapping[str, Any] | None = None
-    ttl_seconds: int | None = None
-    refresh_interval: float = DEFAULT_BEACON_REFRESH_SECONDS
+    refresh_interval: float | None = None
     log_label: str = "Beacon"
 
     def __post_init__(self) -> None:
@@ -291,10 +311,8 @@ class BeaconAdvertisementSpec:
             if self.advertiser is not None
             else endpoint
         )
-        if self.refresh_interval <= 0:
+        if self.refresh_interval is not None and self.refresh_interval <= 0:
             raise ValueError("refresh_interval must be greater than zero")
-        if self.ttl_seconds is not None and self.ttl_seconds <= 0:
-            raise ValueError("ttl_seconds must be greater than zero")
         operations = tuple(
             _require_text(item, field_name="Beacon operation")
             for item in self.operations
@@ -335,17 +353,13 @@ class Beacon:
         self,
         bucket: NatsKvMaterializedBucket | Any,
         *,
-        default_ttl_seconds: int = DEFAULT_BEACON_TTL_SECONDS,
         buffer_size: int = 100,
     ) -> None:
-        if default_ttl_seconds <= 0:
-            raise ValueError("default_ttl_seconds must be greater than zero")
         self._bucket = (
             bucket
             if _is_materialized_bucket(bucket)
             else NatsKvMaterializedBucket(bucket=bucket, buffer_size=buffer_size)
         )
-        self._default_ttl_seconds = default_ttl_seconds
         self._buffer_size = buffer_size
         self._ready = anyio.Event()
         self._started = False
@@ -658,16 +672,17 @@ class Beacon:
         *,
         advertisement_id: str,
     ) -> AdvertisementHandle:
+        ttl_seconds = await self._ttl_seconds()
         record = _record_from_spec(
             spec,
             advertisement_id=advertisement_id,
-            default_ttl_seconds=self._default_ttl_seconds,
+            ttl_seconds=ttl_seconds,
         )
         key = beacon_advertisement_key(
             feature_id=record.feature_id,
             advertisement_id=record.advertisement_id,
         )
-        entry = await self._bucket.create(key, record, ttl=record.ttl_seconds)
+        entry = await self._bucket.create(key, record, ttl=ttl_seconds)
         await self._apply_kv_change(
             KvChange(
                 self.bucket,
@@ -691,6 +706,7 @@ class Beacon:
         payload: Mapping[str, Any] | None,
         force_refresh: bool,
     ) -> AdvertisementHandle:
+        ttl_seconds = await self._ttl_seconds()
         current = self._entries_by_key.get(handle.key)
         if current is None:
             exact = await self._bucket.get_exact(handle.key)
@@ -709,6 +725,7 @@ class Beacon:
             labels=labels,
             hints=hints,
             payload=payload,
+            ttl_seconds=ttl_seconds,
             force_refresh=force_refresh,
         )
         if refreshed is record:
@@ -718,7 +735,7 @@ class Beacon:
                 handle.key,
                 refreshed,
                 revision=current.revision,
-                ttl=refreshed.ttl_seconds,
+                ttl=ttl_seconds,
             )
         except KvConflict:
             exact = await self._bucket.get_exact(handle.key)
@@ -737,13 +754,14 @@ class Beacon:
                 labels=labels,
                 hints=hints,
                 payload=payload,
+                ttl_seconds=ttl_seconds,
                 force_refresh=True,
             )
             entry = await self._bucket.update(
                 handle.key,
                 refreshed,
                 revision=exact_candidate.revision,
-                ttl=refreshed.ttl_seconds,
+                ttl=ttl_seconds,
             )
         await self._apply_kv_change(
             KvChange(
@@ -756,6 +774,15 @@ class Beacon:
             )
         )
         return _advertisement_handle(handle.key, refreshed, entry.revision)
+
+    async def _ttl_seconds(self) -> int:
+        ttl_seconds = getattr(self._bucket, "ttl_seconds", None)
+        value = None
+        if ttl_seconds is not None:
+            value = ttl_seconds()
+            if hasattr(value, "__await__"):
+                value = await value
+        return _beacon_ttl_seconds(value, bucket=self.bucket)
 
     async def _withdraw_advertisement(self, handle: AdvertisementHandle) -> bool:
         current = await self._bucket.get_exact(handle.key)
@@ -975,10 +1002,8 @@ class BeaconAdvertisementLease:
         self._labels = dict(spec.labels or {})
         self._hints = dict(spec.hints or {})
         self._payload = dict(spec.payload) if spec.payload is not None else None
-        self._refresh_interval = _beacon_refresh_interval(
-            requested=spec.refresh_interval,
-            ttl_seconds=spec.ttl_seconds or beacon._default_ttl_seconds,  # noqa: SLF001
-        )
+        self._requested_refresh_interval = spec.refresh_interval
+        self._refresh_interval: float | None = None
         self._log_label = spec.log_label
         self._handle: AdvertisementHandle | None = None
         self._last_refresh_at: float | None = None
@@ -1064,6 +1089,8 @@ class BeaconAdvertisementLease:
 
     async def _heartbeat_loop(self) -> None:
         while not self._closed:
+            if self._refresh_interval is None:
+                self._refresh_interval = await self._next_refresh_interval()
             await anyio.sleep(self._refresh_interval)
             if self._closed:
                 return
@@ -1091,6 +1118,7 @@ class BeaconAdvertisementLease:
                 advertisement_id=self._advertisement_id,
             )
             self._last_refresh_at = monotonic()
+            self._refresh_interval = await self._next_refresh_interval()
             return self._handle
         if force_refresh and not self._refresh_due():
             return self._handle
@@ -1119,12 +1147,20 @@ class BeaconAdvertisementLease:
         self._handle = refreshed
         if refreshed.revision != old_revision:
             self._last_refresh_at = monotonic()
+            self._refresh_interval = await self._next_refresh_interval()
         return refreshed
 
     def _refresh_due(self) -> bool:
         return (
             self._last_refresh_at is None
+            or self._refresh_interval is None
             or monotonic() - self._last_refresh_at >= self._refresh_interval
+        )
+
+    async def _next_refresh_interval(self) -> float:
+        return _beacon_refresh_interval(
+            requested=self._requested_refresh_interval,
+            ttl_seconds=await self._beacon._ttl_seconds(),  # noqa: SLF001
         )
 
 
@@ -1163,7 +1199,7 @@ def _record_from_spec(
     spec: BeaconAdvertisementSpec,
     *,
     advertisement_id: str,
-    default_ttl_seconds: int,
+    ttl_seconds: int,
 ) -> AdvertisementRecord:
     now = _now_utc()
     return AdvertisementRecord(
@@ -1173,7 +1209,7 @@ def _record_from_spec(
         endpoint=spec.endpoint,
         sessionId=spec.session_id,
         refreshSeq=1,
-        ttlSeconds=spec.ttl_seconds or default_ttl_seconds,
+        ttlSeconds=ttl_seconds,
         protocol=spec.protocol,
         operations=tuple(spec.operations),
         labels=spec.labels or {},
@@ -1192,6 +1228,7 @@ def _updated_record(
     labels: Mapping[str, str],
     hints: Mapping[str, Any],
     payload: Mapping[str, Any] | None,
+    ttl_seconds: int,
     force_refresh: bool,
 ) -> AdvertisementRecord:
     update = {
@@ -1200,6 +1237,7 @@ def _updated_record(
         "labels": freeze_json(labels),
         "hints": freeze_json(hints),
         "payload": freeze_json(payload) if payload is not None else None,
+        "ttl_seconds": ttl_seconds,
     }
     changed = (
         record.protocol != update["protocol"]
@@ -1207,6 +1245,7 @@ def _updated_record(
         or record.labels != update["labels"]
         or record.hints != update["hints"]
         or record.payload != update["payload"]
+        or record.ttl_seconds != ttl_seconds
     )
     if not changed and not force_refresh:
         return record
@@ -1435,7 +1474,6 @@ __all__ = [
     "BEACON_ADVERTISEMENT_SCHEMA_ID",
     "BEACON_ADVERTISEMENT_STORE_POLICY",
     "DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME",
-    "DEFAULT_BEACON_REFRESH_SECONDS",
     "DEFAULT_BEACON_TTL_SECONDS",
     "AdvertisementHandle",
     "AdvertisementRecord",

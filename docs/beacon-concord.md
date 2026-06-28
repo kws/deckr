@@ -122,14 +122,16 @@ Create an advertisement with a unique advertisement id using `create`. Refresh
 it by exact-read, owner-check, incrementing `refreshSeq`, and revision-guarded
 `update`. Withdraw it by exact-read, owner-check, and revision-guarded delete.
 The Python runtime owns advertisement leases and treats `refreshInterval` as a
-requested cadence. Advertisement refresh writes are clamped to no faster than
-`ttlSeconds / 6` and no later than `ttlSeconds * 0.8`; with the default
-30-second TTL this preserves the 5-second write cadence. Real payload, label,
-hint, protocol, or operation changes publish immediately, but unchanged
-heartbeat refreshes may be skipped while the stored value is already fresh
-enough. If the advertisement is no longer refreshed, the TTL-bound store removes
-it. Beacon advertisements are not reaped by Concord maintenance. Their
-lifecycle is the advertisement owner plus the store TTL.
+requested cadence. Python Beacon derives `ttlSeconds` from the Beacon KV bucket
+TTL instead of per-advertisement configuration; the default Python Beacon bucket
+TTL is 300 seconds. Managed heartbeat refresh writes are scheduled with jitter
+between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`, so the default cadence is
+150-225 seconds. Real payload, label, hint, protocol, or operation changes
+publish immediately, but unchanged heartbeat refreshes may be skipped while the
+stored value is already fresh enough. If the advertisement is no longer
+refreshed, the TTL-bound store removes it. Beacon advertisements are not reaped
+by Concord maintenance. Their lifecycle is the advertisement owner plus the
+store TTL.
 
 Managed advertisers should best-effort remove stale advertisements for the same
 feature, advertiser, and endpoint during startup or replacement, using

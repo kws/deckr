@@ -160,7 +160,7 @@ class FailingWatchKvBucket(MemoryJsonKvBucket):
 
 class PausingWatchKvBucket(MemoryJsonKvBucket):
     def __init__(self, *, bucket: str) -> None:
-        super().__init__(bucket=bucket)
+        super().__init__(bucket=bucket, ttl_seconds=300)
         self._close_events: list[anyio.Event] = []
         self._pause_next_watch = False
         self._watch_paused = anyio.Event()
@@ -349,7 +349,7 @@ def _hardware_advertisement_record(
         endpoint=endpoint,
         sessionId=session_id,
         refreshSeq=1,
-        ttlSeconds=30,
+        ttlSeconds=300,
         payload=_hardware_payload(session_id=session_id).to_dict(),
     )
 
@@ -377,8 +377,8 @@ def _hardware_claim_terms(
 
 
 def _beacon() -> tuple[Beacon, MemoryJsonKvBucket]:
-    raw = MemoryJsonKvBucket(bucket="beacon")
-    return Beacon(raw, default_ttl_seconds=30), raw
+    raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
+    return Beacon(raw), raw
 
 
 @pytest.mark.asyncio
@@ -392,7 +392,7 @@ async def test_beacon_wait_current_rebuilds_generation_stale_cache() -> None:
         endpoint=endpoint,
         sessionId="manager-session",
         refreshSeq=1,
-        ttlSeconds=30,
+        ttlSeconds=300,
         payload=_hardware_payload().to_dict(),
     )
     key = beacon_advertisement_key(
@@ -439,7 +439,7 @@ async def test_beacon_candidates_exact_reads_bucket_directly() -> None:
         endpoint=endpoint,
         sessionId="manager-session",
         refreshSeq=1,
-        ttlSeconds=30,
+        ttlSeconds=300,
         payload=_hardware_payload().to_dict(),
     )
     key = beacon_advertisement_key(
@@ -459,8 +459,8 @@ async def test_beacon_startup_replay_does_not_overflow_subscriber_queue(
     caplog,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="deckr.substrates.nats_kv")
-    raw = MemoryJsonKvBucket(bucket="beacon", buffer_size=40)
-    beacon = Beacon(raw, default_ttl_seconds=30, buffer_size=5)
+    raw = MemoryJsonKvBucket(bucket="beacon", buffer_size=40, ttl_seconds=300)
+    beacon = Beacon(raw, buffer_size=5)
     for index in range(12):
         record = _hardware_advertisement_record(f"advertisement-{index:02d}")
         await raw.put(
@@ -849,6 +849,70 @@ async def test_beacon_find_treats_refresh_as_newest_write() -> None:
     assert candidates[0].advertisement.refresh_seq == 2
 
 
+def test_beacon_refresh_interval_uses_ttl_jitter(monkeypatch) -> None:
+    samples: list[tuple[float, float]] = []
+
+    def sample(lower: float, upper: float) -> float:
+        samples.append((lower, upper))
+        return 180.0
+
+    monkeypatch.setattr("deckr.beacon.random.uniform", sample)
+
+    assert (
+        beacon_module._beacon_refresh_interval(  # noqa: SLF001
+            requested=None,
+            ttl_seconds=300,
+        )
+        == 180.0
+    )
+    assert samples == [(150.0, 225.0)]
+
+
+def test_beacon_refresh_interval_respects_requested_minimum(monkeypatch) -> None:
+    samples: list[tuple[float, float]] = []
+
+    def sample(lower: float, upper: float) -> float:
+        samples.append((lower, upper))
+        return lower
+
+    monkeypatch.setattr("deckr.beacon.random.uniform", sample)
+
+    assert (
+        beacon_module._beacon_refresh_interval(  # noqa: SLF001
+            requested=200.0,
+            ttl_seconds=300,
+        )
+        == 200.0
+    )
+    assert samples == [(200.0, 225.0)]
+
+
+@pytest.mark.asyncio
+async def test_beacon_records_derive_ttl_from_bucket_ttl() -> None:
+    raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
+    beacon = Beacon(raw)
+    advertisement = await beacon.advertise(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="manager-session",
+            advertisement_id="advertisement-1",
+            payload=_hardware_payload().to_dict(),
+        )
+    )
+
+    first_entry = await raw.get(advertisement.handle.key)
+    assert first_entry is not None
+    assert AdvertisementRecord.model_validate(first_entry.value).ttl_seconds == 300
+
+    raw._ttl_seconds = 225  # noqa: SLF001
+    await advertisement.update(hints={"bucket": "retuned"})
+
+    refreshed_entry = await raw.get(advertisement.handle.key)
+    assert refreshed_entry is not None
+    assert AdvertisementRecord.model_validate(refreshed_entry.value).ttl_seconds == 225
+
+
 @pytest.mark.asyncio
 async def test_beacon_close_withdraws_and_stops_heartbeat() -> None:
     beacon, _raw = _beacon()
@@ -863,7 +927,6 @@ async def test_beacon_close_withdraws_and_stops_heartbeat() -> None:
                 session_id="manager-session",
                 advertisement_id="advertisement-1",
                 payload=_hardware_payload().to_dict(),
-                refresh_interval=0.01,
             ),
         )
         await advertisement.aclose()
@@ -874,9 +937,16 @@ async def test_beacon_close_withdraws_and_stops_heartbeat() -> None:
 
 
 @pytest.mark.asyncio
-async def test_beacon_heartbeat_cadence_is_clamped_by_ttl() -> None:
-    raw = MemoryJsonKvBucket(bucket="beacon")
-    beacon = Beacon(raw, default_ttl_seconds=1)
+async def test_beacon_heartbeat_uses_jittered_bucket_ttl(monkeypatch) -> None:
+    samples: list[tuple[float, float]] = []
+
+    def sample(lower: float, upper: float) -> float:
+        samples.append((lower, upper))
+        return 0.01
+
+    monkeypatch.setattr("deckr.beacon.random.uniform", sample)
+    raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=1)
+    beacon = Beacon(raw)
 
     async with anyio.create_task_group() as tg:
         beacon.start(tg)
@@ -888,15 +958,9 @@ async def test_beacon_heartbeat_cadence_is_clamped_by_ttl() -> None:
                 session_id="manager-session",
                 advertisement_id="advertisement-1",
                 payload=_hardware_payload().to_dict(),
-                ttl_seconds=1,
-                refresh_interval=0.01,
             )
         )
         first = advertisement.handle
-        await anyio.sleep(0.05)
-        early = await raw.get(first.key)
-        assert early is not None
-        assert early.revision == first.revision
 
         with anyio.fail_after(1):
             while True:
@@ -907,6 +971,8 @@ async def test_beacon_heartbeat_cadence_is_clamped_by_ttl() -> None:
                     break
                 await anyio.sleep(0.01)
         tg.cancel_scope.cancel()
+
+    assert samples[0] == (0.5, 0.75)
 
 
 @pytest.mark.asyncio
@@ -1026,7 +1092,7 @@ async def test_beacon_service_feature_watch_reports_expiry(caplog) -> None:
 @pytest.mark.asyncio
 async def test_beacon_validate_reports_unavailable_while_view_stale() -> None:
     raw = PausingWatchKvBucket(bucket="beacon")
-    beacon = Beacon(raw, default_ttl_seconds=30)
+    beacon = Beacon(raw)
     endpoint = hardware_manager_address("manager-main")
 
     async with anyio.create_task_group() as tg:
@@ -3276,7 +3342,7 @@ def test_profile_payloads_terms_hashes_and_hardware_claim_conflicts() -> None:
         endpoint=hardware_manager_address("manager-main"),
         sessionId="manager-session",
         refreshSeq=1,
-        ttlSeconds=30,
+        ttlSeconds=300,
         payload=hardware_payload.to_dict(),
     )
     assert hardware_payload_from_advertisement(hardware_advertisement) == hardware_payload
@@ -3300,7 +3366,7 @@ def test_profile_payloads_terms_hashes_and_hardware_claim_conflicts() -> None:
         endpoint=action_provider_address("provider-main"),
         sessionId="provider-session",
         refreshSeq=1,
-        ttlSeconds=30,
+        ttlSeconds=300,
         payload=actions_payload.to_dict(),
     )
     assert actions_payload_from_advertisement(actions_advertisement) == actions_payload
