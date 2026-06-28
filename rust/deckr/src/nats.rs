@@ -638,16 +638,7 @@ async fn open_state_bucket(
         }
         Err(get_error) => {
             let created = jetstream
-                .create_key_value(KvConfig {
-                    bucket: bucket.to_string(),
-                    history: 1,
-                    max_age: policy
-                        .broker_ttl_seconds
-                        .map(Duration::from_secs)
-                        .unwrap_or(Duration::ZERO),
-                    limit_markers: policy.broker_ttl_seconds.map(Duration::from_secs),
-                    ..Default::default()
-                })
+                .create_key_value(kv_config_for_policy(bucket, &policy))
                 .await;
             match created {
                 Ok(store) => {
@@ -689,7 +680,28 @@ async fn validate_bucket(store: &Store, bucket: &str, policy: &StateStorePolicy)
             expected_max_age
         )));
     }
+    let expected_delete_marker_ttl = policy.broker_ttl_seconds.map(Duration::from_secs);
+    if status.info.config.subject_delete_marker_ttl != expected_delete_marker_ttl {
+        return Err(Error::StateUnavailable(format!(
+            "NATS KV bucket {bucket} has subject delete marker TTL {:?}; expected {:?}",
+            status.info.config.subject_delete_marker_ttl,
+            expected_delete_marker_ttl
+        )));
+    }
     Ok(())
+}
+
+fn kv_config_for_policy(bucket: &str, policy: &StateStorePolicy) -> KvConfig {
+    KvConfig {
+        bucket: bucket.to_string(),
+        history: 1,
+        max_age: policy
+            .broker_ttl_seconds
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::ZERO),
+        limit_markers: policy.broker_ttl_seconds.map(Duration::from_secs),
+        ..Default::default()
+    }
 }
 
 fn is_revision_conflict(error: &impl Display) -> bool {
@@ -699,4 +711,33 @@ fn is_revision_conflict(error: &impl Display) -> bool {
         || message.contains("wrong last")
         || message.contains("expected")
         || message.contains("already exists")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kv_config_for_ttl_policy_sets_limit_markers() {
+        let policy = StateStorePolicy::ttl(30, "test ttl").unwrap();
+
+        let config = kv_config_for_policy("deckr_beacon_advertisement_v1", &policy);
+
+        assert_eq!(config.bucket, "deckr_beacon_advertisement_v1");
+        assert_eq!(config.history, 1);
+        assert_eq!(config.max_age, Duration::from_secs(30));
+        assert_eq!(config.limit_markers, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn kv_config_for_persistent_policy_omits_limit_markers() {
+        let policy = StateStorePolicy::persistent("test persistent");
+
+        let config = kv_config_for_policy("deckr_concord_contract_v1", &policy);
+
+        assert_eq!(config.bucket, "deckr_concord_contract_v1");
+        assert_eq!(config.history, 1);
+        assert_eq!(config.max_age, Duration::ZERO);
+        assert_eq!(config.limit_markers, None);
+    }
 }

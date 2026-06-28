@@ -19,6 +19,8 @@ KV_DELETE_OPERATION = "DEL"
 KV_PURGE_OPERATION = "PURGE"
 NATS_MARKER_REASON_HEADER = "Nats-Marker-Reason"
 NATS_MARKER_MAX_AGE = "MaxAge"
+NATS_NANOSECONDS_PER_SECOND = 1_000_000_000
+NATS_SUBJECT_DELETE_MARKER_TTL_FIELD = "subject_delete_marker_ttl"
 
 
 class KvConflict(RuntimeError):
@@ -336,22 +338,59 @@ class NatsJsonKvBucket:
                 "Deckr build."
             ) from exc
         config = info.config
+        expected_marker_ttl_ns = _duration_nanoseconds(self.policy.ttl_seconds)
+        raw_config = None
+        if expected_marker_ttl_ns is not None:
+            try:
+                raw_config = await _nats_stream_raw_config(self._js, stream_name)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not inspect raw NATS KV stream config for {self.bucket!r}; "
+                    "Deckr requires subject delete markers on TTL-bound buckets."
+                ) from exc
         needs_update = (
-            getattr(config, "max_age", None) != self.policy.ttl_seconds
+            not _duration_seconds_equal(
+                getattr(config, "max_age", None),
+                self.policy.ttl_seconds,
+            )
             or getattr(config, "max_msgs_per_subject", None) != 1
         )
         if self.policy.allow_write_ttl:
             needs_update = (
                 needs_update or getattr(config, "allow_msg_ttl", None) is not True
             )
+        if expected_marker_ttl_ns is not None:
+            needs_update = (
+                needs_update
+                or _raw_duration_nanoseconds(
+                    raw_config,
+                    NATS_SUBJECT_DELETE_MARKER_TTL_FIELD,
+                )
+                != expected_marker_ttl_ns
+            )
         if not needs_update:
             return
-        config.max_age = self.policy.ttl_seconds
-        config.max_msgs_per_subject = 1
-        if self.policy.allow_write_ttl:
-            config.allow_msg_ttl = True
         try:
-            await self._js.update_stream(config)
+            if raw_config is None:
+                config.max_age = self.policy.ttl_seconds
+                config.max_msgs_per_subject = 1
+                if self.policy.allow_write_ttl:
+                    config.allow_msg_ttl = True
+                await self._js.update_stream(config)
+            else:
+                updated_config = dict(raw_config)
+                updated_config["max_age"] = expected_marker_ttl_ns
+                updated_config["max_msgs_per_subject"] = 1
+                updated_config[NATS_SUBJECT_DELETE_MARKER_TTL_FIELD] = (
+                    expected_marker_ttl_ns
+                )
+                if self.policy.allow_write_ttl:
+                    updated_config["allow_msg_ttl"] = True
+                await _update_nats_stream_raw_config(
+                    self._js,
+                    stream_name,
+                    updated_config,
+                )
         except Exception as exc:
             raise RuntimeError(
                 f"Existing NATS KV bucket {self.bucket!r} is not configured for "
@@ -665,6 +704,66 @@ def kv_value(value: Mapping[str, Any] | DeckrModel) -> Mapping[str, Any]:
 
 def kv_payload(value: Mapping[str, Any]) -> bytes:
     return json.dumps(thaw_json(value), separators=(",", ":")).encode("utf-8")
+
+
+def _duration_nanoseconds(seconds: float | None) -> int | None:
+    if seconds is None:
+        return None
+    return int(float(seconds) * NATS_NANOSECONDS_PER_SECOND)
+
+
+def _duration_seconds_equal(actual: float | None, expected: float | None) -> bool:
+    if expected is None:
+        return actual is None or actual == 0
+    if actual is None:
+        return False
+    return abs(float(actual) - float(expected)) <= 0.001
+
+
+def _raw_duration_nanoseconds(
+    config: Mapping[str, Any] | None,
+    field: str,
+) -> int | None:
+    if config is None:
+        return None
+    value = config.get(field)
+    if value is None:
+        return None
+    return int(value)
+
+
+async def _nats_stream_raw_config(js: Any, stream_name: str) -> Mapping[str, Any]:
+    api_request = getattr(js, "_api_request", None)
+    if api_request is None:
+        raise RuntimeError("NATS JetStream context does not expose _api_request")
+    prefix = getattr(js, "_prefix", "$JS.API")
+    timeout = getattr(js, "_timeout", 5)
+    response = await api_request(
+        f"{prefix}.STREAM.INFO.{stream_name}",
+        b"",
+        timeout=timeout,
+    )
+    config = response.get("config") if isinstance(response, Mapping) else None
+    if not isinstance(config, Mapping):
+        raise RuntimeError(f"NATS stream {stream_name!r} response did not include config")
+    return config
+
+
+async def _update_nats_stream_raw_config(
+    js: Any,
+    stream_name: str,
+    config: Mapping[str, Any],
+) -> None:
+    api_request = getattr(js, "_api_request", None)
+    if api_request is None:
+        raise RuntimeError("NATS JetStream context does not expose _api_request")
+    prefix = getattr(js, "_prefix", "$JS.API")
+    timeout = getattr(js, "_timeout", 5)
+    await api_request(
+        f"{prefix}.STREAM.UPDATE.{stream_name}",
+        json.dumps(config).encode("utf-8"),
+        timeout=timeout,
+    )
 
 
 def kv_entry_from_raw(bucket: str, entry) -> KvEntry:

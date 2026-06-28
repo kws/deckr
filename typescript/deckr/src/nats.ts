@@ -171,20 +171,43 @@ export class NatsStateStore implements StateStore {
     const status = await call(kv, "status");
     const expectedTtlMs =
       this.policy.brokerTtlSeconds === null ? 0 : this.policy.brokerTtlSeconds * 1000;
+    const expectedMaxAgeNs = expectedTtlMs * 1_000_000;
+    const expectedDeleteMarkerNs =
+      this.policy.brokerTtlSeconds === null ? null : expectedMaxAgeNs;
     const actualTtlMs = Number(getProperty(status, "ttl"));
     const actualHistory = Number(getProperty(status, "history"));
-    if (Math.abs(actualTtlMs - expectedTtlMs) <= 1 && actualHistory === 1) {
+    let config: Record<string, unknown> | null = null;
+    let deleteMarkerMatches = true;
+    if (expectedDeleteMarkerNs !== null) {
+      const streamInfo = getProperty(status, "streamInfo");
+      config = getProperty(streamInfo, "config") as Record<string, unknown>;
+      deleteMarkerMatches =
+        Number(config["subject_delete_marker_ttl"] ?? 0) === expectedDeleteMarkerNs;
+    }
+    if (
+      Math.abs(actualTtlMs - expectedTtlMs) <= 1 &&
+      actualHistory === 1 &&
+      deleteMarkerMatches
+    ) {
       return;
     }
-    const streamInfo = getProperty(status, "streamInfo");
-    const config = getProperty(streamInfo, "config") as Record<string, unknown>;
+    if (config === null) {
+      const streamInfo = getProperty(status, "streamInfo");
+      config = getProperty(streamInfo, "config") as Record<string, unknown>;
+    }
     const streamName = String(getProperty(config, "name"));
     const manager = await callSync(this.connection, "jetstreamManager");
     const streams = getProperty(manager, "streams");
-    await call(streams, "update", streamName, {
+    const updatedConfig: Record<string, unknown> = {
       ...config,
-      max_age: expectedTtlMs * 1_000_000,
+      max_age: expectedMaxAgeNs,
       max_msgs_per_subject: 1,
+    };
+    if (expectedDeleteMarkerNs !== null) {
+      updatedConfig["subject_delete_marker_ttl"] = expectedDeleteMarkerNs;
+    }
+    await call(streams, "update", streamName, {
+      ...updatedConfig,
     });
   }
 

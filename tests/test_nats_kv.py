@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
@@ -41,6 +42,9 @@ async def test_nats_json_kv_creates_bucket_with_policy_ttl() -> None:
     assert fake_js.created_config.bucket == "deckr_beacon_advertisement_v1"
     assert fake_js.created_config.ttl == 30.0
     assert fake_js.created_config.history == 1
+    assert fake_js.updated_raw_config is not None
+    assert fake_js.updated_raw_config["max_age"] == 30_000_000_000
+    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 30_000_000_000
 
 
 @pytest.mark.asyncio
@@ -57,10 +61,76 @@ async def test_nats_json_kv_updates_existing_bucket_policy() -> None:
 
     await bucket.put("contracts.main.1.participants.controller", {"token": "one"})
 
-    assert fake_js.updated_config is not None
-    assert fake_js.updated_config.max_age == 30.0
-    assert fake_js.updated_config.max_msgs_per_subject == 1
-    assert fake_js.updated_config.allow_msg_ttl is True
+    assert fake_js.updated_raw_config is not None
+    assert fake_js.updated_raw_config["max_age"] == 30_000_000_000
+    assert fake_js.updated_raw_config["max_msgs_per_subject"] == 1
+    assert fake_js.updated_raw_config["allow_msg_ttl"] is True
+    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 30_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_updates_existing_ttl_bucket_missing_delete_markers() -> None:
+    fake_js = _FakeJs(
+        existing=True,
+        max_age=30.0,
+        allow_msg_ttl=True,
+        subject_delete_marker_ttl=None,
+    )
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(
+            bucket="deckr_beacon_advertisement_v1",
+            ttl_seconds=30.0,
+            allow_write_ttl=True,
+        ),
+    )
+
+    await bucket.put("advertisements.by_feature.hardware.deck", {"owner": "hw"})
+
+    assert fake_js.updated_raw_config is not None
+    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 30_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_keeps_existing_ttl_bucket_with_delete_markers() -> None:
+    fake_js = _FakeJs(
+        existing=True,
+        max_age=30.0,
+        allow_msg_ttl=True,
+        subject_delete_marker_ttl=30_000_000_000,
+    )
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(
+            bucket="deckr_beacon_advertisement_v1",
+            ttl_seconds=30.0,
+            allow_write_ttl=True,
+        ),
+    )
+
+    await bucket.put("advertisements.by_feature.hardware.deck", {"owner": "hw"})
+
+    assert fake_js.updated_raw_config is None
+    assert fake_js.updated_config is None
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_persistent_bucket_does_not_require_delete_markers() -> None:
+    fake_js = _FakeJs(
+        existing=True,
+        max_age=0.0,
+        allow_msg_ttl=False,
+        subject_delete_marker_ttl=None,
+    )
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
+    )
+
+    await bucket.put("contracts.main.1.meta", {"state": "open"})
+
+    assert fake_js.updated_raw_config is None
+    assert fake_js.updated_config is None
 
 
 @pytest.mark.asyncio
@@ -75,6 +145,10 @@ async def test_nats_json_kv_watch_maps_put_delete_and_expire_markers() -> None:
         "contracts.main.1.participants.manager",
         headers={"Nats-Marker-Reason": "MaxAge"},
     )
+    fake_js.kv.add_marker(
+        "contracts.main.1.participants.worker",
+        operation="",
+    )
     bucket = NatsJsonKvBucket(
         js=fake_js,
         policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
@@ -84,6 +158,7 @@ async def test_nats_json_kv_watch_maps_put_delete_and_expire_markers() -> None:
         put = await changes.receive()
         deleted = await changes.receive()
         expired = await changes.receive()
+        unclassified_marker = await changes.receive()
         ready = await changes.receive()
 
     assert put is not None
@@ -94,6 +169,9 @@ async def test_nats_json_kv_watch_maps_put_delete_and_expire_markers() -> None:
     assert deleted.operation == "delete"
     assert expired is not None
     assert expired.operation == "expire"
+    assert unclassified_marker is not None
+    assert unclassified_marker.operation == "delete"
+    assert unclassified_marker.marker_reason == "absent"
     assert ready is None
     assert fake_js.deleted_consumers == [("KV_deckr_concord_contract_v1", "consumer-1")]
 
@@ -469,7 +547,7 @@ class _FakeKvEntry:
         key: str,
         value: bytes,
         revision: int,
-        operation: str = "PUT",
+        operation: str | None = "PUT",
         headers: dict[str, str] | None = None,
     ) -> None:
         self.key = key
@@ -509,7 +587,7 @@ class _FakeKv:
         self,
         key: str,
         *,
-        operation: str = "PUT",
+        operation: str | None = "PUT",
         headers: dict[str, str] | None = None,
     ) -> _FakeKvEntry:
         self._revision += 1
@@ -632,11 +710,13 @@ class _FakeStreamConfig:
         max_age: float | None,
         max_msgs_per_subject: int | None = 1,
         allow_msg_ttl: bool | None = True,
+        subject_delete_marker_ttl: int | None = None,
     ) -> None:
         self.name = name
         self.max_age = max_age
         self.max_msgs_per_subject = max_msgs_per_subject
         self.allow_msg_ttl = allow_msg_ttl
+        self.subject_delete_marker_ttl = subject_delete_marker_ttl
 
 
 class _FakeStreamInfo:
@@ -651,6 +731,7 @@ class _FakeJs:
         existing: bool = True,
         max_age: float | None = None,
         allow_msg_ttl: bool | None = True,
+        subject_delete_marker_ttl: int | None = None,
     ) -> None:
         self.bucket = "deckr_concord_contract_v1"
         self.kv = _FakeKv(self) if existing else None
@@ -658,12 +739,16 @@ class _FakeJs:
             name=f"KV_{self.bucket}",
             max_age=max_age,
             allow_msg_ttl=allow_msg_ttl,
+            subject_delete_marker_ttl=subject_delete_marker_ttl,
         )
         self.created_config = None
         self.updated_config = None
+        self.updated_raw_config = None
         self.deleted_consumers: list[tuple[str, str]] = []
         self._consumer_index = 0
         self._jsm = self
+        self._prefix = "$JS.API"
+        self._timeout = 5
 
     def next_consumer_name(self) -> str:
         self._consumer_index += 1
@@ -706,6 +791,46 @@ class _FakeJs:
     async def update_stream(self, config) -> None:
         self.updated_config = config
         self.config = config
+
+    async def _api_request(
+        self,
+        subject: str,
+        req: bytes = b"",
+        *,
+        timeout: float = 5,
+    ) -> dict[str, object]:
+        del timeout
+        if subject == f"$JS.API.STREAM.INFO.{self.config.name}":
+            return {"config": self._raw_config(), "state": {}}
+        if subject == f"$JS.API.STREAM.UPDATE.{self.config.name}":
+            raw_config = json.loads(req.decode("utf-8"))
+            self.updated_raw_config = raw_config
+            self.config = _FakeStreamConfig(
+                name=str(raw_config["name"]),
+                max_age=float(raw_config["max_age"]) / 1_000_000_000,
+                max_msgs_per_subject=int(raw_config["max_msgs_per_subject"]),
+                allow_msg_ttl=bool(raw_config.get("allow_msg_ttl", False)),
+                subject_delete_marker_ttl=raw_config.get(
+                    "subject_delete_marker_ttl"
+                ),
+            )
+            return {"config": self._raw_config(), "state": {}}
+        raise AssertionError(f"unexpected JetStream API subject {subject!r}")
+
+    def _raw_config(self) -> dict[str, object]:
+        raw: dict[str, object] = {
+            "name": self.config.name,
+            "max_age": (
+                0
+                if self.config.max_age is None
+                else int(self.config.max_age * 1_000_000_000)
+            ),
+            "max_msgs_per_subject": self.config.max_msgs_per_subject,
+            "allow_msg_ttl": self.config.allow_msg_ttl,
+        }
+        if self.config.subject_delete_marker_ttl is not None:
+            raw["subject_delete_marker_ttl"] = self.config.subject_delete_marker_ttl
+        return raw
 
     async def delete_consumer(self, stream: str, consumer: str) -> bool:
         self.deleted_consumers.append((stream, consumer))

@@ -379,8 +379,13 @@ cleanup. Other components should prefer managed `deckr.beacon`, `deckr.concord`,
 and explicit `ServiceViewStore` instances opened from `deckr.kv_bucket(...)` for
 normal protocol and protected service-view authority.
 
-TTL-bound buckets are configured with broker-owned bucket TTL and one retained
-message per subject. Persistent buckets reject per-write TTL. Reopening the same
+TTL-bound buckets are configured with broker-owned bucket TTL, subject delete
+markers retained for the same duration as the bucket TTL, and one retained
+message per subject. The delete markers are required so long-lived materialized
+watch caches observe broker-owned expiry instead of retaining keys that exact KV
+reads no longer return. Client libraries may surface these marker wakeups as
+delete or expire events depending on header visibility; either event must remove
+the cached key. Persistent buckets reject per-write TTL. Reopening the same
 bucket with a conflicting policy is an error.
 
 Package-owned private buckets must be owner-qualified and versioned, for
