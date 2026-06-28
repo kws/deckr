@@ -3186,9 +3186,10 @@ class Concord:
         participant: str | EndpointAddress,
         profile: str | None,
     ) -> tuple[ContractHandle, ...]:
-        return await self._coordinator.participant_profile_contracts(
+        return await self._find_contracts(
+            profile,
             participant=participant,
-            profile=profile,
+            state=ContractState.OPEN,
         )
 
     async def _attach(
