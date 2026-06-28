@@ -2775,6 +2775,22 @@ class Concord:
             validity=validity,
         )
 
+    async def _confirm_agreement_terminal_validity(
+        self,
+        agreement: ConcordAgreementLease,
+        validity: ContractValidity,
+        *,
+        current_sessions: Mapping[str, str],
+    ) -> ContractValidity:
+        if not _agreement_successor_status(validity.status):
+            return validity
+        exact = await self._coordinator.validate(
+            agreement.contract,
+            current_sessions=current_sessions,
+        )
+        agreement._validity = exact  # noqa: SLF001
+        return exact
+
     async def _refresh_agreement(
         self,
         agreement: ConcordAgreementLease,
@@ -2789,6 +2805,11 @@ class Concord:
             log_label=spec.log_label,
         )
         agreement._validity = validity  # noqa: SLF001
+        validity = await self._confirm_agreement_terminal_validity(
+            agreement,
+            validity,
+            current_sessions=current_sessions,
+        )
         if validity.status == ContractValidityStatus.UNAVAILABLE:
             return validity
         if _agreement_successor_status(validity.status):
@@ -2816,6 +2837,11 @@ class Concord:
                 log_label=spec.log_label,
             )
             agreement._validity = validity  # noqa: SLF001
+            validity = await self._confirm_agreement_terminal_validity(
+                agreement,
+                validity,
+                current_sessions=current_sessions,
+            )
             logger.warning(
                 "%s Concord agreement refresh failed contract=%s generation=%s "
                 "participant=%s session=%s status=%s reason=%s conflict=%s",
@@ -2837,6 +2863,13 @@ class Concord:
             log_label=spec.log_label,
         )
         agreement._validity = validity  # noqa: SLF001
+        validity = await self._confirm_agreement_terminal_validity(
+            agreement,
+            validity,
+            current_sessions=current_sessions,
+        )
+        if _agreement_successor_status(validity.status):
+            await agreement._lease.aclose()  # noqa: SLF001
         return validity
 
     async def _cancel_agreement(

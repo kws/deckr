@@ -442,7 +442,7 @@ async def test_materialized_bucket_changes_carry_view_generation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_materialized_bucket_generation_advances_when_subscriber_drops_change() -> None:
+async def test_materialized_bucket_backpressures_without_dropping_changes() -> None:
     raw = MemoryJsonKvBucket(bucket="materialized")
     materialized = NatsKvMaterializedBucket(
         bucket=raw,
@@ -457,13 +457,27 @@ async def test_materialized_bucket_generation_advances_when_subscriber_drops_cha
 
         async with materialized.subscribe() as changes:
             await materialized.put("items.a", {"value": "a"})
-            await materialized.put("items.b", {"value": "b"})
-            delivered = await changes.receive()
-            with anyio.move_on_after(0.05) as scope:
-                await changes.receive()
 
-        assert delivered.view_generation == initial_generation + 1
-        assert scope.cancelled_caught
+            put_completed = anyio.Event()
+
+            async def put_second_change() -> None:
+                await materialized.put("items.b", {"value": "b"})
+                put_completed.set()
+
+            task_group.start_soon(put_second_change)
+            with anyio.move_on_after(0.05) as scope:
+                await put_completed.wait()
+            assert scope.cancelled_caught
+
+            first = await changes.receive()
+            second = await changes.receive()
+            with anyio.fail_after(1):
+                await put_completed.wait()
+
+        assert first.key == "items.a"
+        assert first.view_generation == initial_generation + 1
+        assert second.key == "items.b"
+        assert second.view_generation == initial_generation + 2
         assert materialized.generation == initial_generation + 2
         task_group.cancel_scope.cancel()
 

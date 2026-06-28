@@ -2921,6 +2921,47 @@ async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
 
 
 @pytest.mark.asyncio
+async def test_concord_agreement_refresh_confirms_terminal_cache_status_exactly() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    spec = ConcordAgreementSpec(
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        participants=(controller, manager),
+        local_participant=controller,
+        local_session_id="controller-session",
+        current_sessions={
+            str(controller): "controller-session",
+            str(manager): "manager-session",
+        },
+        log_label="TestConcord",
+    )
+
+    agreement = await service.propose(spec)
+    token = agreement.local_token
+    assert token is not None
+    await service._apply_token_change(  # noqa: SLF001
+        KvChange(
+            service.token_bucket,
+            token.key,
+            token.revision + 1,
+            "delete",
+        )
+    )
+    assert (await service._validate(agreement.contract)).status == (  # noqa: SLF001
+        ContractValidityStatus.MISSING_TOKEN
+    )
+
+    refreshed = await agreement.refresh()
+
+    assert refreshed.status == ContractValidityStatus.NOT_YET_FULFILLED
+    assert not agreement.closed
+    assert agreement.local_token is not None
+
+
+@pytest.mark.asyncio
 async def test_concord_ensure_agreement_cancels_stable_conflicting_generations() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")

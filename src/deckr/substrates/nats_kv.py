@@ -705,13 +705,7 @@ class NatsKvMaterializedBucket:
             subscribers = tuple(self._subscribers)
         for subscriber in subscribers:
             try:
-                subscriber.send_nowait(delivered)
-            except anyio.WouldBlock:
-                logger.warning(
-                    "NATS KV materialized subscriber buffer full bucket=%s key=%s",
-                    self.bucket,
-                    change.key,
-                )
+                await subscriber.send(delivered)
             except (anyio.BrokenResourceError, anyio.ClosedResourceError):
                 async with self._lock:
                     self._subscribers.discard(subscriber)
