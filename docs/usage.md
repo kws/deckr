@@ -938,103 +938,69 @@ integration APIs.
 Maintenance, diagnostics, reapers, and cold-start materialization may perform
 bounded scans, but feature resolution must not.
 
-Observed current usage in this workspace:
+Python action SDK service surface:
 
-```text
-deckr-plugin-openhab and deckr-plugin-sonos clients use ServiceDirectory,
-ServiceResolver, SERVICE_USE_INDEX_BUCKET_POLICY, and acquire_service_use_lease.
-They also keep module-global _DIRECTORY_CACHE entries and pass command/view
-timeouts into service-use negotiation.
-Files:
-  ../deckr-plugin-openhab/src/deckr/plugins/openhab/_service_client.py
-  ../deckr-plugin-sonos/src/deckr/plugins/sonos/_service_client.py
+Python action authors should receive `self.services`, not raw
+`self.core.beacon`, `self.core.concord`, or `self.core.kv_bucket(...)`. The
+runtime-owned `DeckrServices` handle keeps one `BeaconDirectory` per service
+protocol, proposes scoped Concord service-use contracts, sends service commands,
+and reads or watches fenced service views. It is intentionally not a
+ServiceDirectory replacement and does not expose raw Beacon, Concord, endpoint,
+or KV handles.
 
-deckr-plugin-openhab and deckr-plugin-sonos providers already use
-Concord.participant(...) with ServiceUseTerms validation and current service
-session evidence.
-Files:
-  ../deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py
-  ../deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py
+Availability probes are descriptor checks against the long-lived directory. They
+must not open repeated one-second Concord proposals:
 
-deckr-controller, deckr-action-provider-runtime-python, deckr.hardware.runtime,
-and deckr-adapter-elgato-node already model non-service lifecycles as direct
-ConcordAgreementSpec proposals plus Concord participant managers.
-Files:
-  ../deckr-controller/src/deckr/controller/_action_provider_sessions.py
-  ../deckr-controller/src/deckr/controller/_controller_service.py
-  ../deckr-action-provider-runtime-python/src/deckr/action_provider_runtime/runtime.py
-  src/deckr/hardware/runtime.py
-  ../deckr-adapter-elgato-node/tests/beaconConcordLifecycle.test.ts
-
-deckr-controller still has hardware/action discovery paths that fall back from
-cached Beacon candidates to candidates_exact(...). Treat those as concrete
-scan-shaped cleanup targets, not as the pattern to preserve.
-Files:
-  ../deckr-controller/src/deckr/controller/_controller_service.py
-  ../deckr-controller/src/deckr/controller/action_provider/action_registry.py
-
-Those controller paths also show why the generic directory cannot be purely
-"one advertisement becomes one descriptor": hardware advertisements fan out into
-device candidates, and action-provider advertisements fan out into advertised
-actions.
-
-typescript/deckr mirrors the old service-use index through
-ServiceUseLeaseManager. rust/deckr mirrors the old service discovery wrappers
-through ServiceDirectory, ServiceResolver, and ServiceQuery.
-Files:
-  typescript/deckr/src/services.ts
-  typescript/deckr/tests/lifecycle.test.ts
-  rust/deckr/src/services.rs
-  rust/deckr/tests/services_directory.rs
+```python
+async def openhab_probe(services: DeckrServices) -> None:
+    client = OpenHABServiceClient(services)
+    await client.require_available(
+        "openhab-home",
+        operations={"ensureItems", "sendCommand"},
+        views={"items"},
+    )
 ```
 
-Concrete replacement work from those call sites:
+Interactive commands should name both budgets. The service-use budget covers
+discovery plus Concord validity and should usually be at least 30 seconds. The
+request budget covers only the command RPC after authority exists:
+
+```python
+reply = await SonosServiceClient(self.services).command(
+    "sonos-home",
+    "playMusicItem",
+    {"zone": self.zone_name, "playRef": dict(play_ref)},
+    service_use_timeout_seconds=30.0,
+    request_timeout_seconds=12.0,
+)
+```
+
+View watchers should normally let lifecycle cancellation bound setup and retry.
+Do not reuse command RPC timeouts as watcher setup timeouts:
+
+```python
+async for view in SonosServiceClient(self.services).watch_view(
+    "sonos-home",
+    sonos_zone_view_ref("sonos-home", self.zone_name),
+):
+    if view is None:
+        break
+    await self._apply_view(view)
+```
+
+Landed Python cleanup:
 
 ```text
-OpenHAB/Sonos clients:
-  replace _DIRECTORY_CACHE with one runtime-owned BeaconDirectory per
-  runtime/feature/profile, started at component startup and reused by calls
-  replace ServiceResolver calls with directory.wait_for(predicate, select=...)
-  replace acquire_service_use_lease with direct Concord proposal plus a generic
-  wait-for-valid-agreement helper if repeated loops appear
-  choose an explicit service-use lease lifecycle: either propose/cancel per
-  operation, or keep a runtime-owned lease cache that is closed at runtime
-  shutdown; do not leave per-command helpers holding unmanaged token heartbeats
-  separate service-use negotiation timeout from command/view RPC timeout,
-  including action availability probes and view watcher loops
+deckr-action-provider-runtime-python exposes DeckrServices as context.services
+and self.services. DeckrRuntimeCore is no longer exported as an SDK type.
 
-OpenHAB/Sonos providers:
-  keep Concord.participant(...)
-  move repeated ServiceUseTerms/session/participant checks into pure helpers
-  keep application policy in the provider
-  withdraw Beacon before closing the Concord participant during clean shutdown
-  when the service is draining from discovery
+deckr-plugin-openhab, deckr-plugin-sonos, and deckr-plugin-kaj action code use
+self.services. Their service clients no longer use _DIRECTORY_CACHE,
+ServiceDirectory, ServiceResolver, SERVICE_USE_INDEX_BUCKET_POLICY, or
+acquire_service_use_lease.
 
-Kaj and plugin tests:
-  remove fake SERVICE_USE_INDEX_BUCKET_POLICY buckets in the same breaking
-  branch that removes acquire_service_use_lease
-  rewrite the existing OpenHAB/Sonos service-client tests so they assert:
-    opaque contract ids are independent from serviceUseId
-    missing Beacon does not reconstruct old authority
-    scope/session changes propose independent contracts without supersedes
-
-Cross-language mirrors:
-  apply the same breaking removal in typescript/deckr and rust/deckr so the SDKs
-  do not preserve the old service-specific lifecycle as their public API
-
-deckr-controller hardware/action discovery:
-  replace candidates_exact(...) fallback paths with long-lived BeaconDirectory
-  style views for the relevant feature ids
-  if the Beacon view is not current, wait or report the feature unavailable
-  instead of listing exact advertisement keys from the request path
-  preserve the existing duplicate-selection and fan-out behavior while moving
-  the source of candidates behind the long-lived directory
-
-Docs:
-  update deckr README and BAU docs that currently mention
-  ServiceDirectory/ServiceResolver or deckr_service_use_index_v1
-  update deckr-plugin-openhab and deckr-plugin-sonos READMEs that currently
-  mention ServiceDirectory/ServiceResolver
+OpenHAB/Sonos providers keep Concord.participant(...) with service-use terms
+validation and current service session evidence.
 ```
 
 Remove these public service-specific discovery helpers in the breaking branch:
