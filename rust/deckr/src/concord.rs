@@ -598,10 +598,8 @@ impl ConcordParticipantLease {
         self.requested_refresh_interval = interval;
         self.refresh_interval = interval;
         if let Some(token) = &self.token {
-            self.refresh_interval = ttl_heartbeat_delay(
-                Some(self.requested_refresh_interval),
-                token.ttl_seconds,
-            );
+            self.refresh_interval =
+                ttl_heartbeat_delay(Some(self.requested_refresh_interval), token.ttl_seconds);
         }
         self
     }
@@ -700,10 +698,8 @@ impl ConcordParticipantLease {
             .await
         {
             Ok(token) => {
-                self.refresh_interval = ttl_heartbeat_delay(
-                    Some(self.requested_refresh_interval),
-                    token.ttl_seconds,
-                );
+                self.refresh_interval =
+                    ttl_heartbeat_delay(Some(self.requested_refresh_interval), token.ttl_seconds);
                 self.token = Some(token.clone());
                 self.last_token_refresh_at = Some(Instant::now());
                 Ok(token)

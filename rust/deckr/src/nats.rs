@@ -688,8 +688,7 @@ async fn validate_bucket(store: &Store, bucket: &str, policy: &StateStorePolicy)
     if status.info.config.subject_delete_marker_ttl != expected_delete_marker_ttl {
         return Err(Error::StateUnavailable(format!(
             "NATS KV bucket {bucket} has subject delete marker TTL {:?}; expected {:?}",
-            status.info.config.subject_delete_marker_ttl,
-            expected_delete_marker_ttl
+            status.info.config.subject_delete_marker_ttl, expected_delete_marker_ttl
         )));
     }
     Ok(())

@@ -9,11 +9,10 @@ use deckr::beacon::{
 use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_value};
 use deckr::concord::{
     concord_contract_key, concord_participant_profile_index_prefix, concord_participant_token_key,
-    concord_token_store_policy,
-    ConcordCoordinator, ConcordNotificationSource, ConcordParticipantLease,
-    ConcordParticipantManager, ContractHandle, ContractRecord, ContractState,
-    ContractValidityStatus, ParticipantTokenRecord, DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
-    DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
+    concord_token_store_policy, ConcordCoordinator, ConcordNotificationSource,
+    ConcordParticipantLease, ConcordParticipantManager, ContractHandle, ContractRecord,
+    ContractState, ContractValidityStatus, ParticipantTokenRecord,
+    DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS, DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
@@ -512,15 +511,10 @@ async fn beacon_advertisement_bucket_must_be_ttl_bound() {
 async fn beacon_advertisement_uses_bucket_ttl_and_coalesces_unchanged_refreshes() {
     let state = MemoryStateStore::ttl_bound(1).unwrap();
     let endpoint = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
-    let advertiser = BeaconAdvertiser::new(
-        state.clone(),
-        "feature",
-        endpoint.clone(),
-        "session",
-    )
-    .advertisement_id("ad-1")
-    .payload(json!({"version": 1}))
-    .refresh_interval(Duration::from_millis(10));
+    let advertiser = BeaconAdvertiser::new(state.clone(), "feature", endpoint.clone(), "session")
+        .advertisement_id("ad-1")
+        .payload(json!({"version": 1}))
+        .refresh_interval(Duration::from_millis(10));
 
     let first = advertiser.publish().await.unwrap();
     let first_entry = state.get(&first.key).await.unwrap().unwrap();
@@ -547,10 +541,7 @@ async fn beacon_advertisement_uses_bucket_ttl_and_coalesces_unchanged_refreshes(
         .advertisement_id("ad-1")
         .payload(json!({"version": 2}))
         .refresh_interval(Duration::from_millis(10));
-    let changed = changed_advertiser
-        .refresh(&ttl_changed)
-        .await
-        .unwrap();
+    let changed = changed_advertiser.refresh(&ttl_changed).await.unwrap();
     assert_eq!(changed.refresh_seq, ttl_changed.refresh_seq + 1);
     assert_ne!(changed.revision, ttl_changed.revision);
 
