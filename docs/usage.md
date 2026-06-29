@@ -16,6 +16,33 @@ All negotiated live authority uses Concord.
 Domain-specific meaning is supplied by endpoint family, feature id, profile id,
 payload schema, terms schema, and profile validation policy.
 
+## Breaking-change posture
+
+This document describes the target shape for an intentional breaking change.
+The goal is to remove the old service-specific discovery and service-use index
+paths, not to keep them working beside the new generic path.
+
+Do this in one coherent migration branch:
+
+```text
+add BeaconDirectory
+move callers to BeaconDirectory and direct Concord proposals
+delete ServiceDirectory, ServiceResolver, and service-use index APIs
+delete stale tests and docs for the removed APIs
+```
+
+It is fine for intermediate commits in that branch to be temporarily broken.
+The merged result should be workable, tested, and internally consistent. Do not
+add compatibility aliases, deprecated wrappers, dual lookup paths, feature
+flags, or fallback scans just to keep old clients running during the migration.
+Downstream clients and cross-language mirrors should move with the contract.
+
+The `BeaconDirectory` API used below is the target API this branch creates. The
+Beacon advertisement lease, direct Concord proposal flow, and
+`Concord.participant(...)` provider flow are already the intended shape; the
+breaking work is to make discovery generic and remove the service-specific
+authority shortcuts around it.
+
 The examples below are identical for services, hardware, actions, or
 future namespaces. So where we use service below, we use it in the most
 generic sense, and there should not be specific paths for hardware or actions
@@ -364,8 +391,8 @@ selector functions.
 This is the **consumer** proposing service use.
 
 The important part: `service_use_terms(...)` creates deterministic terms so
-both participants can validate the requested scope. The `serviceUseScopeId`
-inside those terms is semantic agreement material only. It is not a
+both participants can validate the requested scope. The `serviceUseId` inside
+those terms is semantic agreement material only. It is not a
 service-use index key, not a reusable Concord contract id, and not a lookup path
 for reviving prior authority. Concord contract ids remain opaque and
 incarnation-specific.
@@ -424,8 +451,8 @@ async def propose_example_service_use(
             # Concord contract; use supersedes only when replacing an exact
             # known contract pointer.
             #
-            # The serviceUseScopeId inside terms describes the requested
-            # scope. It is not Concord identity.
+            # The serviceUseId inside terms describes the requested scope. It
+            # is not Concord identity.
         ),
         # Starts the local participant token heartbeat loop.
         start_soon=task_group.start_soon,
@@ -787,14 +814,50 @@ The architectural invariant is: **Beacon disappearance only affects future disco
 
 ---
 
-## Cleanup after implementation
+## Breaking implementation plan
 
-Once the generic `BeaconDirectory` and `Concord.participant(...)` path is
-implemented, exported, and covered by tests, the service-specific discovery and
-service-use index path can be deleted. Do not delete `ServiceDirectory` first and
-leave callers without the generic replacement API. Do not replace it with
-another service-specific directory or service-use acceptor helper unless a
-concrete repeated call-site need appears later.
+The first workable slice should introduce the generic `BeaconDirectory`, move
+Python service discovery onto it, and delete the Python
+`ServiceDirectory`/`ServiceResolver` public API in the same branch. The same
+breaking branch should remove service-use index APIs and callers instead of
+preserving them with aliases or shims.
+
+`Concord.participant(...)` is already the desired provider-side shape. Keep it
+and compose it with pure profile validation helpers; do not replace it with a
+new service-specific acceptor.
+
+Do not replace the removed APIs with another service-specific directory,
+service-use acceptor, compatibility manager, or deterministic contract-reuse
+helper unless a concrete repeated call-site need appears later.
+
+Create:
+
+```text
+deckr.beacon.BeaconDirectory
+BeaconDirectory tests for replay, update, withdraw, invalid payloads, and stale/current recovery
+BeaconDirectory support for parser output that is zero, one, or many records
+small generic Concord wait-for-valid helper, only if repeated proposal loops prove it useful
+```
+
+Modify:
+
+```text
+Python service consumers use BeaconDirectory plus pure service descriptor helpers
+Python service consumers propose ConcordAgreementSpec directly for service use
+provider implementations keep Concord.participant(...) and pure ServiceUseTerms validation
+controller hardware/action discovery moves away from candidates_exact(...) fallback paths
+docs describe BeaconDirectory and direct Concord proposal, not ServiceDirectory or service-use indexes
+TypeScript and Rust mirrors follow the same public contract shape
+```
+
+Remove:
+
+```text
+Python ServiceDirectory, ServiceResolver, ServiceSelectionPolicy, and NewestServiceSelectionPolicy
+service-use index APIs, buckets, scope records, deterministic pointer reuse, and tests
+cross-language ServiceUseLeaseManager / ServiceQuery / service-use index mirrors
+compatibility aliases, deprecated wrappers, dual discovery APIs, and exact-scan fallback paths
+```
 
 The utility boundary should be:
 
@@ -925,7 +988,7 @@ Files:
   rust/deckr/tests/services_directory.rs
 ```
 
-Concrete migration recommendations from those call sites:
+Concrete replacement work from those call sites:
 
 ```text
 OpenHAB/Sonos clients:
@@ -948,16 +1011,16 @@ OpenHAB/Sonos providers:
   when the service is draining from discovery
 
 Kaj and plugin tests:
-  remove fake SERVICE_USE_INDEX_BUCKET_POLICY buckets once clients stop using
-  acquire_service_use_lease
-  keep or rewrite the existing OpenHAB/Sonos service-client tests that assert:
-    opaque contract ids are independent from serviceUseScopeId
+  remove fake SERVICE_USE_INDEX_BUCKET_POLICY buckets in the same breaking
+  branch that removes acquire_service_use_lease
+  rewrite the existing OpenHAB/Sonos service-client tests so they assert:
+    opaque contract ids are independent from serviceUseId
     missing Beacon does not reconstruct old authority
     scope/session changes propose independent contracts without supersedes
 
 Cross-language mirrors:
-  apply the same removal in typescript/deckr and rust/deckr so the SDKs do not
-  preserve the old service-specific lifecycle as their public API
+  apply the same breaking removal in typescript/deckr and rust/deckr so the SDKs
+  do not preserve the old service-specific lifecycle as their public API
 
 deckr-controller hardware/action discovery:
   replace candidates_exact(...) fallback paths with long-lived BeaconDirectory
@@ -974,7 +1037,7 @@ Docs:
   mention ServiceDirectory/ServiceResolver
 ```
 
-Remove these public service-specific discovery helpers:
+Remove these public service-specific discovery helpers in the breaking branch:
 
 ```text
 src/deckr/services/directory.py
@@ -984,7 +1047,9 @@ from deckr.services import ServiceSelectionPolicy
 from deckr.services import NewestServiceSelectionPolicy
 ```
 
-Remove these public service-use index helpers and constants:
+Remove any remaining Python service-use index and request-lifecycle surface in
+the breaking branch. Some of these symbols may already be gone in Python; do not
+reintroduce them:
 
 ```text
 from deckr.services import SERVICE_USE_INDEX_BUCKET_POLICY
@@ -996,7 +1061,8 @@ from deckr.services import service_use_scope_index_key
 deckr_service_use_index_v1 references
 ```
 
-Remove or replace the corresponding cross-language mirrors:
+Remove or replace the corresponding cross-language mirrors in the same
+contract-breaking pass:
 
 ```text
 typescript/deckr ServiceUseLeaseManager
