@@ -218,6 +218,12 @@ The directory belongs to Beacon: it owns one watch for one feature id and keeps
 an in-process parsed descriptor set. Service-specific meaning is supplied only
 by the parser function.
 
+Do not add a fallback from `BeaconDirectory` to lower-level exact candidate or
+key-listing APIs in this path. If the local Beacon view is not ready or current,
+wait for it or surface the feature as temporarily unavailable; an exact key scan
+on the request path recreates the slow failure mode this shape is meant to
+remove.
+
 ```python
 def parse_example_service_candidate(candidate) -> ServiceDescriptor | None:
     return parse_service_descriptor(candidate, EXAMPLE_PROTOCOL)
@@ -789,6 +795,156 @@ index path can be deleted. Do not replace it with another service-specific
 directory or service-use acceptor helper unless a concrete repeated call-site
 need appears later.
 
+The utility boundary should be:
+
+```text
+generic lifecycle helpers live in deckr.beacon or deckr.concord
+domain/profile packages provide pure parsers, selectors, terms builders, and validators
+applications compose those pieces for their policy
+```
+
+That keeps boilerplate low without making services special. If repeated
+boilerplate appears in services, hardware, actions, and future feature families,
+the fix should be a parameterized Beacon or Concord utility. If boilerplate is
+specific to one profile's payload or terms schema, it belongs beside that
+profile's models as a pure helper.
+
+Good generic utility candidates:
+
+```text
+runtime-owned BeaconDirectory registry keyed by feature id and stable
+  parser/profile identity
+BeaconDirectory parser/predicate/selector helpers
+Concord agreement wait helpers with caller-supplied terminal statuses
+Concord participant helpers that accept current_sessions and accept_contract callbacks
+```
+
+The registry recommendation is a performance recommendation, not a convenience
+wrapper for per-call lookups. A runtime should start one long-lived
+BeaconDirectory for a feature/profile and reuse its local parsed view from
+request handlers. It should not create a directory, replay a watch, or scan a
+bucket inside each command, view read, action resolution, or hardware claim
+attempt.
+
+Good domain/profile helpers:
+
+```text
+parse candidate payload into a descriptor
+select a descriptor from a collection
+build profile terms from a descriptor and requested scope
+validate proposed terms against current session and application policy
+derive protected view keys and prefixes
+```
+
+Avoid utilities that combine discovery, terms construction, Concord proposal,
+contract reuse, and provider acceptance into one domain-specific lifecycle
+manager. Those helpers are hard to reuse across feature families and tend to
+recreate hidden authority paths.
+
+Performance guardrails:
+
+```text
+No raw KV key scans on runtime lookup paths.
+No exact-candidate fallback from normal discovery.
+No raw bucket items(...), materialized-bucket items_exact(...), or
+  equivalent prefix listing inside service/action/hardware resolution.
+No caller-facing Concord participant/profile search to decide which service to use.
+No service-use scope index or deterministic scope pointer for contract reuse.
+No per-request materialized view startup.
+No public API that asks callers to choose between "cached" and "exact" lookup
+  paths unless there is a strict diagnostic or maintenance requirement.
+```
+
+Hot-path discovery should wait for a long-lived Beacon view to become current
+and then resolve locally. If that view is unavailable, surface unavailability or
+let the surrounding lifecycle wait; do not recover by listing exact Beacon keys.
+Concord lookup in hot paths should use agreement handles, exact known contract
+pointers, or participant managers. Any filtered contract indexes needed to make
+that fast should stay behind those abstractions rather than becoming application
+integration APIs.
+Maintenance, diagnostics, reapers, and cold-start materialization may perform
+bounded scans, but feature resolution must not.
+
+Observed current usage in this workspace:
+
+```text
+deckr-plugin-openhab and deckr-plugin-sonos clients use ServiceDirectory,
+ServiceResolver, SERVICE_USE_INDEX_BUCKET_POLICY, and acquire_service_use_lease.
+They also keep module-global _DIRECTORY_CACHE entries and pass command/view
+timeouts into service-use negotiation.
+Files:
+  ../deckr-plugin-openhab/src/deckr/plugins/openhab/_service_client.py
+  ../deckr-plugin-sonos/src/deckr/plugins/sonos/_service_client.py
+
+deckr-plugin-openhab and deckr-plugin-sonos providers already use
+Concord.participant(...) with ServiceUseTerms validation and current service
+session evidence.
+Files:
+  ../deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py
+  ../deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py
+
+deckr-controller, deckr-action-provider-runtime-python, deckr.hardware.runtime,
+and deckr-adapter-elgato-node already model non-service lifecycles as direct
+ConcordAgreementSpec proposals plus Concord participant managers.
+Files:
+  ../deckr-controller/src/deckr/controller/_action_provider_sessions.py
+  ../deckr-controller/src/deckr/controller/_controller_service.py
+  ../deckr-action-provider-runtime-python/src/deckr/action_provider_runtime/runtime.py
+  src/deckr/hardware/runtime.py
+  ../deckr-adapter-elgato-node/tests/beaconConcordLifecycle.test.ts
+
+deckr-controller still has hardware/action discovery paths that fall back from
+cached Beacon candidates to candidates_exact(...). Treat those as concrete
+scan-shaped cleanup targets, not as the pattern to preserve.
+Files:
+  ../deckr-controller/src/deckr/controller/_controller_service.py
+  ../deckr-controller/src/deckr/controller/action_provider/action_registry.py
+
+typescript/deckr mirrors the old service-use index through
+ServiceUseLeaseManager. rust/deckr mirrors the old service discovery wrappers
+through ServiceDirectory, ServiceResolver, and ServiceQuery.
+Files:
+  typescript/deckr/src/services.ts
+  typescript/deckr/tests/lifecycle.test.ts
+  rust/deckr/src/services.rs
+  rust/deckr/tests/services_directory.rs
+```
+
+Concrete migration recommendations from those call sites:
+
+```text
+OpenHAB/Sonos clients:
+  replace _DIRECTORY_CACHE with one runtime-owned BeaconDirectory per
+  runtime/feature/profile, started at component startup and reused by calls
+  replace ServiceResolver calls with directory.wait_for(predicate, select=...)
+  replace acquire_service_use_lease with direct Concord proposal plus a generic
+  wait-for-valid-agreement helper if repeated loops appear
+  separate service-use negotiation timeout from command/view RPC timeout
+
+OpenHAB/Sonos providers:
+  keep Concord.participant(...)
+  move repeated ServiceUseTerms/session/participant checks into pure helpers
+  keep application policy in the provider
+
+Kaj and plugin tests:
+  remove fake SERVICE_USE_INDEX_BUCKET_POLICY buckets once clients stop using
+  acquire_service_use_lease
+
+Cross-language mirrors:
+  apply the same removal in typescript/deckr and rust/deckr so the SDKs do not
+  preserve the old service-specific lifecycle as their public API
+
+deckr-controller hardware/action discovery:
+  replace candidates_exact(...) fallback paths with long-lived BeaconDirectory
+  style views for the relevant feature ids
+  if the Beacon view is not current, wait or report the feature unavailable
+  instead of listing exact advertisement keys from the request path
+
+Docs:
+  update deckr-plugin-openhab and deckr-plugin-sonos READMEs that currently
+  mention ServiceDirectory/ServiceResolver
+```
+
 Remove these public service-specific discovery helpers:
 
 ```text
@@ -809,6 +965,21 @@ from deckr.services import ServiceUseScopeIndexRecord
 from deckr.services import acquire_service_use_lease
 from deckr.services import service_use_scope_index_key
 deckr_service_use_index_v1 references
+```
+
+Remove or replace the corresponding cross-language mirrors:
+
+```text
+typescript/deckr ServiceUseLeaseManager
+typescript/deckr ServiceUseScopeIndexRecord
+typescript/deckr validateServiceUseScopeIndexRecord(...)
+typescript/deckr serviceUseScopeIndexKey(...)
+typescript/deckr DEFAULT_SERVICE_USE_INDEX_STORE_NAME
+rust/deckr ServiceDirectory
+rust/deckr ServiceResolver
+rust/deckr ServiceQuery
+rust/deckr ServiceUseScopeIndexRecord
+rust/deckr service_use_scope_index_key(...)
 ```
 
 Remove the matching imports and `__all__` exports from `deckr.services`. Remove
@@ -833,6 +1004,7 @@ directory = BeaconDirectory(
     log_label="ExampleService",
 )
 directory.start(task_group)
+await directory.wait_ready()
 
 descriptor = await directory.wait_for(
     lambda item: (
