@@ -52,11 +52,11 @@ DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS = 15.0
 DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
 DEFAULT_HARDWARE_WATCH_RETRY_SECONDS = 1.0
 
-HardwareCommandHandler = Callable[[DeckrMessage], Awaitable[bool | None]]
-HardwareResetHandler = Callable[[str], Awaitable[None]]
+_HardwareCommandHandler = Callable[[DeckrMessage], Awaitable[bool | None]]
+_HardwareResetHandler = Callable[[str], Awaitable[None]]
 
 
-class HardwareEndpoint(Protocol):
+class _HardwareEndpoint(Protocol):
     address: EndpointAddress
     session_id: str
 
@@ -117,13 +117,13 @@ class _ClaimCandidate:
 
 @dataclass(slots=True)
 class HardwareManagerRuntime:
-    endpoint: HardwareEndpoint
+    endpoint: _HardwareEndpoint
     beacon: Beacon
     concord: Concord
     manager_id: str
     labels: Mapping[str, str] | None = None
-    command_handler: HardwareCommandHandler | None = None
-    reset_handler: HardwareResetHandler | None = None
+    command_handler: _HardwareCommandHandler | None = None
+    reset_handler: _HardwareResetHandler | None = None
     advertisement_refresh_seconds: float = (
         DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS
     )
@@ -177,21 +177,13 @@ class HardwareManagerRuntime:
         )
 
     @property
-    def advertisement(self) -> AdvertisementHandle | None:
-        return self._advertisement
-
-    @property
-    def devices(self) -> Mapping[str, DeviceDescriptor]:
-        return dict(self._devices)
-
-    @property
     def live_claims(self) -> tuple[LiveHardwareClaim, ...]:
         return tuple(self._claims[key] for key in sorted(self._claims))
 
     async def set_device(self, descriptor: DeviceDescriptor) -> None:
         self._devices[descriptor.device_id] = descriptor
-        await self.publish_advertisement()
-        await self.reconcile_claims(reason="device inventory changed")
+        await self._publish_advertisement()
+        await self._reconcile_claims(reason="device inventory changed")
 
     async def remove_device(
         self,
@@ -204,22 +196,22 @@ class HardwareManagerRuntime:
             device_id,
             reason=f"hardware device {device_id} {reason}",
         )
-        await self.publish_advertisement()
-        await self.reconcile_claims(reason="device inventory changed")
+        await self._publish_advertisement()
+        await self._reconcile_claims(reason="device inventory changed")
 
     async def start(self, task_group: anyio.abc.TaskGroup) -> None:
         self._task_group = task_group
-        await self.publish_advertisement()
+        await self._publish_advertisement()
         if self._advertiser is not None:
             self._advertiser.start(task_group)
         self._claim_manager.start(task_group)
-        task_group.start_soon(self.command_subscription_loop)
-        task_group.start_soon(self.contract_event_loop)
-        task_group.start_soon(self.contract_reconcile_loop)
+        task_group.start_soon(self._command_subscription_loop)
+        task_group.start_soon(self._contract_event_loop)
+        task_group.start_soon(self._contract_reconcile_loop)
 
     async def stop(self) -> None:
         with anyio.CancelScope(shield=True):
-            await self.withdraw_advertisement()
+            await self._withdraw_advertisement()
             self._claims.clear()
             self._claims_by_device.clear()
             await self._claim_manager.aclose()
@@ -242,8 +234,8 @@ class HardwareManagerRuntime:
                 device_id,
                 reason=f"hardware device {device_id} {removed_reason}",
             )
-        await self.publish_advertisement()
-        await self.reconcile_claims(reason="device snapshot changed")
+        await self._publish_advertisement()
+        await self._reconcile_claims(reason="device snapshot changed")
 
     async def handle_hardware_message(self, message: DeckrMessage) -> bool:
         event = hw_messages.hardware_body_from_message(message)
@@ -281,12 +273,12 @@ class HardwareManagerRuntime:
         )
         return True
 
-    async def command_subscription_loop(self) -> None:
+    async def _command_subscription_loop(self) -> None:
         async with self.endpoint.subscribe(HARDWARE_MESSAGES_LANE) as stream:
             async for envelope in stream:
-                await self.handle_command(envelope)
+                await self._handle_command(envelope)
 
-    async def handle_command(self, envelope: DeckrMessage) -> bool:
+    async def _handle_command(self, envelope: DeckrMessage) -> bool:
         ref = hw_messages.hardware_device_ref_from_message(envelope)
         if ref is None or ref.manager_id != self.manager_id:
             return False
@@ -340,13 +332,13 @@ class HardwareManagerRuntime:
     ) -> LiveHardwareClaim | None:
         claim = self._claims_by_device.get(device_id)
         if refresh or claim is None or envelope.sender != claim.controller_endpoint:
-            await self.reconcile_claims(reason="command authorization")
+            await self._reconcile_claims(reason="command authorization")
             claim = self._claims_by_device.get(device_id)
         if claim is None or envelope.sender != claim.controller_endpoint:
             return None
         return claim
 
-    async def publish_advertisement(self) -> None:
+    async def _publish_advertisement(self) -> None:
         async with self._advertisement_lock:
             payload = self._hardware_payload()
             payload_dict = payload.to_dict()
@@ -390,7 +382,7 @@ class HardwareManagerRuntime:
                 )
                 self._advertisement_dirty = True
 
-    async def publish_advertisement_if_changed(self) -> None:
+    async def _publish_advertisement_if_changed(self) -> None:
         async with self._advertisement_lock:
             payload = self._hardware_payload()
             payload_dict = payload.to_dict()
@@ -402,9 +394,9 @@ class HardwareManagerRuntime:
             ):
                 return
 
-        await self.publish_advertisement()
+        await self._publish_advertisement()
 
-    async def withdraw_advertisement(self) -> None:
+    async def _withdraw_advertisement(self) -> None:
         async with self._advertisement_lock:
             self._advertisement = None
             self._advertised_payload = None
@@ -416,22 +408,22 @@ class HardwareManagerRuntime:
                     logger.debug("Could not withdraw hardware Beacon advertisement")
                 self._advertiser = None
 
-    async def advertisement_refresh_loop(self) -> None:
+    async def _advertisement_refresh_loop(self) -> None:
         while True:
             await anyio.sleep(self.advertisement_refresh_seconds)
-            await self.publish_advertisement()
+            await self._publish_advertisement()
 
-    async def contract_event_loop(self) -> None:
+    async def _contract_event_loop(self) -> None:
         async with self._claim_manager.watch() as stream:
             async for event in stream:
-                await self.reconcile_claims(
+                await self._reconcile_claims(
                     reason=f"managed contract {event.event_type.value}"
                 )
 
-    async def contract_reconcile_loop(self) -> None:
+    async def _contract_reconcile_loop(self) -> None:
         while True:
             try:
-                await self.reconcile_claims(reason="contract snapshot")
+                await self._reconcile_claims(reason="contract snapshot")
             except ConcordUnavailable:
                 logger.warning(
                     "Hardware claim contracts unavailable; reconciliation will retry",
@@ -439,7 +431,7 @@ class HardwareManagerRuntime:
                 )
             await anyio.sleep(self.claim_reconcile_seconds)
 
-    async def reconcile_claims(self, *, reason: str) -> None:
+    async def _reconcile_claims(self, *, reason: str) -> None:
         async with self._lock:
             await self._reconcile_claims_locked(reason=reason)
 
@@ -479,7 +471,7 @@ class HardwareManagerRuntime:
         self._claims_by_device = next_by_device
         if lost_claims:
             await self._reset_lost_claim_devices(lost_claims.values())
-        await self.publish_advertisement_if_changed()
+        await self._publish_advertisement_if_changed()
 
     async def _matching_claim_candidates(self) -> dict[str, _ClaimCandidate]:
         candidates: dict[str, _ClaimCandidate] = {}
@@ -686,9 +678,6 @@ __all__ = [
     "DEFAULT_HARDWARE_CLAIM_RECONCILE_SECONDS",
     "DEFAULT_HARDWARE_TOKEN_REFRESH_SECONDS",
     "DEFAULT_HARDWARE_WATCH_RETRY_SECONDS",
-    "HardwareCommandHandler",
-    "HardwareEndpoint",
     "HardwareManagerRuntime",
-    "HardwareResetHandler",
     "LiveHardwareClaim",
 ]
