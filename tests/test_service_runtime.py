@@ -11,28 +11,14 @@ from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import Beacon, BeaconAdvertisementSpec
-from deckr.concord import (
-    CONCORD_CONTRACT_BUCKET_POLICY,
-    CONCORD_MAINTENANCE_BUCKET_POLICY,
-    CONCORD_TOKEN_BUCKET_POLICY,
-    Concord,
-    ConcordAgreementSpec,
-    ConcordConflict,
-    ContractPointer,
-    ContractState,
-    canonical_json_hash,
-)
 from deckr.contracts.messages import service_address
 from deckr.services import (
-    SERVICE_USE_INDEX_BUCKET_POLICY,
-    SERVICE_USE_INDEX_SCHEMA_ID,
     ServiceAdvertisementPayload,
     ServiceBackendStatus,
     ServiceDescriptor,
     ServiceDirectory,
     ServiceProtocol,
     ServiceResolver,
-    ServiceUnavailable,
     ServiceUseTerms,
     ServiceViewChange,
     ServiceViewEntry,
@@ -40,11 +26,9 @@ from deckr.services import (
     ServiceViewRef,
     ServiceViewStore,
     UnsupportedServiceScope,
-    acquire_service_use_lease,
     newest_service_descriptor,
     parse_service_descriptor,
     service_descriptor_from_terms,
-    service_use_scope_index_key,
     service_use_terms,
     service_view_key,
 )
@@ -73,17 +57,6 @@ def _protocol(
 
 def _memory_beacon() -> Beacon:
     return Beacon(MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300))
-
-
-def _memory_concord() -> Concord:
-    return Concord(
-        MemoryJsonKvBucket(bucket=CONCORD_CONTRACT_BUCKET_POLICY.bucket),
-        MemoryJsonKvBucket(
-            bucket=CONCORD_TOKEN_BUCKET_POLICY.bucket,
-            ttl_seconds=CONCORD_TOKEN_BUCKET_POLICY.ttl_seconds,
-        ),
-        MemoryJsonKvBucket(bucket=CONCORD_MAINTENANCE_BUCKET_POLICY.bucket),
-    )
 
 
 async def _publish_service_advertisement(
@@ -128,90 +101,6 @@ async def _descriptor(
     descriptor = newest_service_descriptor(descriptors)
     assert descriptor is not None
     return descriptor
-
-
-async def _service_descriptor(
-    *,
-    service_session_id: str = "service-session",
-) -> ServiceDescriptor:
-    beacon = _memory_beacon()
-    protocol = _protocol()
-    await _publish_service_advertisement(
-        beacon,
-        protocol,
-        session_id=service_session_id,
-    )
-    return await _descriptor(beacon, protocol)
-
-
-async def _acquire_service_use_lease_with_service_token(
-    concord: Concord,
-    index_bucket: MemoryJsonKvBucket,
-    descriptor: ServiceDescriptor,
-    *,
-    client_session_id: str = "client-session",
-    operations: set[str] | None = None,
-    timeout: float = 1.0,
-):
-    client_endpoint = action_provider_address("provider-main")
-    result: dict[str, Any] = {}
-
-    async def acquire_task() -> None:
-        try:
-            result["lease"] = await acquire_service_use_lease(
-                concord=concord,
-                index_bucket=index_bucket,
-                descriptor=descriptor,
-                client_endpoint=client_endpoint,
-                client_session_id=client_session_id,
-                operations=operations or {"sendCommand"},
-                timeout=timeout,
-                start_soon=task_group.start_soon,
-            )
-        except BaseException as exc:  # pragma: no cover - test failure path
-            result["error"] = exc
-
-    async def service_token_task() -> None:
-        while "lease" not in result and "error" not in result:
-            contracts = await concord.contracts(
-                descriptor.use_profile,
-                participant=descriptor.endpoint,
-                state=ContractState.OPEN,
-            )
-            for contract in contracts:
-                record = await concord.contract_record(contract)
-                if (
-                    record is None
-                    or descriptor.endpoint in record.attached_participants
-                ):
-                    continue
-                try:
-                    await concord.attach(
-                        contract,
-                        participant=descriptor.endpoint,
-                        session_id=descriptor.session_id,
-                    )
-                except ConcordConflict:
-                    pass
-            await anyio.sleep(0)
-
-    async with anyio.create_task_group() as task_group:
-        task_group.start_soon(acquire_task)
-        task_group.start_soon(service_token_task)
-        with anyio.fail_after(timeout + 1):
-            while "lease" not in result and "error" not in result:
-                await anyio.sleep(0)
-        task_group.cancel_scope.cancel()
-
-    if "error" in result:
-        raise result["error"]
-    return result["lease"]
-
-
-async def _scope_index_record(index_bucket: MemoryJsonKvBucket, scope_id: str) -> dict:
-    entry = await index_bucket.get(service_use_scope_index_key(scope_id))
-    assert entry is not None
-    return dict(entry.value)
 
 
 async def _service_view_context():
@@ -290,7 +179,7 @@ def test_service_protocol_payload_terms_and_view_keys() -> None:
 
     terms = ServiceUseTerms(
         profile=protocol.use_profile,
-        serviceUseScopeId="service-use-scope:test",
+        serviceUseId="service-use:test",
         serviceId="openhab-home",
         serviceEndpoint=service_address("openhab-home"),
         serviceNamespace=protocol.namespace,
@@ -303,277 +192,6 @@ def test_service_protocol_payload_terms_and_view_keys() -> None:
     assert terms.to_dict()["allowedViews"] == {
         "items": ["views.openhab-home.items."]
     }
-
-
-@pytest.mark.asyncio
-async def test_service_use_scope_index_reuses_valid_contract() -> None:
-    concord = _memory_concord()
-    index_bucket = MemoryJsonKvBucket(bucket=SERVICE_USE_INDEX_BUCKET_POLICY.bucket)
-    descriptor = await _service_descriptor()
-    first = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-    )
-
-    reused = await acquire_service_use_lease(
-        concord=concord,
-        index_bucket=index_bucket,
-        descriptor=descriptor,
-        client_endpoint=action_provider_address("provider-main"),
-        client_session_id="client-session",
-        operations={"sendCommand"},
-        timeout=0,
-    )
-
-    assert reused.contract.contract_id == first.contract.contract_id
-    assert reused.terms.service_use_scope_id == first.terms.service_use_scope_id
-    assert len(await concord.contracts(descriptor.use_profile)) == 1
-
-
-@pytest.mark.asyncio
-async def test_service_use_scope_index_replaces_stale_pointer() -> None:
-    concord = _memory_concord()
-    index_bucket = MemoryJsonKvBucket(bucket=SERVICE_USE_INDEX_BUCKET_POLICY.bucket)
-    descriptor = await _service_descriptor()
-    client_endpoint = action_provider_address("provider-main")
-    terms = service_use_terms(
-        descriptor,
-        client_endpoint,
-        operations={"sendCommand"},
-    )
-    stale_pointer = ContractPointer(contractId="missing-service-use", generation=1)
-    await index_bucket.create(
-        service_use_scope_index_key(terms.service_use_scope_id),
-        {
-            "schema": SERVICE_USE_INDEX_SCHEMA_ID,
-            "scopeId": terms.service_use_scope_id,
-            "contract": stale_pointer.model_dump(by_alias=True, mode="json"),
-            "termsHash": canonical_json_hash(terms),
-            "serviceEndpoint": str(terms.service_endpoint),
-            "serviceSessionId": terms.service_session_id,
-            "clientEndpoint": str(terms.client_endpoint),
-            "clientSessionId": "client-session",
-            "state": "candidate",
-            "createdAt": "2026-01-01T00:00:00Z",
-            "updatedAt": "2026-01-01T00:00:00Z",
-        },
-    )
-
-    lease = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-    )
-
-    assert lease.contract.contract_id != stale_pointer.contract_id
-    record = await concord.contract_record(lease.contract)
-    assert record is not None
-    assert record.supersedes == stale_pointer
-
-
-@pytest.mark.asyncio
-async def test_service_use_scope_index_replaces_client_session_mismatch() -> None:
-    concord = _memory_concord()
-    index_bucket = MemoryJsonKvBucket(bucket=SERVICE_USE_INDEX_BUCKET_POLICY.bucket)
-    descriptor = await _service_descriptor()
-    first = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-    )
-
-    successor = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-        client_session_id="client-session-2",
-    )
-
-    old_pointer = ContractPointer(
-        contractId=first.contract.contract_id,
-        generation=first.contract.generation,
-    )
-    assert successor.terms.service_use_scope_id == first.terms.service_use_scope_id
-    assert successor.contract.contract_id != first.contract.contract_id
-    record = await concord.contract_record(successor.contract)
-    assert record is not None
-    assert record.supersedes == old_pointer
-    old_record = await concord.contract_record(first.contract)
-    assert old_record is not None
-    assert old_record.state == ContractState.CANCELLED
-    indexed = await _scope_index_record(index_bucket, successor.terms.service_use_scope_id)
-    assert indexed["contract"] == ContractPointer(
-        contractId=successor.contract.contract_id,
-        generation=successor.contract.generation,
-    ).model_dump(by_alias=True, mode="json")
-    assert indexed["supersedes"] == old_pointer.model_dump(by_alias=True, mode="json")
-
-
-@pytest.mark.asyncio
-async def test_service_use_scope_index_replaces_missing_client_token() -> None:
-    concord = _memory_concord()
-    index_bucket = MemoryJsonKvBucket(bucket=SERVICE_USE_INDEX_BUCKET_POLICY.bucket)
-    descriptor = await _service_descriptor()
-    first = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-    )
-    await first.agreement.aclose()
-
-    successor = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-    )
-
-    assert successor.contract.contract_id != first.contract.contract_id
-    record = await concord.contract_record(successor.contract)
-    assert record is not None
-    assert record.supersedes == ContractPointer(
-        contractId=first.contract.contract_id,
-        generation=first.contract.generation,
-    )
-
-
-@pytest.mark.asyncio
-async def test_service_use_scope_index_replaces_missing_service_token() -> None:
-    concord = _memory_concord()
-    index_bucket = MemoryJsonKvBucket(bucket=SERVICE_USE_INDEX_BUCKET_POLICY.bucket)
-    descriptor = await _service_descriptor()
-    client_endpoint = action_provider_address("provider-main")
-    terms = service_use_terms(
-        descriptor,
-        client_endpoint,
-        operations={"sendCommand"},
-    )
-    pending = await concord.propose(
-        ConcordAgreementSpec(
-            profile=descriptor.use_profile,
-            participants=(client_endpoint, descriptor.endpoint),
-            local_participant=client_endpoint,
-            local_session_id="client-session",
-            terms=terms,
-            current_sessions={
-                str(descriptor.endpoint): descriptor.session_id,
-                str(client_endpoint): "client-session",
-            },
-        )
-    )
-    old_pointer = ContractPointer(
-        contractId=pending.contract.contract_id,
-        generation=pending.contract.generation,
-    )
-    await index_bucket.create(
-        service_use_scope_index_key(terms.service_use_scope_id),
-        {
-            "schema": SERVICE_USE_INDEX_SCHEMA_ID,
-            "scopeId": terms.service_use_scope_id,
-            "contract": old_pointer.model_dump(by_alias=True, mode="json"),
-            "termsHash": canonical_json_hash(terms),
-            "serviceEndpoint": str(terms.service_endpoint),
-            "serviceSessionId": terms.service_session_id,
-            "clientEndpoint": str(terms.client_endpoint),
-            "clientSessionId": "client-session",
-            "state": "candidate",
-            "createdAt": "2026-01-01T00:00:00Z",
-            "updatedAt": "2026-01-01T00:00:00Z",
-        },
-    )
-
-    with pytest.raises(ServiceUnavailable) as exc_info:
-        await acquire_service_use_lease(
-            concord=concord,
-            index_bucket=index_bucket,
-            descriptor=descriptor,
-            client_endpoint=client_endpoint,
-            client_session_id="client-session",
-            operations={"sendCommand"},
-            timeout=0,
-        )
-
-    assert exc_info.value.code == "contract_not_yet_fulfilled"
-    old_record = await concord.contract_record(pending.contract)
-    assert old_record is not None
-    assert old_record.state == ContractState.CANCELLED
-    indexed = await _scope_index_record(index_bucket, terms.service_use_scope_id)
-    assert indexed["contract"] != old_pointer.model_dump(by_alias=True, mode="json")
-    successor = await concord.get_contract(indexed["contract"])
-    assert successor is not None
-    successor_record = await concord.contract_record(successor)
-    assert successor_record is not None
-    assert successor_record.supersedes == old_pointer
-
-
-@pytest.mark.asyncio
-async def test_service_use_scope_index_replaces_terms_hash_mismatch() -> None:
-    concord = _memory_concord()
-    index_bucket = MemoryJsonKvBucket(bucket=SERVICE_USE_INDEX_BUCKET_POLICY.bucket)
-    descriptor = await _service_descriptor()
-    first = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-    )
-    key = service_use_scope_index_key(first.terms.service_use_scope_id)
-    entry = await index_bucket.get(key)
-    assert entry is not None
-    stale = dict(entry.value)
-    stale["termsHash"] = "sha256:stale"
-    await index_bucket.update(key, stale, revision=entry.revision)
-
-    successor = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-    )
-
-    old_pointer = ContractPointer(
-        contractId=first.contract.contract_id,
-        generation=first.contract.generation,
-    )
-    assert successor.contract.contract_id != first.contract.contract_id
-    record = await concord.contract_record(successor.contract)
-    assert record is not None
-    assert record.supersedes == old_pointer
-    old_record = await concord.contract_record(first.contract)
-    assert old_record is not None
-    assert old_record.state == ContractState.CANCELLED
-
-
-@pytest.mark.asyncio
-async def test_service_use_scope_index_retries_after_cas_conflict() -> None:
-    class ConflictOnceBucket(MemoryJsonKvBucket):
-        def __init__(self) -> None:
-            super().__init__(bucket=SERVICE_USE_INDEX_BUCKET_POLICY.bucket)
-            self.conflicts = 1
-
-        async def create(self, key, value, *, ttl=None):
-            if self.conflicts:
-                self.conflicts -= 1
-                raise KvConflict("simulated scope-index race")
-            return await super().create(key, value, ttl=ttl)
-
-    concord = _memory_concord()
-    index_bucket = ConflictOnceBucket()
-    descriptor = await _service_descriptor()
-
-    lease = await _acquire_service_use_lease_with_service_token(
-        concord,
-        index_bucket,
-        descriptor,
-    )
-
-    contracts = await concord.contracts(descriptor.use_profile)
-    assert len(contracts) == 2
-    cancelled = [
-        await concord.contract_record(contract)
-        for contract in contracts
-        if contract.contract_id != lease.contract.contract_id
-    ]
-    assert cancelled[0] is not None
-    assert cancelled[0].state == ContractState.CANCELLED
 
 
 @pytest.mark.asyncio
@@ -780,7 +398,7 @@ def test_service_descriptor_from_terms_without_beacon_candidate() -> None:
     protocol = _protocol()
     terms = ServiceUseTerms(
         profile=protocol.use_profile,
-        serviceUseScopeId="service-use-scope:test",
+        serviceUseId="service-use:test",
         serviceId="openhab-backup",
         serviceEndpoint=service_address("openhab-backup"),
         serviceNamespace=protocol.namespace,

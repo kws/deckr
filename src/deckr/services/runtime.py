@@ -9,7 +9,6 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-import anyio
 from pydantic import (
     Field,
     field_serializer,
@@ -229,7 +228,7 @@ class ServiceAdvertisementPayload(DeckrModel):
 
 class ServiceUseTerms(DeckrModel):
     profile: str
-    service_use_scope_id: str = Field(alias="serviceUseScopeId")
+    service_use_id: str = Field(alias="serviceUseId")
     service_id: str = Field(alias="serviceId")
     service_endpoint: EndpointAddress = Field(alias="serviceEndpoint")
     service_namespace: str = Field(alias="serviceNamespace")
@@ -243,7 +242,7 @@ class ServiceUseTerms(DeckrModel):
 
     @field_validator(
         "profile",
-        "service_use_scope_id",
+        "service_use_id",
         "service_id",
         "service_namespace",
         "service_session_id",
@@ -320,6 +319,14 @@ class ServiceDescriptor:
         )
         object.__setattr__(self, "views", MappingProxyType(dict(self.views)))
         object.__setattr__(self, "diagnostics", freeze_json(dict(self.diagnostics)))
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceUseRequest:
+    descriptor: ServiceDescriptor
+    client_endpoint: EndpointAddress
+    operations: frozenset[str]
+    views: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(slots=True)
@@ -504,7 +511,7 @@ def service_use_terms(
     return ServiceUseTerms.model_validate(
         {
             **identity,
-            "serviceUseScopeId": f"service-use-scope:{digest}",
+            "serviceUseId": f"service-use:{digest}",
         }
     )
 
