@@ -372,20 +372,28 @@ candidates and parse service descriptors ad hoc, or query Concord to discover
 available services. The resolver output is only a candidate for a new
 service-use negotiation.
 
+Service-use Concord contract ids are deterministic: consumers derive
+`ServiceUseTerms.serviceUseId` from the selected descriptor, client endpoint,
+requested operations, and requested views, then use that value as the Concord
+stable contract id. Consumers must not query Concord to find or reconstruct
+matching service-use contracts after descriptor or lease state is lost.
+The Concord participants must be exactly the service endpoint and the client
+endpoint encoded in `ServiceUseTerms`.
+
 After a service-use Concord contract is negotiated, service command and view
-authority follows that Concord contract and its participant tokens, not
+authority follows that already-held lease and its participant tokens, not
 continued Beacon advertisement presence. Protected service views are authorized
 through the service-use contract and fenced by the advertised service identity
-and session. Consumers must validate an existing service-use Concord contract
-before treating missing Beacon discovery as service unavailability.
-Protected view watches deliver payloads only while the stored entry matches the
-watcher's service-use fence. If a visible same-key entry is replaced by another
-service identity or session, the watcher observes only a removal-style event and
-must not receive the replacement payload. Delete and expire events for entries
-that were never visible to that watcher are not delivered.
-A service may withdraw its Beacon advertisement when it cannot accept new
-service-use contracts; existing service-use contracts remain governed only by
-Concord validity and participant tokens.
+and session. Consumers may refresh an already-held service-use lease while it
+remains valid, but new or lost lease state requires current Beacon discovery and
+a new deterministic-id proposal. Protected view watches deliver payloads only
+while the stored entry matches the watcher's service-use fence. If a visible
+same-key entry is replaced by another service identity or session, the watcher
+observes only a removal-style event and must not receive the replacement
+payload. Delete and expire events for entries that were never visible to that
+watcher are not delivered. A service may withdraw its Beacon advertisement when
+it cannot accept new service-use contracts; already-held service-use contracts
+remain governed only by Concord validity and participant tokens.
 
 ## Contract Artifacts And Conformance
 

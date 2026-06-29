@@ -538,7 +538,8 @@ export class ServiceUseAuthorizer {
         ContractValidityStatus.SESSION_MISMATCH,
         ContractValidityStatus.TERMS_HASH_MISMATCH,
       ],
-      acceptContract: (_contract, record) => this.matchingTermsRecord(record) !== null,
+      acceptContract: (contract, record) =>
+        this.matchingTermsRecord(contract, record) !== null,
       currentSessions: () => ({ [this.endpoint.endpoint]: this.endpoint.sessionId }),
     });
   }
@@ -552,7 +553,7 @@ export class ServiceUseAuthorizer {
     if (managed === null) {
       return null;
     }
-    return this.matchingTermsRecord(managed.record);
+    return this.matchingTermsRecord(contract, managed.record);
   }
 
   async authorizeCommand(
@@ -570,7 +571,7 @@ export class ServiceUseAuthorizer {
     }
     await this.reconcileContracts();
     for (const managed of this.manager.managedContracts()) {
-      const terms = this.matchingTermsRecord(managed.record);
+      const terms = this.matchingTermsRecord(managed.contract, managed.record);
       if (terms === null) {
         continue;
       }
@@ -593,7 +594,10 @@ export class ServiceUseAuthorizer {
     return AuthorizationDecision.DENIED;
   }
 
-  private matchingTermsRecord(record: ContractRecord): ServiceUseTerms | null {
+  private matchingTermsRecord(
+    contract: ContractHandle,
+    record: ContractRecord,
+  ): ServiceUseTerms | null {
     if (record.state !== ContractState.OPEN || record.terms === undefined) {
       return null;
     }
@@ -601,6 +605,12 @@ export class ServiceUseAuthorizer {
     try {
       terms = validateServiceUseTerms(record.terms);
     } catch {
+      return null;
+    }
+    if (contract.contractId !== terms.serviceUseId) {
+      return null;
+    }
+    if (!serviceUseParticipantsMatch(record, terms)) {
       return null;
     }
     if (
@@ -614,6 +624,14 @@ export class ServiceUseAuthorizer {
     }
     return terms;
   }
+}
+
+function serviceUseParticipantsMatch(record: ContractRecord, terms: ServiceUseTerms): boolean {
+  const expected = [terms.clientEndpoint, terms.serviceEndpoint].sort();
+  return (
+    record.participants.length === expected.length &&
+    record.participants.every((participant, index) => participant === expected[index])
+  );
 }
 
 export class ServiceCommandChannel {

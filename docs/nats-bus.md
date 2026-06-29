@@ -322,8 +322,13 @@ view prefixes are derived from each descriptor's advertised service id.
 Resolving a service is therefore a local lookup and policy selection step; it
 must not scan Beacon KV, perform an exact NATS round trip, query Concord, or
 duplicate service-specific Beacon indexing in consumers. Directory results are
-discovery candidates only. Existing service-use contracts remain governed by
-Concord validity and participant tokens.
+discovery candidates only. Consumers derive deterministic service-use terms from
+the selected descriptor and requested scope, then use
+`ServiceUseTerms.serviceUseId` as the Concord stable contract id. Consumers must
+not query Concord to find or reconstruct matching service-use contracts after
+descriptor or lease state is lost.
+The Concord participants must be exactly the service endpoint and the client
+endpoint encoded in `ServiceUseTerms`.
 
 Protected service views are direct JetStream/KV views. Service/application code
 opens them by constructing `ServiceViewStore` from an explicit KV bucket and
@@ -341,11 +346,12 @@ another service identity or session emits a removal-style event to the original
 watcher without exposing the replacement payload, and delete/expire events for
 never-visible entries are suppressed for that watcher. After a service-use
 Concord contract is negotiated, service command and protected view authority
-follows Concord, not continued Beacon advertisement presence. A service may
-withdraw its Beacon advertisement when it cannot accept new service-use
-contracts; existing service-use contracts remain Concord-governed. Consumers
-validate those existing service-use contracts before treating missing Beacon
-discovery as service unavailability.
+follows the already-held Concord lease, not continued Beacon advertisement
+presence. A service may withdraw its Beacon advertisement when it cannot accept
+new service-use contracts; already-held service-use contracts remain
+Concord-governed and may be refreshed until Concord invalidates them. New or
+lost lease state requires current Beacon discovery and a new deterministic-id
+proposal.
 
 ## Component Dependencies
 

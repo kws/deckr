@@ -201,4 +201,77 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
     }),
     AuthorizationDecision.AUTHORIZED,
   );
+
+  const mismatchedTerms = serviceUseTerms(descriptor!, clientEndpoint.endpoint, {
+    operations: ["pause"],
+  });
+  await concord.ensureAgreement({
+    profile: descriptor!.useProfile,
+    participants: [descriptor!.endpoint, clientEndpoint.endpoint],
+    localParticipant: clientEndpoint.endpoint,
+    localSessionId: clientEndpoint.sessionId,
+    terms: mismatchedTerms as any,
+    stableContractId: "service-use:wrong",
+    currentSessions: {
+      [descriptor!.endpoint]: descriptor!.sessionId,
+      [clientEndpoint.endpoint]: clientEndpoint.sessionId,
+    },
+  });
+
+  const pauseMessage = buildMessage({
+    lane: "services",
+    sender: clientEndpoint.endpoint,
+    senderSessionId: clientEndpoint.sessionId,
+    recipient: descriptor!.endpoint,
+    recipientSessionId: descriptor!.sessionId,
+    messageType: "serviceCommand",
+    subject: entitySubject("service", {
+      serviceId: "music",
+      namespace: protocol.namespace,
+      operation: "pause",
+    }),
+    body: {
+      serviceNamespace: protocol.namespace,
+      operation: "pause",
+      params: {},
+    },
+  });
+
+  assert.equal(
+    await authorizer.authorizeCommand(
+      pauseMessage,
+      {
+        serviceNamespace: protocol.namespace,
+        operation: "pause",
+        params: {},
+      },
+    ),
+    AuthorizationDecision.DENIED,
+  );
+
+  const otherClientEndpoint = {
+    endpoint: controllerAddress("other"),
+    sessionId: "other-controller-session",
+  };
+  await concord.ensureAgreement({
+    profile: descriptor!.useProfile,
+    participants: [descriptor!.endpoint, otherClientEndpoint.endpoint],
+    localParticipant: otherClientEndpoint.endpoint,
+    localSessionId: otherClientEndpoint.sessionId,
+    terms: mismatchedTerms as any,
+    stableContractId: mismatchedTerms.serviceUseId,
+    currentSessions: {
+      [descriptor!.endpoint]: descriptor!.sessionId,
+      [otherClientEndpoint.endpoint]: otherClientEndpoint.sessionId,
+    },
+  });
+
+  assert.equal(
+    await authorizer.authorizeCommand(pauseMessage, {
+      serviceNamespace: protocol.namespace,
+      operation: "pause",
+      params: {},
+    }),
+    AuthorizationDecision.DENIED,
+  );
 });
