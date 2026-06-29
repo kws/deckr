@@ -1,12 +1,6 @@
 """Shared service endpoint and message contracts."""
 
 from deckr.contracts.lanes import SERVICE_LANE_CONTRACT
-from deckr.services.directory import (
-    NewestServiceSelectionPolicy,
-    ServiceDirectory,
-    ServiceResolver,
-    ServiceSelectionPolicy,
-)
 from deckr.services.messages import (
     SERVICE_COMMAND,
     SERVICE_COMMAND_REPLY,
@@ -29,7 +23,6 @@ from deckr.services.runtime import (
     ServiceProtocol,
     ServiceUnavailable,
     ServiceUseLease,
-    ServiceUseRequest,
     ServiceUseTerms,
     ServiceViewFamily,
     ServiceViewFamilyDefinition,
@@ -49,22 +42,17 @@ __all__ = [
     "SERVICE_COMMAND",
     "SERVICE_COMMAND_REPLY",
     "SERVICE_LANE_CONTRACT",
-    "NewestServiceSelectionPolicy",
     "ServiceAdvertisementPayload",
     "ServiceBackendStatus",
     "ServiceCommandBody",
     "ServiceCommandReplyBody",
     "ServiceCommandStatus",
-    "ServiceDirectory",
     "ServiceDescriptor",
     "ServiceError",
     "ServiceMessageBody",
     "ServiceProtocol",
-    "ServiceResolver",
-    "ServiceSelectionPolicy",
     "ServiceUnavailable",
     "ServiceUseLease",
-    "ServiceUseRequest",
     "ServiceUseTerms",
     "ServiceViewChange",
     "ServiceViewEntry",

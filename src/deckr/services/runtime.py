@@ -321,14 +321,6 @@ class ServiceDescriptor:
         object.__setattr__(self, "diagnostics", freeze_json(dict(self.diagnostics)))
 
 
-@dataclass(frozen=True, slots=True)
-class ServiceUseRequest:
-    descriptor: ServiceDescriptor
-    client_endpoint: EndpointAddress
-    operations: frozenset[str]
-    views: Mapping[str, tuple[str, ...]]
-
-
 @dataclass(slots=True)
 class ServiceUseLease:
     agreement: ConcordAgreementLease

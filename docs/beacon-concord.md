@@ -362,27 +362,22 @@ ids, advertisement payload profiles, terms profiles, and direct KV-backed
 service views. Deckr core does not define service-specific domain semantics
 such as Sonos zones, OpenHAB items, or package-owned view schemas.
 
-Service consumers must discover service candidates through
-`ServiceDirectory`/`ServiceResolver` in `deckr.services`. A service directory is
-a local, profile-aware index over one `Beacon.watch(protocol.feature_id)` stream
-and parsed `ServiceDescriptor` values for that service protocol feature, not
-for one service id. The service id and concrete view key prefixes come from each
-validated descriptor. Consumers must not raw-scan Beacon KV, scan all Beacon
-candidates and parse service descriptors ad hoc, or query Concord to discover
-available services. The resolver output is only a candidate for a new
+Service consumers discover service candidates through `BeaconDirectory` in
+`deckr.beacon`, using `parse_service_descriptor()` as the service profile parser.
+A directory is a local parsed view over one Beacon feature watch, not a
+directory for one service id. The service id and concrete view key prefixes come
+from each validated descriptor. Consumers must not raw-scan Beacon KV, scan all
+Beacon candidates and parse service descriptors ad hoc, or query Concord to
+discover available services. Directory output is only a candidate for a new
 service-use negotiation.
 
 Service-use Concord contract ids are opaque runtime ids. Consumers derive
-`ServiceUseTerms.serviceUseScopeId` from the selected descriptor, client
-endpoint, requested operations, and requested views, then use that value only as
-the key into the `deckr_service_use_index_v1` service-use scope index. The index
-record points at an exact Concord contract pointer and can be replaced only by
-compare-and-set after the pointed contract no longer matches current terms,
-session, or token validity. Scope-index reuse is allowed only when exact Concord
-validation reports `valid`; a `not_yet_fulfilled` pointer is still only a
-candidate and requires a successor contract.
-The Concord participants must be exactly the service endpoint and the client
-endpoint encoded in `ServiceUseTerms`.
+`ServiceUseTerms.serviceUseId` from the selected descriptor, client endpoint,
+requested operations, and requested views as semantic terms material only. It is
+not a Concord contract id, not a reusable pointer, and not a lookup key for
+reviving old authority. New or lost service-use authority is established by
+proposing a fresh Concord contract. The Concord participants must be exactly the
+service endpoint and the client endpoint encoded in `ServiceUseTerms`.
 
 After a service-use Concord contract is negotiated, service command and view
 authority follows that already-held lease and its participant tokens, not

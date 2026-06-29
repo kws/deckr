@@ -81,10 +81,15 @@ def test_removed_service_runtime_helpers_are_not_public() -> None:
 
     removed = {
         "AuthorizationDecision",
+        "NewestServiceSelectionPolicy",
         "ServiceAdvertiser",
         "ServiceCommandChannel",
+        "ServiceDirectory",
+        "ServiceResolver",
+        "ServiceSelectionPolicy",
         "ServiceUseAuthorizer",
         "ServiceUseLeaseManager",
+        "ServiceUseRequest",
     }
     assert all(not hasattr(runtime, name) for name in removed)
     assert all(not hasattr(services, name) for name in removed)

@@ -168,11 +168,12 @@ managed Beacon discovery, `Deckr.concord` for managed agreement state, and
 `Deckr.kv_bucket(...)` for explicit NATS KV buckets. Protected service views are
 opened in service/application code by constructing `ServiceViewStore` from an
 explicit KV bucket and starting it in a caller-owned task group. Service
-consumers discover service candidates with `ServiceDirectory` and
-`ServiceResolver` from `deckr.services`, not by scanning Beacon KV, duplicating
-descriptor parsing loops, or querying Concord as a catalog. A directory is
-created for a service protocol feature, not for a single service id; parsed
-descriptors carry the actual advertised service id and derived view prefixes.
+consumers discover service candidates with `BeaconDirectory` from
+`deckr.beacon`, using `parse_service_descriptor()` as the service profile
+parser. A directory is created for a service protocol feature, not for a single
+service id; parsed descriptors carry the actual advertised service id and
+derived view prefixes. Consumers must not scan Beacon KV, duplicate descriptor
+parsing loops, or query Concord as a catalog.
 The optional
 `deckr[supervised-nats]` extra also installs the first-party
 `deckr-nats-server-bin` binary package so embedded hosts and the `deckr` launcher

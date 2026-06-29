@@ -3,13 +3,14 @@ from __future__ import annotations
 import logging
 import random
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from threading import RLock
 from time import monotonic
-from typing import Any, Literal, Protocol
+from typing import Any, Generic, Literal, Protocol, TypeVar
 
 import anyio
 from pydantic import Field, field_serializer, field_validator, model_validator
@@ -70,6 +71,8 @@ class AdvertisementSelector(Protocol):
 
 
 AdvertisementFilter = Callable[["AdvertisementRecord"], bool] | AdvertisementSelector
+
+T = TypeVar("T")
 
 
 def _require_text(value: str, *, field_name: str) -> str:
@@ -269,6 +272,11 @@ class Candidate:
     @property
     def endpoint(self) -> EndpointAddress:
         return self.advertisement.endpoint
+
+
+BeaconDirectoryParser = Callable[[Candidate], T | list[T] | tuple[T, ...] | None]
+BeaconDirectoryPredicate = Callable[[T], bool]
+BeaconDirectorySelector = Callable[[Collection[T]], T | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -993,6 +1001,241 @@ class Beacon:
         return tuple(sorted(candidates, key=_candidate_newest_sort_key))
 
 
+class BeaconDirectory(Generic[T]):
+    """Generic local parsed-record view over one Beacon feature."""
+
+    def __init__(
+        self,
+        beacon: Beacon,
+        feature_id: str,
+        parser: BeaconDirectoryParser[T],
+        *,
+        log_label: str = "BeaconDirectory",
+        retry_interval: float = 1.0,
+    ) -> None:
+        if retry_interval <= 0:
+            raise ValueError("retry_interval must be greater than zero")
+        self._beacon = beacon
+        self.feature_id = _require_text(feature_id, field_name="Beacon feature id")
+        self._parser = parser
+        self._log_label = _require_text(log_label, field_name="Beacon directory log label")
+        self._retry_interval = retry_interval
+        self._ready = anyio.Event()
+        self._changed = anyio.Event()
+        self._closed = False
+        self._started = False
+        self._current = False
+        self._cancel_scope: anyio.CancelScope | None = None
+        self._records_by_key: dict[str, tuple[T, ...]] = {}
+        self._lock = RLock()
+
+    def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        self.start_soon(task_group.start_soon)
+
+    def start_soon(self, start_soon: Callable[..., object] | None) -> None:
+        if start_soon is None or self._closed or self._started:
+            return
+        self._started = True
+        start_soon(self._event_loop)
+
+    async def wait_ready(self) -> None:
+        await self._ready.wait()
+
+    def is_current(self) -> bool:
+        with self._lock:
+            return self._ready.is_set() and self._current and self._beacon.is_current()
+
+    def records(self) -> tuple[T, ...]:
+        with self._lock:
+            self._raise_if_stale_locked()
+            return self._records_locked()
+
+    def resolve(
+        self,
+        predicate: BeaconDirectoryPredicate[T] | None = None,
+        *,
+        select: BeaconDirectorySelector[T] | None = None,
+    ) -> T | None:
+        with self._lock:
+            self._raise_if_stale_locked()
+            return self._resolve_locked(predicate, select=select)
+
+    async def wait_for(
+        self,
+        predicate: BeaconDirectoryPredicate[T] | None = None,
+        *,
+        select: BeaconDirectorySelector[T] | None = None,
+        timeout: float | None = None,
+    ) -> T:
+        async def wait_loop() -> T:
+            await self.wait_ready()
+            while True:
+                with self._lock:
+                    current = (
+                        self._ready.is_set()
+                        and self._current
+                        and self._beacon.is_current()
+                    )
+                    selected = (
+                        self._resolve_locked(predicate, select=select)
+                        if current
+                        else None
+                    )
+                    changed = self._changed
+                if selected is not None:
+                    return selected
+                if self._beacon.is_current():
+                    await changed.wait()
+                else:
+                    await self._beacon.wait_current()
+
+        if timeout is None:
+            return await wait_loop()
+        with anyio.fail_after(timeout):
+            return await wait_loop()
+
+    async def aclose(self) -> None:
+        self._closed = True
+        if self._cancel_scope is not None:
+            self._cancel_scope.cancel()
+        self._notify_changed()
+
+    async def _event_loop(self) -> None:
+        with anyio.CancelScope() as cancel_scope:
+            self._cancel_scope = cancel_scope
+            while not self._closed:
+                try:
+                    async with self._beacon.watch(self.feature_id) as events:
+                        if not self._consume_pending_events(events):
+                            continue
+                        self._mark_current()
+                        async for event in events:
+                            self._apply_event(event)
+                        self._mark_stale()
+                except anyio.get_cancelled_exc_class():
+                    raise
+                except KvUnavailable:
+                    self._mark_stale()
+                    await anyio.sleep(self._retry_interval)
+                except Exception:
+                    self._mark_stale()
+                    logger.warning(
+                        "%s Beacon directory watch failed feature=%s",
+                        self._log_label,
+                        self.feature_id,
+                        exc_info=True,
+                    )
+                    await anyio.sleep(self._retry_interval)
+
+    def _consume_pending_events(
+        self,
+        events: anyio.abc.ObjectReceiveStream[BeaconFeatureEvent],
+    ) -> bool:
+        while True:
+            try:
+                event = events.receive_nowait()
+            except anyio.WouldBlock:
+                return True
+            except anyio.EndOfStream:
+                self._mark_stale()
+                return False
+            self._apply_event(event, mark_current=False)
+
+    def _apply_event(
+        self,
+        event: BeaconFeatureEvent,
+        *,
+        mark_current: bool = True,
+    ) -> None:
+        if event.feature_id != self.feature_id:
+            return
+        records = (
+            self._parse_candidate(event.candidate)
+            if event.event_type
+            in {
+                BeaconFeatureEventType.ADVERTISED,
+                BeaconFeatureEventType.UPDATED,
+            }
+            and event.candidate is not None
+            else ()
+        )
+        with self._lock:
+            if records:
+                self._records_by_key[event.key] = records
+            else:
+                self._records_by_key.pop(event.key, None)
+            if mark_current:
+                self._current = True
+                self._ready.set()
+            self._notify_changed_locked()
+
+    def _parse_candidate(self, candidate: Candidate | None) -> tuple[T, ...]:
+        if candidate is None:
+            return ()
+        try:
+            parsed = self._parser(candidate)
+        except Exception:
+            logger.warning(
+                "%s Beacon directory parser rejected feature=%s key=%s",
+                self._log_label,
+                self.feature_id,
+                candidate.key,
+                exc_info=True,
+            )
+            return ()
+        if parsed is None:
+            return ()
+        if isinstance(parsed, list | tuple):
+            return tuple(parsed)
+        return (parsed,)
+
+    def _mark_current(self) -> None:
+        with self._lock:
+            self._current = True
+            self._ready.set()
+            self._notify_changed_locked()
+
+    def _mark_stale(self) -> None:
+        with self._lock:
+            self._current = False
+            self._notify_changed_locked()
+
+    def _raise_if_stale_locked(self) -> None:
+        if not (self._ready.is_set() and self._current and self._beacon.is_current()):
+            raise KvUnavailable(
+                f"Beacon directory for feature {self.feature_id!r} is not current"
+            )
+
+    def _records_locked(self) -> tuple[T, ...]:
+        return tuple(
+            record
+            for key in sorted(self._records_by_key)
+            for record in self._records_by_key[key]
+        )
+
+    def _resolve_locked(
+        self,
+        predicate: BeaconDirectoryPredicate[T] | None,
+        *,
+        select: BeaconDirectorySelector[T] | None,
+    ) -> T | None:
+        records = self._records_locked()
+        if predicate is not None:
+            records = tuple(record for record in records if predicate(record))
+        if select is not None:
+            return select(records)
+        return records[0] if records else None
+
+    def _notify_changed(self) -> None:
+        with self._lock:
+            self._notify_changed_locked()
+
+    def _notify_changed_locked(self) -> None:
+        changed = self._changed
+        self._changed = anyio.Event()
+        changed.set()
+
+
 class BeaconAdvertisementLease:
     """Core-owned Beacon advertisement lease with heartbeat refreshes."""
 
@@ -1520,6 +1763,7 @@ __all__ = [
     "Beacon",
     "BeaconAdvertisementLease",
     "BeaconAdvertisementSpec",
+    "BeaconDirectory",
     "BeaconEvent",
     "BeaconFeatureEvent",
     "BeaconFeatureEventType",

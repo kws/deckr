@@ -303,34 +303,27 @@ The service API is intentionally layered instead of one broad runtime helper.
 `ServiceProtocol`, `ServiceAdvertisementPayload`, `ServiceDescriptor`,
 `ServiceUseTerms`, `ServiceViewFamilyDefinition`, `ServiceViewFamily`,
 `ServiceViewRef`, service command schemas, descriptor parsing, terms
-construction, local service discovery, and service-view key helpers. Services
-advertise descriptors through Beacon, negotiate service-use authority through
-Concord, and, when the host explicitly enables the optional `services` lane,
-carry service command/reply messages as ordinary lane traffic. A service keeps
-its own advertisement fresh, skips unchanged refresh writes when possible,
-best-effort withdraws on clean shutdown, and removes stale same-endpoint
-advertisements left by an earlier crashed session or changed configuration.
+construction, and service-view key helpers. Generic local discovery lives in
+`deckr.beacon.BeaconDirectory`. Services advertise descriptors through Beacon,
+negotiate service-use authority through Concord, and, when the host explicitly
+enables the optional `services` lane, carry service command/reply messages as
+ordinary lane traffic. A service keeps its own advertisement fresh, skips
+unchanged refresh writes when possible, best-effort withdraws on clean shutdown,
+and removes stale same-endpoint advertisements left by an earlier crashed
+session or changed configuration.
 
-Service consumers must use `ServiceDirectory` and `ServiceResolver` for service
-discovery. A directory subscribes once to
-`Beacon.watch(protocol.feature_id)`, parses advertisements with
-`parse_service_descriptor()`, and maintains local indexes by service id,
-namespace, use profile, operation, view family, endpoint, and endpoint session.
-The directory is per service protocol feature, not per service id; concrete
-view prefixes are derived from each descriptor's advertised service id.
-Resolving a service is therefore a local lookup and policy selection step; it
-must not scan Beacon KV, perform an exact NATS round trip, query Concord, or
+Service consumers should create one long-lived `BeaconDirectory` for the service
+protocol feature and parse advertisements with `parse_service_descriptor()`.
+The directory is per feature id, not per service id; concrete view prefixes are
+derived from each descriptor's advertised service id. Resolving a service is
+therefore local predicate and selector logic over parsed descriptors. It must
+not scan Beacon KV, perform an exact NATS round trip, query Concord, or
 duplicate service-specific Beacon indexing in consumers. Directory results are
-discovery candidates only. Consumers derive service-use terms and a deterministic
-`ServiceUseTerms.serviceUseScopeId` from the selected descriptor and requested
-scope, then use that scope id only as the key into
-`deckr_service_use_index_v1`. The indexed value points at an exact Concord
-contract pointer. Concord contract ids remain opaque runtime ids and must not be
-derived from the service-use scope id. Consumers may reuse the pointer only when
-exact Concord validation reports `valid`; pending `not_yet_fulfilled` pointers
-must be superseded instead of reused.
-The Concord participants must be exactly the service endpoint and the client
-endpoint encoded in `ServiceUseTerms`.
+discovery candidates only. Consumers derive `ServiceUseTerms.serviceUseId` as
+semantic terms material, then propose a fresh opaque Concord contract directly.
+The service-use id must not be used as a Concord contract id, reusable pointer,
+or authority lookup key. The Concord participants must be exactly the service
+endpoint and the client endpoint encoded in `ServiceUseTerms`.
 
 Protected service views are direct JetStream/KV views. Service/application code
 opens them by constructing `ServiceViewStore` from an explicit KV bucket and
@@ -352,8 +345,8 @@ follows the already-held Concord lease, not continued Beacon advertisement
 presence. A service may withdraw its Beacon advertisement when it cannot accept
 new service-use contracts; already-held service-use contracts remain
 Concord-governed and may be refreshed until Concord invalidates them. New or
-lost lease state requires current Beacon discovery, a new opaque Concord
-contract, and a compare-and-set update to the service-use scope index.
+lost lease state requires current Beacon discovery and a new opaque Concord
+contract.
 
 ## Component Dependencies
 
