@@ -48,6 +48,18 @@ class ServiceViewFamily(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
+class ServiceViewFamilyDefinition(DeckrModel):
+    store_name: str = Field(alias="storeName")
+
+    @field_validator("store_name")
+    @classmethod
+    def _validate_text(cls, value: str) -> str:
+        return _require_text(value, field_name="service view family definition field")
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
 @dataclass(frozen=True, slots=True)
 class ServiceViewRef:
     """Explicit reference to a service-owned current-state view."""
@@ -75,7 +87,7 @@ class ServiceProtocol:
     advertisement_profile: str
     use_profile: str
     operations: tuple[str, ...]
-    view_families: Mapping[str, ServiceViewFamily]
+    view_families: Mapping[str, ServiceViewFamilyDefinition]
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -108,13 +120,13 @@ class ServiceProtocol:
         if not operations:
             raise ValueError("service protocol operations must not be empty")
         object.__setattr__(self, "operations", operations)
-        families: dict[str, ServiceViewFamily] = {}
+        families: dict[str, ServiceViewFamilyDefinition] = {}
         for name, family in self.view_families.items():
             key = _require_text(name, field_name="service view family name")
             families[key] = (
                 family
-                if isinstance(family, ServiceViewFamily)
-                else ServiceViewFamily.model_validate(family)
+                if isinstance(family, ServiceViewFamilyDefinition)
+                else ServiceViewFamilyDefinition.model_validate(family)
             )
         object.__setattr__(self, "view_families", MappingProxyType(families))
 
@@ -135,7 +147,7 @@ class ServiceProtocol:
             serviceUseProfile=self.use_profile,
             backendStatus=backend_status,
             supportedOperations=self.operations,
-            views=self.view_families,
+            views=_service_protocol_views(self, service_id),
             diagnostics=dict(diagnostics or {}),
         )
 
@@ -413,9 +425,10 @@ def parse_service_descriptor(
         return None
     if not set(payload.supported_operations).issubset(set(protocol.operations)):
         return None
-    if {
-        key: family.to_dict() for key, family in payload.views.items()
-    } != {key: family.to_dict() for key, family in protocol.view_families.items()}:
+    expected_views = _service_protocol_views(protocol, payload.service_id)
+    if {key: family.to_dict() for key, family in payload.views.items()} != {
+        key: family.to_dict() for key, family in expected_views.items()
+    }:
         return None
     return ServiceDescriptor(
         candidate=candidate,
@@ -426,7 +439,7 @@ def parse_service_descriptor(
         advertisement_profile=payload.profile,
         use_profile=payload.service_use_profile,
         supported_operations=frozenset(payload.supported_operations),
-        views=payload.views,
+        views=expected_views,
         backend_status=payload.backend_status,
         diagnostics=payload.diagnostics,
     )
@@ -467,7 +480,7 @@ def service_descriptor_from_terms(
         advertisement_profile=protocol.advertisement_profile,
         use_profile=terms.profile,
         supported_operations=frozenset(protocol.operations),
-        views=protocol.view_families,
+        views=_service_protocol_views(protocol, terms.service_id),
         backend_status=backend_status,
         diagnostics=dict(diagnostics or {}),
     )
@@ -588,8 +601,9 @@ def _normalize_view_scope(
 
 
 def _validate_view_scope(protocol: ServiceProtocol, terms: ServiceUseTerms) -> None:
+    protocol_views = _service_protocol_views(protocol, terms.service_id)
     for family, prefixes in terms.allowed_views.items():
-        service_family = protocol.view_families.get(family)
+        service_family = protocol_views.get(family)
         if service_family is None:
             raise UnsupportedServiceScope(
                 f"Service-use terms allow unknown view family {family!r}"
@@ -600,6 +614,22 @@ def _validate_view_scope(protocol: ServiceProtocol, terms: ServiceUseTerms) -> N
                     f"Service-use terms view prefix {prefix!r} is outside "
                     f"service view family {family!r}"
                 )
+
+
+def _service_protocol_views(
+    protocol: ServiceProtocol,
+    service_id: str,
+) -> Mapping[str, ServiceViewFamily]:
+    service_id = _require_text(service_id, field_name="service id")
+    return MappingProxyType(
+        {
+            family: ServiceViewFamily(
+                storeName=definition.store_name,
+                keyPrefix=service_view_prefix(service_id, family),
+            )
+            for family, definition in protocol.view_families.items()
+        }
+    )
 
 
 def _view_ref_authorized(lease: ServiceUseLease, view: ServiceViewRef) -> bool:

@@ -8,6 +8,7 @@ pub mod lanes;
 #[cfg(feature = "nats")]
 pub mod nats;
 pub mod profiles;
+pub mod services;
 pub mod state;
 
 mod error;

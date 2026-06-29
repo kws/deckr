@@ -16,11 +16,13 @@ from deckr.services import (
     ServiceAdvertisementPayload,
     ServiceBackendStatus,
     ServiceDescriptor,
+    ServiceDirectory,
     ServiceProtocol,
+    ServiceResolver,
     ServiceUseTerms,
     ServiceViewChange,
     ServiceViewEntry,
-    ServiceViewFamily,
+    ServiceViewFamilyDefinition,
     ServiceViewRef,
     ServiceViewStore,
     UnsupportedServiceScope,
@@ -29,7 +31,6 @@ from deckr.services import (
     service_descriptor_from_terms,
     service_use_terms,
     service_view_key,
-    service_view_prefix,
 )
 from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
 
@@ -39,6 +40,7 @@ def _protocol(
     *,
     operations: tuple[str, ...] = ("ensureItems", "refreshItem", "sendCommand"),
 ) -> ServiceProtocol:
+    del service_id
     return ServiceProtocol(
         namespace="dev.deckr.openhab.service",
         feature_id="dev.deckr.openhab.feature",
@@ -46,9 +48,8 @@ def _protocol(
         use_profile="dev.deckr.openhab.service_use.v1",
         operations=operations,
         view_families={
-            "items": ServiceViewFamily(
+            "items": ServiceViewFamilyDefinition(
                 storeName="deckr_openhab_service_view_v1",
-                keyPrefix=service_view_prefix(service_id, "items"),
             )
         },
     )
@@ -131,6 +132,28 @@ async def _assert_no_service_change(stream) -> None:
     with anyio.move_on_after(0.05) as scope:
         received = await stream.receive()
     assert scope.cancel_called, f"unexpected service view change: {received!r}"
+
+
+async def _eventually_descriptor_count(
+    directory: ServiceDirectory,
+    count: int,
+) -> None:
+    with anyio.fail_after(1):
+        while len(directory.descriptors()) != count:
+            await anyio.sleep(0)
+
+
+class _CountingBeacon:
+    def __init__(self, beacon: Beacon) -> None:
+        self._beacon = beacon
+        self.candidate_calls = 0
+
+    def candidates(self, *args, **kwargs):
+        self.candidate_calls += 1
+        return self._beacon.candidates(*args, **kwargs)
+
+    def watch(self, *args, **kwargs):
+        return self._beacon.watch(*args, **kwargs)
 
 
 def test_service_protocol_payload_terms_and_view_keys() -> None:
@@ -227,6 +250,119 @@ async def test_parse_service_descriptor_validates_profile_identity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_service_directory_matches_local_descriptor_indexes() -> None:
+    raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
+    beacon = Beacon(raw)
+    counting_beacon = _CountingBeacon(beacon)
+    protocol = _protocol()
+    directory = ServiceDirectory(counting_beacon, protocol)
+
+    async with anyio.create_task_group() as task_group:
+        beacon.start(task_group)
+        directory.start(task_group)
+        await directory.wait_ready()
+        assert directory.is_current()
+        assert directory.descriptors() == ()
+        assert counting_beacon.candidate_calls == 0
+
+        await _publish_service_advertisement(beacon, protocol)
+        await _publish_service_advertisement(
+            beacon,
+            protocol,
+            service_id="openhab-backup",
+            session_id="backup-session",
+            advertisement_id="ad-2",
+        )
+        await _eventually_descriptor_count(directory, 2)
+
+        counting_beacon.candidate_calls = 0
+        resolver = ServiceResolver(directory)
+        descriptor = resolver.resolve(
+            protocol=protocol,
+            service_id="openhab-backup",
+            namespace=protocol.namespace,
+            use_profile=protocol.use_profile,
+            operations={"sendCommand"},
+            views={"items"},
+            endpoint=service_address("openhab-backup"),
+            session_id="backup-session",
+        )
+
+        assert descriptor is not None
+        assert descriptor.service_id == "openhab-backup"
+        assert descriptor.views["items"].key_prefix == "views.openhab-backup.items."
+        assert directory.match(operations={"missing"}) == ()
+        assert directory.match(views={"missing"}) == ()
+        assert directory.match(endpoint=service_address("missing")) == ()
+        assert counting_beacon.candidate_calls == 0
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_directory_replays_current_watch_without_candidate_scan() -> None:
+    raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
+    beacon = Beacon(raw)
+    counting_beacon = _CountingBeacon(beacon)
+    protocol = _protocol()
+
+    async with anyio.create_task_group() as task_group:
+        beacon.start(task_group)
+        await _publish_service_advertisement(beacon, protocol)
+        await _publish_service_advertisement(
+            beacon,
+            protocol,
+            service_id="openhab-backup",
+            session_id="backup-session",
+            advertisement_id="ad-2",
+        )
+
+        directory = ServiceDirectory(counting_beacon, protocol)
+        directory.start(task_group)
+        await directory.wait_ready()
+
+        assert [item.service_id for item in directory.descriptors()] == [
+            "openhab-home",
+            "openhab-backup",
+        ]
+        assert counting_beacon.candidate_calls == 0
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_directory_tracks_beacon_events_without_stale_descriptors() -> None:
+    raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
+    beacon = Beacon(raw)
+    protocol = _protocol()
+    directory = ServiceDirectory(beacon, protocol)
+
+    async with anyio.create_task_group() as task_group:
+        beacon.start(task_group)
+        directory.start(task_group)
+        await directory.wait_ready()
+
+        advertisement = await _publish_service_advertisement(beacon, protocol)
+        await _eventually_descriptor_count(directory, 1)
+
+        await advertisement.update(payload={"invalid": "service-payload"})
+        await _eventually_descriptor_count(directory, 0)
+
+        await advertisement.update(
+            payload=protocol.advertisement_payload(
+                service_id="openhab-home",
+                session_id="service-session",
+                backend_status=ServiceBackendStatus.DEGRADED,
+            ).to_dict()
+        )
+        await _eventually_descriptor_count(directory, 1)
+        assert directory.descriptors()[0].backend_status == ServiceBackendStatus.DEGRADED
+
+        await advertisement.withdraw()
+        await _eventually_descriptor_count(directory, 0)
+
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_service_use_terms_grant_only_requested_scope() -> None:
     beacon = _memory_beacon()
     protocol = _protocol()
@@ -263,23 +399,23 @@ def test_service_descriptor_from_terms_without_beacon_candidate() -> None:
     terms = ServiceUseTerms(
         profile=protocol.use_profile,
         serviceUseId="service-use:test",
-        serviceId="openhab-home",
-        serviceEndpoint=service_address("openhab-home"),
+        serviceId="openhab-backup",
+        serviceEndpoint=service_address("openhab-backup"),
         serviceNamespace=protocol.namespace,
         serviceSessionId="service-session",
         clientEndpoint=action_provider_address("provider-main"),
         allowedOperations=("ensureItems",),
-        allowedViews={"items": ("views.openhab-home.items.",)},
+        allowedViews={"items": ("views.openhab-backup.items.",)},
     )
 
     descriptor = service_descriptor_from_terms(protocol, terms)
 
     assert descriptor.candidate is None
-    assert descriptor.service_id == "openhab-home"
-    assert descriptor.endpoint == service_address("openhab-home")
+    assert descriptor.service_id == "openhab-backup"
+    assert descriptor.endpoint == service_address("openhab-backup")
     assert descriptor.session_id == "service-session"
     assert descriptor.supported_operations == frozenset(protocol.operations)
-    assert descriptor.views == protocol.view_families
+    assert descriptor.views["items"].key_prefix == "views.openhab-backup.items."
 
 
 @pytest.mark.asyncio

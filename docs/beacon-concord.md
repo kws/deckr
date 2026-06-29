@@ -360,13 +360,24 @@ or successor negotiations.
 Service packages may use generic Beacon and Concord with package-owned feature
 ids, advertisement payload profiles, terms profiles, and direct KV-backed
 service views. Deckr core does not define service-specific domain semantics
-such as Sonos zones, OpenHAB items, or package-owned view schemas. After a
-service-use Concord contract is negotiated, service command and view authority
-follows that Concord contract and its participant tokens, not continued Beacon
-advertisement presence. Protected service views are authorized through the
-service-use contract and fenced by the advertised service identity and session.
-Consumers must validate an existing service-use Concord contract before treating
-missing Beacon discovery as service unavailability.
+such as Sonos zones, OpenHAB items, or package-owned view schemas.
+
+Service consumers must discover service candidates through
+`ServiceDirectory`/`ServiceResolver` in `deckr.services`. A service directory is
+a local, profile-aware index over one `Beacon.watch(protocol.feature_id)` stream
+and parsed `ServiceDescriptor` values for that service protocol feature, not
+for one service id. The service id and concrete view key prefixes come from each
+validated descriptor. Consumers must not raw-scan Beacon KV, scan all Beacon
+candidates and parse service descriptors ad hoc, or query Concord to discover
+available services. The resolver output is only a candidate for a new
+service-use negotiation.
+
+After a service-use Concord contract is negotiated, service command and view
+authority follows that Concord contract and its participant tokens, not
+continued Beacon advertisement presence. Protected service views are authorized
+through the service-use contract and fenced by the advertised service identity
+and session. Consumers must validate an existing service-use Concord contract
+before treating missing Beacon discovery as service unavailability.
 Protected view watches deliver payloads only while the stored entry matches the
 watcher's service-use fence. If a visible same-key entry is replaced by another
 service identity or session, the watcher observes only a removal-style event and

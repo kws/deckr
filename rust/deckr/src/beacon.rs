@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
+use futures_core::Stream;
+use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -12,7 +15,8 @@ use crate::keys::{
     parse_beacon_advertisement_key,
 };
 use crate::state::{
-    ttl_heartbeat_delay, MaterializedStateStore, StateEntry, StateStore, StateStorePolicy,
+    ttl_heartbeat_delay, MaterializedStateStore, StateChange, StateEntry, StateOperation,
+    StateStore, StateStorePolicy,
 };
 use crate::{Error, Result};
 
@@ -130,6 +134,28 @@ pub struct Candidate {
     pub revision: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BeaconFeatureEventType {
+    Advertised,
+    Updated,
+    Withdrawn,
+    Expired,
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BeaconFeatureEvent {
+    pub event_type: BeaconFeatureEventType,
+    pub feature_id: String,
+    pub key: String,
+    pub candidate: Option<Candidate>,
+    pub previous: Option<Candidate>,
+    pub reason: Option<String>,
+}
+
+pub type BeaconFeatureWatchStream =
+    Pin<Box<dyn Stream<Item = Result<BeaconFeatureEvent>> + Send + 'static>>;
+
 #[derive(Debug, Clone)]
 pub struct BeaconAdvertiser<S: StateStore> {
     state: S,
@@ -195,6 +221,50 @@ impl<S: StateStore> Beacon<S> {
                         && &candidate.advertisement.endpoint == endpoint
                 }),
         )
+    }
+
+    pub fn watch(&self, feature_id: &str) -> Result<BeaconFeatureWatchStream> {
+        require_text(feature_id, "Beacon feature id")?;
+        let changes = self.advertisements.subscribe_cached();
+        let initial_candidates = self.candidates(feature_id)?;
+        let known = initial_candidates
+            .iter()
+            .map(|candidate| (candidate.key.clone(), candidate.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let initial_events = initial_candidates
+            .into_iter()
+            .map(|candidate| {
+                Ok(BeaconFeatureEvent {
+                    event_type: BeaconFeatureEventType::Advertised,
+                    feature_id: candidate.advertisement.feature_id.clone(),
+                    key: candidate.key.clone(),
+                    candidate: Some(candidate),
+                    previous: None,
+                    reason: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        let feature_id = feature_id.to_string();
+        let live = stream::unfold(
+            (changes, known, feature_id),
+            |(mut changes, mut known, feature_id)| async move {
+                loop {
+                    let Some(change) = changes.next().await else {
+                        return None;
+                    };
+                    let item = match change {
+                        Ok(change) => {
+                            beacon_event_from_state_change(&feature_id, &mut known, change).map(Ok)
+                        }
+                        Err(error) => Some(Err(error)),
+                    };
+                    if let Some(item) = item {
+                        return Some((item, (changes, known, feature_id)));
+                    }
+                }
+            },
+        );
+        Ok(Box::pin(stream::iter(initial_events).chain(live)))
     }
 }
 
@@ -441,6 +511,76 @@ pub fn candidate_from_entry(entry: StateEntry) -> Option<Candidate> {
         advertisement,
         revision: entry.revision,
     })
+}
+
+fn beacon_event_from_state_change(
+    feature_id: &str,
+    known: &mut BTreeMap<String, Candidate>,
+    change: StateChange,
+) -> Option<BeaconFeatureEvent> {
+    match change.operation {
+        StateOperation::Put => {
+            let Some(entry) = change.entry else {
+                return None;
+            };
+            let parsed_key = parse_beacon_advertisement_key(&entry.key);
+            let candidate = candidate_from_entry(entry);
+            match candidate {
+                Some(candidate) if candidate.advertisement.feature_id == feature_id => {
+                    let previous = known.insert(candidate.key.clone(), candidate.clone());
+                    Some(BeaconFeatureEvent {
+                        event_type: if previous.is_some() {
+                            BeaconFeatureEventType::Updated
+                        } else {
+                            BeaconFeatureEventType::Advertised
+                        },
+                        feature_id: candidate.advertisement.feature_id.clone(),
+                        key: candidate.key.clone(),
+                        candidate: Some(candidate),
+                        previous,
+                        reason: None,
+                    })
+                }
+                _ => {
+                    let (key_feature, key) = parsed_key?;
+                    if key_feature != feature_id {
+                        return None;
+                    }
+                    let previous = known.remove(&change.key);
+                    Some(BeaconFeatureEvent {
+                        event_type: BeaconFeatureEventType::Invalid,
+                        feature_id: key_feature,
+                        key: change.key,
+                        candidate: None,
+                        previous,
+                        reason: Some(format!("invalid Beacon advertisement {key:?}")),
+                    })
+                }
+            }
+        }
+        StateOperation::Delete | StateOperation::Expire => {
+            let previous = known.remove(&change.key)?;
+            Some(BeaconFeatureEvent {
+                event_type: if change.operation == StateOperation::Expire {
+                    BeaconFeatureEventType::Expired
+                } else {
+                    BeaconFeatureEventType::Withdrawn
+                },
+                feature_id: previous.advertisement.feature_id.clone(),
+                key: change.key,
+                candidate: None,
+                previous: Some(previous),
+                reason: Some(
+                    if change.operation == StateOperation::Expire {
+                        "expire"
+                    } else {
+                        "delete"
+                    }
+                    .to_string(),
+                ),
+            })
+        }
+    }
 }
 
 pub async fn find_candidates<S: StateStore>(state: &S, feature_id: &str) -> Result<Vec<Candidate>> {
