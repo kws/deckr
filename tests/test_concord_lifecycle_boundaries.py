@@ -6,7 +6,6 @@ from pathlib import Path
 _LOW_LEVEL_ALWAYS = {
     "_contract_record",
     "_create_contract",
-    "_find_contracts",
     "_participant_lease",
     "_refresh_token",
     "create_contract",

@@ -8,26 +8,177 @@ import {
   CandidateStatus,
 } from "../src/beacon.ts";
 import {
+  canonicalJsonHash,
   CONCORD_CONTRACT_STORE_POLICY,
   CONCORD_TOKEN_STORE_POLICY,
   ConcordCoordinator,
   ConcordReaperService,
   ConcordService,
+  ContractState,
   ContractValidityStatus,
+  type ContractPointer,
 } from "../src/concord.ts";
 import { controllerAddress, serviceAddress } from "../src/endpoint.ts";
+import { ServiceUnavailable, StateConflict } from "../src/errors.ts";
+import type { JsonObject, JsonValue } from "../src/json.ts";
 import { buildMessage, entitySubject } from "../src/lanes.ts";
 import {
   AuthorizationDecision,
+  DEFAULT_SERVICE_USE_INDEX_STORE_NAME,
+  SERVICE_USE_INDEX_SCHEMA_ID,
   ServiceAdvertiser,
   ServiceBackendStatus,
   ServiceUseAuthorizer,
+  ServiceUseLeaseManager,
   parseServiceDescriptor,
+  serviceUseScopeIndexKey,
   serviceUseTerms,
   serviceViewKey,
+  type RegisteredEndpointLane,
+  type ServiceDescriptor,
+  type ServiceUseLease,
+  type ServiceUseTerms,
   type ServiceProtocol,
 } from "../src/services.ts";
 import { MemoryStateStore } from "../src/state.ts";
+
+const TEST_SERVICE_PROTOCOL: ServiceProtocol = {
+  namespace: "dev.deckr.test.service",
+  featureId: "dev.deckr.test.service",
+  advertisementProfile: "dev.deckr.test.service.advertisement.v1",
+  useProfile: "dev.deckr.test.service_use.v1",
+  operations: ["play", "pause"],
+  viewFamilies: {
+    status: {
+      storeName: "dev_deckr_test_service_view_v1",
+      keyPrefix: serviceViewKey("music", "status"),
+    },
+  },
+};
+
+function testClientEndpoint(sessionId = "controller-session"): RegisteredEndpointLane {
+  return {
+    endpoint: controllerAddress("main"),
+    sessionId,
+  };
+}
+
+async function testServiceDescriptor(sessionId = "service-session"): Promise<ServiceDescriptor> {
+  const beaconState = new MemoryStateStore({ policy: BEACON_ADVERTISEMENT_STORE_POLICY });
+  const beacon = new BeaconService(new BeaconDiscovery(beaconState));
+  const advertiser = new ServiceAdvertiser({
+    protocol: TEST_SERVICE_PROTOCOL,
+    serviceId: "music",
+    endpoint: {
+      endpoint: serviceAddress("music"),
+      sessionId,
+    },
+    beacon,
+  });
+  await advertiser.publish(ServiceBackendStatus.AVAILABLE);
+  const candidate = (await beacon.find(TEST_SERVICE_PROTOCOL.featureId))[0]!;
+  const descriptor = parseServiceDescriptor(candidate, TEST_SERVICE_PROTOCOL);
+  if (descriptor === null) {
+    throw new Error("test service descriptor did not validate");
+  }
+  return descriptor;
+}
+
+function serviceUseTestRuntime(client = testClientEndpoint()): {
+  concord: ConcordService;
+  contractState: MemoryStateStore;
+  tokenState: MemoryStateStore;
+  serviceUseIndex: MemoryStateStore;
+  manager: ServiceUseLeaseManager;
+  client: RegisteredEndpointLane;
+} {
+  const contractState = new MemoryStateStore({ policy: CONCORD_CONTRACT_STORE_POLICY });
+  const tokenState = new MemoryStateStore({ policy: CONCORD_TOKEN_STORE_POLICY });
+  const serviceUseIndex = new MemoryStateStore({
+    name: DEFAULT_SERVICE_USE_INDEX_STORE_NAME,
+  });
+  const concord = new ConcordService(new ConcordCoordinator(contractState, tokenState));
+  const manager = new ServiceUseLeaseManager({
+    endpoint: client,
+    concord,
+    serviceUseIndex,
+  });
+  return { concord, contractState, tokenState, serviceUseIndex, manager, client };
+}
+
+async function acquireServiceUseLeaseWithServiceToken(options: {
+  concord: ConcordService;
+  manager: ServiceUseLeaseManager;
+  descriptor: ServiceDescriptor;
+  operations?: string[];
+  timeoutMs?: number;
+}): Promise<ServiceUseLease> {
+  const result: { lease?: ServiceUseLease; error?: unknown } = {};
+  void options.manager.ensure(options.descriptor, {
+    operations: options.operations ?? ["play"],
+    timeoutMs: options.timeoutMs ?? 500,
+  }).then(
+    (lease) => {
+      result.lease = lease;
+    },
+    (error) => {
+      result.error = error;
+    },
+  );
+
+  while (result.lease === undefined && result.error === undefined) {
+    const contracts = await options.concord.contracts(options.descriptor.useProfile, {
+      participant: options.descriptor.endpoint,
+      state: ContractState.OPEN,
+    });
+    for (const contract of contracts) {
+      const record = await options.concord.contractRecord(contract);
+      if (record === null || record.attachedParticipants.includes(options.descriptor.endpoint)) {
+        continue;
+      }
+      try {
+        await options.concord.attach(
+          contract,
+          options.descriptor.endpoint,
+          options.descriptor.sessionId,
+        );
+      } catch (error) {
+        if (!(error instanceof StateConflict)) {
+          throw error;
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  if (result.error !== undefined) {
+    throw result.error;
+  }
+  return result.lease!;
+}
+
+function serviceUseIndexRecord(
+  terms: ServiceUseTerms,
+  pointer: ContractPointer,
+  client: RegisteredEndpointLane,
+): JsonObject {
+  const now = new Date().toISOString();
+  return {
+    schema: SERVICE_USE_INDEX_SCHEMA_ID,
+    scopeId: terms.serviceUseScopeId,
+    contract: {
+      contractId: pointer.contractId,
+      generation: pointer.generation,
+    },
+    termsHash: canonicalJsonHash(terms as unknown as JsonValue),
+    serviceEndpoint: terms.serviceEndpoint,
+    serviceSessionId: terms.serviceSessionId,
+    clientEndpoint: terms.clientEndpoint,
+    clientSessionId: client.sessionId,
+    state: "candidate",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 test("Beacon advertises, refreshes, validates, and withdraws candidates", async () => {
   const state = new MemoryStateStore({ policy: BEACON_ADVERTISEMENT_STORE_POLICY });
@@ -162,7 +313,6 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
     localParticipant: clientEndpoint.endpoint,
     localSessionId: clientEndpoint.sessionId,
     terms: terms as any,
-    stableContractId: terms.serviceUseId,
     currentSessions: {
       [descriptor!.endpoint]: descriptor!.sessionId,
       [clientEndpoint.endpoint]: clientEndpoint.sessionId,
@@ -205,19 +355,6 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
   const mismatchedTerms = serviceUseTerms(descriptor!, clientEndpoint.endpoint, {
     operations: ["pause"],
   });
-  await concord.ensureAgreement({
-    profile: descriptor!.useProfile,
-    participants: [descriptor!.endpoint, clientEndpoint.endpoint],
-    localParticipant: clientEndpoint.endpoint,
-    localSessionId: clientEndpoint.sessionId,
-    terms: mismatchedTerms as any,
-    stableContractId: "service-use:wrong",
-    currentSessions: {
-      [descriptor!.endpoint]: descriptor!.sessionId,
-      [clientEndpoint.endpoint]: clientEndpoint.sessionId,
-    },
-  });
-
   const pauseMessage = buildMessage({
     lane: "services",
     sender: clientEndpoint.endpoint,
@@ -259,7 +396,6 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
     localParticipant: otherClientEndpoint.endpoint,
     localSessionId: otherClientEndpoint.sessionId,
     terms: mismatchedTerms as any,
-    stableContractId: mismatchedTerms.serviceUseId,
     currentSessions: {
       [descriptor!.endpoint]: descriptor!.sessionId,
       [otherClientEndpoint.endpoint]: otherClientEndpoint.sessionId,
@@ -274,4 +410,257 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
     }),
     AuthorizationDecision.DENIED,
   );
+});
+
+test("service-use scope index reuses a valid exact Concord pointer", async () => {
+  const runtime = serviceUseTestRuntime();
+  const descriptor = await testServiceDescriptor();
+  const first = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: runtime.manager,
+    descriptor,
+  });
+  const secondManager = new ServiceUseLeaseManager({
+    endpoint: runtime.client,
+    concord: runtime.concord,
+    serviceUseIndex: runtime.serviceUseIndex,
+  });
+
+  const reused = await secondManager.ensure(descriptor, {
+    operations: ["play"],
+    timeoutMs: 0,
+  });
+
+  assert.equal(reused.agreement.contract.contractId, first.agreement.contract.contractId);
+  assert.equal(
+    reused.terms.serviceUseScopeId,
+    first.terms.serviceUseScopeId,
+  );
+  assert.equal((await runtime.concord.contracts(descriptor.useProfile)).length, 1);
+});
+
+test("service-use scope index replaces a stale pointer", async () => {
+  const runtime = serviceUseTestRuntime();
+  const descriptor = await testServiceDescriptor();
+  const terms = serviceUseTerms(descriptor, runtime.client.endpoint, {
+    operations: ["play"],
+  });
+  const stalePointer = { contractId: "missing-service-use", generation: 1 };
+  await runtime.serviceUseIndex.create(
+    serviceUseScopeIndexKey(terms.serviceUseScopeId),
+    serviceUseIndexRecord(terms, stalePointer, runtime.client),
+  );
+
+  const lease = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: runtime.manager,
+    descriptor,
+  });
+
+  assert.notEqual(lease.agreement.contract.contractId, stalePointer.contractId);
+  const record = await runtime.concord.contractRecord(lease.agreement.contract);
+  assert.deepEqual(record?.supersedes, stalePointer);
+});
+
+test("service-use scope index replaces a client session mismatch and cancels the old contract", async () => {
+  const runtime = serviceUseTestRuntime(testClientEndpoint("controller-session-1"));
+  const descriptor = await testServiceDescriptor();
+  const first = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: runtime.manager,
+    descriptor,
+  });
+  const nextClient = testClientEndpoint("controller-session-2");
+  const nextManager = new ServiceUseLeaseManager({
+    endpoint: nextClient,
+    concord: runtime.concord,
+    serviceUseIndex: runtime.serviceUseIndex,
+  });
+
+  const successor = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: nextManager,
+    descriptor,
+  });
+
+  const oldPointer = {
+    contractId: first.agreement.contract.contractId,
+    generation: first.agreement.contract.generation,
+  };
+  assert.equal(
+    successor.terms.serviceUseScopeId,
+    first.terms.serviceUseScopeId,
+  );
+  assert.notEqual(
+    successor.agreement.contract.contractId,
+    first.agreement.contract.contractId,
+  );
+  const successorRecord = await runtime.concord.contractRecord(successor.agreement.contract);
+  assert.deepEqual(successorRecord?.supersedes, oldPointer);
+  const oldRecord = await runtime.concord.contractRecord(first.agreement.contract);
+  assert.equal(oldRecord?.state, ContractState.CANCELLED);
+  const index = await runtime.serviceUseIndex.get(
+    serviceUseScopeIndexKey(successor.terms.serviceUseScopeId),
+  );
+  assert.deepEqual(index?.value.supersedes, oldPointer);
+});
+
+test("service-use scope index replaces a missing client token", async () => {
+  const runtime = serviceUseTestRuntime();
+  const descriptor = await testServiceDescriptor();
+  const first = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: runtime.manager,
+    descriptor,
+  });
+  const token = first.agreement.localToken;
+  assert.notEqual(token, null);
+  await runtime.tokenState.delete(token!.key, { revision: token!.revision });
+  const secondManager = new ServiceUseLeaseManager({
+    endpoint: runtime.client,
+    concord: runtime.concord,
+    serviceUseIndex: runtime.serviceUseIndex,
+  });
+
+  const successor = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: secondManager,
+    descriptor,
+  });
+
+  assert.notEqual(
+    successor.agreement.contract.contractId,
+    first.agreement.contract.contractId,
+  );
+  const record = await runtime.concord.contractRecord(successor.agreement.contract);
+  assert.deepEqual(record?.supersedes, {
+    contractId: first.agreement.contract.contractId,
+    generation: first.agreement.contract.generation,
+  });
+});
+
+test("service-use scope index replaces a missing service token", async () => {
+  const runtime = serviceUseTestRuntime();
+  const descriptor = await testServiceDescriptor();
+  const terms = serviceUseTerms(descriptor, runtime.client.endpoint, {
+    operations: ["play"],
+  });
+  const pending = await runtime.concord.ensureAgreement({
+    profile: descriptor.useProfile,
+    participants: [runtime.client.endpoint, descriptor.endpoint],
+    localParticipant: runtime.client.endpoint,
+    localSessionId: runtime.client.sessionId,
+    terms: terms as unknown as JsonObject,
+    currentSessions: {
+      [descriptor.endpoint]: descriptor.sessionId,
+      [runtime.client.endpoint]: runtime.client.sessionId,
+    },
+  });
+  const oldPointer = {
+    contractId: pending.contract.contractId,
+    generation: pending.contract.generation,
+  };
+  await runtime.serviceUseIndex.create(
+    serviceUseScopeIndexKey(terms.serviceUseScopeId),
+    serviceUseIndexRecord(terms, oldPointer, runtime.client),
+  );
+
+  await assert.rejects(
+    () => runtime.manager.ensure(descriptor, { operations: ["play"], timeoutMs: 0 }),
+    (error) => error instanceof ServiceUnavailable && error.code === "service_contract_pending",
+  );
+
+  const oldRecord = await runtime.concord.contractRecord(pending.contract);
+  assert.equal(oldRecord?.state, ContractState.CANCELLED);
+  const index = await runtime.serviceUseIndex.get(serviceUseScopeIndexKey(terms.serviceUseScopeId));
+  assert.notEqual(index, null);
+  assert.notDeepEqual(index!.value.contract, oldPointer);
+  assert.deepEqual(index!.value.supersedes, oldPointer);
+  const successor = await runtime.concord.getContract(index!.value.contract as unknown as ContractPointer);
+  assert.notEqual(successor, null);
+  const successorRecord = await runtime.concord.contractRecord(successor!);
+  assert.deepEqual(successorRecord?.supersedes, oldPointer);
+});
+
+test("service-use scope index replaces a terms hash mismatch", async () => {
+  const runtime = serviceUseTestRuntime();
+  const descriptor = await testServiceDescriptor();
+  const first = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: runtime.manager,
+    descriptor,
+  });
+  const key = serviceUseScopeIndexKey(first.terms.serviceUseScopeId);
+  const current = await runtime.serviceUseIndex.get(key);
+  assert.notEqual(current, null);
+  await runtime.serviceUseIndex.update(
+    key,
+    { ...current!.value, termsHash: "sha256:stale" },
+    { revision: current!.revision },
+  );
+  const secondManager = new ServiceUseLeaseManager({
+    endpoint: runtime.client,
+    concord: runtime.concord,
+    serviceUseIndex: runtime.serviceUseIndex,
+  });
+
+  const successor = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: secondManager,
+    descriptor,
+  });
+
+  assert.notEqual(
+    successor.agreement.contract.contractId,
+    first.agreement.contract.contractId,
+  );
+  const oldRecord = await runtime.concord.contractRecord(first.agreement.contract);
+  assert.equal(oldRecord?.state, ContractState.CANCELLED);
+});
+
+test("service-use scope index retries after a CAS conflict", async () => {
+  class ConflictOnceStore extends MemoryStateStore {
+    conflicts = 1;
+
+    override async create(
+      key: string,
+      value: Parameters<MemoryStateStore["create"]>[1],
+      options: Parameters<MemoryStateStore["create"]>[2] = {},
+    ) {
+      if (this.conflicts > 0) {
+        this.conflicts -= 1;
+        throw new StateConflict("simulated scope-index race");
+      }
+      return super.create(key, value, options);
+    }
+  }
+
+  const client = testClientEndpoint();
+  const contractState = new MemoryStateStore({ policy: CONCORD_CONTRACT_STORE_POLICY });
+  const tokenState = new MemoryStateStore({ policy: CONCORD_TOKEN_STORE_POLICY });
+  const serviceUseIndex = new ConflictOnceStore({
+    name: DEFAULT_SERVICE_USE_INDEX_STORE_NAME,
+  });
+  const concord = new ConcordService(new ConcordCoordinator(contractState, tokenState));
+  const manager = new ServiceUseLeaseManager({
+    endpoint: client,
+    concord,
+    serviceUseIndex,
+  });
+  const descriptor = await testServiceDescriptor();
+
+  const lease = await acquireServiceUseLeaseWithServiceToken({
+    concord,
+    manager,
+    descriptor,
+  });
+
+  const contracts = await concord.contracts(descriptor.useProfile);
+  assert.equal(contracts.length, 2);
+  const cancelled = await Promise.all(
+    contracts
+      .filter((contract) => contract.contractId !== lease.agreement.contract.contractId)
+      .map((contract) => concord.contractRecord(contract)),
+  );
+  assert.equal(cancelled[0]?.state, ContractState.CANCELLED);
 });

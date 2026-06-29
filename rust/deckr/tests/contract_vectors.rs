@@ -8,10 +8,10 @@ use deckr::beacon::{
 };
 use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_value};
 use deckr::concord::{
-    concord_contract_key, concord_participant_profile_index_prefix, concord_participant_token_key,
-    concord_token_store_policy, ConcordCoordinator, ConcordNotificationSource,
-    ConcordParticipantLease, ConcordParticipantManager, ContractHandle, ContractRecord,
-    ContractState, ContractValidityStatus, ParticipantTokenRecord,
+    concord_contract_key, concord_participant_token_key, concord_token_store_policy,
+    ConcordCoordinator, ConcordNotificationSource, ConcordParticipantLease,
+    ConcordParticipantManager, ContractHandle, ContractRecord, ContractState,
+    ContractValidityStatus, CreateContractSpec, ParticipantTokenRecord,
     DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS, DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
 };
 use deckr::endpoint::EndpointAddress;
@@ -564,14 +564,15 @@ async fn concord_token_bucket_must_be_ttl_bound() {
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
     let contract = concord
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some("contract-1".to_string()),
-            1,
-            None,
-            None,
-            Some(controller),
-        )
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("contract-1".to_string()),
+            generation: 1,
+            profile: None,
+            terms: None,
+            created_by: Some(controller),
+            supersedes: None,
+        })
         .await
         .unwrap();
 
@@ -589,14 +590,15 @@ async fn concord_token_attach_and_refresh_use_bucket_ttl() {
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
     let contract = concord
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some("contract-1".to_string()),
-            1,
-            None,
-            None,
-            Some(controller),
-        )
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("contract-1".to_string()),
+            generation: 1,
+            profile: None,
+            terms: None,
+            created_by: Some(controller),
+            supersedes: None,
+        })
         .await
         .unwrap();
 
@@ -626,20 +628,21 @@ async fn materialized_concord_participant_profile_discovery_uses_cache() {
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
     let contract = exact
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some("materialized-claim-1".to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(json!({
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("materialized-claim-1".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
                 "profile": HARDWARE_CLAIM_PROFILE_ID,
                 "claimId": "materialized-claim-1",
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:mirabox-main",
                 "devices": []
             })),
-            Some(controller),
-        )
+            created_by: Some(controller),
+            supersedes: None,
+        })
         .await
         .unwrap();
     let materialized = ConcordCoordinator::new(
@@ -655,7 +658,12 @@ async fn materialized_concord_participant_profile_discovery_uses_cache() {
     tokens.clear_observations();
 
     let discovered = materialized
-        .participant_profile_contracts_cached(&manager, Some(HARDWARE_CLAIM_PROFILE_ID))
+        .contracts_cached(deckr::concord::ContractFilters {
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID),
+            participant: Some(&manager),
+            state: Some(deckr::concord::ContractState::Open),
+            ..deckr::concord::ContractFilters::default()
+        })
         .unwrap();
 
     assert_eq!(discovered.len(), 1);
@@ -729,14 +737,15 @@ async fn concord_validation_distinguishes_pending_missing_and_lost_tokens() {
         }]
     });
     let contract = concord
-        .create_contract(
-            vec![manager.clone(), controller.clone()],
-            Some("contract-1".to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(terms),
-            Some(controller.clone()),
-        )
+        .create_contract(CreateContractSpec {
+            participants: vec![manager.clone(), controller.clone()],
+            contract_id: Some("contract-1".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(terms),
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
 
@@ -809,14 +818,15 @@ async fn concord_participant_manager_does_not_resurrect_lost_authority() {
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
     let contract = concord
-        .create_contract(
-            vec![manager.clone(), controller.clone()],
-            Some("contract-1".to_string()),
-            1,
-            None,
-            None,
-            Some(controller.clone()),
-        )
+        .create_contract(CreateContractSpec {
+            participants: vec![manager.clone(), controller.clone()],
+            contract_id: Some("contract-1".to_string()),
+            generation: 1,
+            profile: None,
+            terms: None,
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
     concord
@@ -917,7 +927,7 @@ async fn concord_participant_manager_session_mismatch_cancels_before_accept() {
 }
 
 #[tokio::test]
-async fn concord_participant_manager_discovers_from_participant_profile_index() {
+async fn concord_participant_manager_discovers_from_filtered_contracts() {
     let contracts = RecordingStateStore::new(MemoryStateStore::new());
     let tokens = token_store();
     let concord = ConcordCoordinator::new(contracts.clone(), tokens.clone());
@@ -925,48 +935,51 @@ async fn concord_participant_manager_discovers_from_participant_profile_index() 
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
     let other_manager = EndpointAddress::parse("hardware_manager:other").unwrap();
     let contract = concord
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some("hardware-contract-1".to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(json!({
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("hardware-contract-1".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
                 "profile": HARDWARE_CLAIM_PROFILE_ID,
                 "claimId": "claim-1",
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:mirabox-main",
                 "devices": []
             })),
-            Some(controller.clone()),
-        )
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
     concord
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some("other-profile-contract".to_string()),
-            1,
-            Some("dev.deckr.profile.other.v1".to_string()),
-            None,
-            Some(controller.clone()),
-        )
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("other-profile-contract".to_string()),
+            generation: 1,
+            profile: Some("dev.deckr.profile.other.v1".to_string()),
+            terms: None,
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
     concord
-        .create_contract(
-            vec![controller.clone(), other_manager],
-            Some("other-participant-contract".to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(json!({
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), other_manager],
+            contract_id: Some("other-participant-contract".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
                 "profile": HARDWARE_CLAIM_PROFILE_ID,
                 "claimId": "claim-2",
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:other",
                 "devices": []
             })),
-            Some(controller.clone()),
-        )
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
     concord
@@ -993,20 +1006,10 @@ async fn concord_participant_manager_discovers_from_participant_profile_index() 
             .collect::<Vec<_>>(),
         vec!["hardware-contract-1"]
     );
-    assert_eq!(
-        contracts.items_prefixes(),
-        vec![concord_participant_profile_index_prefix(
-            &manager,
-            Some(HARDWARE_CLAIM_PROFILE_ID)
-        )]
-    );
-    assert!(!contracts
-        .items_prefixes()
-        .iter()
-        .any(|prefix| prefix == "contracts."));
+    assert_eq!(contracts.items_prefixes(), vec!["contracts.".to_string()]);
     assert!(
         contracts.get_keys().iter().all(|key| key == &contract.key),
-        "participant discovery should exact-read only referenced contracts"
+        "reconcile should exact-read only accepted filtered contracts"
     );
 }
 
@@ -1126,20 +1129,21 @@ async fn concord_participant_manager_reconcile_managed_does_not_discover_new_con
     assert_eq!(managed.len(), 1);
 
     let second_contract = concord
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some("contract-2".to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(json!({
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("contract-2".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
                 "profile": HARDWARE_CLAIM_PROFILE_ID,
                 "claimId": "claim-2",
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:mirabox-main",
                 "devices": []
             })),
-            Some(controller.clone()),
-        )
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
     concord
@@ -1203,25 +1207,26 @@ async fn concord_contract_notifications_include_contract_and_token_details() {
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
     let mut stream = concord
-        .watch_contract_notifications(Some(HARDWARE_CLAIM_PROFILE_ID))
+        .watch_contract_notifications(Some(HARDWARE_CLAIM_PROFILE_ID), None)
         .await
         .unwrap();
 
     let contract = concord
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some("contract-watch-1".to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(json!({
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("contract-watch-1".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
                 "profile": HARDWARE_CLAIM_PROFILE_ID,
                 "claimId": "contract-watch-1",
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:mirabox-main",
                 "devices": []
             })),
-            Some(controller.clone()),
-        )
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
 
@@ -1269,25 +1274,26 @@ async fn concord_participant_manager_notification_discovers_new_contract() {
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
     let mut stream = concord
-        .watch_contract_notifications(Some(HARDWARE_CLAIM_PROFILE_ID))
+        .watch_contract_notifications(Some(HARDWARE_CLAIM_PROFILE_ID), None)
         .await
         .unwrap();
 
     let contract = concord
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some("contract-watch-2".to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(json!({
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("contract-watch-2".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
                 "profile": HARDWARE_CLAIM_PROFILE_ID,
                 "claimId": "contract-watch-2",
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:mirabox-main",
                 "devices": []
             })),
-            Some(controller.clone()),
-        )
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
     let notification = stream.next().await.unwrap();
@@ -1328,20 +1334,21 @@ async fn concord_refresh_returns_latest_token_after_revision_race() {
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
     let contract = concord
-        .create_contract(
-            vec![manager, controller.clone()],
-            Some("contract-1".to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(json!({
+        .create_contract(CreateContractSpec {
+            participants: vec![manager, controller.clone()],
+            contract_id: Some("contract-1".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
                 "profile": HARDWARE_CLAIM_PROFILE_ID,
                 "claimId": "claim-1",
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:mirabox-main",
                 "devices": []
             })),
-            Some(controller.clone()),
-        )
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
     let controller_token = concord
@@ -1390,20 +1397,21 @@ async fn managed_claim_context(
             .unwrap()
             .profile(HARDWARE_CLAIM_PROFILE_ID.to_string());
     let contract = concord
-        .create_contract(
-            vec![controller.clone(), manager.clone()],
-            Some(contract_id.to_string()),
-            1,
-            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
-            Some(json!({
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some(contract_id.to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
                 "profile": HARDWARE_CLAIM_PROFILE_ID,
                 "claimId": contract_id,
                 "controllerEndpoint": "controller:main",
                 "managerEndpoint": "hardware_manager:mirabox-main",
                 "devices": []
             })),
-            Some(controller.clone()),
-        )
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
     concord

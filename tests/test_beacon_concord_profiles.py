@@ -30,6 +30,7 @@ from deckr.concord import (
     ConcordManagedContractEventType,
     ConcordParticipant,
     ConcordUnavailable,
+    ContractPointer,
     ContractRecord,
     ContractState,
     ContractValidityStatus,
@@ -59,7 +60,6 @@ from deckr.profiles import (
     ACTIONS_FEATURE_ID,
     ActionProviderSessionTerms,
     ActionsBeaconPayload,
-    action_provider_session_contract_id,
     actions_payload_from_advertisement,
     profile_terms_hash,
 )
@@ -2742,7 +2742,7 @@ async def test_concord_participant_attaches_existing_action_provider_session_aft
     )
     contract = await creator._create_contract(  # noqa: SLF001
         (controller, provider),
-        contract_id=action_provider_session_contract_id(controller, provider),
+        contract_id="legacy-action-provider-session",
         profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
         terms=terms,
         created_by=controller,
@@ -2919,7 +2919,7 @@ async def test_concord_service_use_token_refresh_logs_below_info(caplog) -> None
 
 
 @pytest.mark.asyncio
-async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
+async def test_concord_ensure_agreement_uses_opaque_successor_after_token_loss() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
     service = _concord(contract_state, token_state)
@@ -2930,7 +2930,6 @@ async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
         participants=(service_endpoint, client),
         local_participant=client,
         local_session_id="client-session",
-        stable_contract_id="service-use:openhab",
         current_sessions={
             str(service_endpoint): "service-session",
             str(client): "client-session",
@@ -2944,13 +2943,35 @@ async def test_concord_ensure_agreement_supersedes_stable_token_loss() -> None:
     assert agreement.local_token is not None
     await _delete_token_from_view(service, token_state, agreement.local_token)
 
-    successor = await service.propose(spec)
+    successor = await service.propose(
+        ConcordAgreementSpec(
+            profile="dev.deckr.openhab.service_use.v1",
+            participants=(service_endpoint, client),
+            local_participant=client,
+            local_session_id="client-session",
+            supersedes=ContractPointer(
+                contractId=agreement.contract_id,
+                generation=agreement.generation,
+            ),
+            current_sessions={
+                str(service_endpoint): "service-session",
+                str(client): "client-session",
+            },
+            log_label="TestConcord",
+        )
+    )
 
-    assert successor.contract_id == agreement.contract_id
-    assert successor.generation == 2
+    assert successor.contract_id != agreement.contract_id
+    assert successor.generation == 1
     assert successor.local_token is not None
+    successor_record = await service.contract_record(successor.contract)
+    assert successor_record is not None
+    assert successor_record.supersedes == ContractPointer(
+        contractId=agreement.contract_id,
+        generation=agreement.generation,
+    )
     assert (await service._validate(agreement.contract)).status == (
-        ContractValidityStatus.CANCELLED
+        ContractValidityStatus.MISSING_TOKEN
     )
     assert (await successor.refresh()).status == (
         ContractValidityStatus.NOT_YET_FULFILLED
@@ -2999,17 +3020,17 @@ async def test_concord_agreement_refresh_confirms_terminal_cache_status_exactly(
 
 
 @pytest.mark.asyncio
-async def test_concord_ensure_agreement_cancels_stable_conflicting_generations() -> None:
+async def test_concord_ensure_agreement_does_not_reuse_or_cancel_legacy_generations() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
     service = _concord(contract_state, token_state)
     controller = controller_address("controller-main")
     provider = action_provider_address("provider-main")
-    stable_id = action_provider_session_contract_id(controller, provider)
+    legacy_id = "legacy-action-provider-session"
 
     old = await service._create_contract(
         (controller, provider),
-        contract_id=stable_id,
+        contract_id=legacy_id,
         generation=1,
         profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
         terms=ActionProviderSessionTerms(
@@ -3023,7 +3044,7 @@ async def test_concord_ensure_agreement_cancels_stable_conflicting_generations()
     )
     older_conflict = await service._create_contract(
         (controller, provider),
-        contract_id=stable_id,
+        contract_id=legacy_id,
         generation=2,
         profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
         terms=ActionProviderSessionTerms(
@@ -3042,7 +3063,7 @@ async def test_concord_ensure_agreement_cancels_stable_conflicting_generations()
             participants=(controller, provider),
             local_participant=controller,
             local_session_id="controller-session",
-            stable_contract_id=stable_id,
+            supersedes=ContractPointer(contractId=legacy_id, generation=2),
             terms=ActionProviderSessionTerms(
                 sessionId="current-provider-session",
                 controllerEndpoint=controller,
@@ -3057,11 +3078,16 @@ async def test_concord_ensure_agreement_cancels_stable_conflicting_generations()
         )
     )
 
-    assert agreement.contract_id == stable_id
-    assert agreement.generation == 3
-    assert (await service._validate(old)).status == ContractValidityStatus.CANCELLED
+    assert agreement.contract_id != legacy_id
+    assert agreement.generation == 1
+    record = await service.contract_record(agreement.contract)
+    assert record is not None
+    assert record.supersedes == ContractPointer(contractId=legacy_id, generation=2)
+    assert (await service._validate(old)).status == (
+        ContractValidityStatus.NOT_YET_FULFILLED
+    )
     assert (await service._validate(older_conflict)).status == (
-        ContractValidityStatus.CANCELLED
+        ContractValidityStatus.NOT_YET_FULFILLED
     )
     record = await service.contract_record(agreement.contract)
     assert record is not None
@@ -3337,7 +3363,7 @@ async def test_concord_find_and_watch_contracts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concord_stable_agreement_lookup_uses_contract_id_prefix() -> None:
+async def test_concord_agreement_creation_does_not_scan_contract_id_families() -> None:
     contract_state = CountingItemsKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
     service = _concord(contract_state, token_state)
@@ -3350,7 +3376,7 @@ async def test_concord_stable_agreement_lookup_uses_contract_id_prefix() -> None
             profile="dev.deckr.openhab.service_use.v1",
             created_by=client,
         )
-    contract = await service._create_contract(
+    existing = await service._create_contract(
         (service_endpoint, client),
         contract_id="service-use-openhab",
         profile="dev.deckr.openhab.service_use.v1",
@@ -3361,7 +3387,6 @@ async def test_concord_stable_agreement_lookup_uses_contract_id_prefix() -> None
         participants=(service_endpoint, client),
         local_participant=client,
         local_session_id="client-session",
-        stable_contract_id="service-use-openhab",
         current_sessions={
             str(service_endpoint): "service-session",
             str(client): "client-session",
@@ -3371,7 +3396,9 @@ async def test_concord_stable_agreement_lookup_uses_contract_id_prefix() -> None
 
     agreement = await service.propose(spec)
 
-    assert agreement.contract.key == contract.key
+    assert agreement.contract.key != existing.key
+    assert agreement.contract_id != "service-use-openhab"
+    assert agreement.generation == 1
     assert contract_state.items_prefixes == []
 
 
@@ -3477,30 +3504,6 @@ def test_profile_payloads_terms_hashes_and_hardware_claim_conflicts() -> None:
     assert hardware_claim_conflicts((conflicting, non_conflicting), claim_terms) == (
         conflicting,
     )
-
-
-def test_action_provider_session_contract_id_is_endpoint_scoped() -> None:
-    controller = controller_address("controller-main")
-    provider = action_provider_address("provider-main")
-
-    contract_id = action_provider_session_contract_id(controller, provider)
-
-    assert contract_id == action_provider_session_contract_id(
-        str(controller),
-        str(provider),
-    )
-    assert contract_id != action_provider_session_contract_id(
-        controller_address("other-controller"),
-        provider,
-    )
-    assert contract_id != action_provider_session_contract_id(
-        controller,
-        action_provider_address("other-provider"),
-    )
-    with pytest.raises(ValueError, match="controllerEndpoint"):
-        action_provider_session_contract_id(provider, provider)
-    with pytest.raises(ValueError, match="providerEndpoint"):
-        action_provider_session_contract_id(controller, controller)
 
 
 def test_concord_contract_attached_participants_must_be_named() -> None:

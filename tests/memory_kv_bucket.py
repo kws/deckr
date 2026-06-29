@@ -61,10 +61,19 @@ class MemoryJsonKvBucket:
         ttl: float | None = None,
     ) -> KvEntry:
         del ttl
+        normalized = kv_value(value)
         async with self._lock:
             if key in self._entries:
                 raise KvConflict(f"KV key {key!r} already exists")
-        return await self.put(key, value)
+            self._revision += 1
+            entry = KvEntry(self.bucket, key, normalized, self._revision)
+            self._entries[key] = entry
+            watchers = self._watchers_for(key)
+        await self._publish(
+            watchers,
+            KvChange(self.bucket, key, entry.revision, "put", entry),
+        )
+        return entry
 
     async def update(
         self,
@@ -75,11 +84,20 @@ class MemoryJsonKvBucket:
         ttl: float | None = None,
     ) -> KvEntry:
         del ttl
+        normalized = kv_value(value)
         async with self._lock:
             current = self._entries.get(key)
             if current is None or current.revision != revision:
                 raise KvConflict(f"KV key {key!r} revision changed")
-        return await self.put(key, value)
+            self._revision += 1
+            entry = KvEntry(self.bucket, key, normalized, self._revision)
+            self._entries[key] = entry
+            watchers = self._watchers_for(key)
+        await self._publish(
+            watchers,
+            KvChange(self.bucket, key, entry.revision, "put", entry),
+        )
+        return entry
 
     async def delete(self, key: str, *, revision: int | None = None) -> int | None:
         async with self._lock:

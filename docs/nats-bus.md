@@ -210,7 +210,6 @@ agreement = await concord.propose(
         participants=("controller:main", "hardware_manager:mirabox-main"),
         local_participant="controller:main",
         local_session_id="controller-session",
-        stable_contract_id="hardware-claim-main",
         profile="dev.deckr.profile.hardware_claim.v1",
         terms=terms,
     )
@@ -322,11 +321,14 @@ view prefixes are derived from each descriptor's advertised service id.
 Resolving a service is therefore a local lookup and policy selection step; it
 must not scan Beacon KV, perform an exact NATS round trip, query Concord, or
 duplicate service-specific Beacon indexing in consumers. Directory results are
-discovery candidates only. Consumers derive deterministic service-use terms from
-the selected descriptor and requested scope, then use
-`ServiceUseTerms.serviceUseId` as the Concord stable contract id. Consumers must
-not query Concord to find or reconstruct matching service-use contracts after
-descriptor or lease state is lost.
+discovery candidates only. Consumers derive service-use terms and a deterministic
+`ServiceUseTerms.serviceUseScopeId` from the selected descriptor and requested
+scope, then use that scope id only as the key into
+`deckr_service_use_index_v1`. The indexed value points at an exact Concord
+contract pointer. Concord contract ids remain opaque runtime ids and must not be
+derived from the service-use scope id. Consumers may reuse the pointer only when
+exact Concord validation reports `valid`; pending `not_yet_fulfilled` pointers
+must be superseded instead of reused.
 The Concord participants must be exactly the service endpoint and the client
 endpoint encoded in `ServiceUseTerms`.
 
@@ -350,8 +352,8 @@ follows the already-held Concord lease, not continued Beacon advertisement
 presence. A service may withdraw its Beacon advertisement when it cannot accept
 new service-use contracts; already-held service-use contracts remain
 Concord-governed and may be refreshed until Concord invalidates them. New or
-lost lease state requires current Beacon discovery and a new deterministic-id
-proposal.
+lost lease state requires current Beacon discovery, a new opaque Concord
+contract, and a compare-and-set update to the service-use scope index.
 
 ## Component Dependencies
 

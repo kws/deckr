@@ -10,10 +10,25 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 use crate::beacon::{Beacon, BeaconFeatureEvent, BeaconFeatureEventType, Candidate};
+use crate::canonical_json::canonical_json_hash_value;
+use crate::concord::ContractPointer;
 use crate::endpoint::{service_address, EndpointAddress};
-use crate::keys::encode_key_token;
-use crate::state::StateStore;
+use crate::keys::{
+    encode_key_token, service_use_scope_index_key as make_service_use_scope_index_key,
+};
+use crate::state::{StateStore, StateStorePolicy};
 use crate::{Error, Result};
+
+pub const SERVICE_USE_INDEX_SCHEMA_ID: &str = "dev.deckr.service-use-index.v1";
+pub const DEFAULT_SERVICE_USE_INDEX_STORE_NAME: &str = "deckr_service_use_index_v1";
+
+pub fn service_use_index_store_policy() -> StateStorePolicy {
+    StateStorePolicy::persistent("Deckr service-use scope index")
+}
+
+pub fn service_use_scope_index_key(scope_id: &str) -> String {
+    make_service_use_scope_index_key(scope_id)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -223,6 +238,125 @@ impl ServiceAdvertisementPayload {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceUseTerms {
+    pub profile: String,
+    pub service_use_scope_id: String,
+    pub service_id: String,
+    pub service_endpoint: EndpointAddress,
+    pub service_namespace: String,
+    pub service_session_id: String,
+    pub client_endpoint: EndpointAddress,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_operations: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub allowed_views: BTreeMap<String, Vec<String>>,
+}
+
+impl ServiceUseTerms {
+    pub fn from_value(value: Value) -> Result<Self> {
+        let terms: Self = serde_json::from_value(value)?;
+        terms.validate()?;
+        Ok(terms)
+    }
+
+    pub fn to_value(&self) -> Result<Value> {
+        self.validate()?;
+        Ok(serde_json::to_value(self)?)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        require_text(&self.profile, "service-use terms profile")?;
+        require_text(&self.service_use_scope_id, "service-use scope id")?;
+        require_text(&self.service_id, "service id")?;
+        require_text(&self.service_namespace, "service namespace")?;
+        require_text(&self.service_session_id, "service session id")?;
+        if self.service_endpoint != EndpointAddress::parse(service_address(&self.service_id))? {
+            return Err(Error::Invalid(
+                "serviceEndpoint must equal service:<serviceId>".to_string(),
+            ));
+        }
+        for operation in &self.allowed_operations {
+            require_text(operation, "service operation")?;
+        }
+        for (family, prefixes) in &self.allowed_views {
+            require_text(family, "service view family")?;
+            for prefix in prefixes {
+                require_text(prefix, "service view prefix")?;
+            }
+        }
+        if self.allowed_operations.is_empty()
+            && !self
+                .allowed_views
+                .values()
+                .any(|prefixes| !prefixes.is_empty())
+        {
+            return Err(Error::Invalid(
+                "service-use terms require operations or views".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceUseScopeIndexState {
+    Candidate,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceUseScopeIndexRecord {
+    #[serde(default = "service_use_index_schema_id", rename = "schema")]
+    pub schema_id: String,
+    pub scope_id: String,
+    pub contract: ContractPointer,
+    pub terms_hash: String,
+    pub service_endpoint: EndpointAddress,
+    pub service_session_id: String,
+    pub client_endpoint: EndpointAddress,
+    pub client_session_id: String,
+    pub state: ServiceUseScopeIndexState,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<ContractPointer>,
+}
+
+impl ServiceUseScopeIndexRecord {
+    pub fn from_value(value: Value) -> Result<Self> {
+        let record: Self = serde_json::from_value(value)?;
+        record.validate()?;
+        Ok(record)
+    }
+
+    pub fn to_value(&self) -> Result<Value> {
+        self.validate()?;
+        Ok(serde_json::to_value(self)?)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_id != SERVICE_USE_INDEX_SCHEMA_ID {
+            return Err(Error::Invalid(format!(
+                "service-use scope index schema must be {SERVICE_USE_INDEX_SCHEMA_ID}"
+            )));
+        }
+        require_text(&self.scope_id, "service-use scope id")?;
+        self.contract.validate()?;
+        require_text(&self.terms_hash, "service-use terms hash")?;
+        require_text(&self.service_session_id, "service session id")?;
+        require_text(&self.client_session_id, "client session id")?;
+        require_text(&self.created_at, "service-use scope index timestamp")?;
+        require_text(&self.updated_at, "service-use scope index timestamp")?;
+        if let Some(supersedes) = &self.supersedes {
+            supersedes.validate()?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServiceDescriptor {
     pub candidate: Option<Candidate>,
@@ -289,6 +423,84 @@ pub fn parse_service_descriptor(
         backend_status: payload.backend_status,
         diagnostics: payload.diagnostics,
     })
+}
+
+pub fn service_use_terms(
+    descriptor: &ServiceDescriptor,
+    client_endpoint: &EndpointAddress,
+    operations: impl IntoIterator<Item = impl Into<String>>,
+    views: BTreeMap<String, Vec<String>>,
+) -> Result<ServiceUseTerms> {
+    let mut allowed_operations = operations
+        .into_iter()
+        .map(Into::into)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    for operation in &allowed_operations {
+        require_text(operation, "service operation")?;
+        if !descriptor.supported_operations.contains(operation) {
+            return Err(Error::Invalid(format!(
+                "service {:?} does not advertise operation {:?}",
+                descriptor.service_id, operation
+            )));
+        }
+    }
+    allowed_operations.sort();
+
+    let mut allowed_views = BTreeMap::<String, Vec<String>>::new();
+    for (family, prefixes) in views {
+        require_text(&family, "service view family")?;
+        let Some(view_family) = descriptor.views.get(&family) else {
+            return Err(Error::Invalid(format!(
+                "service {:?} does not advertise view family {:?}",
+                descriptor.service_id, family
+            )));
+        };
+        let mut normalized = if prefixes.is_empty() {
+            vec![view_family.key_prefix.clone()]
+        } else {
+            prefixes
+        };
+        normalized.sort();
+        normalized.dedup();
+        for prefix in &normalized {
+            require_text(prefix, "service view prefix")?;
+            if !prefix.starts_with(&view_family.key_prefix) {
+                return Err(Error::Invalid(format!(
+                    "view prefix {:?} is outside service view family {:?}",
+                    prefix, family
+                )));
+            }
+        }
+        allowed_views.insert(family, normalized);
+    }
+
+    let identity = serde_json::json!({
+        "profile": descriptor.use_profile,
+        "serviceId": descriptor.service_id,
+        "serviceEndpoint": descriptor.endpoint,
+        "serviceNamespace": descriptor.namespace,
+        "serviceSessionId": descriptor.session_id,
+        "clientEndpoint": client_endpoint,
+        "allowedOperations": allowed_operations.clone(),
+        "allowedViews": allowed_views.clone(),
+    });
+    let digest = canonical_json_hash_value(&identity)?;
+    let digest = digest.trim_start_matches("sha256:");
+    let terms = ServiceUseTerms {
+        profile: descriptor.use_profile.clone(),
+        service_use_scope_id: format!("service-use-scope:{}", &digest[..32]),
+        service_id: descriptor.service_id.clone(),
+        service_endpoint: descriptor.endpoint.clone(),
+        service_namespace: descriptor.namespace.clone(),
+        service_session_id: descriptor.session_id.clone(),
+        client_endpoint: client_endpoint.clone(),
+        allowed_operations,
+        allowed_views,
+    };
+    terms.validate()?;
+    Ok(terms)
 }
 
 pub fn service_descriptor_sort_key(descriptor: &ServiceDescriptor) -> (String, u64, String) {
@@ -750,6 +962,10 @@ fn intersect_set(keys: &mut BTreeSet<String>, filter: Option<&BTreeSet<String>>)
         Some(filter) => keys.retain(|key| filter.contains(key)),
         None => keys.clear(),
     }
+}
+
+fn service_use_index_schema_id() -> String {
+    SERVICE_USE_INDEX_SCHEMA_ID.to_string()
 }
 
 fn require_text(value: &str, field_name: &str) -> Result<()> {

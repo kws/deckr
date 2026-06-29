@@ -372,11 +372,15 @@ candidates and parse service descriptors ad hoc, or query Concord to discover
 available services. The resolver output is only a candidate for a new
 service-use negotiation.
 
-Service-use Concord contract ids are deterministic: consumers derive
-`ServiceUseTerms.serviceUseId` from the selected descriptor, client endpoint,
-requested operations, and requested views, then use that value as the Concord
-stable contract id. Consumers must not query Concord to find or reconstruct
-matching service-use contracts after descriptor or lease state is lost.
+Service-use Concord contract ids are opaque runtime ids. Consumers derive
+`ServiceUseTerms.serviceUseScopeId` from the selected descriptor, client
+endpoint, requested operations, and requested views, then use that value only as
+the key into the `deckr_service_use_index_v1` service-use scope index. The index
+record points at an exact Concord contract pointer and can be replaced only by
+compare-and-set after the pointed contract no longer matches current terms,
+session, or token validity. Scope-index reuse is allowed only when exact Concord
+validation reports `valid`; a `not_yet_fulfilled` pointer is still only a
+candidate and requires a successor contract.
 The Concord participants must be exactly the service endpoint and the client
 endpoint encoded in `ServiceUseTerms`.
 
@@ -386,7 +390,7 @@ continued Beacon advertisement presence. Protected service views are authorized
 through the service-use contract and fenced by the advertised service identity
 and session. Consumers may refresh an already-held service-use lease while it
 remains valid, but new or lost lease state requires current Beacon discovery and
-a new deterministic-id proposal. Protected view watches deliver payloads only
+a new opaque Concord contract. Protected view watches deliver payloads only
 while the stored entry matches the watcher's service-use fence. If a visible
 same-key entry is replaced by another service identity or session, the watcher
 observes only a removal-style event and must not receive the replacement

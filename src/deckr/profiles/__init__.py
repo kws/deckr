@@ -12,7 +12,7 @@ from deckr.actions.endpoints import (
 from deckr.actions.messages import ActionDescriptor
 from deckr.beacon import AdvertisementRecord
 from deckr.concord import canonical_json_hash
-from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
+from deckr.contracts.messages import EndpointAddress
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 from deckr.hardware.profiles import ProfileCapacity as _ProfileCapacity
 
@@ -188,25 +188,6 @@ def profile_terms_hash(terms: DeckrModel) -> str:
     return canonical_json_hash(terms)
 
 
-def action_provider_session_contract_id(
-    controller_endpoint: str | EndpointAddress,
-    provider_endpoint: str | EndpointAddress,
-) -> str:
-    controller = parse_endpoint_address(controller_endpoint)
-    provider = parse_endpoint_address(provider_endpoint)
-    _endpoint_id(
-        controller,
-        family="controller",
-        field_name="controllerEndpoint",
-    )
-    _endpoint_id(
-        provider,
-        family="action_provider",
-        field_name="providerEndpoint",
-    )
-    return f"action-provider-session:{controller}:{provider}"
-
-
 def actions_payload_from_advertisement(
     advertisement: AdvertisementRecord,
 ) -> ActionsBeaconPayload:
@@ -229,7 +210,6 @@ __all__ = [
     "ActionBeaconDescriptor",
     "ActionProviderSessionTerms",
     "ActionsBeaconPayload",
-    "action_provider_session_contract_id",
     "actions_payload_from_advertisement",
     "profile_terms_hash",
 ]

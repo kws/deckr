@@ -490,10 +490,12 @@ export class ConcordCoordinator {
     return record;
   }
 
-  async findContracts(
+  async contracts(
     profile?: string,
-    options: { contractId?: string } = {},
+    options: { contractId?: string; participant?: string; state?: ContractState } = {},
   ): Promise<ContractHandle[]> {
+    const participant =
+      options.participant === undefined ? undefined : endpointAddress(options.participant);
     const prefix =
       options.contractId === undefined
         ? concordContractsPrefix()
@@ -515,6 +517,12 @@ export class ConcordCoordinator {
         continue;
       }
       if (profile !== undefined && record.profile !== profile) {
+        continue;
+      }
+      if (participant !== undefined && !record.participants.includes(participant)) {
+        continue;
+      }
+      if (options.state !== undefined && record.state !== options.state) {
         continue;
       }
       if (record.contractId !== contractId || record.generation !== generation) {
@@ -896,7 +904,7 @@ export interface ConcordAgreementSpec {
   localParticipant: string;
   localSessionId: string;
   terms?: JsonObject;
-  stableContractId?: string;
+  supersedes?: ContractPointer;
   currentSessions?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
   refreshIntervalSeconds?: number;
   createdBy?: string;
@@ -962,7 +970,6 @@ export class ConcordAgreement {
 
 export class ConcordService {
   private readonly coordinator: ConcordCoordinator;
-  private readonly agreements = new Map<string, ConcordAgreement>();
 
   constructor(coordinator: ConcordCoordinator) {
     this.coordinator = coordinator;
@@ -970,18 +977,6 @@ export class ConcordService {
 
   async ensureAgreement(spec: ConcordAgreementSpec): Promise<ConcordAgreement> {
     const normalized = normalizeAgreementSpec(spec);
-    const cacheKey = agreementCacheKey(normalized);
-    if (cacheKey !== null) {
-      const cached = this.agreements.get(cacheKey);
-      if (cached !== undefined && !cached.closed) {
-        const validityResult = await cached.refresh();
-        if (!agreementSuccessorStatus(validityResult.status)) {
-          return cached;
-        }
-        await cached.cancel(`concord_agreement_${validityResult.status}`);
-        this.agreements.delete(cacheKey);
-      }
-    }
     while (true) {
       const [contract, initialValidity] = await this.selectOrCreateAgreementContract(normalized);
       const lease = new ConcordParticipantLease(this, {
@@ -1003,9 +998,6 @@ export class ConcordService {
       if (agreementSuccessorStatus(refreshed.status)) {
         await agreement.cancel(`concord_agreement_${refreshed.status}`);
         continue;
-      }
-      if (cacheKey !== null) {
-        this.agreements.set(cacheKey, agreement);
       }
       return agreement;
     }
@@ -1041,8 +1033,11 @@ export class ConcordService {
     return this.coordinator.contractRecord(contract);
   }
 
-  async findContracts(profile?: string, options: { contractId?: string } = {}): Promise<ContractHandle[]> {
-    return this.coordinator.findContracts(profile, options);
+  async contracts(
+    profile?: string,
+    options: { contractId?: string; participant?: string; state?: ContractState } = {},
+  ): Promise<ContractHandle[]> {
+    return this.coordinator.contracts(profile, options);
   }
 
   watchContracts(): AsyncIterable<StateChange> {
@@ -1129,55 +1124,12 @@ export class ConcordService {
     spec: ConcordAgreementSpec,
   ): Promise<[ContractHandle, ContractValidity]> {
     const sessions = await agreementCurrentSessions(spec);
-    let nextGeneration = 1;
-    let reusable: [ContractHandle, ContractValidity] | null = null;
-    const openConflicts: Array<[ContractHandle, string]> = [];
-    if (spec.stableContractId !== undefined) {
-      for (const contract of await this.findContracts(undefined, { contractId: spec.stableContractId })) {
-        const record = await this.contractRecord(contract);
-        if (record === null) {
-          continue;
-        }
-        nextGeneration = Math.max(nextGeneration, record.generation + 1);
-        if (record.state !== ContractState.OPEN) {
-          continue;
-        }
-        if (!agreementRecordMatchesSpec(record, spec)) {
-          openConflicts.push([contract, "concord_agreement_conflicting_generation"]);
-          continue;
-        }
-        const contractValidity = await this.validate(contract, { currentSessions: sessions });
-        if (agreementSuccessorStatus(contractValidity.status)) {
-          openConflicts.push([contract, `concord_agreement_${contractValidity.status}`]);
-          continue;
-        }
-        if (reusable === null || contract.generation > reusable[0].generation) {
-          if (reusable !== null) {
-            openConflicts.push([reusable[0], "concord_agreement_superseded_generation"]);
-          }
-          reusable = [contract, contractValidity];
-          continue;
-        }
-        openConflicts.push([contract, "concord_agreement_superseded_generation"]);
-      }
-    }
-    for (const [contract, reason] of openConflicts) {
-      await this.cancelContract(contract, spec.localParticipant, { reason });
-    }
-    if (reusable !== null) {
-      return reusable;
-    }
-    const supersedes =
-      spec.stableContractId !== undefined && nextGeneration > 1
-        ? { contractId: spec.stableContractId, generation: nextGeneration - 1 }
-        : undefined;
     const contract = await this.createContract(spec.participants, {
-      contractId: spec.stableContractId,
-      generation: nextGeneration,
+      generation: 1,
       profile: spec.profile,
       terms: spec.terms,
       createdBy: spec.createdBy ?? spec.localParticipant,
-      supersedes,
+      supersedes: spec.supersedes,
     });
     return [contract, await this.validate(contract, { currentSessions: sessions })];
   }
@@ -1275,7 +1227,10 @@ export class ConcordParticipantManager {
     }
     const nextManaged = new Map<string, ConcordManagedContract>();
     const nextLeases = new Map<string, ConcordParticipantLease>();
-    for (const contract of this.sortedContracts(await this.concord.findContracts(this.profile))) {
+    for (const contract of this.sortedContracts(await this.concord.contracts(this.profile, {
+      participant: this.participant,
+      state: ContractState.OPEN,
+    }))) {
       const managed = await this.reconcileContract(contract);
       if (managed === null) {
         continue;
@@ -1862,21 +1817,8 @@ function normalizeAgreementSpec(spec: ConcordAgreementSpec): ConcordAgreementSpe
     localSessionId: requireText(spec.localSessionId, "Concord agreement session id"),
     createdBy: spec.createdBy === undefined ? localParticipant : endpointAddress(spec.createdBy),
     terms: spec.terms === undefined ? undefined : cloneJson(spec.terms),
+    supersedes: spec.supersedes === undefined ? undefined : validateContractPointer(spec.supersedes),
   };
-}
-
-function agreementCacheKey(spec: ConcordAgreementSpec): string | null {
-  if (spec.stableContractId === undefined) {
-    return null;
-  }
-  return JSON.stringify({
-    stableContractId: spec.stableContractId,
-    profile: spec.profile ?? null,
-    participants: spec.participants,
-    localParticipant: spec.localParticipant,
-    localSessionId: spec.localSessionId,
-    termsHash: spec.terms === undefined ? null : canonicalJsonHash(spec.terms as JsonValue),
-  });
 }
 
 async function agreementCurrentSessions(spec: ConcordAgreementSpec): Promise<Record<string, string>> {
@@ -1887,22 +1829,6 @@ async function agreementCurrentSessions(spec: ConcordAgreementSpec): Promise<Rec
         ? await spec.currentSessions()
         : spec.currentSessions;
   return { ...sessions, [spec.localParticipant]: spec.localSessionId };
-}
-
-function agreementRecordMatchesSpec(record: ContractRecord, spec: ConcordAgreementSpec): boolean {
-  if (record.profile !== spec.profile) {
-    return false;
-  }
-  if (JSON.stringify(record.participants) !== JSON.stringify(spec.participants)) {
-    return false;
-  }
-  if (record.terms === undefined) {
-    return spec.terms === undefined;
-  }
-  if (spec.terms === undefined) {
-    return false;
-  }
-  return JSON.stringify(record.terms) === JSON.stringify(spec.terms);
 }
 
 function agreementSuccessorStatus(status: ContractValidityStatus): boolean {

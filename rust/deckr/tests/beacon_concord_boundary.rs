@@ -1,6 +1,7 @@
 use deckr::beacon::{find_candidates, BeaconAdvertiser, DEFAULT_BEACON_TTL_SECONDS};
 use deckr::concord::{
-    ConcordCoordinator, ContractState, ContractValidityStatus, DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
+    ConcordCoordinator, ContractState, ContractValidityStatus, CreateContractSpec,
+    DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::state::{MemoryStateStore, StateStore};
@@ -54,14 +55,15 @@ async fn withdrawing_beacon_advertisement_leaves_concord_contract_open() {
     .payload(serde_json::json!({}));
     let advertisement = advertiser.publish().await.unwrap();
     let contract = concord
-        .create_contract(
-            vec![advertiser_endpoint.clone(), controller_endpoint],
-            Some("contract-1".to_string()),
-            1,
-            None,
-            None,
-            Some(advertiser_endpoint.clone()),
-        )
+        .create_contract(CreateContractSpec {
+            participants: vec![advertiser_endpoint.clone(), controller_endpoint],
+            contract_id: Some("contract-1".to_string()),
+            generation: 1,
+            profile: None,
+            terms: None,
+            created_by: Some(advertiser_endpoint.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
 
@@ -98,14 +100,15 @@ async fn cancelling_concord_contract_leaves_beacon_advertisement_available() {
     .payload(serde_json::json!({}));
     let advertisement = advertiser.publish().await.unwrap();
     let contract = concord
-        .create_contract(
-            vec![advertiser_endpoint.clone(), controller_endpoint],
-            Some("contract-1".to_string()),
-            1,
-            None,
-            None,
-            Some(advertiser_endpoint.clone()),
-        )
+        .create_contract(CreateContractSpec {
+            participants: vec![advertiser_endpoint.clone(), controller_endpoint],
+            contract_id: Some("contract-1".to_string()),
+            generation: 1,
+            profile: None,
+            terms: None,
+            created_by: Some(advertiser_endpoint.clone()),
+            supersedes: None,
+        })
         .await
         .unwrap();
 

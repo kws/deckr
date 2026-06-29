@@ -13,10 +13,8 @@ use crate::endpoint::EndpointAddress;
 use crate::keys::{
     concord_contract_key as make_concord_contract_key, concord_contracts_prefix,
     concord_participant_profile_index_key as make_concord_participant_profile_index_key,
-    concord_participant_profile_index_prefix as make_concord_participant_profile_index_prefix,
     concord_participant_token_key as make_concord_participant_token_key,
-    parse_concord_contract_key, parse_concord_participant_profile_index_key,
-    parse_concord_participant_token_key,
+    parse_concord_contract_key, parse_concord_participant_token_key,
 };
 pub use crate::state::DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS;
 use crate::state::{
@@ -378,6 +376,39 @@ impl ContractValidity {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateContractSpec {
+    pub participants: Vec<EndpointAddress>,
+    pub contract_id: Option<String>,
+    pub generation: u64,
+    pub profile: Option<String>,
+    pub terms: Option<Value>,
+    pub created_by: Option<EndpointAddress>,
+    pub supersedes: Option<ContractPointer>,
+}
+
+impl CreateContractSpec {
+    pub fn new(participants: Vec<EndpointAddress>) -> Self {
+        Self {
+            participants,
+            contract_id: None,
+            generation: 1,
+            profile: None,
+            terms: None,
+            created_by: None,
+            supersedes: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ContractFilters<'a> {
+    pub profile: Option<&'a str>,
+    pub contract_id: Option<&'a str>,
+    pub participant: Option<&'a EndpointAddress>,
+    pub state: Option<ContractState>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConcordManagedContract {
     pub contract: ContractHandle,
@@ -418,6 +449,7 @@ pub struct ConcordContractNotificationStream {
     tokens: StateWatchStream,
     known_profiles: BTreeMap<(String, u64), Option<String>>,
     profile_filter: Option<String>,
+    participant_filter: Option<EndpointAddress>,
 }
 
 impl ConcordContractNotificationStream {
@@ -436,6 +468,7 @@ impl ConcordContractNotificationStream {
                     contract_notification_from_change(
                         change,
                         self.profile_filter.as_deref(),
+                        self.participant_filter.as_ref(),
                         &mut self.known_profiles,
                     )
                 }
@@ -446,6 +479,7 @@ impl ConcordContractNotificationStream {
                     token_notification_from_change(
                         change,
                         self.profile_filter.as_deref(),
+                        self.participant_filter.as_ref(),
                         &self.known_profiles,
                     )
                 }
@@ -454,212 +488,6 @@ impl ConcordContractNotificationStream {
                 return Ok(notification);
             }
         }
-    }
-}
-
-pub struct ConcordParticipantProfileNotificationStream<C: StateStore> {
-    contract_state: C,
-    index: StateWatchStream,
-    tokens: StateWatchStream,
-    known_profiles: BTreeMap<(String, u64), Option<String>>,
-    profile_filter: Option<String>,
-}
-
-impl<C: StateStore> ConcordParticipantProfileNotificationStream<C> {
-    pub async fn next(&mut self) -> Result<ConcordContractNotification> {
-        loop {
-            let index = self.index.next();
-            let tokens = self.tokens.next();
-            pin_mut!(index);
-            pin_mut!(tokens);
-
-            let notification = match select(index, tokens).await {
-                Either::Left((change, _)) => {
-                    let change = change.ok_or_else(|| {
-                        Error::StateUnavailable(
-                            "Concord participant profile index watch ended".to_string(),
-                        )
-                    })??;
-                    self.index_notification_from_change(change).await?
-                }
-                Either::Right((change, _)) => {
-                    let change = change.ok_or_else(|| {
-                        Error::StateUnavailable("Concord token watch ended".to_string())
-                    })??;
-                    indexed_token_notification_from_change(
-                        change,
-                        self.profile_filter.as_deref(),
-                        &self.known_profiles,
-                    )
-                }
-            };
-            if let Some(notification) = notification {
-                return Ok(notification);
-            }
-        }
-    }
-
-    async fn index_notification_from_change(
-        &mut self,
-        change: StateChange,
-    ) -> Result<Option<ConcordContractNotification>> {
-        let Some((participant, key_profile, contract_id, generation)) =
-            parse_concord_participant_profile_index_key(&change.key)
-        else {
-            return Ok(None);
-        };
-        if self
-            .profile_filter
-            .as_deref()
-            .is_some_and(|filter| key_profile.as_deref() != Some(filter))
-        {
-            return Ok(None);
-        }
-        let pointer = (contract_id.clone(), generation);
-        let mut contract = None;
-        let mut profile = key_profile.clone();
-        if change.operation == StateOperation::Put {
-            let Some(entry) = change.entry.as_ref() else {
-                return Ok(None);
-            };
-            let Ok(reference) = ParticipantProfileIndexRecord::from_value(entry.value.clone())
-            else {
-                return Ok(None);
-            };
-            if reference.participant != participant
-                || reference.profile != key_profile
-                || reference.contract_id != contract_id
-                || reference.generation != generation
-            {
-                return Ok(None);
-            }
-            if let Some(entry) = self.contract_state.get(&reference.contract_key).await? {
-                contract = contract_handle_from_entry(entry);
-                if let Some(contract) = contract.as_ref() {
-                    profile = contract.profile.clone();
-                }
-            }
-            self.known_profiles.insert(pointer.clone(), profile.clone());
-        } else if matches!(
-            change.operation,
-            StateOperation::Delete | StateOperation::Expire
-        ) {
-            self.known_profiles.remove(&pointer);
-        }
-        Ok(Some(ConcordContractNotification {
-            source: ConcordNotificationSource::Contract,
-            operation: change.operation,
-            contract_id,
-            generation,
-            contract,
-            participant: Some(participant),
-            profile,
-            change,
-        }))
-    }
-}
-
-pub struct MaterializedConcordParticipantProfileNotificationStream<C: StateStore> {
-    contract_state: MaterializedStateStore<C>,
-    index: StateWatchStream,
-    tokens: StateWatchStream,
-    known_profiles: BTreeMap<(String, u64), Option<String>>,
-    profile_filter: Option<String>,
-}
-
-impl<C: StateStore> MaterializedConcordParticipantProfileNotificationStream<C> {
-    pub async fn next(&mut self) -> Result<ConcordContractNotification> {
-        loop {
-            let index = self.index.next();
-            let tokens = self.tokens.next();
-            pin_mut!(index);
-            pin_mut!(tokens);
-
-            let notification = match select(index, tokens).await {
-                Either::Left((change, _)) => {
-                    let change = change.ok_or_else(|| {
-                        Error::StateUnavailable(
-                            "Concord participant profile materialized watch ended".to_string(),
-                        )
-                    })??;
-                    self.index_notification_from_change(change)?
-                }
-                Either::Right((change, _)) => {
-                    let change = change.ok_or_else(|| {
-                        Error::StateUnavailable(
-                            "Concord token materialized watch ended".to_string(),
-                        )
-                    })??;
-                    indexed_token_notification_from_change(
-                        change,
-                        self.profile_filter.as_deref(),
-                        &self.known_profiles,
-                    )
-                }
-            };
-            if let Some(notification) = notification {
-                return Ok(notification);
-            }
-        }
-    }
-
-    fn index_notification_from_change(
-        &mut self,
-        change: StateChange,
-    ) -> Result<Option<ConcordContractNotification>> {
-        let Some((participant, key_profile, contract_id, generation)) =
-            parse_concord_participant_profile_index_key(&change.key)
-        else {
-            return Ok(None);
-        };
-        if self
-            .profile_filter
-            .as_deref()
-            .is_some_and(|filter| key_profile.as_deref() != Some(filter))
-        {
-            return Ok(None);
-        }
-        let pointer = (contract_id.clone(), generation);
-        let mut contract = None;
-        let mut profile = key_profile.clone();
-        if change.operation == StateOperation::Put {
-            let Some(entry) = change.entry.as_ref() else {
-                return Ok(None);
-            };
-            let Ok(reference) = ParticipantProfileIndexRecord::from_value(entry.value.clone())
-            else {
-                return Ok(None);
-            };
-            if reference.participant != participant
-                || reference.profile != key_profile
-                || reference.contract_id != contract_id
-                || reference.generation != generation
-            {
-                return Ok(None);
-            }
-            if let Some(entry) = self.contract_state.get_cached(&reference.contract_key)? {
-                contract = contract_handle_from_entry(entry);
-                if let Some(contract) = contract.as_ref() {
-                    profile = contract.profile.clone();
-                }
-            }
-            self.known_profiles.insert(pointer.clone(), profile.clone());
-        } else if matches!(
-            change.operation,
-            StateOperation::Delete | StateOperation::Expire
-        ) {
-            self.known_profiles.remove(&pointer);
-        }
-        Ok(Some(ConcordContractNotification {
-            source: ConcordNotificationSource::Contract,
-            operation: change.operation,
-            contract_id,
-            generation,
-            contract,
-            participant: Some(participant),
-            profile,
-            change,
-        }))
     }
 }
 
@@ -856,6 +684,7 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
     pub async fn watch_contract_notifications(
         &self,
         profile: Option<&str>,
+        participant: Option<&EndpointAddress>,
     ) -> Result<ConcordContractNotificationStream> {
         Ok(ConcordContractNotificationStream {
             contracts: self
@@ -865,57 +694,36 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
             tokens: self.token_state.watch(concord_contracts_prefix()).await?,
             known_profiles: BTreeMap::new(),
             profile_filter: profile.map(ToString::to_string),
+            participant_filter: participant.cloned(),
         })
     }
 
-    pub async fn watch_participant_profile_notifications(
-        &self,
-        participant: &EndpointAddress,
-        profile: Option<&str>,
-    ) -> Result<ConcordParticipantProfileNotificationStream<C>> {
-        Ok(ConcordParticipantProfileNotificationStream {
-            contract_state: self.contract_state.clone(),
-            index: self
-                .contract_state
-                .watch(&make_concord_participant_profile_index_prefix(
-                    participant,
-                    profile,
-                ))
-                .await?,
-            tokens: self.token_state.watch(concord_contracts_prefix()).await?,
-            known_profiles: BTreeMap::new(),
-            profile_filter: profile.map(ToString::to_string),
-        })
-    }
-
-    pub async fn create_contract(
-        &self,
-        mut participants: Vec<EndpointAddress>,
-        contract_id: Option<String>,
-        generation: u64,
-        profile: Option<String>,
-        terms: Option<Value>,
-        created_by: Option<EndpointAddress>,
-    ) -> Result<ContractHandle> {
-        participants.sort();
-        let terms_hash = terms.as_ref().map(canonical_json_hash_value).transpose()?;
+    pub async fn create_contract(&self, mut spec: CreateContractSpec) -> Result<ContractHandle> {
+        spec.participants.sort();
+        let terms_hash = spec
+            .terms
+            .as_ref()
+            .map(canonical_json_hash_value)
+            .transpose()?;
         let record = ContractRecord {
             schema_id: CONCORD_CONTRACT_SCHEMA_ID.to_string(),
-            contract_id: contract_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-            generation,
-            participants,
+            contract_id: spec
+                .contract_id
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            generation: spec.generation,
+            participants: spec.participants,
             attached_participants: Vec::new(),
             state: ContractState::Open,
-            profile,
+            profile: spec.profile,
             terms_hash,
-            terms,
-            created_by,
+            terms: spec.terms,
+            created_by: spec.created_by,
             created_at: Some(now()),
             cancelled_by: None,
             cancelled_at: None,
             cancel_revision: None,
             cancel_reason: None,
-            supersedes: None,
+            supersedes: spec.supersedes,
         };
         let key = make_concord_contract_key(&record.contract_id, record.generation);
         let entry = self
@@ -927,13 +735,14 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
         Ok(contract_handle(key, &record, entry.revision))
     }
 
-    pub async fn find_contracts(&self, profile: Option<&str>) -> Result<Vec<ContractHandle>> {
+    pub async fn contracts(&self, filters: ContractFilters<'_>) -> Result<Vec<ContractHandle>> {
+        let prefix = if let Some(contract_id) = filters.contract_id {
+            format!("contracts.{}.", crate::keys::encode_key_token(contract_id))
+        } else {
+            concord_contracts_prefix().to_string()
+        };
         let mut contracts = Vec::new();
-        for entry in self
-            .contract_state
-            .items(concord_contracts_prefix())
-            .await?
-        {
+        for entry in self.contract_state.items(&prefix).await? {
             let Some((contract_id, generation)) = parse_concord_contract_key(&entry.key) else {
                 continue;
             };
@@ -943,66 +752,31 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
             if record.contract_id != contract_id || record.generation != generation {
                 continue;
             }
-            if profile.is_some_and(|profile| record.profile.as_deref() != Some(profile)) {
+            if filters
+                .profile
+                .is_some_and(|profile| record.profile.as_deref() != Some(profile))
+            {
+                continue;
+            }
+            if filters
+                .contract_id
+                .is_some_and(|filter_contract_id| record.contract_id != filter_contract_id)
+            {
+                continue;
+            }
+            if filters
+                .participant
+                .is_some_and(|participant| !record.participants.contains(participant))
+            {
+                continue;
+            }
+            if filters.state.is_some_and(|state| record.state != state) {
                 continue;
             }
             contracts.push(contract_handle(entry.key, &record, entry.revision));
         }
         contracts.sort_by(|left, right| left.key.cmp(&right.key));
         Ok(contracts)
-    }
-
-    pub async fn participant_profile_contracts(
-        &self,
-        participant: &EndpointAddress,
-        profile: Option<&str>,
-    ) -> Result<Vec<ContractHandle>> {
-        let prefix = make_concord_participant_profile_index_prefix(participant, profile);
-        let mut contracts = BTreeMap::<String, ContractHandle>::new();
-        for entry in self.contract_state.items(&prefix).await? {
-            let Some((key_participant, key_profile, key_contract_id, key_generation)) =
-                parse_concord_participant_profile_index_key(&entry.key)
-            else {
-                continue;
-            };
-            if &key_participant != participant {
-                continue;
-            }
-            if profile.is_some_and(|profile| key_profile.as_deref() != Some(profile)) {
-                continue;
-            }
-            let Ok(reference) = ParticipantProfileIndexRecord::from_value(entry.value) else {
-                continue;
-            };
-            if &reference.participant != participant
-                || reference.contract_id != key_contract_id
-                || reference.generation != key_generation
-                || reference.profile != key_profile
-            {
-                continue;
-            }
-            if reference.state == ContractState::Cancelled {
-                continue;
-            }
-            let Some(contract_entry) = self.contract_state.get(&reference.contract_key).await?
-            else {
-                continue;
-            };
-            let Some(contract) = contract_handle_from_entry(contract_entry) else {
-                continue;
-            };
-            if contract.contract_id != key_contract_id || contract.generation != key_generation {
-                continue;
-            }
-            if profile.is_some_and(|profile| contract.profile.as_deref() != Some(profile)) {
-                continue;
-            }
-            if !contract.participants.contains(participant) {
-                continue;
-            }
-            contracts.insert(contract.key.clone(), contract);
-        }
-        Ok(contracts.into_values().collect())
     }
 
     pub async fn contract_record(&self, handle: &ContractHandle) -> Result<Option<ContractRecord>> {
@@ -1445,12 +1219,14 @@ impl<C: StateStore, T: StateStore>
         self.token_state.wait_current().await
     }
 
-    pub fn find_contracts_cached(&self, profile: Option<&str>) -> Result<Vec<ContractHandle>> {
+    pub fn contracts_cached(&self, filters: ContractFilters<'_>) -> Result<Vec<ContractHandle>> {
+        let prefix = if let Some(contract_id) = filters.contract_id {
+            format!("contracts.{}.", crate::keys::encode_key_token(contract_id))
+        } else {
+            concord_contracts_prefix().to_string()
+        };
         let mut contracts = Vec::new();
-        for entry in self
-            .contract_state
-            .items_cached(concord_contracts_prefix())?
-        {
+        for entry in self.contract_state.items_cached(&prefix)? {
             let Some((contract_id, generation)) = parse_concord_contract_key(&entry.key) else {
                 continue;
             };
@@ -1460,66 +1236,31 @@ impl<C: StateStore, T: StateStore>
             if record.contract_id != contract_id || record.generation != generation {
                 continue;
             }
-            if profile.is_some_and(|profile| record.profile.as_deref() != Some(profile)) {
+            if filters
+                .profile
+                .is_some_and(|profile| record.profile.as_deref() != Some(profile))
+            {
+                continue;
+            }
+            if filters
+                .contract_id
+                .is_some_and(|filter_contract_id| record.contract_id != filter_contract_id)
+            {
+                continue;
+            }
+            if filters
+                .participant
+                .is_some_and(|participant| !record.participants.contains(participant))
+            {
+                continue;
+            }
+            if filters.state.is_some_and(|state| record.state != state) {
                 continue;
             }
             contracts.push(contract_handle(entry.key, &record, entry.revision));
         }
         contracts.sort_by(|left, right| left.key.cmp(&right.key));
         Ok(contracts)
-    }
-
-    pub fn participant_profile_contracts_cached(
-        &self,
-        participant: &EndpointAddress,
-        profile: Option<&str>,
-    ) -> Result<Vec<ContractHandle>> {
-        let prefix = make_concord_participant_profile_index_prefix(participant, profile);
-        let mut contracts = BTreeMap::<String, ContractHandle>::new();
-        for entry in self.contract_state.items_cached(&prefix)? {
-            let Some((key_participant, key_profile, key_contract_id, key_generation)) =
-                parse_concord_participant_profile_index_key(&entry.key)
-            else {
-                continue;
-            };
-            if &key_participant != participant {
-                continue;
-            }
-            if profile.is_some_and(|profile| key_profile.as_deref() != Some(profile)) {
-                continue;
-            }
-            let Ok(reference) = ParticipantProfileIndexRecord::from_value(entry.value) else {
-                continue;
-            };
-            if &reference.participant != participant
-                || reference.contract_id != key_contract_id
-                || reference.generation != key_generation
-                || reference.profile != key_profile
-            {
-                continue;
-            }
-            if reference.state == ContractState::Cancelled {
-                continue;
-            }
-            let Some(contract_entry) = self.contract_state.get_cached(&reference.contract_key)?
-            else {
-                continue;
-            };
-            let Some(contract) = contract_handle_from_entry(contract_entry) else {
-                continue;
-            };
-            if contract.contract_id != key_contract_id || contract.generation != key_generation {
-                continue;
-            }
-            if profile.is_some_and(|profile| contract.profile.as_deref() != Some(profile)) {
-                continue;
-            }
-            if !contract.participants.contains(participant) {
-                continue;
-            }
-            contracts.insert(contract.key.clone(), contract);
-        }
-        Ok(contracts.into_values().collect())
     }
 
     pub fn contract_record_cached(
@@ -1668,10 +1409,15 @@ impl<C: StateStore, T: StateStore>
     pub async fn watch_contract_notifications_cached(
         &self,
         profile: Option<&str>,
+        participant: Option<&EndpointAddress>,
     ) -> Result<ConcordContractNotificationStream> {
         self.wait_current().await?;
         let known_profiles = self
-            .find_contracts_cached(None)?
+            .contracts_cached(ContractFilters {
+                profile,
+                participant,
+                ..ContractFilters::default()
+            })?
             .into_iter()
             .map(|contract| {
                 (
@@ -1685,31 +1431,7 @@ impl<C: StateStore, T: StateStore>
             tokens: self.token_state.subscribe_cached(),
             known_profiles,
             profile_filter: profile.map(ToString::to_string),
-        })
-    }
-
-    pub async fn watch_participant_profile_notifications_cached(
-        &self,
-        participant: &EndpointAddress,
-        profile: Option<&str>,
-    ) -> Result<MaterializedConcordParticipantProfileNotificationStream<C>> {
-        self.wait_current().await?;
-        let known_profiles = self
-            .participant_profile_contracts_cached(participant, profile)?
-            .into_iter()
-            .map(|contract| {
-                (
-                    (contract.contract_id.clone(), contract.generation),
-                    contract.profile.clone(),
-                )
-            })
-            .collect();
-        Ok(MaterializedConcordParticipantProfileNotificationStream {
-            contract_state: self.contract_state.clone(),
-            index: self.contract_state.subscribe_cached(),
-            tokens: self.token_state.subscribe_cached(),
-            known_profiles,
-            profile_filter: profile.map(ToString::to_string),
+            participant_filter: participant.cloned(),
         })
     }
 }
@@ -1787,7 +1509,12 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
     {
         let contracts = self
             .concord
-            .participant_profile_contracts(&self.participant, self.profile.as_deref())
+            .contracts(ContractFilters {
+                profile: self.profile.as_deref(),
+                participant: Some(&self.participant),
+                state: Some(ContractState::Open),
+                ..ContractFilters::default()
+            })
             .await?;
         self.contract_index = contracts
             .iter()
@@ -2101,9 +1828,12 @@ impl<C: StateStore, T: StateStore>
         F: FnMut(&ContractHandle, &ContractRecord) -> Result<bool>,
     {
         self.concord.wait_current().await?;
-        let contracts = self
-            .concord
-            .participant_profile_contracts_cached(&self.participant, self.profile.as_deref())?;
+        let contracts = self.concord.contracts_cached(ContractFilters {
+            profile: self.profile.as_deref(),
+            participant: Some(&self.participant),
+            state: Some(ContractState::Open),
+            ..ContractFilters::default()
+        })?;
         self.contract_index = contracts
             .iter()
             .map(|contract| (contract.key.clone(), contract.clone()))
@@ -2349,34 +2079,31 @@ pub fn concord_participant_token_key(
     make_concord_participant_token_key(contract_id, generation, participant)
 }
 
-pub fn concord_participant_profile_index_key(
-    participant: &EndpointAddress,
-    profile: Option<&str>,
-    contract_id: &str,
-    generation: u64,
-) -> String {
-    make_concord_participant_profile_index_key(participant, profile, contract_id, generation)
-}
-
-pub fn concord_participant_profile_index_prefix(
-    participant: &EndpointAddress,
-    profile: Option<&str>,
-) -> String {
-    make_concord_participant_profile_index_prefix(participant, profile)
-}
-
 fn contract_notification_from_change(
     change: StateChange,
     profile_filter: Option<&str>,
+    participant_filter: Option<&EndpointAddress>,
     known_profiles: &mut BTreeMap<(String, u64), Option<String>>,
 ) -> Option<ConcordContractNotification> {
     let (contract_id, generation) = parse_concord_contract_key(&change.key)?;
     let pointer = (contract_id.clone(), generation);
+    let was_known = known_profiles.contains_key(&pointer);
     let known_profile = known_profiles.get(&pointer).cloned().flatten();
     let contract = contract_handle_from_change(&change);
     let (profile, profile_known) = if let Some(contract) = contract.as_ref() {
         let profile = contract.profile.clone();
-        known_profiles.insert(pointer.clone(), profile.clone());
+        let matches_profile =
+            profile_filter.is_none_or(|filter| profile.as_deref() == Some(filter));
+        let matches_participant = participant_filter
+            .is_none_or(|participant| contract.participants.contains(participant));
+        if matches_profile && matches_participant {
+            known_profiles.insert(pointer.clone(), profile.clone());
+        } else {
+            known_profiles.remove(&pointer);
+            if !was_known {
+                return None;
+            }
+        }
         (profile, true)
     } else {
         let profile_known = known_profiles.contains_key(&pointer);
@@ -2389,6 +2116,11 @@ fn contract_notification_from_change(
         (known_profile, profile_known)
     };
     if profile_filter.is_some_and(|filter| profile_known && profile.as_deref() != Some(filter)) {
+        if !was_known {
+            return None;
+        }
+    }
+    if participant_filter.is_some() && !was_known && contract.is_none() {
         return None;
     }
     Some(ConcordContractNotification {
@@ -2406,39 +2138,17 @@ fn contract_notification_from_change(
 fn token_notification_from_change(
     change: StateChange,
     profile_filter: Option<&str>,
+    participant_filter: Option<&EndpointAddress>,
     known_profiles: &BTreeMap<(String, u64), Option<String>>,
 ) -> Option<ConcordContractNotification> {
     let (contract_id, generation, participant) = parse_concord_participant_token_key(&change.key)?;
     let pointer = (contract_id.clone(), generation);
     let profile_known = known_profiles.contains_key(&pointer);
     let profile = known_profiles.get(&pointer).cloned().flatten();
+    if participant_filter.is_some() && !profile_known {
+        return None;
+    }
     if profile_filter.is_some_and(|filter| profile_known && profile.as_deref() != Some(filter)) {
-        return None;
-    }
-    Some(ConcordContractNotification {
-        source: ConcordNotificationSource::Token,
-        operation: change.operation,
-        contract_id,
-        generation,
-        contract: None,
-        participant: Some(participant),
-        profile,
-        change,
-    })
-}
-
-fn indexed_token_notification_from_change(
-    change: StateChange,
-    profile_filter: Option<&str>,
-    known_profiles: &BTreeMap<(String, u64), Option<String>>,
-) -> Option<ConcordContractNotification> {
-    let (contract_id, generation, participant) = parse_concord_participant_token_key(&change.key)?;
-    let pointer = (contract_id.clone(), generation);
-    if !known_profiles.contains_key(&pointer) {
-        return None;
-    }
-    let profile = known_profiles.get(&pointer).cloned().flatten();
-    if profile_filter.is_some_and(|filter| profile.as_deref() != Some(filter)) {
         return None;
     }
     Some(ConcordContractNotification {

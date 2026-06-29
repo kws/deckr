@@ -1429,71 +1429,6 @@ class _ConcordKvStore:
             )
         )
 
-    async def participant_profile_contracts(
-        self,
-        *,
-        participant: str | EndpointAddress,
-        profile: str | None,
-    ) -> tuple[ContractHandle, ...]:
-        parsed_participant = parse_endpoint_address(participant)
-        prefix = concord_participant_profile_index_prefix(
-            participant=parsed_participant,
-            profile=profile,
-        )
-        handles: dict[str, ContractHandle] = {}
-        for entry in await self._contract_bucket.items_exact(prefix):
-            parsed = parse_concord_participant_profile_index_key(entry.key)
-            if parsed is None:
-                continue
-            key_participant, key_profile, key_contract_id, key_generation = parsed
-            if key_participant != parsed_participant:
-                continue
-            if profile is not None and key_profile != profile:
-                continue
-            try:
-                reference = ConcordParticipantProfileIndexRecord.model_validate(
-                    entry.value
-                )
-            except ValueError:
-                continue
-            if (
-                reference.participant != parsed_participant
-                or reference.contract_id != key_contract_id
-                or reference.generation != key_generation
-                or reference.profile != key_profile
-            ):
-                continue
-            if reference.state == ContractState.CANCELLED:
-                continue
-            contract_entry = await self._contract_bucket.get(reference.contract_key)
-            if contract_entry is None:
-                continue
-            handle = _contract_handle_from_entry(contract_entry)
-            if handle is None:
-                continue
-            if handle.contract_id != key_contract_id or handle.generation != key_generation:
-                continue
-            if profile is not None and handle.profile != profile:
-                continue
-            if parsed_participant not in handle.participants:
-                continue
-            handles[handle.key] = handle
-        return tuple(handles[key] for key in sorted(handles))
-
-    async def participant_profile_contract_notification_changes(
-        self,
-        *,
-        participant: str | EndpointAddress,
-        profile: str | None,
-    ) -> Any:
-        parsed_participant = parse_endpoint_address(participant)
-        return self._contract_bucket.watch(
-            concord_participant_profile_index_prefix(
-                participant=parsed_participant,
-                profile=profile,
-            )
-        )
-
     async def _put_participant_profile_indexes(
         self,
         record: ContractRecord,
@@ -1817,7 +1752,6 @@ class Concord:
         self._started = False
         self._closed = False
         self._task_group: anyio.abc.TaskGroup | None = None
-        self._agreements: dict[tuple[Any, ...], ConcordAgreementLease] = {}
         self._agreement_lock = anyio.Lock()
         self._lock = anyio.Lock()
         self._subscribers: set[_ConcordSubscriber] = set()
@@ -1909,12 +1843,11 @@ class Concord:
         *,
         start_soon: Callable[..., object] | None = None,
     ) -> ConcordAgreementLease:
-        """Create, reuse, or supersede an owner-side agreement.
+        """Create an owner-side agreement with an opaque Concord contract id.
 
         This method is the production lifecycle entry point for a participant
-        that owns the contract. It validates before attaching so a generation
-        with lost participant authority is cancelled and superseded instead of
-        receiving a replacement token.
+        that owns the contract. Each call opens a fresh contract; replacement
+        relationships are represented only by an explicit ``supersedes`` pointer.
         """
 
         if self._started:
@@ -1928,19 +1861,6 @@ class Concord:
         *,
         start_soon: Callable[..., object] | None = None,
     ) -> ConcordAgreementLease:
-        cache_key = _agreement_cache_key(spec)
-        if cache_key is not None:
-            cached = self._agreements.get(cache_key)
-            if cached is not None and not cached.closed:
-                validity = await cached.refresh()
-                if not _agreement_successor_status(validity.status):
-                    return cached
-                await self._cancel_agreement(
-                    cached,
-                    reason=f"concord_agreement_{validity.status.value}",
-                )
-                self._agreements.pop(cache_key, None)
-
         while True:
             contract, validity = await self._select_or_create_agreement_contract(spec)
             agreement = self._agreement_from_contract(spec, contract, validity)
@@ -1952,11 +1872,7 @@ class Concord:
                     agreement,
                     reason=f"concord_agreement_{validity.status.value}",
                 )
-                if cache_key is not None:
-                    self._agreements.pop(cache_key, None)
                 continue
-            if cache_key is not None:
-                self._agreements[cache_key] = agreement
             return agreement
 
     def participant(
@@ -2665,89 +2581,15 @@ class Concord:
         spec: ConcordAgreementSpec,
     ) -> tuple[ContractHandle, ContractValidity]:
         current_sessions = await _agreement_current_sessions(spec)
-        next_generation = 1
-        reusable: tuple[ContractHandle, ContractValidity] | None = None
-        open_conflicts: list[tuple[ContractHandle, str]] = []
-        if spec.stable_contract_id is not None:
-            for contract in await self._find_contracts(
-                contract_id=spec.stable_contract_id,
-            ):
-                record = await self._contract_record(contract)
-                if record is None:
-                    continue
-                next_generation = max(next_generation, record.generation + 1)
-                if record.state != ContractState.OPEN:
-                    continue
-                if not _agreement_record_matches_spec(record, spec):
-                    open_conflicts.append(
-                        (contract, "concord_agreement_conflicting_generation")
-                    )
-                    continue
-                validity = await self._validate(
-                    contract,
-                    current_sessions=current_sessions,
-                    log_label=spec.log_label,
-                    log_invalid=False,
-                )
-                if _agreement_successor_status(validity.status):
-                    open_conflicts.append(
-                        (
-                            contract,
-                            f"concord_agreement_{validity.status.value}",
-                        )
-                    )
-                    continue
-                if reusable is None or contract.generation > reusable[0].generation:
-                    if reusable is not None:
-                        open_conflicts.append(
-                            (
-                                reusable[0],
-                                "concord_agreement_superseded_generation",
-                            )
-                        )
-                    reusable = (contract, validity)
-                    continue
-                open_conflicts.append(
-                    (contract, "concord_agreement_superseded_generation")
-                )
-
-        for contract, reason in open_conflicts:
-            try:
-                await self._cancel(
-                    contract,
-                    spec.local_participant,
-                    reason=reason,
-                    log_label=spec.log_label,
-                )
-            except ConcordConflict:
-                return await self._select_or_create_agreement_contract(spec)
-
-        if reusable is not None:
-            return reusable
-
-        supersedes = (
-            ContractPointer(
-                contractId=spec.stable_contract_id,
-                generation=next_generation - 1,
-            )
-            if spec.stable_contract_id is not None and next_generation > 1
-            else None
+        contract = await self._create_contract(
+            spec.participants,
+            generation=1,
+            profile=spec.profile,
+            terms=spec.terms,
+            created_by=spec.created_by,
+            supersedes=spec.supersedes,
+            log_label=spec.log_label,
         )
-        try:
-            contract = await self._create_contract(
-                spec.participants,
-                contract_id=spec.stable_contract_id,
-                generation=next_generation,
-                profile=spec.profile,
-                terms=spec.terms,
-                created_by=spec.created_by,
-                supersedes=supersedes,
-                log_label=spec.log_label,
-            )
-        except ConcordConflict:
-            if spec.stable_contract_id is None:
-                raise
-            return await self._select_or_create_agreement_contract(spec)
         validity = await self._validate(
             contract,
             current_sessions=current_sessions,
@@ -2890,9 +2732,6 @@ class Concord:
             log_label=agreement.spec.log_label,
         )
         await agreement.aclose()
-        cache_key = _agreement_cache_key(agreement.spec)
-        if cache_key is not None and self._agreements.get(cache_key) is agreement:
-            self._agreements.pop(cache_key, None)
         validity = await self._validate(
             agreement.contract,
             current_sessions=await _agreement_current_sessions(agreement.spec),
@@ -2984,7 +2823,7 @@ class Concord:
     ) -> tuple[ContractHandle, ...]:
         if self._started:
             await self.wait_current()
-        return await self._find_contracts(
+        return await self._contracts_filtered(
             profile,
             contract_id=contract_id,
             participant=participant,
@@ -3180,7 +3019,7 @@ class Concord:
                 return None
             return record
 
-    async def _find_contracts(
+    async def _contracts_filtered(
         self,
         profile: str | None = None,
         *,
@@ -3217,18 +3056,6 @@ class Concord:
                 for key in sorted(keys)
                 if key in self._contract_handles_by_key
             )
-
-    async def _participant_profile_contracts(
-        self,
-        *,
-        participant: str | EndpointAddress,
-        profile: str | None,
-    ) -> tuple[ContractHandle, ...]:
-        return await self._find_contracts(
-            profile,
-            participant=participant,
-            state=ContractState.OPEN,
-        )
 
     async def _attach(
         self,
@@ -4021,9 +3848,9 @@ ConcordSessionEvidence = (
 class ConcordAgreementSpec:
     """Owner-side Concord agreement request.
 
-    A stable contract id is used for contracts whose identity is durable across
-    generations, such as service-use agreements. Omit it for one-shot claims or
-    sessions that should receive a fresh contract id when superseded.
+    Owner-side agreement creation opens a fresh opaque Concord contract. Use
+    ``supersedes`` to explicitly link a replacement to a previous exact
+    contract pointer.
     """
 
     profile: str | None
@@ -4031,7 +3858,7 @@ class ConcordAgreementSpec:
     local_participant: str | EndpointAddress
     local_session_id: str
     terms: Mapping[str, Any] | DeckrModel | None = None
-    stable_contract_id: str | None = None
+    supersedes: ContractPointer | Mapping[str, Any] | None = None
     current_sessions: ConcordSessionEvidence | None = None
     refresh_interval: float = DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
     log_label: str = "Concord"
@@ -4053,12 +3880,13 @@ class ConcordAgreementSpec:
             raise ValueError("refresh_interval must be greater than zero")
         if self.profile is not None:
             _require_text(self.profile, field_name="Concord agreement profile")
-        stable_contract_id = self.stable_contract_id
-        if stable_contract_id is not None:
-            stable_contract_id = _require_text(
-                stable_contract_id,
-                field_name="Concord agreement contract id",
-            )
+        supersedes = (
+            self.supersedes
+            if isinstance(self.supersedes, ContractPointer)
+            else ContractPointer.model_validate(self.supersedes)
+            if self.supersedes is not None
+            else None
+        )
         created_by = (
             parse_endpoint_address(self.created_by)
             if self.created_by is not None
@@ -4084,7 +3912,7 @@ class ConcordAgreementSpec:
             "terms",
             freeze_json(terms) if terms is not None else None,
         )
-        object.__setattr__(self, "stable_contract_id", stable_contract_id)
+        object.__setattr__(self, "supersedes", supersedes)
         object.__setattr__(self, "created_by", created_by)
 
 
@@ -4386,9 +4214,10 @@ class ConcordParticipant:
         rebuild_index: bool,
     ) -> tuple[ContractHandle, ...]:
         del rebuild_index
-        indexed = await self._concord._participant_profile_contracts(
+        indexed = await self._concord.contracts(
+            self.profile,
             participant=self.participant,
-            profile=self.profile,
+            state=ContractState.OPEN,
         )
         candidates = {contract.key: contract for contract in indexed}
         for managed in self._managed.values():
@@ -4732,19 +4561,6 @@ def _event_matches_subscriber(
     return False
 
 
-def _agreement_cache_key(spec: ConcordAgreementSpec) -> tuple[Any, ...] | None:
-    if spec.stable_contract_id is None:
-        return None
-    return (
-        spec.stable_contract_id,
-        spec.profile,
-        tuple(str(item) for item in spec.participants),
-        str(spec.local_participant),
-        spec.local_session_id,
-        canonical_json_hash(spec.terms) if spec.terms is not None else None,
-    )
-
-
 async def _agreement_current_sessions(
     spec: ConcordAgreementSpec,
 ) -> dict[str, str]:
@@ -4756,21 +4572,6 @@ async def _agreement_current_sessions(
         sessions.update({str(key): value for key, value in current.items()})
     sessions[str(spec.local_participant)] = spec.local_session_id
     return sessions
-
-
-def _agreement_record_matches_spec(
-    record: ContractRecord,
-    spec: ConcordAgreementSpec,
-) -> bool:
-    if record.profile != spec.profile:
-        return False
-    if tuple(record.participants) != tuple(spec.participants):
-        return False
-    if record.terms is None:
-        return spec.terms is None
-    if spec.terms is None:
-        return False
-    return thaw_json(record.terms) == thaw_json(spec.terms)
 
 
 def _agreement_successor_status(status: ContractValidityStatus) -> bool:
@@ -5308,11 +5109,8 @@ __all__ = [
     "concord_contract_key",
     "concord_contract_prefix",
     "concord_contracts_prefix",
-    "concord_participant_profile_index_key",
-    "concord_participant_profile_index_prefix",
     "concord_participant_token_key",
     "concord_stale_observation_key",
     "parse_concord_contract_key",
-    "parse_concord_participant_profile_index_key",
     "parse_concord_participant_token_key",
 ]

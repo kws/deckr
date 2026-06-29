@@ -10,6 +10,8 @@ import {
   ContractState,
   ContractValidityStatus,
   canonicalJsonHash,
+  validateContractPointer,
+  type ContractPointer,
   type ContractHandle,
   type ContractRecord,
   type ConcordAgreementSpec,
@@ -29,11 +31,13 @@ import {
   type DeckrMessage,
   type EntitySubject,
 } from "./lanes.ts";
-import type { StateStore } from "./state.ts";
+import type { StateEntry, StateStore } from "./state.ts";
 
 export const DEFAULT_SERVICE_CONTRACT_RECONCILE_SECONDS = 300;
 export const DEFAULT_SERVICE_ADVERTISEMENT_REFRESH_SECONDS = 5;
 export const DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS = 5;
+export const SERVICE_USE_INDEX_SCHEMA_ID = "dev.deckr.service-use-index.v1";
+export const DEFAULT_SERVICE_USE_INDEX_STORE_NAME = "deckr_service_use_index_v1";
 
 export const ServiceBackendStatus = Object.freeze({
   AVAILABLE: "available",
@@ -96,7 +100,7 @@ export interface ServiceAdvertisementPayload {
 
 export interface ServiceUseTerms {
   profile: string;
-  serviceUseId: string;
+  serviceUseScopeId: string;
   serviceId: string;
   serviceEndpoint: string;
   serviceNamespace: string;
@@ -104,6 +108,21 @@ export interface ServiceUseTerms {
   clientEndpoint: string;
   allowedOperations: string[];
   allowedViews: Record<string, string[]>;
+}
+
+export interface ServiceUseScopeIndexRecord {
+  schema: typeof SERVICE_USE_INDEX_SCHEMA_ID;
+  scopeId: string;
+  contract: ContractPointer;
+  termsHash: string;
+  serviceEndpoint: string;
+  serviceSessionId: string;
+  clientEndpoint: string;
+  clientSessionId: string;
+  state: "candidate";
+  createdAt: string;
+  updatedAt: string;
+  supersedes?: ContractPointer;
 }
 
 export interface ServiceDescriptor {
@@ -264,7 +283,7 @@ export function validateServiceUseTerms(value: unknown): ServiceUseTerms {
   }
   return {
     profile: requireText(raw.profile, "profile"),
-    serviceUseId: requireText(raw.serviceUseId, "serviceUseId"),
+    serviceUseScopeId: requireText(raw.serviceUseScopeId, "serviceUseScopeId"),
     serviceId,
     serviceEndpoint,
     serviceNamespace: requireText(raw.serviceNamespace, "serviceNamespace"),
@@ -273,6 +292,35 @@ export function validateServiceUseTerms(value: unknown): ServiceUseTerms {
     allowedOperations: validateTextArray(raw.allowedOperations ?? [], "allowedOperations"),
     allowedViews,
   };
+}
+
+export function validateServiceUseScopeIndexRecord(value: unknown): ServiceUseScopeIndexRecord {
+  const raw = requireJsonObject(value, "service-use scope index record");
+  const schema = requireText(raw.schema, "schema");
+  if (schema !== SERVICE_USE_INDEX_SCHEMA_ID) {
+    throw new ValidationError(`service-use scope index schema must be ${SERVICE_USE_INDEX_SCHEMA_ID}`);
+  }
+  const state = requireText(raw.state, "state");
+  if (state !== "candidate") {
+    throw new ValidationError("service-use scope index state must be candidate");
+  }
+  const record: ServiceUseScopeIndexRecord = {
+    schema: SERVICE_USE_INDEX_SCHEMA_ID,
+    scopeId: requireText(raw.scopeId, "scopeId"),
+    contract: validateContractPointer(raw.contract),
+    termsHash: requireText(raw.termsHash, "termsHash"),
+    serviceEndpoint: endpointAddress(requireText(raw.serviceEndpoint, "serviceEndpoint")),
+    serviceSessionId: requireText(raw.serviceSessionId, "serviceSessionId"),
+    clientEndpoint: endpointAddress(requireText(raw.clientEndpoint, "clientEndpoint")),
+    clientSessionId: requireText(raw.clientSessionId, "clientSessionId"),
+    state,
+    createdAt: requireText(raw.createdAt, "createdAt"),
+    updatedAt: requireText(raw.updatedAt, "updatedAt"),
+  };
+  if (raw.supersedes !== undefined) {
+    record.supersedes = validateContractPointer(raw.supersedes);
+  }
+  return record;
 }
 
 export class ServiceAdvertiser {
@@ -357,6 +405,7 @@ export class ServiceAdvertiser {
 export class ServiceUseLeaseManager {
   private readonly endpoint: RegisteredEndpointLane;
   private readonly concord: ConcordService;
+  private readonly serviceUseIndex: StateStore;
   private readonly refreshIntervalSeconds: number;
   private readonly leases = new Map<string, ServiceUseLease>();
   private closed = false;
@@ -364,6 +413,7 @@ export class ServiceUseLeaseManager {
   constructor(options: {
     endpoint: RegisteredEndpointLane;
     concord: ConcordService;
+    serviceUseIndex: StateStore;
     refreshIntervalSeconds?: number;
   }) {
     this.endpoint = {
@@ -372,6 +422,7 @@ export class ServiceUseLeaseManager {
       request: options.endpoint.request,
     };
     this.concord = options.concord;
+    this.serviceUseIndex = options.serviceUseIndex;
     this.refreshIntervalSeconds =
       options.refreshIntervalSeconds ?? DEFAULT_SERVICE_TOKEN_REFRESH_SECONDS;
   }
@@ -451,20 +502,124 @@ export class ServiceUseLeaseManager {
     descriptor: ServiceDescriptor,
     terms: ServiceUseTerms,
   ): Promise<ServiceUseLease> {
-    const agreement = await this.concord.ensureAgreement({
+    const key = serviceUseScopeIndexKey(terms.serviceUseScopeId);
+    const currentSessions = {
+      [this.endpoint.endpoint]: this.endpoint.sessionId,
+      [descriptor.endpoint]: descriptor.sessionId,
+    };
+    while (true) {
+      const entry = await this.serviceUseIndex.get(key);
+      const indexed = serviceUseIndexRecordFromEntry(entry, terms.serviceUseScopeId);
+      if (indexed !== null) {
+        const agreement = await this.reusableAgreement(indexed, descriptor, terms, currentSessions);
+        if (agreement !== null) {
+          return { agreement, descriptor, terms };
+        }
+      }
+
+      const supersedes = indexed?.contract;
+      const agreement = await this.concord.ensureAgreement({
+        profile: descriptor.useProfile,
+        participants: [descriptor.endpoint, this.endpoint.endpoint],
+        localParticipant: this.endpoint.endpoint,
+        localSessionId: this.endpoint.sessionId,
+        terms: terms as unknown as JsonObject,
+        supersedes,
+        currentSessions,
+        refreshIntervalSeconds: this.refreshIntervalSeconds,
+      } satisfies ConcordAgreementSpec);
+      const record = serviceUseIndexRecord({
+        terms,
+        contract: agreement.contract,
+        descriptor,
+        clientSessionId: this.endpoint.sessionId,
+        supersedes,
+        previous: indexed,
+      });
+      try {
+        if (entry === null) {
+          await this.serviceUseIndex.create(key, record as unknown as JsonObject);
+        } else {
+          await this.serviceUseIndex.update(key, record as unknown as JsonObject, { revision: entry.revision });
+        }
+      } catch (error) {
+        if (!(error instanceof StateConflict)) {
+          throw error;
+        }
+        await agreement.cancel("service_use_scope_index_conflict");
+        continue;
+      }
+      if (supersedes !== undefined) {
+        await this.cancelPointerQuietly(supersedes);
+      }
+      return { agreement, descriptor, terms };
+    }
+  }
+
+  private async reusableAgreement(
+    indexed: ServiceUseScopeIndexRecord,
+    descriptor: ServiceDescriptor,
+    terms: ServiceUseTerms,
+    currentSessions: Record<string, string>,
+  ): Promise<ConcordAgreement | null> {
+    if (!serviceUseIndexMatchesCurrent(indexed, terms, currentSessions)) {
+      return null;
+    }
+    const contract = await this.concord.getContract(indexed.contract);
+    if (contract === null) {
+      return null;
+    }
+    const record = await this.concord.contractRecord(contract);
+    if (record === null || !serviceUseContractMatchesTerms(contract, record, terms)) {
+      return null;
+    }
+    if (!record.attachedParticipants.includes(this.endpoint.endpoint)) {
+      return null;
+    }
+    const validity = await this.concord.validate(contract, { currentSessions });
+    const localToken = validity.tokens[this.endpoint.endpoint];
+    if (localToken === undefined || localToken.sessionId !== this.endpoint.sessionId) {
+      return null;
+    }
+    if (validity.status !== ContractValidityStatus.VALID) {
+      return null;
+    }
+    const spec = {
       profile: descriptor.useProfile,
       participants: [descriptor.endpoint, this.endpoint.endpoint],
       localParticipant: this.endpoint.endpoint,
       localSessionId: this.endpoint.sessionId,
       terms: terms as unknown as JsonObject,
-      stableContractId: terms.serviceUseId,
-      currentSessions: {
-        [this.endpoint.endpoint]: this.endpoint.sessionId,
-        [descriptor.endpoint]: descriptor.sessionId,
-      },
+      currentSessions,
       refreshIntervalSeconds: this.refreshIntervalSeconds,
-    } satisfies ConcordAgreementSpec);
-    return { agreement, descriptor, terms };
+    } satisfies ConcordAgreementSpec;
+    const lease = this.concord.participantLease({
+      contract,
+      participant: this.endpoint.endpoint,
+      sessionId: this.endpoint.sessionId,
+    });
+    lease.adopt(localToken);
+    return new ConcordAgreement(this.concord, {
+      spec,
+      contract,
+      lease,
+      validity,
+    });
+  }
+
+  private async cancelPointerQuietly(pointer: ContractPointer): Promise<void> {
+    try {
+      const contract = await this.concord.getContract(pointer);
+      if (contract !== null) {
+        await this.concord.cancelContract(contract, this.endpoint.endpoint, {
+          reason: "service_use_scope_replaced",
+        });
+      }
+    } catch (error) {
+      if (!(error instanceof StateConflict || error instanceof StateUnavailable || error instanceof ValidationError)) {
+        throw error;
+      }
+    }
   }
 
   private async validLease(lease: ServiceUseLease, timeoutMs: number): Promise<ServiceUseLease> {
@@ -605,9 +760,6 @@ export class ServiceUseAuthorizer {
     try {
       terms = validateServiceUseTerms(record.terms);
     } catch {
-      return null;
-    }
-    if (contract.contractId !== terms.serviceUseId) {
       return null;
     }
     if (!serviceUseParticipantsMatch(record, terms)) {
@@ -771,6 +923,98 @@ export function serviceViewPrefix(serviceId: string, family: string): string {
   return `${serviceViewKey(serviceId, family)}.`;
 }
 
+export function serviceUseScopeIndexKey(scopeId: string): string {
+  return `scopes.${encodeKeyToken(requireText(scopeId, "service-use scope id"))}`;
+}
+
+function serviceUseIndexRecordFromEntry(
+  entry: StateEntry | null,
+  scopeId: string,
+): ServiceUseScopeIndexRecord | null {
+  if (entry === null) {
+    return null;
+  }
+  let record: ServiceUseScopeIndexRecord;
+  try {
+    record = validateServiceUseScopeIndexRecord(entry.value);
+  } catch {
+    return null;
+  }
+  if (record.scopeId !== scopeId) {
+    return null;
+  }
+  return record;
+}
+
+function serviceUseIndexMatchesCurrent(
+  record: ServiceUseScopeIndexRecord,
+  terms: ServiceUseTerms,
+  currentSessions: Record<string, string>,
+): boolean {
+  return (
+    record.termsHash === canonicalJsonHash(terms as unknown as JsonValue) &&
+    record.serviceEndpoint === terms.serviceEndpoint &&
+    record.serviceSessionId === terms.serviceSessionId &&
+    record.clientEndpoint === terms.clientEndpoint &&
+    record.clientSessionId === currentSessions[terms.clientEndpoint]
+  );
+}
+
+function serviceUseIndexRecord(options: {
+  terms: ServiceUseTerms;
+  contract: ContractHandle;
+  descriptor: ServiceDescriptor;
+  clientSessionId: string;
+  supersedes?: ContractPointer;
+  previous: ServiceUseScopeIndexRecord | null;
+}): ServiceUseScopeIndexRecord {
+  const now = new Date().toISOString();
+  return {
+    schema: SERVICE_USE_INDEX_SCHEMA_ID,
+    scopeId: options.terms.serviceUseScopeId,
+    contract: {
+      contractId: options.contract.contractId,
+      generation: options.contract.generation,
+    },
+    termsHash: canonicalJsonHash(options.terms as unknown as JsonValue),
+    serviceEndpoint: options.terms.serviceEndpoint,
+    serviceSessionId: options.descriptor.sessionId,
+    clientEndpoint: options.terms.clientEndpoint,
+    clientSessionId: options.clientSessionId,
+    state: "candidate",
+    createdAt: options.previous?.createdAt ?? now,
+    updatedAt: now,
+    ...(options.supersedes === undefined ? {} : { supersedes: options.supersedes }),
+  };
+}
+
+function serviceUseContractMatchesTerms(
+  contract: ContractHandle,
+  record: ContractRecord,
+  terms: ServiceUseTerms,
+): boolean {
+  if (record.state !== ContractState.OPEN) {
+    return false;
+  }
+  if (contract.contractId !== record.contractId || contract.generation !== record.generation) {
+    return false;
+  }
+  if (record.profile !== terms.profile) {
+    return false;
+  }
+  if (record.termsHash !== canonicalJsonHash(terms as unknown as JsonValue)) {
+    return false;
+  }
+  if (JSON.stringify(record.terms) !== JSON.stringify(terms)) {
+    return false;
+  }
+  const expected = [terms.clientEndpoint, terms.serviceEndpoint].sort();
+  return (
+    record.participants.length === expected.length &&
+    record.participants.every((participant, index) => participant === expected[index])
+  );
+}
+
 export function parseServiceDescriptor(
   candidate: Candidate,
   protocol: ServiceProtocol,
@@ -841,7 +1085,7 @@ export function serviceUseTerms(
     .slice(0, 32);
   return validateServiceUseTerms({
     ...identity,
-    serviceUseId: `service-use:${digest}`,
+    serviceUseScopeId: `service-use-scope:${digest}`,
   });
 }
 
@@ -1002,7 +1246,7 @@ function leaseKey(
     descriptor.endpoint,
     descriptor.sessionId,
     descriptor.useProfile,
-    terms.serviceUseId,
+    terms.serviceUseScopeId,
   ]);
 }
 

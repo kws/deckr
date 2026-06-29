@@ -7,8 +7,8 @@ use deckr::beacon::{
 };
 use deckr::endpoint::{service_address, EndpointAddress};
 use deckr::services::{
-    parse_service_descriptor, service_view_prefix, ServiceBackendStatus, ServiceDirectory,
-    ServiceProtocol, ServiceQuery, ServiceResolver, ServiceViewFamilyDefinition,
+    parse_service_descriptor, service_use_terms, service_view_prefix, ServiceBackendStatus,
+    ServiceDirectory, ServiceProtocol, ServiceQuery, ServiceResolver, ServiceViewFamilyDefinition,
 };
 use deckr::state::{MemoryStateStore, StateStore};
 use futures_util::StreamExt;
@@ -40,6 +40,28 @@ async fn service_descriptor_parsing_validates_protocol_identity() {
     let mut wrong_protocol = protocol.clone();
     wrong_protocol.feature_id = "dev.deckr.other.feature".to_string();
     assert!(parse_service_descriptor(&candidate, &wrong_protocol).is_none());
+}
+
+#[tokio::test]
+async fn service_use_scope_id_includes_namespace() {
+    let state = MemoryStateStore::ttl_bound(DEFAULT_BEACON_TTL_SECONDS).unwrap();
+    let beacon = Beacon::start(state.clone()).await.unwrap();
+    let protocol = service_protocol(SERVICE_ID);
+    publish_service(&state, &protocol, SERVICE_ID, "ad-1", SESSION_ID).await;
+
+    wait_until(|| beacon.candidates(&protocol.feature_id).unwrap().len() == 1).await;
+    let candidate = beacon.candidates(&protocol.feature_id).unwrap()[0].clone();
+    let descriptor = parse_service_descriptor(&candidate, &protocol).unwrap();
+    let client = EndpointAddress::parse("action_provider:test-provider").unwrap();
+    let terms = service_use_terms(&descriptor, &client, ["sendCommand"], BTreeMap::new()).unwrap();
+    let mut other_namespace = descriptor.clone();
+    other_namespace.namespace = "dev.deckr.other.service".to_string();
+    let other_terms =
+        service_use_terms(&other_namespace, &client, ["sendCommand"], BTreeMap::new()).unwrap();
+
+    assert_eq!(terms.service_namespace, "dev.deckr.openhab.service");
+    assert_eq!(other_terms.service_namespace, "dev.deckr.other.service");
+    assert_ne!(terms.service_use_scope_id, other_terms.service_use_scope_id);
 }
 
 #[tokio::test]
