@@ -14,90 +14,110 @@ hardware, actions, or future namespaces.
 All runtime discovery uses Beacon.
 All negotiated live authority uses Concord.
 Domain-specific meaning is supplied by endpoint family, feature id, profile id,
-payload schema, terms schema, and profile validation policy
+payload schema, terms schema, and profile validation policy.
 
-The examples below are identical for services, hardware, actions, or 
+The examples below are identical for services, hardware, actions, or
 future namespaces. So where we use service below, we use it in the most
 generic sense, and there should not be specific paths for hardware or actions
 as examples.
 
-## Shared service protocol definition
+## Shared example service feature definition
 
-Both the provider and the consumer need to agree on the same service protocol.
+Both the advertiser and the watcher need to agree on the same Beacon feature id
+and payload profile. This document deliberately uses one small fictitious
+presence service so the examples demonstrate the Beacon and Concord lifecycle,
+not the domain-specific work the service performs.
 
 ```python
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 import anyio
 
 from deckr.runtime import Deckr
-from deckr.beacon import (
-    BeaconAdvertisementSpec,
-    BeaconFeatureEventType,
-)
+from deckr.beacon import BeaconAdvertisementSpec, BeaconDirectory
 from deckr.concord import (
     ConcordAgreementSpec,
     ConcordConflict,
-    ContractState,
     ContractValidityStatus,
-    ConcordEventType,
 )
-from deckr.contracts.messages import EndpointAddress
 from deckr.services import (
     SERVICE_LANE_CONTRACT,
-    ServiceAdvertisementPayload,
     ServiceBackendStatus,
     ServiceDescriptor,
     ServiceProtocol,
     ServiceUnavailable,
     ServiceUseLease,
     ServiceUseTerms,
-    ServiceViewFamily,
+    ServiceViewFamilyDefinition,
     newest_service_descriptor,
     parse_service_descriptor,
     service_use_terms,
+    service_view_prefix,
 )
 ```
 
 ```python
-CLOCK_PROTOCOL = ServiceProtocol(
-    namespace="org.example.clock",
-    feature_id="org.example.clock.service",
-    advertisement_profile="org.example.clock.advertisement.v1",
-    use_profile="org.example.clock.service_use.v1",
-    operations=(
-        "time.now",
-        "time.watch",
-    ),
+EXAMPLE_FEATURE_ID = "org.example.presence"
+EXAMPLE_ADVERTISEMENT_PROFILE = "org.example.presence.advertisement.v1"
+EXAMPLE_USE_PROFILE = "org.example.presence.service_use.v1"
+EXAMPLE_OPERATIONS = ("presence.report",)
+
+
+EXAMPLE_PROTOCOL = ServiceProtocol(
+    namespace="org.example.presence",
+    feature_id=EXAMPLE_FEATURE_ID,
+    advertisement_profile=EXAMPLE_ADVERTISEMENT_PROFILE,
+    use_profile=EXAMPLE_USE_PROFILE,
+    operations=EXAMPLE_OPERATIONS,
     view_families={
-        "status": ServiceViewFamily(
-            storeName="org_example_clock_status_v1",
-            keyPrefix="views.clock.status.",
+        "status": ServiceViewFamilyDefinition(
+            storeName="org_example_presence_status_v1",
         ),
     },
 )
+
+
+def example_advertisement_payload(
+    *,
+    service_id: str,
+    session_id: str,
+    backend_status: ServiceBackendStatus = ServiceBackendStatus.AVAILABLE,
+    diagnostics: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    return EXAMPLE_PROTOCOL.advertisement_payload(
+        service_id=service_id,
+        session_id=session_id,
+        backend_status=backend_status,
+        diagnostics=diagnostics or {},
+    ).to_dict()
 ```
 
-A service advertisement payload already has the important service identity fields: service id, service endpoint, namespace, service session id, use profile, supported operations, views, and backend status. The current `parse_service_descriptor()` path validates those fields against the protocol before a candidate is treated as a service descriptor.
+A Beacon advertisement has generic envelope fields, such as feature id,
+endpoint, session id, labels, operations, and protocol hints. Domain-specific
+meaning belongs in the payload and its profile. A service advertisement payload,
+for example, adds service id, namespace, service session id, use profile,
+supported operations, views, and backend status; `parse_service_descriptor()`
+validates those fields before a candidate is treated as a service descriptor.
 
 ---
 
-# 1. Service publishes and maintains a Beacon advertisement
+# 1. Feature publishes and maintains a Beacon advertisement
 
-This is the **provider** side.
+This is the **advertiser** side. It uses a `service:<id>` endpoint only because
+Deckr endpoint addresses must use one of the core endpoint families; Beacon does
+not care which domain owns the payload.
 
 ```python
-class ClockService:
-    def __init__(self, *, service_id: str = "clock-main") -> None:
+class ExampleAdvertiser:
+    def __init__(self, *, service_id: str = "presence-main") -> None:
         self.service_id = service_id
-        self.service_endpoint = f"service:{service_id}"
-        self.session_id = f"clock-session-{uuid.uuid4()}"
+        self.endpoint = f"service:{service_id}"
+        self.session_id = f"presence-session-{uuid.uuid4()}"
 
         self._beacon_lease = None
-        self._contract_acceptor: ServiceContractAcceptor | None = None
 
     def _advertisement_payload(
         self,
@@ -105,81 +125,54 @@ class ClockService:
         backend_status: ServiceBackendStatus = ServiceBackendStatus.AVAILABLE,
         diagnostics: Mapping[str, object] | None = None,
     ) -> dict:
-        payload = CLOCK_PROTOCOL.advertisement_payload(
+        return example_advertisement_payload(
             service_id=self.service_id,
             session_id=self.session_id,
             backend_status=backend_status,
-            diagnostics=diagnostics or {},
+            diagnostics=diagnostics,
         )
-        return payload.to_dict()
 
     async def run(self, stop_event: anyio.Event) -> None:
-        async with Deckr(
-            lanes=("services",),
-            lane_contracts=(SERVICE_LANE_CONTRACT,),
-        ) as deckr:
+        async with Deckr() as deckr:
             async with deckr.endpoint(
-                self.service_endpoint,
+                self.endpoint,
                 session_id=self.session_id,
             ):
                 beacon = deckr.beacon
-                concord = deckr.concord
 
                 self._beacon_lease = await beacon.advertise(
                     BeaconAdvertisementSpec(
-                        feature_id=CLOCK_PROTOCOL.feature_id,
-                        endpoint=self.service_endpoint,
-                        advertiser=self.service_endpoint,
+                        feature_id=EXAMPLE_PROTOCOL.feature_id,
+                        endpoint=self.endpoint,
+                        advertiser=self.endpoint,
                         session_id=self.session_id,
                         protocol={
-                            "namespace": CLOCK_PROTOCOL.namespace,
+                            "namespace": EXAMPLE_PROTOCOL.namespace,
                             "version": "1",
                         },
-                        operations=CLOCK_PROTOCOL.operations,
+                        operations=EXAMPLE_PROTOCOL.operations,
                         labels={
                             "serviceId": self.service_id,
-                            "namespace": CLOCK_PROTOCOL.namespace,
+                            "namespace": EXAMPLE_PROTOCOL.namespace,
                         },
                         payload=self._advertisement_payload(),
                     ),
                     cleanup_stale_same_endpoint=True,
                 )
 
-                self._contract_acceptor = ServiceContractAcceptor(
-                    concord=concord,
-                    protocol=CLOCK_PROTOCOL,
-                    service_id=self.service_id,
-                    service_endpoint=self.service_endpoint,
-                    service_session_id=self.session_id,
-                )
-
-                async with anyio.create_task_group() as tg:
-                    tg.start_soon(self._contract_acceptor.run)
-
-                    try:
-                        await stop_event.wait()
-                    finally:
-                        # First stop accepting new contracts.
-                        #
-                        # Existing Concord contracts remain governed by Concord;
-                        # withdrawing Beacon only removes us from future discovery.
-                        if self._beacon_lease is not None:
-                            await self._beacon_lease.aclose()
-
-                        # Then terminate active contracts and withdraw participant tokens.
-                        if self._contract_acceptor is not None:
-                            await self._contract_acceptor.aclose(
-                                reason="service_shutdown"
-                            )
-
-                        tg.cancel_scope.cancel()
+                try:
+                    await stop_event.wait()
+                finally:
+                    # Withdrawing Beacon removes us from future discovery.
+                    if self._beacon_lease is not None:
+                        await self._beacon_lease.aclose()
 ```
 
 What keeps the Beacon advertisement alive?
 
 The returned `BeaconAdvertisementLease` is the important object. Keeping it alive keeps the managed heartbeat loop alive. The branch’s Beacon lease has an internal heartbeat loop and `aclose()`/withdraw path. The docs describe the default Beacon TTL as 300 seconds, with managed refreshes scheduled around 150–225 seconds by default.
 
-To update the advertisement because the service degraded:
+To update the advertisement because the advertised feature degraded:
 
 ```python
 async def mark_degraded(self, reason: str) -> None:
@@ -193,16 +186,21 @@ async def mark_degraded(self, reason: str) -> None:
         ),
         labels={
             "serviceId": self.service_id,
-            "namespace": CLOCK_PROTOCOL.namespace,
+            "namespace": EXAMPLE_PROTOCOL.namespace,
         },
-        operations=CLOCK_PROTOCOL.operations,
+        operations=EXAMPLE_PROTOCOL.operations,
     )
 ```
 
-If the service is not accepting new contracts but wants to keep existing contracts alive, it should withdraw Beacon but keep its Concord participant leases running.
+If the advertiser wants to disappear from future discovery without changing any
+existing Concord authority, it should withdraw Beacon and leave Concord
+participant leases alone. This is discovery drain, not hard admission control:
+a consumer that already cached the descriptor may still propose a Concord
+contract. Services that need a hard drain should also pause or close the
+participant or make the accept policy reject new proposals.
 
 ```python
-async def stop_accepting_new_contracts(self) -> None:
+async def stop_advertising(self) -> None:
     if self._beacon_lease is not None:
         await self._beacon_lease.aclose()
         self._beacon_lease = None
@@ -214,22 +212,52 @@ async def stop_accepting_new_contracts(self) -> None:
 
 This is the **consumer** side.
 
-The hot path should use the materialised Beacon view:
+Consumers should use a generic `BeaconDirectory`, not raw Beacon KV scans,
+ad hoc candidate parsing loops, or a service-specific directory/resolver path.
+The directory belongs to Beacon: it owns one watch for one feature id and keeps
+an in-process parsed descriptor set. Service-specific meaning is supplied only
+by the parser function.
 
 ```python
-candidates = beacon.candidates(CLOCK_PROTOCOL.feature_id)
+def parse_example_service_candidate(candidate) -> ServiceDescriptor | None:
+    return parse_service_descriptor(candidate, EXAMPLE_PROTOCOL)
+
+
+def example_service_directory(beacon) -> BeaconDirectory[ServiceDescriptor]:
+    return BeaconDirectory(
+        beacon,
+        EXAMPLE_PROTOCOL.feature_id,
+        parse_example_service_candidate,
+        log_label="ExampleService",
+    )
 ```
 
-That uses the in-memory `_keys_by_feature` and `_entries_by_key` indexes, not a raw KV prefix scan.
+Start the directory with the surrounding task group and wait for its initial
+watch replay before resolving from it:
 
 ```python
-def service_descriptor_matches(
+directory = example_service_directory(deckr.beacon)
+directory.start(task_group)
+await directory.wait_ready()
+```
+
+Resolving from the directory is local selection over parsed descriptors. The
+predicate encodes required capability; the selector encodes preference.
+
+```python
+def example_service_matches(
     descriptor: ServiceDescriptor,
     *,
     required_operations: set[str],
     required_view_families: set[str],
 ) -> bool:
     if descriptor.backend_status == ServiceBackendStatus.UNAVAILABLE:
+        return False
+
+    if descriptor.namespace != EXAMPLE_PROTOCOL.namespace:
+        return False
+
+    if descriptor.use_profile != EXAMPLE_PROTOCOL.use_profile:
         return False
 
     if not required_operations.issubset(descriptor.supported_operations):
@@ -239,106 +267,89 @@ def service_descriptor_matches(
         return False
 
     return True
+
+
+def select_newest_available(
+    descriptors: Collection[ServiceDescriptor],
+) -> ServiceDescriptor | None:
+    available = tuple(
+        descriptor
+        for descriptor in descriptors
+        if descriptor.backend_status != ServiceBackendStatus.UNAVAILABLE
+    )
+    return newest_service_descriptor(available)
 ```
 
 ```python
-async def find_clock_service(
-    deckr: Deckr,
+async def find_example_service_now(
+    directory: BeaconDirectory[ServiceDescriptor],
     *,
     required_operations: set[str],
     required_view_families: set[str],
 ) -> ServiceDescriptor:
-    beacon = deckr.beacon
+    await directory.wait_ready()
 
-    await beacon.wait_current()
-
-    descriptors: list[ServiceDescriptor] = []
-
-    for candidate in beacon.candidates(CLOCK_PROTOCOL.feature_id):
-        descriptor = parse_service_descriptor(candidate, CLOCK_PROTOCOL)
-        if descriptor is None:
-            continue
-
-        if service_descriptor_matches(
+    selected = directory.resolve(
+        lambda descriptor: example_service_matches(
             descriptor,
             required_operations=required_operations,
             required_view_families=required_view_families,
-        ):
-            descriptors.append(descriptor)
-
-    selected = newest_service_descriptor(descriptors)
+        ),
+        select=select_newest_available,
+    )
     if selected is not None:
         return selected
 
     raise ServiceUnavailable(
         "no_candidate",
-        "No matching clock service is currently advertised",
+        "No matching example service is currently advertised",
         {
-            "featureId": CLOCK_PROTOCOL.feature_id,
+            "featureId": EXAMPLE_PROTOCOL.feature_id,
             "operations": sorted(required_operations),
             "views": sorted(required_view_families),
         },
     )
 ```
 
-A watch-based version is better when the caller is willing to wait:
+The normal startup path should wait for the directory's Beacon watch to observe
+a matching descriptor. If the service is a required dependency, timing out does
+not recover anything; it usually only moves failure into a caller retry loop.
+Let cancellation or shutdown stop the wait. Pass a timeout only when an outer
+workflow has a real bounded latency budget, such as an interactive UI action.
 
 ```python
-async def wait_for_clock_service(
-    deckr: Deckr,
+async def wait_for_example_service(
+    directory: BeaconDirectory[ServiceDescriptor],
     *,
     required_operations: set[str],
     required_view_families: set[str],
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float | None = None,
 ) -> ServiceDescriptor:
-    beacon = deckr.beacon
-
-    # First try the already-materialised snapshot.
     try:
-        return await find_clock_service(
-            deckr,
-            required_operations=required_operations,
-            required_view_families=required_view_families,
+        return await directory.wait_for(
+            lambda descriptor: example_service_matches(
+                descriptor,
+                required_operations=required_operations,
+                required_view_families=required_view_families,
+            ),
+            select=select_newest_available,
+            timeout=timeout_seconds,
         )
-    except ServiceUnavailable:
-        pass
-
-    with anyio.fail_after(timeout_seconds):
-        async with beacon.watch(
-            CLOCK_PROTOCOL.feature_id,
-            replay_current=True,
-        ) as events:
-            async for event in events:
-                if event.event_type not in {
-                    BeaconFeatureEventType.ADVERTISED,
-                    BeaconFeatureEventType.UPDATED,
-                }:
-                    continue
-
-                if event.candidate is None:
-                    continue
-
-                descriptor = parse_service_descriptor(
-                    event.candidate,
-                    CLOCK_PROTOCOL,
-                )
-                if descriptor is None:
-                    continue
-
-                if service_descriptor_matches(
-                    descriptor,
-                    required_operations=required_operations,
-                    required_view_families=required_view_families,
-                ):
-                    return descriptor
-
-    raise ServiceUnavailable(
-        "discovery_timeout",
-        "Timed out waiting for a matching clock service",
-    )
+    except TimeoutError as exc:
+        raise ServiceUnavailable(
+            "discovery_timeout",
+            "Timed out waiting for a matching example service",
+            {
+                "featureId": EXAMPLE_PROTOCOL.feature_id,
+                "operations": sorted(required_operations),
+                "views": sorted(required_view_families),
+            },
+        ) from exc
 ```
 
-This is the shape I would expect a future `ServiceDirectory` helper to wrap: one Beacon watch, local indexes, and zero raw KV scans.
+This is the expected shape for every feature family: one Beacon feature watch,
+one parser that returns a typed descriptor or `None`, and local predicate plus
+selector functions.
 
 ---
 
@@ -346,7 +357,19 @@ This is the shape I would expect a future `ServiceDirectory` helper to wrap: one
 
 This is the **consumer** proposing service use.
 
-The important part: `service_use_terms(...)` creates deterministic terms/scope material, but the Concord contract itself remains opaque and incarnation-specific.
+The important part: `service_use_terms(...)` creates deterministic terms so
+both participants can validate the requested scope. The `serviceUseScopeId`
+inside those terms is semantic agreement material only. It is not a
+service-use index key, not a reusable Concord contract id, and not a lookup path
+for reviving prior authority. Concord contract ids remain opaque and
+incarnation-specific.
+
+Use a long enough proposal timeout. The consumer cannot safely use the service
+until the provider has accepted and Concord validates the contract, so a short
+timeout usually does not make progress; it cancels a contract that may have been
+about to be accepted and starts retry churn. A typical service-use negotiation
+timeout should be at least 30 seconds unless the caller has an explicit
+interactive latency budget.
 
 ```python
 TERMINAL_DURING_NEGOTIATION = {
@@ -362,7 +385,7 @@ TERMINAL_DURING_NEGOTIATION = {
 ```
 
 ```python
-async def propose_clock_service_use(
+async def propose_example_service_use(
     deckr: Deckr,
     *,
     client_endpoint: str,
@@ -371,7 +394,7 @@ async def propose_clock_service_use(
     required_operations: set[str],
     required_view_families: set[str],
     task_group: anyio.abc.TaskGroup,
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float = 30.0,
 ) -> ServiceUseLease:
     terms = service_use_terms(
         descriptor,
@@ -390,16 +413,19 @@ async def propose_clock_service_use(
             local_session_id=client_session_id,
             profile=descriptor.use_profile,
             terms=terms,
-            # Intentionally no deterministic contract id.
+            # Intentionally no deterministic contract id and no service-use
+            # scope index lookup. If this authority is lost, propose a fresh
+            # Concord contract; use supersedes only when replacing an exact
+            # known contract pointer.
             #
-            # The serviceUseScopeId inside terms is a scope/index key only,
-            # not the Concord contract identity.
+            # The serviceUseScopeId inside terms describes the requested
+            # scope. It is not Concord identity.
         ),
         # Starts the local participant token heartbeat loop.
         start_soon=task_group.start_soon,
     )
 
-    with anyio.fail_after(timeout_seconds):
+    with anyio.move_on_after(timeout_seconds):
         while True:
             validity = await agreement.refresh()
 
@@ -414,7 +440,7 @@ async def propose_clock_service_use(
                 await agreement.aclose()
                 raise ServiceUnavailable(
                     f"contract_{validity.status.value}",
-                    "Clock service-use contract became terminal during negotiation",
+                    "Example service-use contract became terminal during negotiation",
                     {
                         "status": validity.status.value,
                         "reason": validity.reason,
@@ -434,10 +460,16 @@ async def propose_clock_service_use(
 
             await anyio.sleep(0.25)
 
-    await agreement.aclose()
+    try:
+        await agreement.cancel("contract_timeout")
+    except ConcordConflict:
+        pass
+    finally:
+        await agreement.aclose()
+
     raise ServiceUnavailable(
         "contract_timeout",
-        "Timed out waiting for clock service-use contract to become valid",
+        "Timed out waiting for example service-use contract to become valid",
     )
 ```
 
@@ -446,7 +478,7 @@ The Concord contract becomes valid only when every named participant has attache
 A consumer using the service should refresh or validate before important work:
 
 ```python
-async def use_clock_service(lease: ServiceUseLease) -> None:
+async def use_example_service(lease: ServiceUseLease) -> None:
     await lease.refresh()
 
     # Now send service commands or read protected views.
@@ -482,10 +514,14 @@ async def close_service_use(
 
 This is the **provider** accepting proposed contracts.
 
-I would implement the acceptor directly over `Concord.watch(...)`. The current public API exposes `Concord.watch(profile=..., participant=..., replay_current=True)`, and the watch implementation replays current contract status then streams later Concord events.
+The provider should use `Concord.participant(...)` for normal service-use
+acceptance. The participant manager watches matching contracts, reconciles from
+Concord's materialized contract index, attaches or refreshes this provider's
+participant token, and releases tokens when a contract is no longer selected.
+The service supplies policy through callbacks.
 
 ```python
-class ServiceContractAcceptor:
+class ExampleServiceUseParticipant:
     def __init__(
         self,
         *,
@@ -501,194 +537,147 @@ class ServiceContractAcceptor:
         self.service_endpoint = service_endpoint
         self.service_session_id = service_session_id
 
-        self._leases = {}
-        self._closed = False
+        self.participant = concord.participant(
+            participant=service_endpoint,
+            session_id=service_session_id,
+            profile=protocol.use_profile,
+            current_sessions=self._current_sessions,
+            accept_contract=self._accept_contract,
+            log_label="ExampleService",
+        )
 
-    async def run(self) -> None:
-        async with self.concord.watch(
-            profile=self.protocol.use_profile,
-            participant=self.service_endpoint,
-            replay_current=True,
-        ) as events:
-            async for event in events:
-                if self._closed:
-                    return
+    def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        self.participant.start(task_group)
 
-                await self._handle_event(event)
+    async def _current_sessions(self, _contract) -> Mapping[str, str]:
+        # The provider's current service session must be part of validation.
+        # A restarted service gets a new session id and must not revive old
+        # proposals.
+        return {self.service_endpoint: self.service_session_id}
 
-    async def _handle_event(self, event) -> None:
-        contract = event.contract
-        if contract is None:
-            return
-
-        if event.event_type in {
-            ConcordEventType.CONTRACT_CANCELLED,
-            ConcordEventType.CONTRACT_DELETED,
-            ConcordEventType.CONTRACT_INVALID,
-        }:
-            await self._close_lease_for_contract(contract.key)
-            return
-
-        if contract.key in self._leases:
-            return
-
-        if event.record is None:
-            return
-
-        if event.record.state != ContractState.OPEN:
-            return
-
-        if not self._record_is_acceptable(event.record):
-            return
-
-        try:
-            lease = await self.concord.attach(
-                contract,
-                participant=self.service_endpoint,
-                session_id=self.service_session_id,
-                # Optional. The token bucket TTL still governs the real cadence.
-                refresh_interval=60.0,
-                log_label="ClockService",
-            )
-        except ConcordConflict:
-            # Another local acceptor may have attached, the contract may have
-            # been cancelled, or the contract may no longer name this service.
-            return
-
-        self._leases[contract.key] = lease
-
-    def _record_is_acceptable(self, record) -> bool:
-        if record.profile != self.protocol.use_profile:
+    async def _accept_contract(self, _contract, record) -> bool:
+        terms = self._validated_terms(record)
+        if terms is None:
             return False
+
+        return await self._application_accepts(terms)
+
+    async def _application_accepts(self, terms: ServiceUseTerms) -> bool:
+        # Domain policy lives here: capacity, backend health, tenant policy,
+        # requested operations, requested view prefixes, and so on.
+        return True
+
+    def _validated_terms(self, record) -> ServiceUseTerms | None:
+        if record.profile != self.protocol.use_profile:
+            return None
 
         if record.terms is None:
-            return False
+            return None
 
         participants = {str(item) for item in record.participants}
         if self.service_endpoint not in participants:
-            return False
+            return None
 
         try:
             terms = ServiceUseTerms.model_validate(record.terms)
         except ValueError:
-            return False
+            return None
 
         if terms.profile != self.protocol.use_profile:
-            return False
+            return None
 
         if terms.service_id != self.service_id:
-            return False
+            return None
 
         if str(terms.service_endpoint) != self.service_endpoint:
-            return False
+            return None
 
         # Critical stale-contract protection:
         # A restarted service has a new session id and must not accept old terms.
         if terms.service_session_id != self.service_session_id:
-            return False
+            return None
 
         if terms.service_namespace != self.protocol.namespace:
-            return False
+            return None
 
         unsupported_operations = set(terms.allowed_operations).difference(
             set(self.protocol.operations)
         )
         if unsupported_operations:
-            return False
+            return None
 
         for family, prefixes in terms.allowed_views.items():
-            view_family = self.protocol.view_families.get(family)
-            if view_family is None:
-                return False
+            if family not in self.protocol.view_families:
+                return None
 
+            expected_prefix = service_view_prefix(self.service_id, family)
             for prefix in prefixes:
-                if not prefix.startswith(view_family.key_prefix):
-                    return False
+                if not prefix.startswith(expected_prefix):
+                    return None
 
-        return True
-
-    async def _close_lease_for_contract(self, contract_key: str) -> None:
-        lease = self._leases.pop(contract_key, None)
-        if lease is not None:
-            await lease.aclose()
+        return terms
 
     async def aclose(self, *, reason: str = "service_shutdown") -> None:
-        self._closed = True
-
-        leases = list(self._leases.values())
-        self._leases.clear()
-
-        for lease in leases:
+        for managed in self.participant.managed_contracts:
             try:
-                await self.concord.cancel(
-                    lease.contract,
-                    participant=self.service_endpoint,
-                    reason=reason,
-                )
+                await self.participant.cancel(managed.contract, reason=reason)
             finally:
-                await lease.aclose()
+                await self.participant.release(
+                    managed.contract,
+                    reason=reason,
+                    withdraw=True,
+                )
+
+        await self.participant.aclose()
 ```
 
 What keeps the accepted contract alive?
 
-`concord.attach(...)` creates or adopts this service participant’s token and returns a `ConcordParticipantLease`. In the current runtime, `Concord.attach()` adds the lease to the Concord instance and starts it if Concord has a task group, so keeping the lease alive keeps the participant token heartbeat alive.
+`Concord.participant(...)` owns the selected contract set and the provider's
+participant-token leases. Keeping the participant manager running keeps the
+provider token heartbeats alive for contracts that still pass validation and
+policy.
 
-The acceptor rejects stale proposals by checking:
+The provider rejects stale proposals by checking:
 
 ```python
 terms.service_session_id == self.service_session_id
 ```
 
-That is important. If the service restarts, it gets a new session id. Old terms should not be accepted by the new process as if the old service state still exists.
+That is important. If the service restarts, it gets a new session id. Old terms
+should not be accepted by the new process as if the old service state still
+exists.
 
-**`ServiceContractAcceptor` is not currently a `deckr` core class.** That was my illustrative wrapper name for “the provider-side loop that watches Concord and attaches to acceptable contracts.”
-
-The class I sketched could become a useful `deckr.services` helper, but I would not make it something services “extend” in the inheritance sense. I would prefer composition:
-
-```python
-acceptor = ServiceUseAcceptor(
-    concord=deckr.concord,
-    protocol=CLOCK_PROTOCOL,
-    service_id="clock-main",
-    service_endpoint="service:clock-main",
-    service_session_id=session_id,
-    accept=application_policy,
-)
-
-tg.start_soon(acceptor.run)
-```
-
-That keeps `deckr` responsible for protocol mechanics and lets each concrete service own domain policy: what terms it accepts, whether it has capacity, whether backend state is healthy, and what shutdown/drain behaviour it wants.
-
-A good core helper would probably be named something like:
+Soft drain and hard drain are different operations:
 
 ```text
-ServiceUseAcceptor
-ServiceUseParticipant
-ConcordServiceUseAcceptor
+soft drain: withdraw Beacon, keep Concord participant running for existing contracts
+hard drain: stop accepting, cancel selected contracts, withdraw provider tokens
 ```
 
-and it would wrap these generic operations:
+The provider path is just the generic Concord participant path plus
+service-specific terms validation and application policy:
 
 ```text
-Concord.watch(profile=..., participant=...)
 validate ServiceUseTerms
-Concord.attach(...)
-hold ConcordParticipantLease objects
+Concord.participant(profile=..., participant=...)
+hold Concord managed-contract state
 cancel/withdraw leases on shutdown
 ```
 
-It should not be a base class unless there is a strong reason. The service should implement policy callbacks, not subclass protocol machinery.
+Raw `Concord.watch(...)` and `Concord.attach(...)` remain useful low-level
+primitives, but ordinary feature integrations should not need to reimplement
+the participant manager.
 
 ---
 
 # Full consumer flow
 
 ```python
-class ClockConsumer:
-    def __init__(self, *, endpoint_id: str = "clock-client-main") -> None:
+class ExampleConsumer:
+    def __init__(self, *, endpoint_id: str = "presence-client-main") -> None:
         self.client_endpoint = f"service:{endpoint_id}"
-        self.client_session_id = f"clock-client-session-{uuid.uuid4()}"
+        self.client_session_id = f"presence-client-session-{uuid.uuid4()}"
 
     async def run(self, stop_event: anyio.Event) -> None:
         async with Deckr(
@@ -700,25 +689,28 @@ class ClockConsumer:
                 session_id=self.client_session_id,
             ):
                 async with anyio.create_task_group() as tg:
+                    directory = example_service_directory(deckr.beacon)
+                    directory.start(tg)
+                    await directory.wait_ready()
+
                     lease: ServiceUseLease | None = None
 
                     try:
-                        descriptor = await wait_for_clock_service(
-                            deckr,
-                            required_operations={"time.now"},
+                        descriptor = await wait_for_example_service(
+                            directory,
+                            required_operations={"presence.report"},
                             required_view_families={"status"},
-                            timeout_seconds=10.0,
                         )
 
-                        lease = await propose_clock_service_use(
+                        lease = await propose_example_service_use(
                             deckr,
                             client_endpoint=self.client_endpoint,
                             client_session_id=self.client_session_id,
                             descriptor=descriptor,
-                            required_operations={"time.now"},
+                            required_operations={"presence.report"},
                             required_view_families={"status"},
                             task_group=tg,
-                            timeout_seconds=10.0,
+                            timeout_seconds=30.0,
                         )
 
                         while not stop_event.is_set():
@@ -748,8 +740,8 @@ Provider startup:
 ```text
 open endpoint session
 publish Beacon advertisement
-start Concord watch for service-use profile + service endpoint
-accept acceptable proposed contracts
+start Concord.participant for service-use profile + service endpoint
+accept acceptable proposed contracts through policy callbacks
 maintain Beacon heartbeat
 maintain Concord participant-token heartbeats
 ```
@@ -758,8 +750,8 @@ Consumer startup:
 
 ```text
 open endpoint session
-read Beacon materialised candidates
-select service descriptor
+start BeaconDirectory for the service protocol feature
+wait for service descriptor from local parsed descriptors
 build service-use terms
 propose opaque Concord contract
 maintain local participant-token heartbeat
@@ -785,4 +777,133 @@ withdraw local participant token
 close endpoint session
 ```
 
-The architectural invariant is: **Beacon disappearance only affects future discovery; existing service authority is Concord-governed.** 
+The architectural invariant is: **Beacon disappearance only affects future discovery; existing service authority is Concord-governed.**
+
+---
+
+## Cleanup after implementation
+
+Once the generic `BeaconDirectory` and `Concord.participant(...)` path is
+implemented and covered by tests, the service-specific discovery and service-use
+index path can be deleted. Do not replace it with another service-specific
+directory or service-use acceptor helper unless a concrete repeated call-site
+need appears later.
+
+Remove these public service-specific discovery helpers:
+
+```text
+src/deckr/services/directory.py
+from deckr.services import ServiceDirectory
+from deckr.services import ServiceResolver
+from deckr.services import ServiceSelectionPolicy
+from deckr.services import NewestServiceSelectionPolicy
+```
+
+Remove these public service-use index helpers and constants:
+
+```text
+from deckr.services import SERVICE_USE_INDEX_BUCKET_POLICY
+from deckr.services import SERVICE_USE_INDEX_SCHEMA_ID
+from deckr.services import ServiceUseRequest
+from deckr.services import ServiceUseScopeIndexRecord
+from deckr.services import acquire_service_use_lease
+from deckr.services import service_use_scope_index_key
+deckr_service_use_index_v1 references
+```
+
+Remove the matching imports and `__all__` exports from `deckr.services`. Remove
+tests whose only purpose is deterministic service-use index behavior:
+
+```text
+scope-index reuse
+stale pointer replacement
+client-session mismatch replacement
+missing-token replacement through the index
+terms-hash mismatch replacement
+CAS retry behavior for the service-use index
+```
+
+Replacement discovery code should be structured like this:
+
+```python
+directory = BeaconDirectory(
+    deckr.beacon,
+    PROTOCOL.feature_id,
+    lambda candidate: parse_service_descriptor(candidate, PROTOCOL),
+    log_label="ExampleService",
+)
+directory.start(task_group)
+
+descriptor = await directory.wait_for(
+    lambda item: (
+        item.backend_status != ServiceBackendStatus.UNAVAILABLE
+        and {"presence.report"}.issubset(item.supported_operations)
+        and {"status"}.issubset(set(item.views))
+    ),
+    select=newest_service_descriptor,
+)
+```
+
+Replacement consumer proposal code should be structured like this:
+
+```python
+terms = service_use_terms(
+    descriptor,
+    client_endpoint=client_endpoint,
+    operations={"presence.report"},
+    views={"status"},
+)
+
+agreement = await deckr.concord.propose(
+    ConcordAgreementSpec(
+        participants=(client_endpoint, str(descriptor.endpoint)),
+        local_participant=client_endpoint,
+        local_session_id=client_session_id,
+        profile=descriptor.use_profile,
+        terms=terms,
+    ),
+    start_soon=task_group.start_soon,
+)
+```
+
+Replacement provider acceptance code should be structured like this:
+
+```python
+participant = deckr.concord.participant(
+    participant=service_endpoint,
+    session_id=service_session_id,
+    profile=PROTOCOL.use_profile,
+    current_sessions=current_sessions_for_service,
+    accept_contract=accept_service_use_terms,
+    log_label="ExampleService",
+)
+participant.start(task_group)
+```
+
+Replace deleted index/discovery coverage with:
+
+```text
+BeaconDirectory replay and live update behavior
+domain parser rejects invalid Beacon payloads
+consumer proposes opaque Concord contracts directly
+provider accepts through Concord.participant(...)
+stale service session terms are rejected
+shutdown/drain cancels or releases managed Concord contracts as intended
+```
+
+Keep the service domain models and helpers that describe payloads, terms, and
+protected views:
+
+```text
+ServiceProtocol
+ServiceAdvertisementPayload
+ServiceDescriptor
+ServiceUseTerms
+ServiceUseLease
+parse_service_descriptor(...)
+service_descriptor_from_terms(...)
+service_use_terms(...)
+service_view_key(...)
+service_view_prefix(...)
+ServiceViewStore and view authorization helpers
+```
