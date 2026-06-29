@@ -21,7 +21,10 @@ async fn beacon_publish_or_refresh_recreates_missing_advertisement() {
     .payload(serde_json::json!({"generation": 1}));
 
     let first = advertiser.publish().await.unwrap();
-    beacon_state.delete(&first.key, Some(first.revision)).await.unwrap();
+    beacon_state
+        .delete(&first.key, Some(first.revision))
+        .await
+        .unwrap();
     let recovered = advertiser.publish_or_refresh(Some(&first)).await.unwrap();
 
     assert_eq!(recovered.key, first.key);

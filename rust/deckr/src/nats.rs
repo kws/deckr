@@ -21,7 +21,8 @@ use crate::concord::{
 use crate::endpoint::EndpointAddress;
 use crate::lanes::{headers_for, validate_subject_hint, DeckrMessage, HARDWARE_MESSAGES_LANE};
 use crate::state::{
-    StateChange, StateEntry, StateOperation, StateStore, StateStorePolicy, StateWatchStream,
+    MaterializedStateStore, StateChange, StateEntry, StateOperation, StateStore, StateStorePolicy,
+    StateWatchStream,
 };
 use crate::{Error, Result};
 
@@ -92,6 +93,28 @@ impl DeckrRuntime {
             self.inner.concord_contracts().clone(),
             self.inner.concord_tokens().clone(),
         )
+    }
+
+    pub async fn materialized_concord(
+        &self,
+    ) -> Result<
+        ConcordCoordinator<
+            MaterializedStateStore<NatsStateStore>,
+            MaterializedStateStore<NatsStateStore>,
+        >,
+    > {
+        Ok(ConcordCoordinator::new(
+            MaterializedStateStore::start(
+                self.inner.concord_contracts().clone(),
+                crate::keys::concord_contracts_prefix(),
+            )
+            .await?,
+            MaterializedStateStore::start(
+                self.inner.concord_tokens().clone(),
+                crate::keys::concord_contracts_prefix(),
+            )
+            .await?,
+        ))
     }
 
     pub fn endpoint(
@@ -586,6 +609,7 @@ fn map_nats_watch_entry(entry: std::result::Result<Entry, WatcherError>) -> Resu
     Ok(StateChange {
         operation,
         key: entry.key,
+        revision: entry.revision,
         entry: state_entry,
     })
 }

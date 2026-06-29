@@ -25,7 +25,8 @@ use deckr::profiles::hardware::{
     HARDWARE_CLAIM_PROFILE_ID,
 };
 use deckr::state::{
-    MemoryStateStore, StateEntry, StateMaintenancePolicy, StateStore, StateWatchStream,
+    MaterializedStateStore, MemoryStateStore, StateEntry, StateMaintenancePolicy, StateStore,
+    StateWatchStream,
 };
 use deckr::Result;
 use serde::Deserialize;
@@ -615,6 +616,66 @@ async fn concord_token_attach_and_refresh_use_bucket_ttl() {
         .unwrap()
         .unwrap();
     assert_eq!(stored.ttl_seconds, 2);
+}
+
+#[tokio::test]
+async fn materialized_concord_participant_profile_discovery_uses_cache() {
+    let contracts = RecordingStateStore::new(MemoryStateStore::new());
+    let tokens = RecordingStateStore::new(token_store());
+    let exact = ConcordCoordinator::new(contracts.clone(), tokens.clone());
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let contract = exact
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some("materialized-claim-1".to_string()),
+            1,
+            Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": "materialized-claim-1",
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:mirabox-main",
+                "devices": []
+            })),
+            Some(controller),
+        )
+        .await
+        .unwrap();
+    let materialized = ConcordCoordinator::new(
+        MaterializedStateStore::start(contracts.clone(), "contracts.")
+            .await
+            .unwrap(),
+        MaterializedStateStore::start(tokens.clone(), "contracts.")
+            .await
+            .unwrap(),
+    );
+    materialized.wait_current().await.unwrap();
+    contracts.clear_observations();
+    tokens.clear_observations();
+
+    let discovered = materialized
+        .participant_profile_contracts_cached(&manager, Some(HARDWARE_CLAIM_PROFILE_ID))
+        .unwrap();
+
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].key, contract.key);
+    assert_eq!(
+        materialized.validate_cached(&contract, None).status,
+        ContractValidityStatus::NotYetFulfilled
+    );
+    assert!(
+        contracts.items_prefixes().is_empty(),
+        "cached discovery must not perform broker prefix scans"
+    );
+    assert!(
+        contracts.get_keys().is_empty(),
+        "cached discovery must not perform broker exact gets"
+    );
+    assert!(
+        tokens.get_keys().is_empty(),
+        "cached validation must not perform broker token gets"
+    );
 }
 
 #[test]

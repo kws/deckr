@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env::{self, VarError};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -10,6 +11,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::task::JoinHandle;
+use tokio::time;
 
 use crate::{Error, Result};
 
@@ -59,6 +61,10 @@ impl StateMaintenancePolicy {
         reconcile_env: std::result::Result<String, VarError>,
     ) -> Result<Self> {
         Self::from_env_results(Err(VarError::NotPresent), reconcile_env)
+    }
+
+    pub fn concord_token_check_interval(&self) -> Duration {
+        (self.concord_token_refresh_interval / 4).max(Duration::from_secs(10))
     }
 }
 
@@ -176,6 +182,7 @@ pub enum StateOperation {
 pub struct StateChange {
     pub operation: StateOperation,
     pub key: String,
+    pub revision: u64,
     pub entry: Option<StateEntry>,
 }
 
@@ -189,20 +196,30 @@ pub struct PrefixObservation {
 
 #[allow(async_fn_in_trait)]
 pub trait StateStore: Clone + Send + Sync + 'static {
-    async fn ttl_seconds(&self) -> Result<Option<u64>>;
-    async fn get(&self, key: &str) -> Result<Option<StateEntry>>;
-    async fn items(&self, prefix: &str) -> Result<Vec<StateEntry>>;
-    async fn put(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry>;
-    async fn create(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry>;
-    async fn update(
+    fn ttl_seconds(&self) -> impl Future<Output = Result<Option<u64>>> + Send;
+    fn get(&self, key: &str) -> impl Future<Output = Result<Option<StateEntry>>> + Send;
+    fn items(&self, prefix: &str) -> impl Future<Output = Result<Vec<StateEntry>>> + Send;
+    fn put(
+        &self,
+        key: &str,
+        value: Value,
+        ttl: Option<u64>,
+    ) -> impl Future<Output = Result<StateEntry>> + Send;
+    fn create(
+        &self,
+        key: &str,
+        value: Value,
+        ttl: Option<u64>,
+    ) -> impl Future<Output = Result<StateEntry>> + Send;
+    fn update(
         &self,
         key: &str,
         value: Value,
         revision: u64,
         ttl: Option<u64>,
-    ) -> Result<StateEntry>;
-    async fn delete(&self, key: &str, revision: Option<u64>) -> Result<()>;
-    async fn watch(&self, prefix: &str) -> Result<StateWatchStream>;
+    ) -> impl Future<Output = Result<StateEntry>> + Send;
+    fn delete(&self, key: &str, revision: Option<u64>) -> impl Future<Output = Result<()>> + Send;
+    fn watch(&self, prefix: &str) -> impl Future<Output = Result<StateWatchStream>> + Send;
 }
 
 pub async fn observe_prefix_current<S: StateStore>(
@@ -256,56 +273,110 @@ pub struct MaterializedStateStore<S: StateStore> {
 struct MaterializedStateInner {
     status: MaterializedStateStatus,
     entries: BTreeMap<String, StateEntry>,
+    revision_by_key: BTreeMap<String, u64>,
+    generation: u64,
     subscribers: Vec<UnboundedSender<Result<StateChange>>>,
 }
 
 impl<S: StateStore> MaterializedStateStore<S> {
     pub async fn start(state: S, prefix: impl Into<String>) -> Result<Self> {
         let prefix = prefix.into();
+        let mut watch = state.watch(&prefix).await?;
         let entries = state
             .items(&prefix)
             .await?
             .into_iter()
             .map(|entry| (entry.key.clone(), entry))
             .collect::<BTreeMap<_, _>>();
-        let mut watch = state.watch(&prefix).await?;
+        let revision_by_key = entries
+            .iter()
+            .map(|(key, entry)| (key.clone(), entry.revision))
+            .collect();
         let inner = Arc::new(Mutex::new(MaterializedStateInner {
             status: MaterializedStateStatus::Ready,
             entries,
+            revision_by_key,
+            generation: 0,
             subscribers: Vec::new(),
         }));
         let watch_inner = inner.clone();
         let watch_prefix = prefix.clone();
+        let watch_state = state.clone();
         let watch_task = tokio::spawn(async move {
-            while let Some(change) = watch.next().await {
-                let change = match change {
-                    Ok(change) => change,
-                    Err(error) => {
+            loop {
+                let retry = match watch.next().await {
+                    Some(Ok(change)) => {
                         let mut inner = watch_inner
                             .lock()
                             .expect("materialized state mutex poisoned");
-                        inner.status = MaterializedStateStatus::Stale;
-                        inner.notify(StateChange {
-                            operation: StateOperation::Delete,
-                            key: format!("{watch_prefix}<watch-error>"),
-                            entry: Some(StateEntry {
-                                key: "<error>".to_string(),
-                                value: Value::String(error.to_string()),
-                                revision: 0,
-                            }),
-                        });
-                        return;
+                        inner.apply_change(change);
+                        false
+                    }
+                    Some(Err(error)) => {
+                        let mut inner = watch_inner
+                            .lock()
+                            .expect("materialized state mutex poisoned");
+                        inner.set_status(MaterializedStateStatus::Stale);
+                        inner.notify_error(error);
+                        true
+                    }
+                    None => {
+                        let mut inner = watch_inner
+                            .lock()
+                            .expect("materialized state mutex poisoned");
+                        inner.set_status(MaterializedStateStatus::Stale);
+                        inner.notify_error(Error::StateUnavailable(
+                            "materialized state watch ended".to_string(),
+                        ));
+                        true
                     }
                 };
-                let mut inner = watch_inner
-                    .lock()
-                    .expect("materialized state mutex poisoned");
-                inner.apply_change(change);
+                if !retry {
+                    continue;
+                }
+
+                loop {
+                    if watch_inner
+                        .lock()
+                        .expect("materialized state mutex poisoned")
+                        .status
+                        == MaterializedStateStatus::Closed
+                    {
+                        return;
+                    }
+                    time::sleep(Duration::from_secs(1)).await;
+                    match watch_state.watch(&watch_prefix).await {
+                        Ok(next_watch) => {
+                            watch = next_watch;
+                            match watch_state.items(&watch_prefix).await {
+                                Ok(entries) => {
+                                    let mut inner = watch_inner
+                                        .lock()
+                                        .expect("materialized state mutex poisoned");
+                                    inner.reconcile_snapshot(entries, &watch_prefix);
+                                    inner.set_status(MaterializedStateStatus::Ready);
+                                }
+                                Err(error) => {
+                                    let mut inner = watch_inner
+                                        .lock()
+                                        .expect("materialized state mutex poisoned");
+                                    inner.set_status(MaterializedStateStatus::Stale);
+                                    inner.notify_error(error);
+                                    continue;
+                                }
+                            }
+                            break;
+                        }
+                        Err(error) => {
+                            let mut inner = watch_inner
+                                .lock()
+                                .expect("materialized state mutex poisoned");
+                            inner.set_status(MaterializedStateStatus::Stale);
+                            inner.notify_error(error);
+                        }
+                    }
+                }
             }
-            watch_inner
-                .lock()
-                .expect("materialized state mutex poisoned")
-                .status = MaterializedStateStatus::Closed;
         });
         Ok(Self {
             state,
@@ -322,6 +393,33 @@ impl<S: StateStore> MaterializedStateStore<S> {
             .status
     }
 
+    pub fn is_current(&self) -> bool {
+        self.status() == MaterializedStateStatus::Ready
+    }
+
+    pub async fn wait_current(&self) -> Result<()> {
+        loop {
+            match self.status() {
+                MaterializedStateStatus::Ready => return Ok(()),
+                MaterializedStateStatus::Closed => {
+                    return Err(Error::Closed(
+                        "materialized state store is closed".to_string(),
+                    ))
+                }
+                MaterializedStateStatus::Starting | MaterializedStateStatus::Stale => {
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.inner
+            .lock()
+            .expect("materialized state mutex poisoned")
+            .generation
+    }
+
     pub fn close(&self) {
         if let Some(task) = self
             .watch_task
@@ -334,7 +432,7 @@ impl<S: StateStore> MaterializedStateStore<S> {
         self.inner
             .lock()
             .expect("materialized state mutex poisoned")
-            .status = MaterializedStateStatus::Closed;
+            .set_status(MaterializedStateStatus::Closed);
     }
 
     pub fn get_cached(&self, key: &str) -> Result<Option<StateEntry>> {
@@ -390,13 +488,17 @@ impl<S: StateStore> MaterializedStateStore<S> {
             .inner
             .lock()
             .expect("materialized state mutex poisoned");
+        inner.reconcile_snapshot(observation.entries.clone(), &self.prefix);
         for key in &observation.confirmed_missing {
-            inner.entries.remove(key);
+            let revision = inner.revision_by_key.get(key).copied().unwrap_or(0) + 1;
+            inner.apply_change(StateChange {
+                operation: StateOperation::Delete,
+                key: key.clone(),
+                revision,
+                entry: None,
+            });
         }
-        for entry in &observation.entries {
-            inner.entries.insert(entry.key.clone(), entry.clone());
-        }
-        inner.status = MaterializedStateStatus::Ready;
+        inner.set_status(MaterializedStateStatus::Ready);
         Ok(observation)
     }
 
@@ -442,9 +544,11 @@ impl<S: StateStore> MaterializedStateStore<S> {
             .inner
             .lock()
             .expect("materialized state mutex poisoned");
+        let revision = inner.revision_by_key.get(key).copied().unwrap_or(0) + 1;
         inner.apply_change(StateChange {
             operation: StateOperation::Delete,
             key: key.to_string(),
+            revision,
             entry: None,
         });
         Ok(())
@@ -457,13 +561,29 @@ impl<S: StateStore> MaterializedStateStore<S> {
             .apply_change(StateChange {
                 operation: StateOperation::Put,
                 key: entry.key.clone(),
+                revision: entry.revision,
                 entry: Some(entry),
             });
     }
 }
 
 impl MaterializedStateInner {
+    fn set_status(&mut self, status: MaterializedStateStatus) {
+        if self.status == MaterializedStateStatus::Closed
+            && status != MaterializedStateStatus::Closed
+        {
+            return;
+        }
+        self.status = status;
+    }
+
     fn apply_change(&mut self, change: StateChange) {
+        let current_revision = self.revision_by_key.get(&change.key).copied().unwrap_or(0);
+        if change.revision <= current_revision {
+            return;
+        }
+        self.revision_by_key
+            .insert(change.key.clone(), change.revision);
         match change.operation {
             StateOperation::Put => {
                 if let Some(entry) = &change.entry {
@@ -474,12 +594,55 @@ impl MaterializedStateInner {
                 self.entries.remove(&change.key);
             }
         }
+        self.generation += 1;
         self.notify(change);
+    }
+
+    fn reconcile_snapshot(&mut self, entries: Vec<StateEntry>, prefix: &str) {
+        let snapshot = entries
+            .into_iter()
+            .map(|entry| (entry.key.clone(), entry))
+            .collect::<BTreeMap<_, _>>();
+        let existing_keys = self
+            .entries
+            .keys()
+            .filter(|key| key.starts_with(prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in existing_keys {
+            if snapshot.contains_key(&key) {
+                continue;
+            }
+            let revision = self.revision_by_key.get(&key).copied().unwrap_or(0) + 1;
+            self.apply_change(StateChange {
+                operation: StateOperation::Delete,
+                key,
+                revision,
+                entry: None,
+            });
+        }
+        for entry in snapshot.into_values() {
+            self.apply_change(StateChange {
+                operation: StateOperation::Put,
+                key: entry.key.clone(),
+                revision: entry.revision,
+                entry: Some(entry),
+            });
+        }
     }
 
     fn notify(&mut self, change: StateChange) {
         self.subscribers
             .retain(|subscriber| subscriber.unbounded_send(Ok(change.clone())).is_ok());
+    }
+
+    fn notify_error(&mut self, error: Error) {
+        let message = error.to_string();
+        self.subscribers.retain(|subscriber| {
+            subscriber
+                .unbounded_send(Err(Error::StateUnavailable(message.clone())))
+                .is_ok()
+        });
     }
 }
 
@@ -655,6 +818,7 @@ impl StateStore for MemoryStateStore {
             StateChange {
                 operation: StateOperation::Put,
                 key: key.to_string(),
+                revision: entry.revision,
                 entry: Some(entry.clone()),
             },
         );
@@ -680,6 +844,7 @@ impl StateStore for MemoryStateStore {
             StateChange {
                 operation: StateOperation::Put,
                 key: key.to_string(),
+                revision: entry.revision,
                 entry: Some(entry.clone()),
             },
         );
@@ -716,6 +881,7 @@ impl StateStore for MemoryStateStore {
             StateChange {
                 operation: StateOperation::Put,
                 key: key.to_string(),
+                revision: entry.revision,
                 entry: Some(entry.clone()),
             },
         );
@@ -737,13 +903,14 @@ impl StateStore for MemoryStateStore {
             }
         }
         let removed = inner.entries.remove(key);
-        inner.revision += 1;
+        let revision = Self::next_revision(&mut inner);
         if removed.is_some() {
             Self::notify_watchers(
                 &mut inner,
                 StateChange {
                     operation: StateOperation::Delete,
                     key: key.to_string(),
+                    revision,
                     entry: None,
                 },
             );
@@ -898,6 +1065,10 @@ mod tests {
         assert_eq!(
             policy.reconcile_interval,
             Duration::from_secs(DEFAULT_STATE_RECONCILE_SECONDS)
+        );
+        assert_eq!(
+            policy.concord_token_check_interval(),
+            Duration::from_secs(15)
         );
     }
 

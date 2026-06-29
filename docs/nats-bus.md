@@ -57,6 +57,13 @@ methods more often, but no-op heartbeats are coalesced. If reconciliation
 observes fresher same-session token details, the local lease adopts them without
 immediately writing again.
 
+Renewal loops must not be used as discovery loops. Runtime code must not run
+full Beacon or Concord discovery, participant/profile prefix scans, or full
+claim/provider reconciliation on the fast advertisement-renewal cadence. Normal
+discovery uses materialized Beacon/Concord views plus watches. Exact full scans
+are reserved for startup, watch reconnect/cache rebuild, diagnostics,
+maintenance, and low-frequency repair.
+
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence
 for discovery lives in Beacon advertisements. Live agreement authority lives in

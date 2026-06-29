@@ -258,6 +258,15 @@ strict exact-read validation described above and is the path for maintenance,
 recovery, diagnostics, and code that must bypass the materialized cache. Concord
 write paths still exact-read current records before revision-guarded updates.
 
+Runtime renewal loops are not discovery mechanisms. Beacon advertisement
+renewal and Concord participant-token renewal must only refresh already-owned
+leases/tokens. They must not perform full Concord reconciliation, participant or
+profile prefix discovery, broad KV scans, or successor-contract attachment.
+Discovery belongs to materialized Beacon/Concord views, watch notifications,
+startup/watch-reconnect cache rebuilds, and explicit low-frequency repair.
+Running full discovery on a fast renewal cadence, including the shared
+five-second state-renewal cadence, is forbidden.
+
 ### Concord Maintenance
 
 Core Concord maintenance is optional and Concord-only. The lane-less component
