@@ -44,19 +44,18 @@ generic state store is no longer part of the Python runtime. Beacon and Concord
 open their explicit JetStream KV bucket policies directly and serve normal reads
 from materialized views.
 TTL-bound heartbeats are core-governed. Caller-provided refresh intervals are
-requests, not guaranteed write cadences. Python Beacon advertisements derive
+requests, not guaranteed write cadences. Beacon advertisements derive
 `ttlSeconds` from the Beacon KV bucket TTL and schedule managed heartbeat
 refreshes with jitter between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`; with
-the default 300-second Python Beacon bucket TTL this produces 150-225 second
+the default 300-second Beacon bucket TTL this produces 150-225 second
 advertisement refreshes.
-Python Concord participant-token writes derive `ttlSeconds` from the token KV
-bucket TTL and schedule refreshes with jitter between `ttlSeconds * 0.5` and
-`ttlSeconds * 0.75`; with the default 120-second Python token bucket TTL this
-produces 60-90 second token refreshes. Runtime participants may call refresh
+Concord participant-token writes derive `ttlSeconds` from the token KV bucket
+TTL and schedule refreshes with jitter between `ttlSeconds * 0.5` and
+`ttlSeconds * 0.75`; with the default 120-second token bucket TTL this produces
+60-90 second token refreshes. Runtime participants may call refresh
 methods more often, but no-op heartbeats are coalesced. If reconciliation
 observes fresher same-session token details, the local lease adopts them without
-immediately writing again. Rust token refresh behavior is intentionally unchanged
-until the Python behavior has landed and stabilized.
+immediately writing again.
 
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence
@@ -157,7 +156,7 @@ Managed `Beacon.advertise(...)` performs best-effort same
 feature/advertiser/endpoint startup cleanup by default, using revision-guarded
 deletes for stale advertisements left by crashed sessions or changed
 configuration. Real advertisement content changes still publish immediately;
-unchanged heartbeat refreshes follow the Python Beacon bucket TTL jitter cadence.
+unchanged heartbeat refreshes follow the Beacon bucket TTL jitter cadence.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
 
@@ -392,10 +391,10 @@ delete or expire events depending on header visibility; either event must remove
 the cached key. Persistent buckets reject per-write TTL. Reopening the same
 bucket with a conflicting policy is an error.
 
-Python Concord treats the token bucket's configured TTL as the single token TTL
-source. Token records mirror that TTL; they are not independently configured by
-participants. Lowering the bucket TTL while Python participants are already
-sleeping may expire existing leases fail-closed before they wake and refresh.
+Concord treats the token bucket's configured TTL as the single token TTL source.
+Token records mirror that TTL; they are not independently configured by
+participants. Lowering the bucket TTL while participants are already sleeping
+may expire existing leases fail-closed before they wake and refresh.
 
 Package-owned private buckets must be owner-qualified and versioned, for
 example `com_example_media_cache_v1`. They must not redefine Beacon or Concord

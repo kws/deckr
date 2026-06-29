@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,12 +11,14 @@ use crate::keys::{
     beacon_advertisement_key as make_beacon_advertisement_key, beacon_feature_prefix,
     parse_beacon_advertisement_key,
 };
-use crate::state::{MaterializedStateStore, StateEntry, StateStore, StateStorePolicy};
+use crate::state::{
+    ttl_heartbeat_delay, MaterializedStateStore, StateEntry, StateStore, StateStorePolicy,
+};
 use crate::{Error, Result};
 
 pub const BEACON_ADVERTISEMENT_SCHEMA_ID: &str = "dev.deckr.beacon.advertisement.v1";
 pub const DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME: &str = "deckr_beacon_advertisement_v1";
-pub const DEFAULT_BEACON_TTL_SECONDS: u64 = 30;
+pub const DEFAULT_BEACON_TTL_SECONDS: u64 = 300;
 pub const BEACON_ADVERTISEMENT_PREFIX: &str = "advertisements.";
 
 pub fn beacon_advertisement_store_policy() -> StateStorePolicy {
@@ -117,6 +120,7 @@ pub struct AdvertisementHandle {
     pub session_id: String,
     pub revision: u64,
     pub refresh_seq: u64,
+    pub next_refresh_at: Instant,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,7 +138,8 @@ pub struct BeaconAdvertiser<S: StateStore> {
     advertiser: EndpointAddress,
     endpoint: EndpointAddress,
     session_id: String,
-    ttl_seconds: u64,
+    requested_refresh_interval: Option<Duration>,
+    protocol: Option<BeaconProtocol>,
     operations: Vec<String>,
     labels: BTreeMap<String, String>,
     hints: BTreeMap<String, Value>,
@@ -207,7 +212,8 @@ impl<S: StateStore> BeaconAdvertiser<S> {
             advertiser: endpoint.clone(),
             endpoint,
             session_id: session_id.into(),
-            ttl_seconds: DEFAULT_BEACON_TTL_SECONDS,
+            requested_refresh_interval: None,
+            protocol: None,
             operations: Vec::new(),
             labels: BTreeMap::new(),
             hints: BTreeMap::new(),
@@ -225,13 +231,32 @@ impl<S: StateStore> BeaconAdvertiser<S> {
         self
     }
 
+    pub fn protocol(mut self, protocol: BeaconProtocol) -> Self {
+        self.protocol = Some(protocol);
+        self
+    }
+
+    pub fn operations(mut self, operations: Vec<String>) -> Self {
+        self.operations = operations;
+        self
+    }
+
     pub fn labels(mut self, labels: BTreeMap<String, String>) -> Self {
         self.labels = labels;
         self
     }
 
-    pub fn ttl_seconds(mut self, ttl_seconds: u64) -> Self {
-        self.ttl_seconds = ttl_seconds;
+    pub fn hints(mut self, hints: BTreeMap<String, Value>) -> Self {
+        self.hints = hints;
+        self
+    }
+
+    pub fn refresh_interval(mut self, interval: Duration) -> Self {
+        assert!(
+            !interval.is_zero(),
+            "Beacon refresh interval must be greater than zero"
+        );
+        self.requested_refresh_interval = Some(interval);
         self
     }
 
@@ -248,7 +273,8 @@ impl<S: StateStore> BeaconAdvertiser<S> {
     }
 
     pub async fn publish(&self) -> Result<AdvertisementHandle> {
-        let record = self.record(1, None);
+        let ttl_seconds = self.bucket_ttl_seconds().await?;
+        let record = self.record(1, ttl_seconds, None);
         let key = make_beacon_advertisement_key(&record.feature_id, &record.advertisement_id);
         let value = record.to_value()?;
         let entry = match self
@@ -260,11 +286,14 @@ impl<S: StateStore> BeaconAdvertiser<S> {
             Err(Error::StateConflict(_)) => {
                 let current = self.state.get(&key).await?;
                 let Some(current) = current else {
+                    let next_refresh_at = self.next_refresh_deadline(record.ttl_seconds);
                     return self
                         .state
                         .create(&key, value, Some(record.ttl_seconds))
                         .await
-                        .map(|entry| advertisement_handle(key, &record, entry.revision));
+                        .map(|entry| {
+                            advertisement_handle(key, &record, entry.revision, next_refresh_at)
+                        });
                 };
                 let current_record = AdvertisementRecord::from_value(current.value)?;
                 if !advertisement_matches(&current_record, &record) {
@@ -272,8 +301,11 @@ impl<S: StateStore> BeaconAdvertiser<S> {
                         "Beacon advertisement {key:?} already exists for a different owner"
                     )));
                 }
-                let refreshed =
-                    self.record(current_record.refresh_seq + 1, current_record.created_at);
+                let refreshed = self.record(
+                    current_record.refresh_seq + 1,
+                    ttl_seconds,
+                    current_record.created_at,
+                );
                 self.state
                     .update(
                         &key,
@@ -286,10 +318,16 @@ impl<S: StateStore> BeaconAdvertiser<S> {
             Err(error) => return Err(error),
         };
         let record = AdvertisementRecord::from_value(entry.value.clone())?;
-        Ok(advertisement_handle(key, &record, entry.revision))
+        Ok(advertisement_handle(
+            key,
+            &record,
+            entry.revision,
+            self.next_refresh_deadline(record.ttl_seconds),
+        ))
     }
 
     pub async fn refresh(&self, handle: &AdvertisementHandle) -> Result<AdvertisementHandle> {
+        let ttl_seconds = self.bucket_ttl_seconds().await?;
         let Some(current) = self.state.get(&handle.key).await? else {
             return Err(Error::StateConflict(format!(
                 "Beacon advertisement {:?} is missing",
@@ -302,8 +340,20 @@ impl<S: StateStore> BeaconAdvertiser<S> {
                 "Beacon advertisement changed owner".to_string(),
             ));
         }
+        let desired = self.record(1, ttl_seconds, current_record.created_at.clone());
+        if advertisement_content_matches(&current_record, &desired)
+            && Instant::now() < handle.next_refresh_at
+        {
+            return Ok(advertisement_handle(
+                handle.key.clone(),
+                &current_record,
+                current.revision,
+                handle.next_refresh_at,
+            ));
+        }
         let refreshed = self.record(
             current_record.refresh_seq + 1,
+            ttl_seconds,
             current_record.created_at.or_else(|| Some(now())),
         );
         let entry = self
@@ -319,6 +369,7 @@ impl<S: StateStore> BeaconAdvertiser<S> {
             handle.key.clone(),
             &refreshed,
             entry.revision,
+            self.next_refresh_deadline(refreshed.ttl_seconds),
         ))
     }
 
@@ -335,7 +386,28 @@ impl<S: StateStore> BeaconAdvertiser<S> {
         self.state.delete(&handle.key, Some(current.revision)).await
     }
 
-    fn record(&self, refresh_seq: u64, created_at: Option<String>) -> AdvertisementRecord {
+    async fn bucket_ttl_seconds(&self) -> Result<u64> {
+        match self.state.ttl_seconds().await? {
+            Some(ttl_seconds) if ttl_seconds > 0 => Ok(ttl_seconds),
+            Some(_) => Err(Error::StateUnavailable(
+                "Beacon advertisement bucket TTL must be greater than zero".to_string(),
+            )),
+            None => Err(Error::StateUnavailable(
+                "Beacon advertisement bucket must be TTL-bound".to_string(),
+            )),
+        }
+    }
+
+    fn next_refresh_deadline(&self, ttl_seconds: u64) -> Instant {
+        Instant::now() + ttl_heartbeat_delay(self.requested_refresh_interval, ttl_seconds)
+    }
+
+    fn record(
+        &self,
+        refresh_seq: u64,
+        ttl_seconds: u64,
+        created_at: Option<String>,
+    ) -> AdvertisementRecord {
         let now = now();
         AdvertisementRecord {
             schema_id: BEACON_ADVERTISEMENT_SCHEMA_ID.to_string(),
@@ -345,8 +417,8 @@ impl<S: StateStore> BeaconAdvertiser<S> {
             endpoint: self.endpoint.clone(),
             session_id: self.session_id.clone(),
             refresh_seq,
-            ttl_seconds: self.ttl_seconds,
-            protocol: None,
+            ttl_seconds,
+            protocol: self.protocol.clone(),
             operations: self.operations.clone(),
             labels: self.labels.clone(),
             hints: self.hints.clone(),
@@ -401,6 +473,7 @@ fn advertisement_handle(
     key: String,
     record: &AdvertisementRecord,
     revision: u64,
+    next_refresh_at: Instant,
 ) -> AdvertisementHandle {
     AdvertisementHandle {
         key,
@@ -411,6 +484,7 @@ fn advertisement_handle(
         session_id: record.session_id.clone(),
         revision,
         refresh_seq: record.refresh_seq,
+        next_refresh_at,
     }
 }
 
@@ -431,6 +505,18 @@ fn advertisement_matches_handle(
         && record.advertiser == handle.advertiser
         && record.endpoint == handle.endpoint
         && record.session_id == handle.session_id
+}
+
+fn advertisement_content_matches(
+    current: &AdvertisementRecord,
+    desired: &AdvertisementRecord,
+) -> bool {
+    current.protocol == desired.protocol
+        && current.operations == desired.operations
+        && current.labels == desired.labels
+        && current.hints == desired.hints
+        && current.payload == desired.payload
+        && current.ttl_seconds == desired.ttl_seconds
 }
 
 fn require_text(value: &str, field_name: &str) -> Result<()> {

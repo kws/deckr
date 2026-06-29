@@ -791,10 +791,10 @@ assert write_intervals(ad.key) are between 150 and 225 seconds
 assert write_intervals(token.key) are between 60 and 90 seconds
 ```
 
-Pass criteria: Python Beacon derives `ttlSeconds` from the 300-second Beacon KV
+Pass criteria: Beacon derives `ttlSeconds` from the 300-second Beacon KV
 bucket TTL and schedules unchanged heartbeat writes with jitter between
-`ttlSeconds * 0.5` and `ttlSeconds * 0.75`. Python Concord does the same from
-the 120-second participant-token bucket TTL. Real payload or token changes still
+`ttlSeconds * 0.5` and `ttlSeconds * 0.75`. Concord does the same from the
+120-second participant-token bucket TTL. Real payload or token changes still
 publish immediately.
 
 ### DIT-OPS-003: Revision Guards Prevent Deleting Another Owner's State

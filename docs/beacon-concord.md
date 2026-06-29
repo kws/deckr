@@ -121,10 +121,10 @@ An advertisement record must have:
 Create an advertisement with a unique advertisement id using `create`. Refresh
 it by exact-read, owner-check, incrementing `refreshSeq`, and revision-guarded
 `update`. Withdraw it by exact-read, owner-check, and revision-guarded delete.
-The Python runtime owns advertisement leases and treats `refreshInterval` as a
-requested cadence. Python Beacon derives `ttlSeconds` from the Beacon KV bucket
-TTL instead of per-advertisement configuration; the default Python Beacon bucket
-TTL is 300 seconds. Managed heartbeat refresh writes are scheduled with jitter
+Runtimes own advertisement leases and treat `refreshInterval` as a requested
+cadence. Beacon derives `ttlSeconds` from the Beacon KV bucket TTL instead of
+per-advertisement configuration; the default Beacon bucket TTL is 300 seconds.
+Managed heartbeat refresh writes are scheduled with jitter
 between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`, so the default cadence is
 150-225 seconds. Real payload, label, hint, protocol, or operation changes
 publish immediately, but unchanged heartbeat refreshes may be skipped while the
@@ -197,18 +197,17 @@ participant must not write another participant's token.
 
 Refresh a token by exact-reading the contract and token, confirming both still
 match the local handle, incrementing `refreshSeq`, and revision-guarded
-`update(tokenKey, tokenRecord)`. Python Concord derives `ttlSeconds` from the
-token KV bucket TTL instead of a separate participant setting; the default
-Python token bucket TTL is 120 seconds. Python lease implementations treat
-configured refresh intervals as requested cadence, not guaranteed write cadence.
+`update(tokenKey, tokenRecord)`. Concord derives `ttlSeconds` from the token KV
+bucket TTL instead of a separate participant setting; the default token bucket
+TTL is 120 seconds. Lease implementations treat configured refresh intervals as
+requested cadence, not guaranteed write cadence.
 Participant-token refresh writes are scheduled from the token TTL with jitter
-between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`; with the default Python
-120-second bucket TTL this produces 60-90 second refreshes. Leases may
+between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`; with the default 120-second
+bucket TTL this produces 60-90 second refreshes. Leases may
 validate/adopt the current token more often, but they should not write a token
 refresh until a token must be attached or the effective refresh interval is due.
 If reconciliation observes fresher same-session token details, the local lease
-adopts them without immediately writing again. Rust token refresh behavior is
-unchanged until the Python behavior has landed and stabilized.
+adopts them without immediately writing again.
 
 If the contract is cancelled, the token is missing, or the token has changed
 owner/session/token id/terms hash, the participant no longer maintains authority

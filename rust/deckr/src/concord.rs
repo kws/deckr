@@ -20,7 +20,8 @@ use crate::keys::{
 };
 pub use crate::state::DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS;
 use crate::state::{
-    StateChange, StateEntry, StateOperation, StateStore, StateStorePolicy, StateWatchStream,
+    ttl_heartbeat_delay, StateChange, StateEntry, StateOperation, StateStore, StateStorePolicy,
+    StateWatchStream,
 };
 use crate::{Error, Result};
 
@@ -31,7 +32,7 @@ pub const CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID: &str = "dev.deckr.concord.partici
 pub const DEFAULT_CONCORD_CONTRACT_STORE_NAME: &str = "deckr_concord_contract_v1";
 pub const DEFAULT_CONCORD_TOKEN_STORE_NAME: &str = "deckr_concord_token_v1";
 pub const DEFAULT_CONCORD_MAINTENANCE_STORE_NAME: &str = "deckr_concord_maintenance_v1";
-pub const DEFAULT_CONCORD_TOKEN_TTL_SECONDS: u64 = 30;
+pub const DEFAULT_CONCORD_TOKEN_TTL_SECONDS: u64 = 120;
 
 pub fn concord_contract_store_policy() -> StateStorePolicy {
     StateStorePolicy::persistent("Concord contract state")
@@ -564,6 +565,7 @@ pub struct ConcordParticipantLease {
     pub participant: EndpointAddress,
     pub session_id: String,
     token: Option<ParticipantHandle>,
+    requested_refresh_interval: Duration,
     refresh_interval: Duration,
     last_token_refresh_at: Option<Instant>,
     closed: bool,
@@ -581,6 +583,7 @@ impl ConcordParticipantLease {
             participant,
             session_id,
             token: None,
+            requested_refresh_interval: Duration::from_secs(DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS),
             refresh_interval: Duration::from_secs(DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS),
             last_token_refresh_at: None,
             closed: false,
@@ -592,7 +595,14 @@ impl ConcordParticipantLease {
             !interval.is_zero(),
             "Concord token refresh interval must be greater than zero"
         );
+        self.requested_refresh_interval = interval;
         self.refresh_interval = interval;
+        if let Some(token) = &self.token {
+            self.refresh_interval = ttl_heartbeat_delay(
+                Some(self.requested_refresh_interval),
+                token.ttl_seconds,
+            );
+        }
         self
     }
 
@@ -630,6 +640,8 @@ impl ConcordParticipantLease {
         if self.token.as_ref() == Some(&token) {
             return Ok(());
         }
+        self.refresh_interval =
+            ttl_heartbeat_delay(Some(self.requested_refresh_interval), token.ttl_seconds);
         self.token = Some(token);
         self.last_token_refresh_at = Some(Instant::now());
         Ok(())
@@ -664,6 +676,10 @@ impl ConcordParticipantLease {
             }
             match concord.refresh(&token).await {
                 Ok(refreshed) => {
+                    self.refresh_interval = ttl_heartbeat_delay(
+                        Some(self.requested_refresh_interval),
+                        refreshed.ttl_seconds,
+                    );
                     self.token = Some(refreshed.clone());
                     self.last_token_refresh_at = Some(Instant::now());
                     return Ok(refreshed);
@@ -684,6 +700,10 @@ impl ConcordParticipantLease {
             .await
         {
             Ok(token) => {
+                self.refresh_interval = ttl_heartbeat_delay(
+                    Some(self.requested_refresh_interval),
+                    token.ttl_seconds,
+                );
                 self.token = Some(token.clone());
                 self.last_token_refresh_at = Some(Instant::now());
                 Ok(token)
@@ -707,7 +727,6 @@ impl ConcordParticipantLease {
 pub struct ConcordCoordinator<C: StateStore, T: StateStore> {
     contract_state: C,
     token_state: T,
-    token_ttl_seconds: u64,
 }
 
 impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
@@ -715,12 +734,23 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
         Self {
             contract_state,
             token_state,
-            token_ttl_seconds: DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
         }
     }
 
     pub fn token_state(&self) -> &T {
         &self.token_state
+    }
+
+    async fn token_ttl_seconds(&self) -> Result<u64> {
+        match self.token_state.ttl_seconds().await? {
+            Some(ttl_seconds) if ttl_seconds > 0 => Ok(ttl_seconds),
+            Some(_) => Err(Error::StateUnavailable(
+                "Concord participant token bucket TTL must be greater than zero".to_string(),
+            )),
+            None => Err(Error::StateUnavailable(
+                "Concord participant token bucket must be TTL-bound".to_string(),
+            )),
+        }
     }
 
     pub async fn watch_contract_notifications(
@@ -935,6 +965,7 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
                 "Concord participant is already attached".to_string(),
             ));
         }
+        let ttl_seconds = self.token_ttl_seconds().await?;
         let requested_token_id = token_id.clone();
         let token = ParticipantTokenRecord {
             schema_id: CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID.to_string(),
@@ -944,7 +975,7 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
             session_id: require_text(session_id, "Concord session id")?.to_string(),
             token_id: token_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
             refresh_seq: 1,
-            ttl_seconds: self.token_ttl_seconds,
+            ttl_seconds,
             terms_hash: record.terms_hash.clone(),
             contract_hash: None,
             observed: BTreeMap::new(),
@@ -1053,6 +1084,7 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
                 "Concord participant token changed owner".to_string(),
             ));
         }
+        token.ttl_seconds = self.token_ttl_seconds().await?;
         token.refresh_seq += 1;
         let entry = match self
             .token_state

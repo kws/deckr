@@ -383,6 +383,10 @@ impl NatsStateStore {
 }
 
 impl StateStore for NatsStateStore {
+    async fn ttl_seconds(&self) -> Result<Option<u64>> {
+        Ok(self.policy.broker_ttl_seconds)
+    }
+
     async fn get(&self, key: &str) -> Result<Option<StateEntry>> {
         let Some(entry) = self.kv.entry(key.to_string()).await.map_err(|error| {
             Error::StateUnavailable(format!("reading state key {key}: {error}"))

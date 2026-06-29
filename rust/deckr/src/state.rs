@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env::{self, VarError};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_core::Stream;
@@ -15,7 +15,7 @@ use crate::{Error, Result};
 
 pub const DEFAULT_STATE_TTL_SECONDS: u64 = 30;
 pub const DEFAULT_STATE_RENEWAL_INTERVAL_SECONDS: u64 = 5;
-pub const DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS: u64 = 15;
+pub const DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS: u64 = 60;
 pub const DEFAULT_STATE_RECONCILE_SECONDS: u64 = 300;
 pub const CONCORD_TOKEN_REFRESH_SECONDS_ENV: &str = "DECKR_CONCORD_TOKEN_REFRESH_SECONDS";
 pub const STATE_RECONCILE_SECONDS_ENV: &str = "DECKR_STATE_RECONCILE_SECONDS";
@@ -106,6 +106,27 @@ fn interval_from_env_value(env_name: &str, default_seconds: u64, value: &str) ->
     Ok(Duration::from_secs(seconds))
 }
 
+pub(crate) fn ttl_heartbeat_delay(requested: Option<Duration>, ttl_seconds: u64) -> Duration {
+    let ttl = Duration::from_secs(ttl_seconds).as_secs_f64();
+    let upper = ttl * 0.75;
+    let mut lower = ttl * 0.5;
+    if let Some(requested) = requested {
+        lower = requested.as_secs_f64().max(lower).min(upper);
+    }
+    if upper <= lower {
+        return Duration::from_secs_f64(lower);
+    }
+    Duration::from_secs_f64(lower + random_unit_interval() * (upper - lower))
+}
+
+fn random_unit_interval() -> f64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    (nanos % 1_000_000) as f64 / 1_000_000.0
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateStorePolicy {
     pub broker_ttl_seconds: Option<u64>,
@@ -168,6 +189,7 @@ pub struct PrefixObservation {
 
 #[allow(async_fn_in_trait)]
 pub trait StateStore: Clone + Send + Sync + 'static {
+    async fn ttl_seconds(&self) -> Result<Option<u64>>;
     async fn get(&self, key: &str) -> Result<Option<StateEntry>>;
     async fn items(&self, prefix: &str) -> Result<Vec<StateEntry>>;
     async fn put(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry>;
@@ -386,6 +408,10 @@ impl<S: StateStore> MaterializedStateStore<S> {
         self.state.items(prefix).await
     }
 
+    pub async fn ttl_seconds(&self) -> Result<Option<u64>> {
+        self.state.ttl_seconds().await
+    }
+
     pub async fn put(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
         let entry = self.state.put(key, value, ttl).await?;
         self.apply_entry(entry.clone());
@@ -472,6 +498,46 @@ fn check_materialized_status(status: MaterializedStateStatus) -> Result<()> {
     }
 }
 
+impl<S: StateStore> StateStore for MaterializedStateStore<S> {
+    async fn ttl_seconds(&self) -> Result<Option<u64>> {
+        self.state.ttl_seconds().await
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<StateEntry>> {
+        self.get_exact(key).await
+    }
+
+    async fn items(&self, prefix: &str) -> Result<Vec<StateEntry>> {
+        self.items_exact(prefix).await
+    }
+
+    async fn put(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
+        MaterializedStateStore::put(self, key, value, ttl).await
+    }
+
+    async fn create(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
+        MaterializedStateStore::create(self, key, value, ttl).await
+    }
+
+    async fn update(
+        &self,
+        key: &str,
+        value: Value,
+        revision: u64,
+        ttl: Option<u64>,
+    ) -> Result<StateEntry> {
+        MaterializedStateStore::update(self, key, value, revision, ttl).await
+    }
+
+    async fn delete(&self, key: &str, revision: Option<u64>) -> Result<()> {
+        MaterializedStateStore::delete(self, key, revision).await
+    }
+
+    async fn watch(&self, prefix: &str) -> Result<StateWatchStream> {
+        self.state.watch(prefix).await
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStateStore {
     inner: Arc<Mutex<MemoryStateInner>>,
@@ -482,6 +548,7 @@ struct MemoryStateInner {
     entries: BTreeMap<String, StateEntry>,
     revision: u64,
     watchers: Vec<MemoryStateWatcher>,
+    ttl_seconds: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -495,9 +562,43 @@ impl MemoryStateStore {
         Self::default()
     }
 
+    pub fn ttl_bound(ttl_seconds: u64) -> Result<Self> {
+        Self::new().with_ttl_seconds(ttl_seconds)
+    }
+
+    pub fn with_ttl_seconds(self, ttl_seconds: u64) -> Result<Self> {
+        self.set_ttl_seconds(Some(ttl_seconds))?;
+        Ok(self)
+    }
+
+    pub fn set_ttl_seconds(&self, ttl_seconds: Option<u64>) -> Result<()> {
+        if ttl_seconds == Some(0) {
+            return Err(Error::Invalid(
+                "memory state TTL must be greater than zero".to_string(),
+            ));
+        }
+        self.inner
+            .lock()
+            .expect("memory state mutex poisoned")
+            .ttl_seconds = ttl_seconds;
+        Ok(())
+    }
+
     fn next_revision(inner: &mut MemoryStateInner) -> u64 {
         inner.revision += 1;
         inner.revision
+    }
+
+    fn validate_ttl(inner: &MemoryStateInner, ttl: Option<u64>) -> Result<()> {
+        if let Some(ttl) = ttl {
+            if Some(ttl) != inner.ttl_seconds {
+                return Err(Error::Invalid(format!(
+                    "memory state uses bucket TTL {:?}; per-key TTL {ttl} is not supported",
+                    inner.ttl_seconds
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn notify_watchers(inner: &mut MemoryStateInner, change: StateChange) {
@@ -511,6 +612,14 @@ impl MemoryStateStore {
 }
 
 impl StateStore for MemoryStateStore {
+    async fn ttl_seconds(&self) -> Result<Option<u64>> {
+        Ok(self
+            .inner
+            .lock()
+            .expect("memory state mutex poisoned")
+            .ttl_seconds)
+    }
+
     async fn get(&self, key: &str) -> Result<Option<StateEntry>> {
         Ok(self
             .inner
@@ -532,8 +641,9 @@ impl StateStore for MemoryStateStore {
             .collect())
     }
 
-    async fn put(&self, key: &str, value: Value, _ttl: Option<u64>) -> Result<StateEntry> {
+    async fn put(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
         let mut inner = self.inner.lock().expect("memory state mutex poisoned");
+        Self::validate_ttl(&inner, ttl)?;
         let entry = StateEntry {
             key: key.to_string(),
             value,
@@ -551,8 +661,9 @@ impl StateStore for MemoryStateStore {
         Ok(entry)
     }
 
-    async fn create(&self, key: &str, value: Value, _ttl: Option<u64>) -> Result<StateEntry> {
+    async fn create(&self, key: &str, value: Value, ttl: Option<u64>) -> Result<StateEntry> {
         let mut inner = self.inner.lock().expect("memory state mutex poisoned");
+        Self::validate_ttl(&inner, ttl)?;
         if inner.entries.contains_key(key) {
             return Err(Error::StateConflict(format!(
                 "state key {key:?} already exists"
@@ -580,9 +691,10 @@ impl StateStore for MemoryStateStore {
         key: &str,
         value: Value,
         revision: u64,
-        _ttl: Option<u64>,
+        ttl: Option<u64>,
     ) -> Result<StateEntry> {
         let mut inner = self.inner.lock().expect("memory state mutex poisoned");
+        Self::validate_ttl(&inner, ttl)?;
         let Some(current) = inner.entries.get(key) else {
             return Err(Error::StateConflict(format!(
                 "state key {key:?} is missing"

@@ -2,13 +2,18 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use deckr::beacon::{beacon_advertisement_key, AdvertisementRecord};
+use deckr::beacon::{
+    beacon_advertisement_key, beacon_advertisement_store_policy, AdvertisementRecord,
+    BeaconAdvertiser, DEFAULT_BEACON_TTL_SECONDS,
+};
 use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_value};
 use deckr::concord::{
     concord_contract_key, concord_participant_profile_index_prefix, concord_participant_token_key,
+    concord_token_store_policy,
     ConcordCoordinator, ConcordNotificationSource, ConcordParticipantLease,
     ConcordParticipantManager, ContractHandle, ContractRecord, ContractState,
-    ContractValidityStatus, ParticipantTokenRecord,
+    ContractValidityStatus, ParticipantTokenRecord, DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
+    DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
@@ -20,7 +25,9 @@ use deckr::profiles::hardware::{
     hardware_payload_from_advertisement, HardwareBeaconPayload, HardwareClaimTerms,
     HARDWARE_CLAIM_PROFILE_ID,
 };
-use deckr::state::{MemoryStateStore, StateEntry, StateStore, StateWatchStream};
+use deckr::state::{
+    MemoryStateStore, StateEntry, StateMaintenancePolicy, StateStore, StateWatchStream,
+};
 use deckr::Result;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -100,6 +107,10 @@ impl RecordingStateStore {
 }
 
 impl StateStore for RecordingStateStore {
+    async fn ttl_seconds(&self) -> Result<Option<u64>> {
+        self.inner.ttl_seconds().await
+    }
+
     async fn get(&self, key: &str) -> Result<Option<StateEntry>> {
         self.get_keys
             .lock()
@@ -144,6 +155,10 @@ impl StateStore for RecordingStateStore {
 }
 
 impl StateStore for RacingUpdateStore {
+    async fn ttl_seconds(&self) -> Result<Option<u64>> {
+        self.inner.ttl_seconds().await
+    }
+
     async fn get(&self, key: &str) -> Result<Option<StateEntry>> {
         self.inner.get(key).await
     }
@@ -461,6 +476,157 @@ fn hardware_body_accepts_all_v1_runtime_message_types() {
 }
 
 #[test]
+fn rust_beacon_concord_ttl_defaults_match_bucket_policies() {
+    assert_eq!(DEFAULT_BEACON_TTL_SECONDS, 300);
+    assert_eq!(DEFAULT_CONCORD_TOKEN_TTL_SECONDS, 120);
+    assert_eq!(DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS, 60);
+    assert_eq!(
+        StateMaintenancePolicy::default()
+            .concord_token_refresh_interval
+            .as_secs(),
+        DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
+    );
+
+    assert_eq!(
+        beacon_advertisement_store_policy().broker_ttl_seconds,
+        Some(DEFAULT_BEACON_TTL_SECONDS)
+    );
+    assert_eq!(
+        concord_token_store_policy().broker_ttl_seconds,
+        Some(DEFAULT_CONCORD_TOKEN_TTL_SECONDS)
+    );
+}
+
+#[tokio::test]
+async fn beacon_advertisement_bucket_must_be_ttl_bound() {
+    let state = MemoryStateStore::new();
+    let endpoint = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let advertiser = BeaconAdvertiser::new(state, "feature", endpoint, "session")
+        .advertisement_id("ad-1")
+        .payload(json!({}));
+
+    assert!(advertiser.publish().await.is_err());
+}
+
+#[tokio::test]
+async fn beacon_advertisement_uses_bucket_ttl_and_coalesces_unchanged_refreshes() {
+    let state = MemoryStateStore::ttl_bound(1).unwrap();
+    let endpoint = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let advertiser = BeaconAdvertiser::new(
+        state.clone(),
+        "feature",
+        endpoint.clone(),
+        "session",
+    )
+    .advertisement_id("ad-1")
+    .payload(json!({"version": 1}))
+    .refresh_interval(Duration::from_millis(10));
+
+    let first = advertiser.publish().await.unwrap();
+    let first_entry = state.get(&first.key).await.unwrap().unwrap();
+    let first_record = AdvertisementRecord::from_value(first_entry.value).unwrap();
+    assert_eq!(first_record.ttl_seconds, 1);
+
+    let repeated = advertiser.refresh(&first).await.unwrap();
+    assert_eq!(repeated.refresh_seq, first.refresh_seq);
+    assert_eq!(repeated.revision, first.revision);
+
+    state.set_ttl_seconds(Some(2)).unwrap();
+    let ttl_changed = advertiser.refresh(&repeated).await.unwrap();
+    assert_eq!(ttl_changed.refresh_seq, first.refresh_seq + 1);
+    assert_ne!(ttl_changed.revision, first.revision);
+    let ttl_changed_entry = state.get(&ttl_changed.key).await.unwrap().unwrap();
+    assert_eq!(
+        AdvertisementRecord::from_value(ttl_changed_entry.value)
+            .unwrap()
+            .ttl_seconds,
+        2
+    );
+
+    let changed_advertiser = BeaconAdvertiser::new(state.clone(), "feature", endpoint, "session")
+        .advertisement_id("ad-1")
+        .payload(json!({"version": 2}))
+        .refresh_interval(Duration::from_millis(10));
+    let changed = changed_advertiser
+        .refresh(&ttl_changed)
+        .await
+        .unwrap();
+    assert_eq!(changed.refresh_seq, ttl_changed.refresh_seq + 1);
+    assert_ne!(changed.revision, ttl_changed.revision);
+
+    let early = changed_advertiser.refresh(&changed).await.unwrap();
+    assert_eq!(early.refresh_seq, changed.refresh_seq);
+    assert_eq!(early.revision, changed.revision);
+
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    let due = changed_advertiser.refresh(&early).await.unwrap();
+    assert_eq!(due.refresh_seq, early.refresh_seq + 1);
+    assert_ne!(due.revision, early.revision);
+}
+
+#[tokio::test]
+async fn concord_token_bucket_must_be_ttl_bound() {
+    let contracts = MemoryStateStore::new();
+    let tokens = MemoryStateStore::new();
+    let concord = ConcordCoordinator::new(contracts, tokens);
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let contract = concord
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some("contract-1".to_string()),
+            1,
+            None,
+            None,
+            Some(controller),
+        )
+        .await
+        .unwrap();
+
+    assert!(concord
+        .attach(&contract, &manager, "manager-session", None)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn concord_token_attach_and_refresh_use_bucket_ttl() {
+    let contracts = MemoryStateStore::new();
+    let tokens = MemoryStateStore::ttl_bound(1).unwrap();
+    let concord = ConcordCoordinator::new(contracts, tokens.clone());
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let contract = concord
+        .create_contract(
+            vec![controller.clone(), manager.clone()],
+            Some("contract-1".to_string()),
+            1,
+            None,
+            None,
+            Some(controller),
+        )
+        .await
+        .unwrap();
+
+    let token = concord
+        .attach(&contract, &manager, "manager-session", None)
+        .await
+        .unwrap();
+    assert_eq!(token.ttl_seconds, 1);
+
+    tokens.set_ttl_seconds(Some(2)).unwrap();
+    let refreshed = concord.refresh(&token).await.unwrap();
+    assert_eq!(refreshed.ttl_seconds, 2);
+    assert_eq!(refreshed.refresh_seq, token.refresh_seq + 1);
+    let stored = concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.ttl_seconds, 2);
+}
+
+#[test]
 fn endpoint_delivery_honors_recipient_session() {
     let command = DeckrMessage::hardware_command(
         "main",
@@ -496,7 +662,7 @@ fn endpoint_delivery_honors_recipient_session() {
 #[tokio::test]
 async fn concord_validation_distinguishes_pending_missing_and_lost_tokens() {
     let contracts = MemoryStateStore::new();
-    let tokens = MemoryStateStore::new();
+    let tokens = token_store();
     let concord = ConcordCoordinator::new(contracts.clone(), tokens.clone());
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
@@ -586,7 +752,7 @@ async fn concord_validation_distinguishes_pending_missing_and_lost_tokens() {
 #[tokio::test]
 async fn concord_participant_manager_does_not_resurrect_lost_authority() {
     let contracts = MemoryStateStore::new();
-    let tokens = MemoryStateStore::new();
+    let tokens = token_store();
     let concord = ConcordCoordinator::new(contracts, tokens.clone());
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
@@ -701,7 +867,7 @@ async fn concord_participant_manager_session_mismatch_cancels_before_accept() {
 #[tokio::test]
 async fn concord_participant_manager_discovers_from_participant_profile_index() {
     let contracts = RecordingStateStore::new(MemoryStateStore::new());
-    let tokens = MemoryStateStore::new();
+    let tokens = token_store();
     let concord = ConcordCoordinator::new(contracts.clone(), tokens.clone());
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
@@ -836,7 +1002,7 @@ async fn concord_participant_lease_public_refresh_path_is_rate_limited() {
     assert_eq!(stored_token.refresh_seq, first_token.refresh_seq);
     assert_eq!(stored_token.revision, first_token.revision);
 
-    tokio::time::sleep(Duration::from_millis(15)).await;
+    tokio::time::sleep(Duration::from_millis(850)).await;
     let refreshed_token = lease.attach_or_refresh(&concord).await.unwrap();
 
     assert_eq!(refreshed_token.refresh_seq, first_token.refresh_seq + 1);
@@ -867,7 +1033,7 @@ async fn concord_participant_lease_adopted_token_is_not_immediately_refreshed() 
     assert_eq!(adopted_token.refresh_seq, manager_token.refresh_seq);
     assert_eq!(adopted_token.revision, manager_token.revision);
 
-    tokio::time::sleep(Duration::from_millis(15)).await;
+    tokio::time::sleep(Duration::from_millis(850)).await;
     let refreshed_token = lease.attach_or_refresh(&concord).await.unwrap();
 
     assert_eq!(refreshed_token.refresh_seq, manager_token.refresh_seq + 1);
@@ -883,7 +1049,7 @@ async fn concord_participant_manager_refreshes_due_token() {
     let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
     let first_token = managed[0].token.clone().unwrap();
 
-    tokio::time::sleep(Duration::from_millis(15)).await;
+    tokio::time::sleep(Duration::from_millis(850)).await;
     let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
     let second_token = managed[0].token.clone().unwrap();
     let stored_token = concord
@@ -980,7 +1146,7 @@ async fn concord_participant_manager_reconcile_managed_does_not_resurrect_delete
 #[tokio::test]
 async fn concord_contract_notifications_include_contract_and_token_details() {
     let contracts = MemoryStateStore::new();
-    let tokens = MemoryStateStore::new();
+    let tokens = token_store();
     let concord = ConcordCoordinator::new(contracts, tokens);
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
@@ -1046,7 +1212,7 @@ async fn concord_contract_notifications_include_contract_and_token_details() {
 #[tokio::test]
 async fn concord_participant_manager_notification_discovers_new_contract() {
     let contracts = MemoryStateStore::new();
-    let tokens = MemoryStateStore::new();
+    let tokens = token_store();
     let concord = ConcordCoordinator::new(contracts, tokens);
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
@@ -1105,7 +1271,7 @@ async fn concord_participant_manager_notification_discovers_new_contract() {
 #[tokio::test]
 async fn concord_refresh_returns_latest_token_after_revision_race() {
     let contracts = MemoryStateStore::new();
-    let tokens = RacingUpdateStore::new(MemoryStateStore::new());
+    let tokens = RacingUpdateStore::new(token_store());
     let concord = ConcordCoordinator::new(contracts.clone(), tokens.clone());
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
@@ -1163,7 +1329,7 @@ async fn managed_claim_context(
     ConcordParticipantManager<MemoryStateStore, MemoryStateStore>,
 ) {
     let contracts = MemoryStateStore::new();
-    let tokens = MemoryStateStore::new();
+    let tokens = short_token_store();
     let concord = ConcordCoordinator::new(contracts, tokens.clone());
     let controller = EndpointAddress::parse("controller:main").unwrap();
     let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
@@ -1199,6 +1365,14 @@ async fn managed_claim_context(
         .unwrap();
 
     (concord, tokens, contract, manager, lifecycle)
+}
+
+fn token_store() -> MemoryStateStore {
+    MemoryStateStore::ttl_bound(DEFAULT_CONCORD_TOKEN_TTL_SECONDS).unwrap()
+}
+
+fn short_token_store() -> MemoryStateStore {
+    MemoryStateStore::ttl_bound(1).unwrap()
 }
 
 fn fixture(path: &str) -> Value {
