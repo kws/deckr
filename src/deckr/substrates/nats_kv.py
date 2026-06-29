@@ -73,6 +73,69 @@ class KvChange:
     view_generation: int | None = None
 
 
+class _NatsKvWatchReceiveStream(anyio.abc.ObjectReceiveStream[KvChange | None]):
+    def __init__(
+        self,
+        *,
+        bucket: str,
+        prefix: str,
+        watcher: Any,
+    ) -> None:
+        self._bucket = bucket
+        self._prefix = prefix
+        self._watcher = watcher
+        self._iterator = watcher.__aiter__()
+        self._closed = False
+
+    async def receive(self) -> KvChange | None:
+        if self._closed:
+            raise anyio.ClosedResourceError
+        try:
+            while True:
+                try:
+                    entry = await self._iterator.__anext__()
+                except StopAsyncIteration:
+                    await self.aclose()
+                    raise anyio.EndOfStream from None
+                if entry is None:
+                    return None
+                change = kv_change_from_raw(self._bucket, entry)
+                if change is None:
+                    continue
+                if not change.key.startswith(self._prefix):
+                    continue
+                return change
+        except anyio.ClosedResourceError:
+            raise
+        except anyio.EndOfStream:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "NATS KV watch failed bucket=%s prefix=%s",
+                self._bucket,
+                self._prefix,
+                exc_info=True,
+            )
+            try:
+                await self.aclose()
+            finally:
+                raise KvUnavailable(
+                    f"Could not watch KV prefix {self._prefix!r}"
+                ) from exc
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self._watcher.stop()
+        finally:
+            await delete_ephemeral_consumer(
+                getattr(self._watcher, "_sub", None),
+                reason=f"KV watch prefix {self._prefix!r}",
+            )
+
+
 class NatsJsonKvBucket:
     """Thin JSON adapter for one NATS KV bucket."""
 
@@ -243,55 +306,19 @@ class NatsJsonKvBucket:
         prefix: str = "",
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
         kv = await self._available_kv()
-        send, receive = anyio.create_memory_object_stream[KvChange | None](
-            max_buffer_size=self._buffer_size
-        )
-        watcher = None
-
-        async def run() -> None:
-            try:
-                async for entry in watcher:
-                    if entry is None:
-                        await send.send(None)
-                        continue
-                    change = kv_change_from_raw(self.bucket, entry)
-                    if change is None:
-                        continue
-                    if not change.key.startswith(prefix):
-                        continue
-                    await send.send(change)
-            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                return
-            except Exception as exc:
-                logger.warning(
-                    "NATS KV watch failed bucket=%s prefix=%s",
-                    self.bucket,
-                    prefix,
-                    exc_info=True,
-                )
-                raise KvUnavailable(
-                    f"Could not watch KV prefix {prefix!r}"
-                ) from exc
-            finally:
-                await send.aclose()
-
         try:
             watcher = await kv.watch(kv_watch_pattern(prefix), inactive_threshold=5 * 60)
         except Exception as exc:
             raise KvUnavailable(f"Could not watch KV prefix {prefix!r}") from exc
+        stream = _NatsKvWatchReceiveStream(
+            bucket=self.bucket,
+            prefix=prefix,
+            watcher=watcher,
+        )
         try:
-            async with send, receive, anyio.create_task_group() as task_group:
-                task_group.start_soon(run)
-                yield receive
-                task_group.cancel_scope.cancel()
+            yield stream
         finally:
-            try:
-                await watcher.stop()
-            finally:
-                await delete_ephemeral_consumer(
-                    getattr(watcher, "_sub", None),
-                    reason=f"KV watch prefix {prefix!r}",
-                )
+            await stream.aclose()
 
     async def _ensure_kv(self):
         if self._kv is not None:

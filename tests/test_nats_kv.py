@@ -199,6 +199,35 @@ async def test_nats_json_kv_watch_maps_put_delete_and_expire_markers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nats_json_kv_watch_closes_from_async_generator_finalizer_task() -> None:
+    fake_js = _FakeJs()
+    fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
+    )
+
+    async def watch_one() -> AsyncIterator[KvChange | None]:
+        async with bucket.watch("contracts.") as changes:
+            yield await changes.receive()
+            await changes.receive()
+
+    stream = watch_one()
+    first = await stream.__anext__()
+
+    assert first is not None
+    assert first.key == "contracts.main.1.meta"
+
+    async def close_stream() -> None:
+        await stream.aclose()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(close_stream)
+
+    assert fake_js.deleted_consumers == [("KV_deckr_concord_contract_v1", "consumer-1")]
+
+
+@pytest.mark.asyncio
 async def test_nats_json_kv_items_lists_current_entries_by_prefix() -> None:
     fake_js = _FakeJs()
     fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
