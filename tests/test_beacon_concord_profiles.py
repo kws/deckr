@@ -997,6 +997,42 @@ async def test_beacon_noop_updates_do_not_bypass_heartbeat_cadence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_beacon_lease_recreates_missing_advertisement_key(caplog) -> None:
+    beacon, raw = _beacon()
+    caplog.set_level("WARNING", logger="deckr.beacon")
+    advertisement = await beacon.advertise(
+        BeaconAdvertisementSpec(
+            feature_id=HARDWARE_FEATURE_ID,
+            endpoint=hardware_manager_address("manager-main"),
+            session_id="manager-session",
+            advertisement_id="advertisement-1",
+            payload=_hardware_payload().to_dict(),
+            log_label="TestHardware",
+        )
+    )
+    first = advertisement.handle
+    await advertisement.update(hints={"load": "light"})
+
+    await raw.expire(first.key)
+    recovered = await advertisement.update(labels={"room": "lab"})
+
+    assert recovered.key == first.key
+    assert recovered.revision > first.revision
+    entry = await raw.get(first.key)
+    assert entry is not None
+    record = AdvertisementRecord.model_validate(entry.value)
+    assert record.advertisement_id == "advertisement-1"
+    assert record.refresh_seq == 1
+    assert record.labels == {"room": "lab"}
+    assert record.hints == {"load": "light"}
+    assert [
+        candidate.advertisement.advertisement_id
+        for candidate in beacon.candidates(HARDWARE_FEATURE_ID)
+    ] == ["advertisement-1"]
+    assert "TestHardware Beacon advertisement missing; recreating" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_beacon_advertise_cleans_stale_same_endpoint_by_default() -> None:
     beacon, raw = _beacon()
     endpoint = hardware_manager_address("manager-main")
@@ -1060,22 +1096,23 @@ async def test_beacon_watch_emits_withdrawn_when_candidate_leaves_selector() -> 
 @pytest.mark.asyncio
 async def test_beacon_service_feature_watch_reports_expiry(caplog) -> None:
     beacon, raw = _beacon()
-    endpoint = hardware_manager_address("manager-main")
+    feature_id = "dev.deckr.openhab.service"
+    endpoint = service_address("openhab-home")
     caplog.set_level("INFO", logger="deckr.beacon")
 
     async with anyio.create_task_group() as tg:
         beacon.start(tg)
         await beacon.wait_ready()
-        async with beacon.watch(HARDWARE_FEATURE_ID) as events:
+        async with beacon.watch(feature_id) as events:
             advertisement = await beacon.advertise(
                 BeaconAdvertisementSpec(
-                    feature_id=HARDWARE_FEATURE_ID,
+                    feature_id=feature_id,
                     endpoint=endpoint,
-                    session_id="manager-session",
+                    session_id="service-session",
                     advertisement_id="advertisement-1",
                     labels={"room": "office"},
-                    payload=_hardware_payload().to_dict(),
-                    log_label="TestHardware",
+                    payload={"service": "openhab"},
+                    log_label="TestService",
                 )
             )
             handle = advertisement.handle

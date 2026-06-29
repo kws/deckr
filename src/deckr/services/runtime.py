@@ -282,9 +282,9 @@ class ServiceUseTerms(DeckrModel):
 
 @dataclass(frozen=True, slots=True)
 class ServiceDescriptor:
-    """Profile-validated service fact parsed from a Beacon candidate."""
+    """Profile-validated service fact from Beacon discovery or Concord terms."""
 
-    candidate: Candidate
+    candidate: Candidate | None
     service_id: str
     namespace: str
     endpoint: EndpointAddress
@@ -432,6 +432,47 @@ def parse_service_descriptor(
     )
 
 
+def service_descriptor_from_terms(
+    protocol: ServiceProtocol,
+    terms: ServiceUseTerms,
+    *,
+    backend_status: ServiceBackendStatus = ServiceBackendStatus.AVAILABLE,
+    diagnostics: Mapping[str, Any] | None = None,
+) -> ServiceDescriptor:
+    """Build service facts from already-negotiated Concord service-use terms."""
+
+    if terms.profile != protocol.use_profile:
+        raise UnsupportedServiceScope(
+            f"Service-use terms profile {terms.profile!r} does not match "
+            f"protocol {protocol.use_profile!r}"
+        )
+    if terms.service_namespace != protocol.namespace:
+        raise UnsupportedServiceScope(
+            f"Service-use terms namespace {terms.service_namespace!r} does not "
+            f"match protocol {protocol.namespace!r}"
+        )
+    unsupported = set(terms.allowed_operations).difference(set(protocol.operations))
+    if unsupported:
+        raise UnsupportedServiceScope(
+            f"Service-use terms allow operations outside protocol: "
+            f"{sorted(unsupported)!r}"
+        )
+    _validate_view_scope(protocol, terms)
+    return ServiceDescriptor(
+        candidate=None,
+        service_id=terms.service_id,
+        namespace=terms.service_namespace,
+        endpoint=terms.service_endpoint,
+        session_id=terms.service_session_id,
+        advertisement_profile=protocol.advertisement_profile,
+        use_profile=terms.profile,
+        supported_operations=frozenset(protocol.operations),
+        views=protocol.view_families,
+        backend_status=backend_status,
+        diagnostics=dict(diagnostics or {}),
+    )
+
+
 def service_use_terms(
     descriptor: ServiceDescriptor,
     client_endpoint: EndpointAddress,
@@ -465,6 +506,8 @@ def service_use_terms(
 def service_descriptor_sort_key(
     descriptor: ServiceDescriptor,
 ) -> tuple[datetime, int, str]:
+    if descriptor.candidate is None:
+        return (datetime.min.replace(tzinfo=UTC), 0, "")
     advertisement = descriptor.candidate.advertisement
     timestamp = (
         advertisement.updated_at
@@ -542,6 +585,21 @@ def _normalize_view_scope(
                 )
         result[family] = normalized_prefixes
     return MappingProxyType(result)
+
+
+def _validate_view_scope(protocol: ServiceProtocol, terms: ServiceUseTerms) -> None:
+    for family, prefixes in terms.allowed_views.items():
+        service_family = protocol.view_families.get(family)
+        if service_family is None:
+            raise UnsupportedServiceScope(
+                f"Service-use terms allow unknown view family {family!r}"
+            )
+        for prefix in prefixes:
+            if not prefix.startswith(service_family.key_prefix):
+                raise UnsupportedServiceScope(
+                    f"Service-use terms view prefix {prefix!r} is outside "
+                    f"service view family {family!r}"
+                )
 
 
 def _view_ref_authorized(lease: ServiceUseLease, view: ServiceViewRef) -> bool:

@@ -3,9 +3,34 @@ use deckr::concord::{
     ConcordCoordinator, ContractState, ContractValidityStatus, DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
 };
 use deckr::endpoint::EndpointAddress;
-use deckr::state::MemoryStateStore;
+use deckr::state::{MemoryStateStore, StateStore};
 
 const FEATURE_ID: &str = "dev.deckr.test.feature";
+
+#[tokio::test]
+async fn beacon_publish_or_refresh_recreates_missing_advertisement() {
+    let beacon_state = MemoryStateStore::ttl_bound(DEFAULT_BEACON_TTL_SECONDS).unwrap();
+    let advertiser_endpoint = EndpointAddress::parse("hardware_manager:rust").unwrap();
+    let advertiser = BeaconAdvertiser::new(
+        beacon_state.clone(),
+        FEATURE_ID,
+        advertiser_endpoint,
+        "advertiser-session",
+    )
+    .advertisement_id("ad-1")
+    .payload(serde_json::json!({"generation": 1}));
+
+    let first = advertiser.publish().await.unwrap();
+    beacon_state.delete(&first.key, Some(first.revision)).await.unwrap();
+    let recovered = advertiser.publish_or_refresh(Some(&first)).await.unwrap();
+
+    assert_eq!(recovered.key, first.key);
+    assert!(recovered.revision > first.revision);
+    let candidates = find_candidates(&beacon_state, FEATURE_ID).await.unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].advertisement.advertisement_id, "ad-1");
+    assert_eq!(candidates[0].advertisement.refresh_seq, 1);
+}
 
 #[tokio::test]
 async fn withdrawing_beacon_advertisement_leaves_concord_contract_open() {

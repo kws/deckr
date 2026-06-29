@@ -131,7 +131,9 @@ publish immediately, but unchanged heartbeat refreshes may be skipped while the
 stored value is already fresh enough. If the advertisement is no longer
 refreshed, the TTL-bound store removes it. Beacon advertisements are not reaped
 by Concord maintenance. Their lifecycle is the advertisement owner plus the
-store TTL.
+store TTL. A managed advertiser that is still running and observes its own
+advertisement key missing must treat that as recoverable TTL/store loss and
+publish the advertisement again instead of retrying the missing key forever.
 
 Managed advertisers should best-effort remove stale advertisements for the same
 feature, advertiser, and endpoint during startup or replacement, using
@@ -354,6 +356,8 @@ service-use Concord contract is negotiated, service command and view authority
 follows that Concord contract and its participant tokens, not continued Beacon
 advertisement presence. Protected service views are authorized through the
 service-use contract and fenced by the advertised service identity and session.
+Consumers must validate an existing service-use Concord contract before treating
+missing Beacon discovery as service unavailability.
 Protected view watches deliver payloads only while the stored entry matches the
 watcher's service-use fence. If a visible same-key entry is replaced by another
 service identity or session, the watcher observes only a removal-style event and

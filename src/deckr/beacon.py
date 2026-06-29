@@ -40,9 +40,12 @@ logger = logging.getLogger(__name__)
 
 
 def _beacon_lifecycle_log_level(feature_id: str) -> int:
-    if feature_id == "dev.deckr.hardware":
-        return logging.INFO
-    return logging.DEBUG
+    del feature_id
+    return logging.INFO
+
+
+class _BeaconAdvertisementMissing(KvConflict):
+    pass
 
 
 class CandidateStatus(StrEnum):
@@ -711,7 +714,9 @@ class Beacon:
         if current is None:
             exact = await self._bucket.get_exact(handle.key)
             if exact is None:
-                raise KvConflict(f"Beacon advertisement {handle.key!r} is missing")
+                raise _BeaconAdvertisementMissing(
+                    f"Beacon advertisement {handle.key!r} is missing"
+                )
             current, _reason = _candidate_from_entry(exact)
             if current is None:
                 raise KvConflict(f"Beacon advertisement {handle.key!r} is invalid")
@@ -737,10 +742,12 @@ class Beacon:
                 revision=current.revision,
                 ttl=ttl_seconds,
             )
-        except KvConflict:
+        except KvConflict as exc:
             exact = await self._bucket.get_exact(handle.key)
             if exact is None:
-                raise
+                raise _BeaconAdvertisementMissing(
+                    f"Beacon advertisement {handle.key!r} is missing"
+                ) from exc
             exact_candidate, _reason = _candidate_from_entry(exact)
             if exact_candidate is None:
                 raise
@@ -1113,25 +1120,40 @@ class BeaconAdvertisementLease:
         if self._closed:
             raise KvConflict("Beacon advertisement is closed")
         if self._handle is None:
-            self._handle = await self._beacon._create_advertisement(
-                self.spec,
-                advertisement_id=self._advertisement_id,
-            )
+            self._handle = await self._create_advertisement_from_current_state()
             self._last_refresh_at = monotonic()
             self._refresh_interval = await self._next_refresh_interval()
             return self._handle
         if force_refresh and not self._refresh_due():
             return self._handle
         old_revision = self._handle.revision
-        refreshed = await self._beacon._refresh_advertisement(
-            self._handle,
-            protocol=self._protocol,
-            operations=self._operations,
-            labels=self._labels,
-            hints=self._hints,
-            payload=self._payload,
-            force_refresh=force_refresh,
-        )
+        old_handle = self._handle
+        try:
+            refreshed = await self._beacon._refresh_advertisement(
+                old_handle,
+                protocol=self._protocol,
+                operations=self._operations,
+                labels=self._labels,
+                hints=self._hints,
+                payload=self._payload,
+                force_refresh=force_refresh,
+            )
+        except _BeaconAdvertisementMissing:
+            logger.warning(
+                "%s Beacon advertisement missing; recreating feature=%s "
+                "endpoint=%s session=%s advertisement=%s key=%s",
+                self._log_label,
+                self.feature_id,
+                self.endpoint,
+                self.session_id,
+                self._advertisement_id,
+                old_handle.key,
+                exc_info=True,
+            )
+            self._handle = await self._create_advertisement_from_current_state()
+            self._last_refresh_at = monotonic()
+            self._refresh_interval = await self._next_refresh_interval()
+            return self._handle
         if refreshed.revision != old_revision:
             logger.debug(
                 "%s Beacon advertisement heartbeat feature=%s endpoint=%s "
@@ -1155,6 +1177,24 @@ class BeaconAdvertisementLease:
             self._last_refresh_at is None
             or self._refresh_interval is None
             or monotonic() - self._last_refresh_at >= self._refresh_interval
+        )
+
+    async def _create_advertisement_from_current_state(self) -> AdvertisementHandle:
+        return await self._beacon._create_advertisement(
+            BeaconAdvertisementSpec(
+                feature_id=self.feature_id,
+                endpoint=self.endpoint,
+                session_id=self.session_id,
+                advertiser=self.advertiser,
+                protocol=self._protocol,
+                operations=self._operations,
+                labels=self._labels,
+                hints=self._hints,
+                payload=self._payload,
+                refresh_interval=self._requested_refresh_interval,
+                log_label=self._log_label,
+            ),
+            advertisement_id=self._advertisement_id,
         )
 
     async def _next_refresh_interval(self) -> float:

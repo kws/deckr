@@ -26,6 +26,7 @@ from deckr.services import (
     UnsupportedServiceScope,
     newest_service_descriptor,
     parse_service_descriptor,
+    service_descriptor_from_terms,
     service_use_terms,
     service_view_key,
     service_view_prefix,
@@ -255,6 +256,30 @@ async def test_service_use_terms_grant_only_requested_scope() -> None:
             action_provider_address("provider-main"),
             views={"missingView"},
         )
+
+
+def test_service_descriptor_from_terms_without_beacon_candidate() -> None:
+    protocol = _protocol()
+    terms = ServiceUseTerms(
+        profile=protocol.use_profile,
+        serviceUseId="service-use:test",
+        serviceId="openhab-home",
+        serviceEndpoint=service_address("openhab-home"),
+        serviceNamespace=protocol.namespace,
+        serviceSessionId="service-session",
+        clientEndpoint=action_provider_address("provider-main"),
+        allowedOperations=("ensureItems",),
+        allowedViews={"items": ("views.openhab-home.items.",)},
+    )
+
+    descriptor = service_descriptor_from_terms(protocol, terms)
+
+    assert descriptor.candidate is None
+    assert descriptor.service_id == "openhab-home"
+    assert descriptor.endpoint == service_address("openhab-home")
+    assert descriptor.session_id == "service-session"
+    assert descriptor.supported_operations == frozenset(protocol.operations)
+    assert descriptor.views == protocol.view_families
 
 
 @pytest.mark.asyncio

@@ -156,7 +156,10 @@ Managed `Beacon.advertise(...)` performs best-effort same
 feature/advertiser/endpoint startup cleanup by default, using revision-guarded
 deletes for stale advertisements left by crashed sessions or changed
 configuration. Real advertisement content changes still publish immediately;
-unchanged heartbeat refreshes follow the Beacon bucket TTL jitter cadence.
+unchanged heartbeat refreshes follow the Beacon bucket TTL jitter cadence. If a
+running managed advertiser finds its own advertisement key missing, it republishes
+the advertisement instead of treating the missing TTL record as permanent
+failure.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
 
@@ -319,7 +322,9 @@ never-visible entries are suppressed for that watcher. After a service-use
 Concord contract is negotiated, service command and protected view authority
 follows Concord, not continued Beacon advertisement presence. A service may
 withdraw its Beacon advertisement when it cannot accept new service-use
-contracts; existing service-use contracts remain Concord-governed.
+contracts; existing service-use contracts remain Concord-governed. Consumers
+validate those existing service-use contracts before treating missing Beacon
+discovery as service unavailability.
 
 ## Component Dependencies
 

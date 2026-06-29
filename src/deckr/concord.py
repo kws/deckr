@@ -91,6 +91,11 @@ def _contract_lifecycle_log_level(profile: str | None) -> int:
     return logging.INFO
 
 
+def _contract_terminal_log_level(profile: str | None) -> int:
+    del profile
+    return logging.INFO
+
+
 def _contract_pending_log_level(profile: str | None) -> int:
     if _is_chattery_contract_profile(profile):
         return logging.DEBUG
@@ -3079,7 +3084,7 @@ class Concord:
                     )
                 )
             logger.log(
-                _contract_lifecycle_log_level(contract.profile),
+                _contract_terminal_log_level(contract.profile),
                 "%s Concord maintenance cancelled contract profile=%s contract=%s "
                 "generation=%s cancelled_by=%s reason=%s revision=%s",
                 log_label,
@@ -3380,7 +3385,7 @@ class Concord:
                     )
                 )
             logger.log(
-                _contract_lifecycle_log_level(contract.profile),
+                _contract_terminal_log_level(contract.profile),
                 "%s Concord contract cancelled profile=%s contract=%s generation=%s "
                 "participant=%s reason=%s revision=%s",
                 log_label,
@@ -4973,7 +4978,7 @@ def _log_concord_event(event: ConcordEvent) -> None:
         return
     if event.event_type == ConcordEventType.CONTRACT_CANCELLED:
         logger.log(
-            _contract_lifecycle_log_level(event.profile),
+            _contract_terminal_log_level(event.profile),
             "Concord contract cancelled profile=%s contract=%s generation=%s "
             "status=%s reason=%s revision=%s",
             event.profile,
@@ -4985,9 +4990,8 @@ def _log_concord_event(event: ConcordEvent) -> None:
         )
         return
     if event.event_type == ConcordEventType.TOKEN_EXPIRED:
-        event_status = event.validity.status if event.validity is not None else None
         logger.log(
-            _contract_invalid_log_level(event.profile, event_status),
+            _contract_terminal_log_level(event.profile),
             "Concord participant token expired profile=%s contract=%s generation=%s "
             "participant=%s status=%s reason=%s revision=%s",
             event.profile,
