@@ -790,10 +790,11 @@ The architectural invariant is: **Beacon disappearance only affects future disco
 ## Cleanup after implementation
 
 Once the generic `BeaconDirectory` and `Concord.participant(...)` path is
-implemented and covered by tests, the service-specific discovery and service-use
-index path can be deleted. Do not replace it with another service-specific
-directory or service-use acceptor helper unless a concrete repeated call-site
-need appears later.
+implemented, exported, and covered by tests, the service-specific discovery and
+service-use index path can be deleted. Do not delete `ServiceDirectory` first and
+leave callers without the generic replacement API. Do not replace it with
+another service-specific directory or service-use acceptor helper unless a
+concrete repeated call-site need appears later.
 
 The utility boundary should be:
 
@@ -815,6 +816,8 @@ Good generic utility candidates:
 runtime-owned BeaconDirectory registry keyed by feature id and stable
   parser/profile identity
 BeaconDirectory parser/predicate/selector helpers
+BeaconDirectory support for both one descriptor per advertisement and
+  fan-out advertisements that produce zero or many domain records
 Concord agreement wait helpers with caller-supplied terminal statuses
 Concord participant helpers that accept current_sessions and accept_contract callbacks
 ```
@@ -825,6 +828,13 @@ BeaconDirectory for a feature/profile and reuse its local parsed view from
 request handlers. It should not create a directory, replay a watch, or scan a
 bucket inside each command, view read, action resolution, or hardware claim
 attempt.
+
+The directory API must not assume every Beacon advertisement maps to exactly one
+domain record. Service advertisements normally parse into one descriptor.
+Hardware advertisements can expose multiple device candidates. Action-provider
+advertisements can expose multiple action descriptors. A generic directory can
+model this either by accepting a parser that returns a collection, or by storing
+parsed advertisement payloads and letting the domain selector fan out locally.
 
 Good domain/profile helpers:
 
@@ -900,6 +910,11 @@ Files:
   ../deckr-controller/src/deckr/controller/_controller_service.py
   ../deckr-controller/src/deckr/controller/action_provider/action_registry.py
 
+Those controller paths also show why the generic directory cannot be purely
+"one advertisement becomes one descriptor": hardware advertisements fan out into
+device candidates, and action-provider advertisements fan out into advertised
+actions.
+
 typescript/deckr mirrors the old service-use index through
 ServiceUseLeaseManager. rust/deckr mirrors the old service discovery wrappers
 through ServiceDirectory, ServiceResolver, and ServiceQuery.
@@ -919,16 +934,26 @@ OpenHAB/Sonos clients:
   replace ServiceResolver calls with directory.wait_for(predicate, select=...)
   replace acquire_service_use_lease with direct Concord proposal plus a generic
   wait-for-valid-agreement helper if repeated loops appear
-  separate service-use negotiation timeout from command/view RPC timeout
+  choose an explicit service-use lease lifecycle: either propose/cancel per
+  operation, or keep a runtime-owned lease cache that is closed at runtime
+  shutdown; do not leave per-command helpers holding unmanaged token heartbeats
+  separate service-use negotiation timeout from command/view RPC timeout,
+  including action availability probes and view watcher loops
 
 OpenHAB/Sonos providers:
   keep Concord.participant(...)
   move repeated ServiceUseTerms/session/participant checks into pure helpers
   keep application policy in the provider
+  withdraw Beacon before closing the Concord participant during clean shutdown
+  when the service is draining from discovery
 
 Kaj and plugin tests:
   remove fake SERVICE_USE_INDEX_BUCKET_POLICY buckets once clients stop using
   acquire_service_use_lease
+  keep or rewrite the existing OpenHAB/Sonos service-client tests that assert:
+    opaque contract ids are independent from serviceUseScopeId
+    missing Beacon does not reconstruct old authority
+    scope/session changes propose independent contracts without supersedes
 
 Cross-language mirrors:
   apply the same removal in typescript/deckr and rust/deckr so the SDKs do not
@@ -939,8 +964,12 @@ deckr-controller hardware/action discovery:
   style views for the relevant feature ids
   if the Beacon view is not current, wait or report the feature unavailable
   instead of listing exact advertisement keys from the request path
+  preserve the existing duplicate-selection and fan-out behavior while moving
+  the source of candidates behind the long-lived directory
 
 Docs:
+  update deckr README and BAU docs that currently mention
+  ServiceDirectory/ServiceResolver or deckr_service_use_index_v1
   update deckr-plugin-openhab and deckr-plugin-sonos READMEs that currently
   mention ServiceDirectory/ServiceResolver
 ```
@@ -971,10 +1000,14 @@ Remove or replace the corresponding cross-language mirrors:
 
 ```text
 typescript/deckr ServiceUseLeaseManager
+typescript/deckr SERVICE_USE_INDEX_SCHEMA_ID
 typescript/deckr ServiceUseScopeIndexRecord
 typescript/deckr validateServiceUseScopeIndexRecord(...)
 typescript/deckr serviceUseScopeIndexKey(...)
 typescript/deckr DEFAULT_SERVICE_USE_INDEX_STORE_NAME
+rust/deckr SERVICE_USE_INDEX_SCHEMA_ID
+rust/deckr DEFAULT_SERVICE_USE_INDEX_STORE_NAME
+rust/deckr service_use_index_store_policy(...)
 rust/deckr ServiceDirectory
 rust/deckr ServiceResolver
 rust/deckr ServiceQuery
