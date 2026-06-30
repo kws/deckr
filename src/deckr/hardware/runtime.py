@@ -146,6 +146,7 @@ class HardwareManagerRuntime:
     _lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
     _advertisement_lock: anyio.Lock = field(init=False, default_factory=anyio.Lock)
     _task_group: anyio.abc.TaskGroup | None = field(init=False, default=None)
+    _closed: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         if self.endpoint.address.family != "hardware_manager":
@@ -181,8 +182,18 @@ class HardwareManagerRuntime:
         return tuple(self._claims[key] for key in sorted(self._claims))
 
     async def set_device(self, descriptor: DeviceDescriptor) -> None:
+        previous = self._devices.get(descriptor.device_id)
+        replaced = (
+            previous is not None and previous.fingerprint != descriptor.fingerprint
+        )
         self._devices[descriptor.device_id] = descriptor
-        await self._publish_advertisement()
+        if replaced:
+            self._claims_by_device.pop(descriptor.device_id, None)
+            await self._cancel_claims_for_device(
+                descriptor.device_id,
+                reason=f"hardware device {descriptor.device_id} replaced",
+            )
+        await self._publish_advertisement_if_changed()
         await self._reconcile_claims(reason="device inventory changed")
 
     async def remove_device(
@@ -200,6 +211,7 @@ class HardwareManagerRuntime:
         await self._reconcile_claims(reason="device inventory changed")
 
     async def start(self, task_group: anyio.abc.TaskGroup) -> None:
+        self._closed = False
         self._task_group = task_group
         await self._publish_advertisement()
         if self._advertiser is not None:
@@ -211,6 +223,7 @@ class HardwareManagerRuntime:
 
     async def stop(self) -> None:
         with anyio.CancelScope(shield=True):
+            self._closed = True
             await self._withdraw_advertisement()
             self._claims.clear()
             self._claims_by_device.clear()
@@ -226,15 +239,25 @@ class HardwareManagerRuntime:
         next_devices = dict(devices)
         previous = dict(self._devices)
         removed_device_ids = sorted(set(previous) - set(next_devices))
+        replaced_device_ids = sorted(
+            device_id
+            for device_id in set(previous) & set(next_devices)
+            if previous[device_id].fingerprint != next_devices[device_id].fingerprint
+        )
         self._devices = next_devices
-        for device_id in removed_device_ids:
+        for device_id in [*removed_device_ids, *replaced_device_ids]:
             self._claims_by_device.pop(device_id, None)
         for device_id in removed_device_ids:
             await self._cancel_claims_for_device(
                 device_id,
                 reason=f"hardware device {device_id} {removed_reason}",
             )
-        await self._publish_advertisement()
+        for device_id in replaced_device_ids:
+            await self._cancel_claims_for_device(
+                device_id,
+                reason=f"hardware device {device_id} replaced",
+            )
+        await self._publish_advertisement_if_changed()
         await self._reconcile_claims(reason="device snapshot changed")
 
     async def handle_hardware_message(self, message: DeckrMessage) -> bool:
@@ -330,6 +353,8 @@ class HardwareManagerRuntime:
         *,
         refresh: bool = False,
     ) -> LiveHardwareClaim | None:
+        if self._closed:
+            return None
         claim = self._claims_by_device.get(device_id)
         if refresh or claim is None or envelope.sender != claim.controller_endpoint:
             await self._reconcile_claims(reason="command authorization")
