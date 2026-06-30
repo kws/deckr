@@ -38,6 +38,11 @@ class _CountingBeacon:
         await self._beacon.wait_current()
 
 
+class _ManualCurrentBeacon:
+    def is_current(self) -> bool:
+        return True
+
+
 class _RecoveringBeaconBucket(MemoryJsonKvBucket):
     def __init__(self, *, bucket: str) -> None:
         super().__init__(bucket=bucket, ttl_seconds=300)
@@ -248,6 +253,92 @@ async def test_beacon_directory_wait_for_returns_later_match_and_times_out() -> 
         with pytest.raises(TimeoutError):
             await directory.wait_for(lambda item: item == "missing", timeout=0.01)
         tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_beacon_directory_watch_records_replays_and_updates_snapshots() -> None:
+    beacon = Beacon(MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300))
+    directory = BeaconDirectory(beacon, FEATURE_ID, _parse_payload)
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await _publish(beacon, "ad-1", {"value": "one"})
+        directory.start(tg)
+
+        snapshots = directory.watch_records()
+        try:
+            assert await anext(snapshots) == ("one",)
+
+            second = await _publish(beacon, "ad-2", {"value": "two"})
+            assert await anext(snapshots) == ("one", "two")
+
+            await second.withdraw()
+            assert await anext(snapshots) == ("one",)
+        finally:
+            await snapshots.aclose()
+            tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_beacon_directory_watch_records_recovers_from_stale_view() -> None:
+    directory = BeaconDirectory(_ManualCurrentBeacon(), FEATURE_ID, _parse_payload)
+    directory._records_by_key["ad-1"] = ("one",)  # noqa: SLF001
+    directory._mark_current()  # noqa: SLF001
+
+    snapshots = directory.watch_records()
+    try:
+        assert await anext(snapshots) == ("one",)
+        directory._mark_stale()  # noqa: SLF001
+
+        async def recover() -> None:
+            await anyio.sleep(0.01)
+            directory._mark_current()  # noqa: SLF001
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(recover)
+            assert await anext(snapshots) == ("one",)
+            tg.cancel_scope.cancel()
+    finally:
+        await snapshots.aclose()
+
+
+@pytest.mark.asyncio
+async def test_beacon_directory_watch_records_closes_cleanly() -> None:
+    beacon = Beacon(MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300))
+    directory = BeaconDirectory(beacon, FEATURE_ID, _parse_payload)
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        directory.start(tg)
+
+        snapshots = directory.watch_records()
+        assert await anext(snapshots) == ()
+
+        await directory.aclose()
+        with pytest.raises(StopAsyncIteration):
+            await anext(snapshots)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_beacon_directory_watch_records_does_not_miss_change_between_waits() -> None:
+    beacon = Beacon(MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300))
+    directory = BeaconDirectory(beacon, FEATURE_ID, _parse_payload)
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        directory.start(tg)
+
+        snapshots = directory.watch_records()
+        try:
+            assert await anext(snapshots) == ()
+            await _publish(beacon, "ad-1", {"value": "one"})
+
+            with anyio.fail_after(1):
+                assert await anext(snapshots) == ("one",)
+        finally:
+            await snapshots.aclose()
+            tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio

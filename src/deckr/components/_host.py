@@ -12,7 +12,7 @@ import anyio
 
 from deckr.beacon import (
     Beacon,
-    BeaconFeatureEventType,
+    BeaconDirectory,
     Candidate,
 )
 from deckr.components._defs import Component
@@ -1415,6 +1415,15 @@ async def _run_dependency_observer(
     feature_snapshots: dict[str, dict[str, Candidate] | None] = {
         feature_id: {} for feature_id in feature_ids
     }
+    directories = {
+        feature_id: BeaconDirectory(
+            beacon,
+            feature_id,
+            _dependency_candidate,
+            log_label="ComponentHost dependency",
+        )
+        for feature_id in feature_ids
+    }
     send, receive = anyio.create_memory_object_stream[object](max_buffer_size=1)
 
     async def notify() -> None:
@@ -1423,45 +1432,39 @@ async def _run_dependency_observer(
         except anyio.WouldBlock:
             pass
 
-    async def watch_feature(feature_id: str) -> None:
-        while True:
-            async with beacon.watch(feature_id) as changes:
-                feature_snapshots[feature_id] = {
-                    candidate.key: candidate
-                    for candidate in beacon.candidates(feature_id)
-                }
-                await notify()
-                async for event in changes:
-                    snapshot = feature_snapshots.get(feature_id)
-                    if snapshot is None:
-                        snapshot = {}
-                        feature_snapshots[feature_id] = snapshot
-                    if (
-                        event.event_type
-                        in {
-                            BeaconFeatureEventType.ADVERTISED,
-                            BeaconFeatureEventType.UPDATED,
-                        }
-                        and event.candidate is not None
-                    ):
-                        snapshot[event.key] = event.candidate
-                    else:
-                        snapshot.pop(event.key, None)
-                    await notify()
+    async def watch_feature(
+        feature_id: str,
+        directory: BeaconDirectory[Candidate],
+    ) -> None:
+        async for records in directory.watch_records():
+            feature_snapshots[feature_id] = {
+                candidate.key: candidate for candidate in records
+            }
+            await notify()
 
     async with send, receive, anyio.create_task_group() as tg:
-        for feature_id in feature_ids:
-            tg.start_soon(watch_feature, feature_id)
-        while True:
-            await _evaluate_dependency_readiness(
-                specs,
-                feature_snapshots=feature_snapshots,
-                component_manager=component_manager,
-            )
-            with anyio.move_on_after(0.25) as scope:
-                await receive.receive()
-            if scope.cancel_called:
-                continue
+        for directory in directories.values():
+            directory.start(tg)
+        try:
+            for feature_id, directory in directories.items():
+                tg.start_soon(watch_feature, feature_id, directory)
+            while True:
+                await _evaluate_dependency_readiness(
+                    specs,
+                    feature_snapshots=feature_snapshots,
+                    component_manager=component_manager,
+                )
+                with anyio.move_on_after(0.25) as scope:
+                    await receive.receive()
+                if scope.cancel_called:
+                    continue
+        finally:
+            for directory in directories.values():
+                await directory.aclose()
+
+
+def _dependency_candidate(candidate: Candidate) -> Candidate:
+    return candidate
 
 
 async def _evaluate_dependency_readiness(

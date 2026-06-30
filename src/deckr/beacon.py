@@ -1027,6 +1027,7 @@ class BeaconDirectory(Generic[T]):
         self._current = False
         self._cancel_scope: anyio.CancelScope | None = None
         self._records_by_key: dict[str, tuple[T, ...]] = {}
+        self._version = 0
         self._lock = RLock()
 
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
@@ -1040,6 +1041,36 @@ class BeaconDirectory(Generic[T]):
 
     async def wait_ready(self) -> None:
         await self._ready.wait()
+
+    async def watch_records(self) -> AsyncIterator[tuple[T, ...]]:
+        """Yield current parsed records and subsequent current snapshots."""
+
+        last_version = -1
+        while True:
+            with self._lock:
+                if self._closed:
+                    return
+                current = (
+                    self._ready.is_set()
+                    and self._current
+                    and self._beacon.is_current()
+                )
+                version = self._version
+                if current and version != last_version:
+                    records = self._records_locked()
+                    last_version = version
+                    changed: anyio.Event | None = None
+                else:
+                    records = None
+                    changed = self._changed
+
+            if records is not None:
+                yield records
+                continue
+
+            assert changed is not None
+            with anyio.move_on_after(self._retry_interval):
+                await changed.wait()
 
     def is_current(self) -> bool:
         with self._lock:
@@ -1231,6 +1262,7 @@ class BeaconDirectory(Generic[T]):
             self._notify_changed_locked()
 
     def _notify_changed_locked(self) -> None:
+        self._version += 1
         changed = self._changed
         self._changed = anyio.Event()
         changed.set()
