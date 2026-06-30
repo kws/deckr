@@ -1507,7 +1507,7 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
     where
         F: FnMut(&ContractHandle, &ContractRecord) -> Result<bool>,
     {
-        let contracts = self
+        let mut contracts = self
             .concord
             .contracts(ContractFilters {
                 profile: self.profile.as_deref(),
@@ -1516,6 +1516,7 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
                 ..ContractFilters::default()
             })
             .await?;
+        self.sort_contracts_for_reconcile(&mut contracts);
         self.contract_index = contracts
             .iter()
             .map(|contract| (contract.key.clone(), contract.clone()))
@@ -1699,6 +1700,14 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         let validity = self.concord.validate(&contract, Some(&sessions)).await;
         let record = validity.contract.clone().unwrap_or(record);
         if terminal_managed_status(validity.status) {
+            if defer_unmanaged_missing_token(
+                validity.status,
+                validity.reason.as_deref(),
+                &self.participant,
+                lease.as_ref(),
+            ) {
+                return Ok(None);
+            }
             self.cancel_terminal_contract(&contract, validity.status)
                 .await?;
             if let Some(mut lease) = lease {
@@ -1785,6 +1794,16 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         sessions
     }
 
+    fn sort_contracts_for_reconcile(&self, contracts: &mut [ContractHandle]) {
+        contracts.sort_by(|left, right| {
+            let left_new = !self.managed.contains_key(&left.key);
+            let right_new = !self.managed.contains_key(&right.key);
+            left_new
+                .cmp(&right_new)
+                .then_with(|| left.key.cmp(&right.key))
+        });
+    }
+
     async fn cancel_terminal_contract(
         &self,
         contract: &ContractHandle,
@@ -1828,12 +1847,13 @@ impl<C: StateStore, T: StateStore>
         F: FnMut(&ContractHandle, &ContractRecord) -> Result<bool>,
     {
         self.concord.wait_current().await?;
-        let contracts = self.concord.contracts_cached(ContractFilters {
+        let mut contracts = self.concord.contracts_cached(ContractFilters {
             profile: self.profile.as_deref(),
             participant: Some(&self.participant),
             state: Some(ContractState::Open),
             ..ContractFilters::default()
         })?;
+        self.sort_contracts_for_reconcile(&mut contracts);
         self.contract_index = contracts
             .iter()
             .map(|contract| (contract.key.clone(), contract.clone()))
@@ -1990,6 +2010,14 @@ impl<C: StateStore, T: StateStore>
         let validity = self.concord.validate_cached(&contract, Some(&sessions));
         let record = validity.contract.clone().unwrap_or(record);
         if terminal_managed_status(validity.status) {
+            if defer_unmanaged_missing_token(
+                validity.status,
+                validity.reason.as_deref(),
+                &self.participant,
+                lease.as_ref(),
+            ) {
+                return Ok(None);
+            }
             self.cancel_terminal_contract(&contract, validity.status)
                 .await?;
             if let Some(mut lease) = lease {
@@ -2265,6 +2293,17 @@ fn terminal_managed_status(status: ContractValidityStatus) -> bool {
             | ContractValidityStatus::SessionMismatch
             | ContractValidityStatus::TermsHashMismatch
     )
+}
+
+fn defer_unmanaged_missing_token(
+    status: ContractValidityStatus,
+    reason: Option<&str>,
+    participant: &EndpointAddress,
+    lease: Option<&ConcordParticipantLease>,
+) -> bool {
+    status == ContractValidityStatus::MissingToken
+        && lease.is_none()
+        && reason.is_some_and(|missing_participant| missing_participant != participant.as_str())
 }
 
 fn managed_cancel_terminal_status(status: ContractValidityStatus) -> bool {
