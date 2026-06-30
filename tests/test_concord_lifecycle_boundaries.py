@@ -58,6 +58,7 @@ def test_production_code_uses_concord_lifecycle_apis() -> None:
 
 
 def test_removed_concord_names_are_not_public() -> None:
+    import deckr.beacon as beacon
     import deckr.concord as concord
 
     removed = {
@@ -66,11 +67,15 @@ def test_removed_concord_names_are_not_public() -> None:
         "ConcordParticipantManager",
         "ConcordContractNotification",
         "ConcordContractEvent",
+        "ConcordParticipantProfileIndexRecord",
         "CONCORD_CONTRACT_STORE_POLICY",
         "CONCORD_MAINTENANCE_STORE_POLICY",
+        "CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID",
         "CONCORD_TOKEN_STORE_POLICY",
+        "concord_contract_id_prefix",
     }
     assert all(not hasattr(concord, name) for name in removed)
+    assert not hasattr(beacon, "BeaconEvent")
     assert hasattr(concord, "Concord")
     assert hasattr(concord, "CONCORD_CONTRACT_BUCKET_POLICY")
 

@@ -152,6 +152,23 @@ def test_beacon_concord_key_vectors_match_python_helpers_and_parsers() -> None:
         assert parsed_value == inputs
 
 
+def test_concord_key_parsers_reject_non_positive_generations() -> None:
+    assert parse_concord_contract_key("contracts.hardware-contract.0.meta") is None
+    assert parse_concord_contract_key("contracts.hardware-contract.-1.meta") is None
+    assert (
+        parse_concord_participant_token_key(
+            "contracts.hardware-contract.0.participants.controller-main"
+        )
+        is None
+    )
+    assert (
+        parse_concord_participant_token_key(
+            "contracts.hardware-contract.-1.participants.controller-main"
+        )
+        is None
+    )
+
+
 def test_concord_terms_hash_vectors_match_python_helpers() -> None:
     vector = _json(_bundle_root() / "vectors" / "concord-terms-hash.v1.json")
 

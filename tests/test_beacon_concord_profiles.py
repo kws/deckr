@@ -38,6 +38,7 @@ from deckr.concord import (
     canonical_json_hash,
     concord_contract_key,
 )
+from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import (
     controller_address,
     hardware_manager_address,
@@ -280,6 +281,27 @@ def _raw_revision(bucket) -> int:
 
 def _inner_concord(service_or_concord) -> Concord:
     return service_or_concord
+
+
+def _legacy_participant_profile_index_key(
+    *,
+    participant: str,
+    profile: str,
+    contract_id: str,
+    generation: int,
+) -> str:
+    return ".".join(
+        (
+            "contracts",
+            "by_participant",
+            encode_key_token(participant),
+            "by_profile",
+            encode_key_token(profile),
+            encode_key_token(contract_id),
+            str(generation),
+            "ref",
+        )
+    )
 
 
 async def _delete_token_from_view(
@@ -1167,6 +1189,35 @@ async def test_beacon_validate_reports_unavailable_while_view_stale() -> None:
             while await beacon.validate(candidate) != CandidateStatus.CANDIDATE:
                 await anyio.sleep(0)
         tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_concord_does_not_write_participant_profile_index_records() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    concord = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+
+    contract = await concord._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    assert await contract_state.items("contracts.by_participant.") == ()
+
+    await concord._attach(
+        contract,
+        controller,
+        "controller-session",
+        token_id="controller-token",
+    )
+    assert await contract_state.items("contracts.by_participant.") == ()
+
+    await concord._cancel(contract, controller, reason="done")
+    assert await contract_state.items("contracts.by_participant.") == ()
 
 
 @pytest.mark.asyncio
@@ -2635,6 +2686,48 @@ async def test_concord_wait_current_rebuilds_generation_stale_cache() -> None:
 
         assert await service.get_contract(pointer) == contract
         tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_concord_ignores_legacy_participant_profile_index_keys() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    concord = _concord(contract_state, token_state)
+    legacy_key = _legacy_participant_profile_index_key(
+        participant="hardware_manager:manager-main",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        contract_id="hardware-contract-1",
+        generation=1,
+    )
+    legacy_entry = KvEntry(
+        "contracts",
+        legacy_key,
+        {
+            "schema": "dev.deckr.concord.participant-profile-proposal-ref.v1",
+            "contractId": "hardware-contract-1",
+            "generation": 1,
+            "contractKey": concord_contract_key(
+                contract_id="hardware-contract-1",
+                generation=1,
+            ),
+            "profile": HARDWARE_CLAIM_PROFILE_ID,
+            "participant": "hardware_manager:manager-main",
+            "contractRevision": 1,
+            "state": "open",
+            "updatedAt": "2024-01-01T00:00:00Z",
+        },
+        1,
+    )
+
+    async with concord.watch(replay_current=False) as events:
+        await concord._apply_contract_change(
+            KvChange("contracts", legacy_key, legacy_entry.revision, "put", legacy_entry)
+        )
+        async with concord._lock:
+            assert legacy_key not in concord._invalid_contracts_by_key
+        with anyio.move_on_after(0.05) as scope:
+            await events.receive()
+        assert scope.cancelled_caught
 
 
 @pytest.mark.asyncio

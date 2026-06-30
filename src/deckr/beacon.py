@@ -280,12 +280,6 @@ BeaconDirectorySelector = Callable[[Collection[T]], T | None]
 
 
 @dataclass(frozen=True, slots=True)
-class BeaconEvent:
-    change: KvChange
-    candidate: Candidate | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class BeaconFeatureEvent:
     event_type: BeaconFeatureEventType
     feature_id: str
@@ -1796,7 +1790,6 @@ __all__ = [
     "BeaconAdvertisementLease",
     "BeaconAdvertisementSpec",
     "BeaconDirectory",
-    "BeaconEvent",
     "BeaconFeatureEvent",
     "BeaconFeatureEventType",
     "BeaconProtocol",
