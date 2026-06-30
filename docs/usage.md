@@ -1001,6 +1001,11 @@ acquire_service_use_lease.
 
 OpenHAB/Sonos providers keep Concord.participant(...) with service-use terms
 validation and current service session evidence.
+
+This Python cleanup pass deliberately stops at the action SDK and Python
+OpenHAB/Sonos/Kaj plugin clients. Controller hardware/action discovery
+`candidates_exact(...)` fallback paths and the TypeScript/Rust mirror removals
+remain follow-up work in the broader breaking migration.
 ```
 
 Remove these public service-specific discovery helpers in the breaking branch:
