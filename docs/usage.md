@@ -1,6 +1,6 @@
 # Beacon & Concord Usage
 
-Below is the lifecycle I would expect from the Python side. The important rule is:
+Below is the current Python lifecycle. The important rule is:
 
 ```text
 Beacon discovers candidates.
@@ -16,37 +16,20 @@ All negotiated live authority uses Concord.
 Domain-specific meaning is supplied by endpoint family, feature id, profile id,
 payload schema, terms schema, and profile validation policy.
 
-## Breaking-change posture
+## Current posture
 
-This document describes the target shape for an intentional breaking change.
-The goal is to remove the old service-specific discovery and service-use index
-paths, not to keep them working beside the new generic path.
+This document describes the current Python Beacon and Concord usage shape.
+Beacon is the runtime discovery surface. Concord is the live authority surface.
+Feature integrations should compose those generic lifecycles with profile-owned
+payload parsing, terms construction, and validation policy.
 
-Do this in one coherent migration branch:
+The old Python service-specific discovery and service-use index helpers are no
+longer public APIs. Service consumers use `BeaconDirectory` and propose Concord
+agreements directly. Service providers use `Concord.participant(...)` and
+validate profile terms in policy callbacks.
 
-```text
-add BeaconDirectory
-move callers to BeaconDirectory and direct Concord proposals
-delete ServiceDirectory, ServiceResolver, and service-use index APIs
-delete stale tests and docs for the removed APIs
-```
-
-It is fine for intermediate commits in that branch to be temporarily broken.
-The merged result should be workable, tested, and internally consistent. Do not
-add compatibility aliases, deprecated wrappers, dual lookup paths, feature
-flags, or fallback scans just to keep old clients running during the migration.
-Downstream clients and cross-language mirrors should move with the contract.
-
-The `BeaconDirectory` API used below is the target API this branch creates. The
-Beacon advertisement lease, direct Concord proposal flow, and
-`Concord.participant(...)` provider flow are already the intended shape; the
-breaking work is to make discovery generic and remove the service-specific
-authority shortcuts around it.
-
-The examples below are identical for services, hardware, actions, or
-future namespaces. So where we use service below, we use it in the most
-generic sense, and there should not be specific paths for hardware or actions
-as examples.
+Cross-language parity work is outside this usage document. The examples below
+focus on the current Python APIs exported by this repository.
 
 ## Shared example service feature definition
 
@@ -197,7 +180,11 @@ class ExampleAdvertiser:
 
 What keeps the Beacon advertisement alive?
 
-The returned `BeaconAdvertisementLease` is the important object. Keeping it alive keeps the managed heartbeat loop alive. The branch’s Beacon lease has an internal heartbeat loop and `aclose()`/withdraw path. The docs describe the default Beacon TTL as 300 seconds, with managed refreshes scheduled around 150–225 seconds by default.
+The returned `BeaconAdvertisementLease` is the important object. Keeping it
+open keeps the managed heartbeat loop alive after the Beacon runtime is started.
+Calling `aclose()` withdraws the advertisement and stops the lease. The default
+Beacon TTL is 300 seconds, with managed refreshes scheduled around 150-225
+seconds by default.
 
 To update the advertisement because the advertised feature degraded:
 
@@ -814,338 +801,79 @@ The architectural invariant is: **Beacon disappearance only affects future disco
 
 ---
 
-## Breaking implementation plan
+## HardwareManagerRuntime
 
-The first workable slice should introduce the generic `BeaconDirectory`, move
-Python service discovery onto it, and delete the Python
-`ServiceDirectory`/`ServiceResolver` public API in the same branch. The same
-breaking branch should remove service-use index APIs and callers instead of
-preserving them with aliases or shims.
+`HardwareManagerRuntime` is the Python manager-side helper for the shared
+hardware profile. A concrete hardware manager still owns physical device
+discovery and command execution. The shared runtime owns the protocol mechanics:
+publishing the hardware Beacon advertisement, participating in Concord hardware
+claim contracts, authorizing controller traffic, routing input and capability
+state for live claims, producing rejection replies, reconciling claim state, and
+refreshing advertised capacity.
 
-`Concord.participant(...)` is already the desired provider-side shape. Keep it
-and compose it with pure profile validation helpers; do not replace it with a
-new service-specific acceptor.
+Hardware inventory is advertised through the `HARDWARE_FEATURE_ID` Beacon
+feature as a `HardwareBeaconPayload`. The payload identifies the manager,
+manager endpoint, endpoint session id, labels, and the current device map. Each
+advertised device carries a `DeviceDescriptor`, a `DeviceRef`, and profile
+capacity. Capacity is a discovery hint. A valid Concord claim is the authority
+for live use.
 
-Do not replace the removed APIs with another service-specific directory,
-service-use acceptor, compatibility manager, or deterministic contract-reuse
-helper unless a concrete repeated call-site need appears later.
+The runtime updates inventory through `set_device(...)`,
+`replace_devices(...)`, and `remove_device(...)`. Adding or updating a device
+publishes a fresh Beacon payload when the advertised state changes. Replacing a
+device with a new fingerprint cancels live claims for that device and advertises
+the replacement as unclaimed capacity. Removing a device cancels matching live
+claims and removes the device from the next Beacon payload. Replacing the full
+device snapshot applies the same cancellation rules for removed and materially
+changed devices.
 
-Create:
+Controller ownership is represented by `HARDWARE_CLAIM_PROFILE_ID` Concord
+contracts with `HardwareClaimTerms`. The terms bind a controller endpoint, a
+hardware-manager endpoint, and one or more claimed device refs. The runtime uses
+`Concord.participant(...)` to maintain the manager participant token only for
+contracts whose terms match the current manager endpoint and current device
+inventory. `live_claims` exposes the currently valid selected claims.
 
-```text
-deckr.beacon.BeaconDirectory
-BeaconDirectory tests for replay, update, withdraw, invalid payloads, and stale/current recovery
-BeaconDirectory support for parser output that is zero, one, or many records
-small generic Concord wait-for-valid helper, only if repeated proposal loops prove it useful
-```
+Single-owner behavior is manager/profile policy over valid Concord contracts.
+When multiple valid contracts overlap on the same device, the runtime keeps an
+existing live claim before selecting a new one. Among new overlapping claim
+candidates, it selects by stable contract ordering. Non-selected contracts stay
+unfulfilled because the manager does not attach or keep a token for them.
 
-Modify:
+The `hardware_messages` lane carries traffic; it is not inventory authority.
+The runtime forwards `controlInput` and `capabilityStateChanged` messages only
+when the referenced device is currently covered by a live claim. Forwarded
+messages target the claimed controller endpoint and controller session id.
+Unclaimed or unknown device input is dropped.
 
-```text
-Python service consumers use BeaconDirectory plus pure service descriptor helpers
-Python service consumers propose ConcordAgreementSpec directly for service use
-provider implementations keep Concord.participant(...) and pure ServiceUseTerms validation
-controller hardware/action discovery moves away from candidates_exact(...) fallback paths
-docs describe BeaconDirectory and direct Concord proposal, not ServiceDirectory or service-use indexes
-TypeScript and Rust mirrors follow the same public contract shape
-```
+Controller commands and capability state requests are accepted only from the
+claimed controller endpoint and current controller session. Before rejecting a
+command as unauthorized, the runtime reconciles claims so a fresh valid claim
+can become live. Stale, unauthorized, and unsupported command traffic receives
+the existing hardware rejection replies. Unsupported capability state requests
+receive an unsupported state reply; stale or unauthorized state requests receive
+a rejected state reply.
 
-Remove:
+Stopping the runtime withdraws the hardware Beacon advertisement, clears the
+local live-claim view, and closes the Concord participant manager so manager
+tokens stop refreshing. Beacon disappearance only affects future discovery. It
+does not cancel an existing claim by itself; if a claimed device disappears, the
+manager must cancel the matching Concord claim or stop maintaining its
+participant token.
 
-```text
-Python ServiceDirectory, ServiceResolver, ServiceSelectionPolicy, and NewestServiceSelectionPolicy
-service-use index APIs, buckets, scope records, deterministic pointer reuse, and tests
-cross-language ServiceUseLeaseManager / ServiceQuery / service-use index mirrors
-compatibility aliases, deprecated wrappers, dual discovery APIs, and exact-scan fallback paths
-```
+On startup, the host opens a `hardware_manager` endpoint session, creates the
+runtime with the endpoint, Beacon, Concord, and hardware callbacks, then starts
+the runtime in the surrounding task group. From there, the runtime publishes the
+current inventory through Beacon, accepts matching claim contracts through
+Concord participant policy, and routes authorized hardware traffic while claims
+validate.
 
-The utility boundary should be:
+During inventory changes, the manager updates current `DeviceDescriptor`
+records through the runtime. The runtime publishes changed Beacon payloads,
+cancels claims for removed or fingerprint-replaced devices, calls the reset
+handler for devices whose live claims are lost when one is provided, and
+reconciles live claims with advertised capacity.
 
-```text
-generic lifecycle helpers live in deckr.beacon or deckr.concord
-domain/profile packages provide pure parsers, selectors, terms builders, and validators
-applications compose those pieces for their policy
-```
-
-That keeps boilerplate low without making services special. If repeated
-boilerplate appears in services, hardware, actions, and future feature families,
-the fix should be a parameterized Beacon or Concord utility. If boilerplate is
-specific to one profile's payload or terms schema, it belongs beside that
-profile's models as a pure helper.
-
-Good generic utility candidates:
-
-```text
-runtime-owned BeaconDirectory registry keyed by feature id and stable
-  parser/profile identity
-BeaconDirectory parser/predicate/selector helpers
-BeaconDirectory support for both one descriptor per advertisement and
-  fan-out advertisements that produce zero or many domain records
-Concord agreement wait helpers with caller-supplied terminal statuses
-Concord participant helpers that accept current_sessions and accept_contract callbacks
-```
-
-The registry recommendation is a performance recommendation, not a convenience
-wrapper for per-call lookups. A runtime should start one long-lived
-BeaconDirectory for a feature/profile and reuse its local parsed view from
-request handlers. It should not create a directory, replay a watch, or scan a
-bucket inside each command, view read, action resolution, or hardware claim
-attempt.
-
-The directory API must not assume every Beacon advertisement maps to exactly one
-domain record. Service advertisements normally parse into one descriptor.
-Hardware advertisements can expose multiple device candidates. Action-provider
-advertisements can expose multiple action descriptors. A generic directory can
-model this either by accepting a parser that returns a collection, or by storing
-parsed advertisement payloads and letting the domain selector fan out locally.
-
-Good domain/profile helpers:
-
-```text
-parse candidate payload into a descriptor
-select a descriptor from a collection
-build profile terms from a descriptor and requested scope
-validate proposed terms against current session and application policy
-derive protected view keys and prefixes
-```
-
-Avoid utilities that combine discovery, terms construction, Concord proposal,
-contract reuse, and provider acceptance into one domain-specific lifecycle
-manager. Those helpers are hard to reuse across feature families and tend to
-recreate hidden authority paths.
-
-Performance guardrails:
-
-```text
-No raw KV key scans on runtime lookup paths.
-No exact-candidate fallback from normal discovery.
-No raw bucket items(...), materialized-bucket items_exact(...), or
-  equivalent prefix listing inside service/action/hardware resolution.
-No caller-facing Concord participant/profile search to decide which service to use.
-No service-use scope index or deterministic scope pointer for contract reuse.
-No per-request materialized view startup.
-No public API that asks callers to choose between "cached" and "exact" lookup
-  paths unless there is a strict diagnostic or maintenance requirement.
-```
-
-Hot-path discovery should wait for a long-lived Beacon view to become current
-and then resolve locally. If that view is unavailable, surface unavailability or
-let the surrounding lifecycle wait; do not recover by listing exact Beacon keys.
-Concord lookup in hot paths should use agreement handles, exact known contract
-pointers, or participant managers. Any filtered contract indexes needed to make
-that fast should stay behind those abstractions rather than becoming application
-integration APIs.
-Maintenance, diagnostics, reapers, and cold-start materialization may perform
-bounded scans, but feature resolution must not.
-
-Python action SDK service surface:
-
-Python action authors should receive `self.services`, not raw
-`self.core.beacon`, `self.core.concord`, or `self.core.kv_bucket(...)`. The
-runtime-owned `DeckrServices` handle keeps one `BeaconDirectory` per service
-protocol, proposes scoped Concord service-use contracts, sends service commands,
-and reads or watches fenced service views. It is intentionally not a
-ServiceDirectory replacement and does not expose raw Beacon, Concord, endpoint,
-or KV handles.
-
-Availability probes are descriptor checks against the long-lived directory. They
-must not open repeated one-second Concord proposals:
-
-```python
-async def openhab_probe(services: DeckrServices) -> None:
-    client = OpenHABServiceClient(services)
-    await client.require_available(
-        "openhab-home",
-        operations={"ensureItems", "sendCommand"},
-        views={"items"},
-    )
-```
-
-Interactive commands should name both budgets. The service-use budget covers
-discovery plus Concord validity and should usually be at least 30 seconds. The
-request budget covers only the command RPC after authority exists:
-
-```python
-reply = await SonosServiceClient(self.services).command(
-    "sonos-home",
-    "playMusicItem",
-    {"zone": self.zone_name, "playRef": dict(play_ref)},
-    service_use_timeout_seconds=30.0,
-    request_timeout_seconds=12.0,
-)
-```
-
-View watchers should normally let lifecycle cancellation bound setup and retry.
-Do not reuse command RPC timeouts as watcher setup timeouts:
-
-```python
-async for view in SonosServiceClient(self.services).watch_view(
-    "sonos-home",
-    sonos_zone_view_ref("sonos-home", self.zone_name),
-):
-    if view is None:
-        break
-    await self._apply_view(view)
-```
-
-Landed Python cleanup:
-
-```text
-deckr-action-provider-runtime-python exposes DeckrServices as context.services
-and self.services. DeckrRuntimeCore is no longer exported as an SDK type.
-
-deckr-plugin-openhab, deckr-plugin-sonos, and deckr-plugin-kaj action code use
-self.services. Their service clients no longer use _DIRECTORY_CACHE,
-ServiceDirectory, ServiceResolver, SERVICE_USE_INDEX_BUCKET_POLICY, or
-acquire_service_use_lease.
-
-OpenHAB/Sonos providers keep Concord.participant(...) with service-use terms
-validation and current service session evidence.
-
-This Python cleanup pass deliberately stops at the action SDK and Python
-OpenHAB/Sonos/Kaj plugin clients. Controller hardware/action discovery
-`candidates_exact(...)` fallback paths and the TypeScript/Rust mirror removals
-remain follow-up work in the broader breaking migration.
-```
-
-Remove these public service-specific discovery helpers in the breaking branch:
-
-```text
-src/deckr/services/directory.py
-from deckr.services import ServiceDirectory
-from deckr.services import ServiceResolver
-from deckr.services import ServiceSelectionPolicy
-from deckr.services import NewestServiceSelectionPolicy
-```
-
-Remove any remaining Python service-use index and request-lifecycle surface in
-the breaking branch. Some of these symbols may already be gone in Python; do not
-reintroduce them:
-
-```text
-from deckr.services import SERVICE_USE_INDEX_BUCKET_POLICY
-from deckr.services import SERVICE_USE_INDEX_SCHEMA_ID
-from deckr.services import ServiceUseRequest
-from deckr.services import ServiceUseScopeIndexRecord
-from deckr.services import acquire_service_use_lease
-from deckr.services import service_use_scope_index_key
-deckr_service_use_index_v1 references
-```
-
-Remove or replace the corresponding cross-language mirrors in the same
-contract-breaking pass:
-
-```text
-typescript/deckr ServiceUseLeaseManager
-typescript/deckr SERVICE_USE_INDEX_SCHEMA_ID
-typescript/deckr ServiceUseScopeIndexRecord
-typescript/deckr validateServiceUseScopeIndexRecord(...)
-typescript/deckr serviceUseScopeIndexKey(...)
-typescript/deckr DEFAULT_SERVICE_USE_INDEX_STORE_NAME
-rust/deckr SERVICE_USE_INDEX_SCHEMA_ID
-rust/deckr DEFAULT_SERVICE_USE_INDEX_STORE_NAME
-rust/deckr service_use_index_store_policy(...)
-rust/deckr ServiceDirectory
-rust/deckr ServiceResolver
-rust/deckr ServiceQuery
-rust/deckr ServiceUseScopeIndexRecord
-rust/deckr service_use_scope_index_key(...)
-```
-
-Remove the matching imports and `__all__` exports from `deckr.services`. Remove
-tests whose only purpose is deterministic service-use index behavior:
-
-```text
-scope-index reuse
-stale pointer replacement
-client-session mismatch replacement
-missing-token replacement through the index
-terms-hash mismatch replacement
-CAS retry behavior for the service-use index
-```
-
-Replacement discovery code should be structured like this:
-
-```python
-directory = BeaconDirectory(
-    deckr.beacon,
-    PROTOCOL.feature_id,
-    lambda candidate: parse_service_descriptor(candidate, PROTOCOL),
-    log_label="ExampleService",
-)
-directory.start(task_group)
-await directory.wait_ready()
-
-descriptor = await directory.wait_for(
-    lambda item: (
-        item.backend_status != ServiceBackendStatus.UNAVAILABLE
-        and {"presence.report"}.issubset(item.supported_operations)
-        and {"status"}.issubset(set(item.views))
-    ),
-    select=newest_service_descriptor,
-)
-```
-
-Replacement consumer proposal code should be structured like this:
-
-```python
-terms = service_use_terms(
-    descriptor,
-    client_endpoint=client_endpoint,
-    operations={"presence.report"},
-    views={"status"},
-)
-
-agreement = await deckr.concord.propose(
-    ConcordAgreementSpec(
-        participants=(client_endpoint, str(descriptor.endpoint)),
-        local_participant=client_endpoint,
-        local_session_id=client_session_id,
-        profile=descriptor.use_profile,
-        terms=terms,
-    ),
-    start_soon=task_group.start_soon,
-)
-```
-
-Replacement provider acceptance code should be structured like this:
-
-```python
-participant = deckr.concord.participant(
-    participant=service_endpoint,
-    session_id=service_session_id,
-    profile=PROTOCOL.use_profile,
-    current_sessions=current_sessions_for_service,
-    accept_contract=accept_service_use_terms,
-    log_label="ExampleService",
-)
-participant.start(task_group)
-```
-
-Replace deleted index/discovery coverage with:
-
-```text
-BeaconDirectory replay and live update behavior
-domain parser rejects invalid Beacon payloads
-consumer proposes opaque Concord contracts directly
-provider accepts through Concord.participant(...)
-stale service session terms are rejected
-shutdown/drain cancels or releases managed Concord contracts as intended
-```
-
-Keep the service domain models and helpers that describe payloads, terms, and
-protected views:
-
-```text
-ServiceProtocol
-ServiceAdvertisementPayload
-ServiceDescriptor
-ServiceUseTerms
-ServiceUseLease
-parse_service_descriptor(...)
-service_descriptor_from_terms(...)
-service_use_terms(...)
-service_view_key(...)
-service_view_prefix(...)
-ServiceViewStore and view authorization helpers
-```
+On shutdown, the host calls `stop()` before closing the endpoint session. The
+runtime withdraws Beacon, clears local live claims, and closes the Concord
+participant/token leases.
