@@ -546,6 +546,19 @@ impl ConcordParticipantLease {
         self.last_token_refresh_at = None;
     }
 
+    pub async fn withdraw<C: StateStore, T: StateStore>(
+        &mut self,
+        concord: &ConcordCoordinator<C, T>,
+    ) -> Result<bool> {
+        let token = self.token.take();
+        self.closed = true;
+        self.last_token_refresh_at = None;
+        let Some(token) = token else {
+            return Ok(false);
+        };
+        concord.withdraw(&token).await
+    }
+
     pub fn adopt(&mut self, token: ParticipantHandle) -> Result<()> {
         if token.contract_id != self.contract.contract_id {
             return Err(Error::Invalid(
@@ -1032,6 +1045,22 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
         ))
     }
 
+    pub async fn withdraw(&self, handle: &ParticipantHandle) -> Result<bool> {
+        let Some(token_entry) = self.token_state.get(&handle.key).await? else {
+            return Ok(false);
+        };
+        let token = ParticipantTokenRecord::from_value(token_entry.value)?;
+        if !token_matches_handle(&token, handle) {
+            return Err(Error::StateConflict(
+                "Concord participant token changed owner".to_string(),
+            ));
+        }
+        self.token_state
+            .delete(&handle.key, Some(token_entry.revision))
+            .await?;
+        Ok(true)
+    }
+
     pub async fn cancel(
         &self,
         contract: &ContractHandle,
@@ -1491,6 +1520,18 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
         }
         self.managed.remove(contract_key);
         self.contract_index.remove(contract_key);
+    }
+
+    pub async fn release_withdraw(&mut self, contract_key: &str) -> Result<bool> {
+        let mut lease = self.leases.remove(contract_key);
+        let withdrawn = if let Some(lease) = lease.as_mut() {
+            lease.withdraw(&self.concord).await?
+        } else {
+            false
+        };
+        self.managed.remove(contract_key);
+        self.contract_index.remove(contract_key);
+        Ok(withdrawn)
     }
 
     pub async fn cancel(&self, contract: &ContractHandle, reason: Option<String>) -> Result<bool> {

@@ -215,8 +215,8 @@ pub mod runtime {
 
     use crate::beacon::{AdvertisementHandle, BeaconAdvertiser};
     use crate::concord::{
-        ConcordCoordinator, ConcordManagedContract, ConcordParticipantManager, ContractHandle,
-        ContractRecord,
+        ConcordContractNotification, ConcordCoordinator, ConcordManagedContract,
+        ConcordParticipantManager, ContractHandle, ContractRecord,
     };
     use crate::endpoint::{hardware_manager_address, EndpointAddress};
     use crate::lanes::{DeckrMessage, DeviceDescriptor, HardwareMessageBody};
@@ -752,6 +752,10 @@ pub mod runtime {
         }
 
         pub async fn start(&self, tasks: &mut JoinSet<Result<()>>) -> Result<()> {
+            {
+                let inner = self.inner.lock().await;
+                inner.cleanup_stale_advertisement().await?;
+            }
             self.reconcile_claims("startup").await?;
             {
                 let mut inner = self.inner.lock().await;
@@ -781,7 +785,7 @@ pub mod runtime {
                 .map(|managed| managed.contract.key)
                 .collect::<Vec<_>>();
             for key in managed_keys {
-                inner.claim_manager.release(&key);
+                inner.claim_manager.release_withdraw(&key).await?;
             }
             inner.state.routing = HardwareClaimRouting::default();
             inner.withdraw_advertisement().await
@@ -980,9 +984,70 @@ pub mod runtime {
                     .claim_manager
                     .cancel(&managed.contract, Some(reason.to_string()))
                     .await?;
-                inner.claim_manager.release(&managed.contract.key);
+                inner
+                    .claim_manager
+                    .release_withdraw(&managed.contract.key)
+                    .await?;
             }
             Ok(())
+        }
+
+        async fn reconcile_notification(
+            &self,
+            notification: &ConcordContractNotification,
+        ) -> Result<HardwareClaimReconcile> {
+            let (reconcile, reset_handler) = {
+                let mut inner = self.inner.lock().await;
+                if inner.closed {
+                    return Ok(HardwareClaimReconcile {
+                        reset_devices: BTreeSet::new(),
+                    });
+                }
+                let state_snapshot = inner.state.clone();
+                let mut selected_devices = state_snapshot.routing.claimed_device_ids();
+                let managed = inner
+                    .claim_manager
+                    .reconcile_notification_cached(
+                        notification,
+                        |contract, record| {
+                            if !state_snapshot.accept_current_hardware_claim(contract, record)? {
+                                return Ok(false);
+                            }
+                            let Some(terms_value) = record.terms.clone() else {
+                                return Ok(false);
+                            };
+                            let terms = HardwareClaimTerms::from_value(terms_value)?;
+                            let device_ids = terms
+                                .devices
+                                .iter()
+                                .map(|device| device.device_ref.device_id.clone())
+                                .collect::<BTreeSet<_>>();
+                            if state_snapshot
+                                .routing
+                                .route_for_contract(&contract.key)
+                                .is_some()
+                            {
+                                selected_devices.extend(device_ids);
+                                return Ok(true);
+                            }
+                            if device_ids
+                                .iter()
+                                .any(|device_id| selected_devices.contains(device_id))
+                            {
+                                return Ok(false);
+                            }
+                            selected_devices.extend(device_ids);
+                            Ok(true)
+                        },
+                        None,
+                    )
+                    .await?;
+                let reconcile = inner.state.reconcile_claims(&managed);
+                inner.publish_advertisement_if_changed(false).await?;
+                (reconcile, inner.reset_handler.clone())
+            };
+            reset_devices(reset_handler, &reconcile.reset_devices).await?;
+            Ok(reconcile)
         }
 
         async fn refresh_managed_tokens(&self) -> Result<()> {
@@ -1034,7 +1099,7 @@ pub mod runtime {
                 let inner = self.inner.lock().await;
                 inner
                     .concord
-                    .watch_contract_notifications(
+                    .watch_contract_notifications_cached(
                         Some(HARDWARE_CLAIM_PROFILE_ID),
                         Some(inner.state.endpoint()),
                     )
@@ -1042,7 +1107,7 @@ pub mod runtime {
             };
             loop {
                 let notification = notifications.next().await?;
-                self.reconcile_claims(notification.source.reason()).await?;
+                self.reconcile_notification(&notification).await?;
             }
         }
 
@@ -1109,6 +1174,13 @@ pub mod runtime {
             self.advertisement_handle = Some(handle);
             self.advertised_payload = Some(payload);
             Ok(true)
+        }
+
+        async fn cleanup_stale_advertisement(&self) -> Result<usize> {
+            let payload = self.advertisement_payload_value()?;
+            self.advertiser_for_payload(payload)
+                .cleanup_stale_same_endpoint()
+                .await
         }
 
         async fn withdraw_advertisement(&mut self) -> Result<()> {

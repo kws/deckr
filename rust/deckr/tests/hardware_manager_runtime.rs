@@ -3,7 +3,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use deckr::beacon::Beacon;
+use deckr::beacon::{Beacon, BeaconAdvertiser};
 use deckr::concord::{
     concord_participant_token_key, ConcordCoordinator, ContractHandle, ContractState,
     ContractValidityStatus, CreateContractSpec,
@@ -446,6 +446,34 @@ async fn publishes_beacon_payload_and_skips_noop_refresh() {
 }
 
 #[tokio::test]
+async fn startup_removes_stale_hardware_beacon_for_same_manager_endpoint() {
+    let h = harness().await;
+    let manager = EndpointAddress::parse("hardware_manager:manager-main").unwrap();
+    let stale_advertiser = BeaconAdvertiser::new(
+        h.beacon_state.clone(),
+        HARDWARE_FEATURE_ID,
+        manager,
+        "old-manager-session",
+    )
+    .advertisement_id("stale-hardware-ad")
+    .payload(serde_json::json!({"profile": "stale"}));
+    let stale = stale_advertiser.publish().await.unwrap();
+
+    let tasks = start_runtime(&h).await;
+
+    assert!(h.beacon_state.get(&stale.key).await.unwrap().is_none());
+    let beacon = Beacon::start(h.beacon_state.clone()).await.unwrap();
+    let candidates = beacon.candidates(HARDWARE_FEATURE_ID).unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_ne!(
+        candidates[0].advertisement.advertisement_id,
+        "stale-hardware-ad"
+    );
+
+    stop_runtime(&h, tasks).await;
+}
+
+#[tokio::test]
 async fn fresh_claim_is_reconciled_before_command_rejection() {
     let h = harness().await;
     let tasks = start_runtime(&h).await;
@@ -631,6 +659,13 @@ async fn removed_device_cancels_live_claim() {
         record.cancel_reason.as_deref(),
         Some("hardware device deck disconnected")
     );
+    let manager = EndpointAddress::parse("hardware_manager:manager-main").unwrap();
+    assert!(h
+        .concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_none());
     let payload = hardware_payload(&h.beacon_state).await;
     assert!(!payload.devices.contains_key("deck"));
 
@@ -661,6 +696,13 @@ async fn replaced_device_cancels_live_claim_and_releases_capacity() {
         record.cancel_reason.as_deref(),
         Some("hardware device deck replaced")
     );
+    let manager = EndpointAddress::parse("hardware_manager:manager-main").unwrap();
+    assert!(h
+        .concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_none());
     wait_for_reset_devices(&h, &["deck"]).await;
     wait_for_capacity(&h, "deck", 0).await;
     let payload = hardware_payload(&h.beacon_state).await;
@@ -674,9 +716,9 @@ async fn replaced_device_cancels_live_claim_and_releases_capacity() {
 #[tokio::test]
 async fn competing_claims_choose_existing_or_lowest_key() {
     let h = harness().await;
-    let tasks = start_runtime(&h).await;
     h.runtime.set_device(descriptor("deck")).await.unwrap();
     let existing = create_claim(&h.concord, "claim-b", "b", "session-b").await;
+    let tasks = start_runtime(&h).await;
     h.lane.publish_inbound(control_command("b", "session-b"));
     wait_for_handler_messages(&h, 1).await;
     let lower = create_claim(&h.concord, "claim-a", "a", "session-a").await;
@@ -694,10 +736,10 @@ async fn competing_claims_choose_existing_or_lowest_key() {
     stop_runtime(&h, tasks).await;
 
     let h = harness().await;
-    let tasks = start_runtime(&h).await;
     h.runtime.set_device(descriptor("deck")).await.unwrap();
     let lower = create_claim(&h.concord, "claim-a", "a", "session-a").await;
     let higher = create_claim(&h.concord, "claim-b", "b", "session-b").await;
+    let tasks = start_runtime(&h).await;
     h.lane.publish_inbound(control_command("a", "session-a"));
     wait_for_handler_messages(&h, 1).await;
     h.lane.publish_inbound(control_command("b", "session-b"));
@@ -710,6 +752,70 @@ async fn competing_claims_choose_existing_or_lowest_key() {
         h.concord.validate(&higher, None).await.status,
         ContractValidityStatus::NotYetFulfilled
     );
+    stop_runtime(&h, tasks).await;
+}
+
+#[tokio::test]
+async fn token_notifications_do_not_trigger_broad_claim_discovery() {
+    let h = harness().await;
+    h.runtime.set_device(descriptor("deck")).await.unwrap();
+    let claim_a = create_claim(&h.concord, "claim-a", "a", "session-a").await;
+    let claim_b = create_claim(&h.concord, "claim-b", "b", "session-b").await;
+    let tasks = start_runtime(&h).await;
+    h.lane.publish_inbound(control_command("a", "session-a"));
+    wait_for_handler_messages(&h, 1).await;
+
+    let manager = EndpointAddress::parse("hardware_manager:manager-main").unwrap();
+    assert!(h
+        .concord
+        .participant_token(&claim_a, &manager)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(h
+        .concord
+        .participant_token(&claim_b, &manager)
+        .await
+        .unwrap()
+        .is_none());
+
+    h.concord
+        .cancel(
+            &claim_a,
+            &EndpointAddress::parse("controller:a").unwrap(),
+            Some("done".to_string()),
+        )
+        .await
+        .unwrap();
+    wait_for_reset_devices(&h, &["deck"]).await;
+    assert!(h
+        .concord
+        .participant_token(&claim_b, &manager)
+        .await
+        .unwrap()
+        .is_none());
+
+    let controller_b = EndpointAddress::parse("controller:b").unwrap();
+    let controller_b_token = h
+        .concord
+        .participant_token(&claim_b, &controller_b)
+        .await
+        .unwrap()
+        .unwrap();
+    h.concord.refresh(&controller_b_token).await.unwrap();
+    materialize().await;
+
+    assert!(h
+        .concord
+        .participant_token(&claim_b, &manager)
+        .await
+        .unwrap()
+        .is_none());
+    let payload = hardware_payload(&h.beacon_state).await;
+    let deck = payload.devices.get("deck").unwrap();
+    assert_eq!(deck.capacity.claimed_instances, 0);
+    assert_eq!(deck.capacity.available_instances, Some(1));
+
     stop_runtime(&h, tasks).await;
 }
 
@@ -758,7 +864,7 @@ async fn start_routes_subscribed_commands_and_stop_withdraws_beacon_and_claims()
     assert_eq!(beacon.candidates(HARDWARE_FEATURE_ID).unwrap().len(), 1);
 
     h.runtime.set_device(descriptor("deck")).await.unwrap();
-    create_claim(&h.concord, "claim-a", "main", "controller-session").await;
+    let contract = create_claim(&h.concord, "claim-a", "main", "controller-session").await;
     h.lane
         .publish_inbound(control_command("main", "controller-session"));
     wait_until(|| {
@@ -768,10 +874,29 @@ async fn start_routes_subscribed_commands_and_stop_withdraws_beacon_and_claims()
             .is_ok_and(|messages| messages.len() == 1)
     })
     .await;
+    let manager = EndpointAddress::parse("hardware_manager:manager-main").unwrap();
+    assert!(h
+        .concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_some());
 
     h.runtime.stop().await.unwrap();
     let beacon = Beacon::start(h.beacon_state.clone()).await.unwrap();
     assert!(beacon.candidates(HARDWARE_FEATURE_ID).unwrap().is_empty());
+    assert!(h
+        .concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_none());
+    let record = h.concord.contract_record(&contract).await.unwrap().unwrap();
+    assert_eq!(record.state, ContractState::Open);
+    assert_eq!(
+        h.concord.validate(&contract, None).await.status,
+        ContractValidityStatus::MissingToken
+    );
 
     h.lane
         .publish_inbound(control_command("main", "controller-session"));

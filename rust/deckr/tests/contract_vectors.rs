@@ -3,15 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use deckr::beacon::{
-    beacon_advertisement_key, beacon_advertisement_store_policy, AdvertisementRecord,
-    BeaconAdvertiser, DEFAULT_BEACON_TTL_SECONDS,
+    beacon_advertisement_key, beacon_advertisement_store_policy, find_candidates,
+    AdvertisementRecord, BeaconAdvertiser, DEFAULT_BEACON_TTL_SECONDS,
 };
 use deckr::canonical_json::{canonical_json_bytes_value, canonical_json_hash_value};
 use deckr::concord::{
     concord_contract_key, concord_participant_token_key, concord_token_store_policy,
-    ConcordCoordinator, ConcordNotificationSource, ConcordParticipantLease,
-    ConcordParticipantManager, ContractHandle, ContractRecord, ContractState,
-    ContractValidityStatus, CreateContractSpec, ParticipantTokenRecord,
+    ConcordContractNotification, ConcordCoordinator, ConcordNotificationSource,
+    ConcordParticipantLease, ConcordParticipantManager, ContractHandle, ContractRecord,
+    ContractState, ContractValidityStatus, CreateContractSpec, ParticipantTokenRecord,
     DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS, DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
 };
 use deckr::endpoint::EndpointAddress;
@@ -25,8 +25,8 @@ use deckr::profiles::hardware::{
     HARDWARE_CLAIM_PROFILE_ID,
 };
 use deckr::state::{
-    MaterializedStateStore, MemoryStateStore, StateEntry, StateMaintenancePolicy, StateStore,
-    StateWatchStream,
+    MaterializedStateStore, MemoryStateStore, StateChange, StateEntry, StateMaintenancePolicy,
+    StateOperation, StateStore, StateWatchStream,
 };
 use deckr::Result;
 use serde::Deserialize;
@@ -557,6 +557,60 @@ async fn beacon_advertisement_uses_bucket_ttl_and_coalesces_unchanged_refreshes(
 }
 
 #[tokio::test]
+async fn beacon_cleanup_stale_same_endpoint_removes_old_identity_only() {
+    let state = MemoryStateStore::ttl_bound(DEFAULT_BEACON_TTL_SECONDS).unwrap();
+    let endpoint = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let other_endpoint = EndpointAddress::parse("hardware_manager:other").unwrap();
+
+    let stale = BeaconAdvertiser::new(state.clone(), "feature", endpoint.clone(), "old-session")
+        .advertisement_id("stale-ad")
+        .payload(json!({"version": "old"}));
+    let current = BeaconAdvertiser::new(state.clone(), "feature", endpoint.clone(), "new-session")
+        .advertisement_id("fresh-ad")
+        .payload(json!({"version": "new"}));
+    let other_same_feature =
+        BeaconAdvertiser::new(state.clone(), "feature", other_endpoint, "other-session")
+            .advertisement_id("other-endpoint")
+            .payload(json!({}));
+    let other_feature = BeaconAdvertiser::new(
+        state.clone(),
+        "other-feature",
+        endpoint,
+        "other-feature-session",
+    )
+    .advertisement_id("other-feature-ad")
+    .payload(json!({}));
+
+    let stale_handle = stale.publish().await.unwrap();
+    let current_handle = current.publish().await.unwrap();
+    let other_same_feature_handle = other_same_feature.publish().await.unwrap();
+    let other_feature_handle = other_feature.publish().await.unwrap();
+
+    assert_eq!(current.cleanup_stale_same_endpoint().await.unwrap(), 1);
+
+    assert!(state.get(&stale_handle.key).await.unwrap().is_none());
+    assert!(state.get(&current_handle.key).await.unwrap().is_some());
+    assert!(state
+        .get(&other_same_feature_handle.key)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(state
+        .get(&other_feature_handle.key)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(find_candidates(&state, "feature").await.unwrap().len(), 2);
+    assert_eq!(
+        find_candidates(&state, "other-feature")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn concord_token_bucket_must_be_ttl_bound() {
     let contracts = MemoryStateStore::new();
     let tokens = MemoryStateStore::new();
@@ -1036,6 +1090,66 @@ async fn concord_participant_manager_reuses_fresh_token_without_refresh() {
 }
 
 #[tokio::test]
+async fn concord_participant_release_withdraw_deletes_owned_token_without_cancelling() {
+    let (concord, _tokens, contract, manager, mut lifecycle) =
+        managed_claim_context("contract-1").await;
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    assert_eq!(managed.len(), 1);
+    assert_eq!(managed[0].validity.status, ContractValidityStatus::Valid);
+    assert!(concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_some());
+
+    assert!(lifecycle.release_withdraw(&contract.key).await.unwrap());
+
+    assert!(concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        concord.validate(&contract, None).await.status,
+        ContractValidityStatus::MissingToken
+    );
+    let record = concord.contract_record(&contract).await.unwrap().unwrap();
+    assert_eq!(record.state, ContractState::Open);
+}
+
+#[tokio::test]
+async fn concord_token_withdraw_refuses_changed_owner_token() {
+    let (concord, tokens, contract, manager, mut lifecycle) =
+        managed_claim_context("contract-1").await;
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    let manager_token = managed[0].token.clone().unwrap();
+    let entry = tokens.get(&manager_token.key).await.unwrap().unwrap();
+    let mut changed = ParticipantTokenRecord::from_value(entry.value).unwrap();
+    changed.session_id = "other-session".to_string();
+    changed.token_id = "other-token".to_string();
+    tokens
+        .update(
+            &manager_token.key,
+            changed.to_value().unwrap(),
+            entry.revision,
+            Some(changed.ttl_seconds),
+        )
+        .await
+        .unwrap();
+
+    assert!(concord.withdraw(&manager_token).await.is_err());
+    let stored = concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.session_id, "other-session");
+    assert_eq!(stored.token_id, "other-token");
+}
+
+#[tokio::test]
 async fn concord_participant_lease_public_refresh_path_is_rate_limited() {
     let (concord, _tokens, contract, manager, _lifecycle) =
         managed_claim_context("contract-1").await;
@@ -1324,6 +1438,161 @@ async fn concord_participant_manager_notification_discovers_new_contract() {
         .await
         .unwrap()
         .is_some());
+}
+
+#[tokio::test]
+async fn materialized_concord_notification_reconcile_is_targeted() {
+    let contracts = MemoryStateStore::new();
+    let tokens = token_store();
+    let exact = ConcordCoordinator::new(contracts.clone(), tokens.clone());
+    let controller_a = EndpointAddress::parse("controller:a").unwrap();
+    let controller_b = EndpointAddress::parse("controller:b").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let contract_a = exact
+        .create_contract(CreateContractSpec {
+            participants: vec![controller_a.clone(), manager.clone()],
+            contract_id: Some("contract-a".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: None,
+            created_by: Some(controller_a.clone()),
+            supersedes: None,
+        })
+        .await
+        .unwrap();
+    let contract_b = exact
+        .create_contract(CreateContractSpec {
+            participants: vec![controller_b.clone(), manager.clone()],
+            contract_id: Some("contract-b".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: None,
+            created_by: Some(controller_b.clone()),
+            supersedes: None,
+        })
+        .await
+        .unwrap();
+    exact
+        .attach(
+            &contract_a,
+            &controller_a,
+            "controller-session-a",
+            Some("controller-token-a".into()),
+        )
+        .await
+        .unwrap();
+    exact
+        .attach(
+            &contract_b,
+            &controller_b,
+            "controller-session-b",
+            Some("controller-token-b".into()),
+        )
+        .await
+        .unwrap();
+    let materialized = ConcordCoordinator::new(
+        MaterializedStateStore::start(contracts, "contracts.")
+            .await
+            .unwrap(),
+        MaterializedStateStore::start(tokens, "contracts.")
+            .await
+            .unwrap(),
+    );
+    materialized.wait_current().await.unwrap();
+    let mut lifecycle = ConcordParticipantManager::new(
+        materialized.clone(),
+        manager.clone(),
+        "manager-session".into(),
+    )
+    .unwrap()
+    .profile(HARDWARE_CLAIM_PROFILE_ID.to_string());
+
+    let managed = lifecycle
+        .reconcile_cached(
+            |contract, _| Ok(contract.contract_id == contract_a.contract_id),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(managed.len(), 1);
+    assert_eq!(managed[0].contract.key, contract_a.key);
+    assert!(exact
+        .participant_token(&contract_b, &manager)
+        .await
+        .unwrap()
+        .is_none());
+
+    let notification_a = ConcordContractNotification {
+        source: ConcordNotificationSource::Token,
+        operation: StateOperation::Put,
+        contract_id: contract_a.contract_id.clone(),
+        generation: contract_a.generation,
+        contract: None,
+        participant: Some(controller_a),
+        profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+        change: StateChange {
+            operation: StateOperation::Put,
+            key: concord_participant_token_key(
+                &contract_a.contract_id,
+                contract_a.generation,
+                &manager,
+            ),
+            revision: 1,
+            entry: None,
+        },
+    };
+    let mut accepted_contracts = Vec::new();
+    let managed = lifecycle
+        .reconcile_notification_cached(
+            &notification_a,
+            |contract, _| {
+                accepted_contracts.push(contract.contract_id.clone());
+                Ok(true)
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(managed.len(), 1);
+    assert_eq!(accepted_contracts, vec!["contract-a".to_string()]);
+
+    let notification_b = ConcordContractNotification {
+        source: ConcordNotificationSource::Token,
+        operation: StateOperation::Put,
+        contract_id: contract_b.contract_id.clone(),
+        generation: contract_b.generation,
+        contract: None,
+        participant: Some(controller_b),
+        profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+        change: StateChange {
+            operation: StateOperation::Put,
+            key: concord_participant_token_key(
+                &contract_b.contract_id,
+                contract_b.generation,
+                &manager,
+            ),
+            revision: 1,
+            entry: None,
+        },
+    };
+    let managed = lifecycle
+        .reconcile_notification_cached(
+            &notification_b,
+            |_, _| -> Result<bool> {
+                panic!("unmanaged token notification must not trigger broad discovery")
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(managed.len(), 1);
+    assert_eq!(managed[0].contract.key, contract_a.key);
+    assert!(exact
+        .participant_token(&contract_b, &manager)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]

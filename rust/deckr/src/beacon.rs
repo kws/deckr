@@ -456,6 +456,37 @@ impl<S: StateStore> BeaconAdvertiser<S> {
         self.state.delete(&handle.key, Some(current.revision)).await
     }
 
+    pub async fn cleanup_stale_same_endpoint(&self) -> Result<usize> {
+        let prefix = beacon_feature_prefix(&self.feature_id);
+        let mut removed = 0;
+        for entry in self.state.items(&prefix).await? {
+            let Some((feature_id, advertisement_id)) = parse_beacon_advertisement_key(&entry.key)
+            else {
+                continue;
+            };
+            if feature_id != self.feature_id {
+                continue;
+            }
+            let Ok(record) = AdvertisementRecord::from_value(entry.value) else {
+                continue;
+            };
+            if record.feature_id != self.feature_id
+                || record.advertisement_id != advertisement_id
+                || record.advertiser != self.advertiser
+                || record.endpoint != self.endpoint
+                || advertisement_matches_advertiser(&record, self)
+            {
+                continue;
+            }
+            match self.state.delete(&entry.key, Some(entry.revision)).await {
+                Ok(()) => removed += 1,
+                Err(Error::StateConflict(_)) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(removed)
+    }
+
     async fn bucket_ttl_seconds(&self) -> Result<u64> {
         match self.state.ttl_seconds().await? {
             Some(ttl_seconds) if ttl_seconds > 0 => Ok(ttl_seconds),
@@ -645,6 +676,17 @@ fn advertisement_matches_handle(
         && record.advertiser == handle.advertiser
         && record.endpoint == handle.endpoint
         && record.session_id == handle.session_id
+}
+
+fn advertisement_matches_advertiser<S: StateStore>(
+    record: &AdvertisementRecord,
+    advertiser: &BeaconAdvertiser<S>,
+) -> bool {
+    record.advertisement_id == advertiser.advertisement_id
+        && record.feature_id == advertiser.feature_id
+        && record.advertiser == advertiser.advertiser
+        && record.endpoint == advertiser.endpoint
+        && record.session_id == advertiser.session_id
 }
 
 fn advertisement_content_matches(
