@@ -644,7 +644,7 @@ class Beacon:
         if self._started and self._ready.is_set() and not self.is_current():
             raise KvUnavailable("Beacon materialized view is not current")
 
-    async def _rebuild_from_bucket(self) -> None:
+    async def _rebuild_from_bucket(self) -> tuple[BeaconFeatureEvent, ...]:
         entries_by_key: dict[str, Candidate] = {}
         revision_by_key: dict[str, int] = {}
         invalid_by_key: dict[str, tuple[int, str]] = {}
@@ -664,12 +664,17 @@ class Beacon:
                 keys_by_feature_endpoint=keys_by_feature_endpoint,
             )
         async with self._lock:
+            events = _beacon_rebuild_events(
+                previous=self._entries_by_key,
+                current=entries_by_key,
+            )
             self._entries_by_key = entries_by_key
             self._revision_by_key = revision_by_key
             self._invalid_by_key = invalid_by_key
             self._keys_by_feature = keys_by_feature
             self._keys_by_feature_endpoint = keys_by_feature_endpoint
             self._bucket_generation = bucket_generation
+            return events
 
     async def _create_advertisement(
         self,
@@ -841,6 +846,12 @@ class Beacon:
             return
         async with self._lock:
             events = self._apply_kv_change_locked(change)
+        await self._send_events(events)
+
+    async def _send_events(
+        self,
+        events: tuple[tuple[_BeaconSubscriber, BeaconFeatureEvent], ...],
+    ) -> None:
         for subscriber, event in events:
             try:
                 subscriber.send.send_nowait(event)
@@ -861,8 +872,34 @@ class Beacon:
             gap = change.view_generation > self._bucket_generation + 1
         if not gap:
             return False
-        await self._rebuild_from_bucket()
+        events = await self._rebuild_from_bucket()
+        await self._publish_rebuild_events(events)
         return True
+
+    async def _publish_rebuild_events(
+        self,
+        events: tuple[BeaconFeatureEvent, ...],
+    ) -> None:
+        if not events:
+            return
+        async with self._lock:
+            deliveries: list[tuple[_BeaconSubscriber, BeaconFeatureEvent]] = []
+            for event in events:
+                _log_beacon_feature_event(event)
+                for subscriber in tuple(self._subscribers):
+                    item = _event_for_subscriber(
+                        subscriber,
+                        event,
+                        candidate=event.candidate,
+                        previous=event.previous,
+                    )
+                    if item is None:
+                        continue
+                    if subscriber.replay_pending:
+                        subscriber.pending_events.append(item)
+                        continue
+                    deliveries.append((subscriber, item))
+        await self._send_events(tuple(deliveries))
 
     def _apply_kv_change_locked(
         self,
@@ -1069,6 +1106,34 @@ class BeaconDirectory(Generic[T]):
     def is_current(self) -> bool:
         with self._lock:
             return self._ready.is_set() and self._current and self._beacon.is_current()
+
+    async def wait_current(self, *, timeout: float | None = None) -> None:
+        async def wait_loop() -> None:
+            await self.wait_ready()
+            while True:
+                with self._lock:
+                    if self._closed:
+                        raise KvUnavailable(
+                            f"Beacon directory for feature {self.feature_id!r} is closed"
+                        )
+                    current = (
+                        self._ready.is_set()
+                        and self._current
+                        and self._beacon.is_current()
+                    )
+                    changed = self._changed
+                if current:
+                    return
+                if self._beacon.is_current():
+                    await changed.wait()
+                else:
+                    await self._beacon.wait_current()
+
+        if timeout is None:
+            await wait_loop()
+            return
+        with anyio.fail_after(timeout):
+            await wait_loop()
 
     def records(self) -> tuple[T, ...]:
         with self._lock:
@@ -1682,6 +1747,52 @@ def _index_candidate(
         _feature_endpoint_key(candidate.advertisement),
         set(),
     ).add(candidate.key)
+
+
+def _beacon_rebuild_events(
+    *,
+    previous: Mapping[str, Candidate],
+    current: Mapping[str, Candidate],
+) -> tuple[BeaconFeatureEvent, ...]:
+    events: list[BeaconFeatureEvent] = []
+    for key in sorted(set(previous) | set(current)):
+        before = previous.get(key)
+        after = current.get(key)
+        if after is not None and before is None:
+            events.append(
+                BeaconFeatureEvent(
+                    BeaconFeatureEventType.ADVERTISED,
+                    after.advertisement.feature_id,
+                    key,
+                    candidate=after,
+                    previous=before,
+                    reason="rebuild",
+                )
+            )
+            continue
+        if after is not None and before != after:
+            events.append(
+                BeaconFeatureEvent(
+                    BeaconFeatureEventType.UPDATED,
+                    after.advertisement.feature_id,
+                    key,
+                    candidate=after,
+                    previous=before,
+                    reason="rebuild",
+                )
+            )
+            continue
+        if before is not None and after is None:
+            events.append(
+                BeaconFeatureEvent(
+                    BeaconFeatureEventType.WITHDRAWN,
+                    before.advertisement.feature_id,
+                    key,
+                    previous=before,
+                    reason="rebuild",
+                )
+            )
+    return tuple(events)
 
 
 def _event_for_subscriber(

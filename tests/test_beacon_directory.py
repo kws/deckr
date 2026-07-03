@@ -42,6 +42,9 @@ class _ManualCurrentBeacon:
     def is_current(self) -> bool:
         return True
 
+    async def wait_current(self) -> None:
+        return None
+
 
 class _RecoveringBeaconBucket(MemoryJsonKvBucket):
     def __init__(self, *, bucket: str) -> None:
@@ -300,6 +303,22 @@ async def test_beacon_directory_watch_records_recovers_from_stale_view() -> None
             tg.cancel_scope.cancel()
     finally:
         await snapshots.aclose()
+
+
+@pytest.mark.asyncio
+async def test_beacon_directory_wait_current_recovers_from_stale_view() -> None:
+    directory = BeaconDirectory(_ManualCurrentBeacon(), FEATURE_ID, _parse_payload)
+    directory._mark_current()  # noqa: SLF001
+    directory._mark_stale()  # noqa: SLF001
+
+    async def recover() -> None:
+        await anyio.sleep(0.01)
+        directory._mark_current()  # noqa: SLF001
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(recover)
+        await directory.wait_current(timeout=1)
+        tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio

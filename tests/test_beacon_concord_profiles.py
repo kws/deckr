@@ -552,6 +552,46 @@ async def test_beacon_rebuilds_from_bucket_after_generation_gap() -> None:
         tg.cancel_scope.cancel()
 
 
+@pytest.mark.asyncio
+async def test_beacon_generation_gap_rebuild_notifies_watchers() -> None:
+    beacon, _raw = _beacon()
+    first = _hardware_advertisement_record("advertisement-1")
+    second = _hardware_advertisement_record("advertisement-2")
+    first_key = beacon_advertisement_key(
+        feature_id=first.feature_id,
+        advertisement_id=first.advertisement_id,
+    )
+    second_key = beacon_advertisement_key(
+        feature_id=second.feature_id,
+        advertisement_id=second.advertisement_id,
+    )
+
+    async with beacon.watch(HARDWARE_FEATURE_ID, replay_current=False) as events:
+        await beacon._bucket.put(first_key, first)  # noqa: SLF001
+        second_entry = await beacon._bucket.put(second_key, second)  # noqa: SLF001
+        bucket_generation = beacon._bucket.generation  # noqa: SLF001
+
+        await beacon._apply_kv_change(  # noqa: SLF001
+            KvChange(
+                beacon.bucket,
+                second_key,
+                second_entry.revision,
+                "put",
+                second_entry,
+                view_generation=bucket_generation,
+            )
+        )
+
+        first_event = await _receive(events)
+        second_event = await _receive(events)
+
+    assert {
+        first_event.event_type,
+        second_event.event_type,
+    } == {BeaconFeatureEventType.ADVERTISED}
+    assert {first_event.key, second_event.key} == {first_key, second_key}
+
+
 def test_beacon_removes_statestore_construction_layer() -> None:
     import deckr.beacon as beacon_module
 
