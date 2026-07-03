@@ -12,7 +12,6 @@ use crate::canonical_json::canonical_json_hash_value;
 use crate::endpoint::EndpointAddress;
 use crate::keys::{
     concord_contract_key as make_concord_contract_key, concord_contracts_prefix,
-    concord_participant_profile_index_key as make_concord_participant_profile_index_key,
     concord_participant_token_key as make_concord_participant_token_key,
     parse_concord_contract_key, parse_concord_participant_token_key,
 };
@@ -24,8 +23,6 @@ use crate::state::{
 use crate::{Error, Result};
 
 pub const CONCORD_CONTRACT_SCHEMA_ID: &str = "dev.deckr.concord.contract.v1";
-pub const CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID: &str =
-    "dev.deckr.concord.participant-profile-proposal-ref.v1";
 pub const CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID: &str = "dev.deckr.concord.participant-token.v1";
 pub const DEFAULT_CONCORD_CONTRACT_STORE_NAME: &str = "deckr_concord_contract_v1";
 pub const DEFAULT_CONCORD_TOKEN_STORE_NAME: &str = "deckr_concord_token_v1";
@@ -270,55 +267,6 @@ impl ParticipantTokenRecord {
                 ));
             }
         }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ParticipantProfileIndexRecord {
-    #[serde(default = "participant_profile_index_schema_id", rename = "schema")]
-    pub schema_id: String,
-    pub contract_id: String,
-    pub generation: u64,
-    pub contract_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<String>,
-    pub participant: EndpointAddress,
-    pub contract_revision: u64,
-    pub state: ContractState,
-    pub updated_at: String,
-}
-
-impl ParticipantProfileIndexRecord {
-    pub fn from_value(value: Value) -> Result<Self> {
-        let record: Self = serde_json::from_value(value)?;
-        record.validate()?;
-        Ok(record)
-    }
-
-    pub fn to_value(&self) -> Result<Value> {
-        self.validate()?;
-        Ok(serde_json::to_value(self)?)
-    }
-
-    pub fn validate(&self) -> Result<()> {
-        if self.schema_id != CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID {
-            return Err(Error::Invalid(format!(
-                "Concord participant profile index schema must be {CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID}"
-            )));
-        }
-        require_text(&self.contract_id, "Concord participant profile index")?;
-        require_text(&self.contract_key, "Concord participant profile index")?;
-        if self.generation == 0 {
-            return Err(Error::Invalid(
-                "generation must be greater than zero".to_string(),
-            ));
-        }
-        if let Some(profile) = &self.profile {
-            require_text(profile, "Concord participant profile index")?;
-        }
-        require_text(&self.updated_at, "Concord participant profile index")?;
         Ok(())
     }
 }
@@ -743,8 +691,6 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
             .contract_state
             .create(&key, record.to_value()?, None)
             .await?;
-        self.put_participant_profile_indexes(&record, &key, entry.revision)
-            .await?;
         Ok(contract_handle(key, &record, entry.revision))
     }
 
@@ -936,11 +882,7 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
                 .update(contract_key, record.to_value()?, current.revision, None)
                 .await
             {
-                Ok(entry) => {
-                    self.put_participant_profile_indexes(&record, contract_key, entry.revision)
-                        .await?;
-                    return Ok(());
-                }
+                Ok(_) => return Ok(()),
                 Err(Error::StateConflict(_)) => continue,
                 Err(error) => return Err(error),
             }
@@ -1084,45 +1026,10 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
         record.cancelled_at = Some(now());
         record.cancel_revision = Some(current.revision);
         record.cancel_reason = reason;
-        let entry = self
-            .contract_state
+        self.contract_state
             .update(&contract.key, record.to_value()?, current.revision, None)
             .await?;
-        self.put_participant_profile_indexes(&record, &contract.key, entry.revision)
-            .await?;
         Ok(true)
-    }
-
-    async fn put_participant_profile_indexes(
-        &self,
-        record: &ContractRecord,
-        contract_key: &str,
-        contract_revision: u64,
-    ) -> Result<()> {
-        let updated_at = now();
-        for participant in &record.participants {
-            let key = make_concord_participant_profile_index_key(
-                participant,
-                record.profile.as_deref(),
-                &record.contract_id,
-                record.generation,
-            );
-            let reference = ParticipantProfileIndexRecord {
-                schema_id: CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID.to_string(),
-                contract_id: record.contract_id.clone(),
-                generation: record.generation,
-                contract_key: contract_key.to_string(),
-                profile: record.profile.clone(),
-                participant: participant.clone(),
-                contract_revision,
-                state: record.state,
-                updated_at: updated_at.clone(),
-            };
-            self.contract_state
-                .put(&key, reference.to_value()?, None)
-                .await?;
-        }
-        Ok(())
     }
 
     pub async fn validate(
@@ -2465,10 +2372,6 @@ fn contract_schema_id() -> String {
 
 fn participant_token_schema_id() -> String {
     CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID.to_string()
-}
-
-fn participant_profile_index_schema_id() -> String {
-    CONCORD_PARTICIPANT_PROFILE_INDEX_SCHEMA_ID.to_string()
 }
 
 fn default_contract_state() -> ContractState {

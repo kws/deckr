@@ -106,21 +106,6 @@ pub fn service_use_scope_index_key(scope_id: &str) -> String {
     format!("scopes.{}", encode_key_token(scope_id))
 }
 
-pub fn concord_participant_profile_index_key(
-    participant: &EndpointAddress,
-    profile: Option<&str>,
-    contract_id: &str,
-    generation: u64,
-) -> String {
-    format!(
-        "contracts.by_participant.{}.by_profile.{}.{}.{}.ref",
-        encode_key_token(participant.as_str()),
-        encode_key_token(profile.unwrap_or("")),
-        encode_key_token(contract_id),
-        generation
-    )
-}
-
 fn is_safe_token(raw: &str) -> bool {
     let mut chars = raw.chars();
     let Some(first) = chars.next() else {

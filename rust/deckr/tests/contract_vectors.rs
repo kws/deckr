@@ -34,6 +34,21 @@ use serde_json::{json, Value};
 
 const CONTRACT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/v1");
 
+fn legacy_participant_profile_index_key(
+    participant: &EndpointAddress,
+    profile: &str,
+    contract_id: &str,
+    generation: u64,
+) -> String {
+    format!(
+        "contracts.by_participant.{}.by_profile.{}.{}.{}.ref",
+        encode_key_token(participant.as_str()),
+        encode_key_token(profile),
+        encode_key_token(contract_id),
+        generation
+    )
+}
+
 #[derive(Debug, Deserialize)]
 struct KeyTokenVectors {
     cases: Vec<KeyTokenCase>,
@@ -672,6 +687,147 @@ async fn concord_token_attach_and_refresh_use_bucket_ttl() {
         .unwrap()
         .unwrap();
     assert_eq!(stored.ttl_seconds, 2);
+}
+
+#[tokio::test]
+async fn concord_does_not_write_participant_profile_index_records() {
+    let contracts = MemoryStateStore::new();
+    let tokens = token_store();
+    let concord = ConcordCoordinator::new(contracts.clone(), tokens);
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+
+    let contract = concord
+        .create_contract(CreateContractSpec {
+            participants: vec![manager.clone(), controller.clone()],
+            contract_id: Some("hardware-contract-1".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": "claim-1",
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:mirabox-main",
+                "devices": []
+            })),
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
+        .await
+        .unwrap();
+    assert!(contracts
+        .items("contracts.by_participant.")
+        .await
+        .unwrap()
+        .is_empty());
+
+    concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some("controller-token".into()),
+        )
+        .await
+        .unwrap();
+    assert!(contracts
+        .items("contracts.by_participant.")
+        .await
+        .unwrap()
+        .is_empty());
+
+    concord
+        .cancel(&contract, &controller, Some("done".to_string()))
+        .await
+        .unwrap();
+    assert!(contracts
+        .items("contracts.by_participant.")
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn concord_ignores_legacy_participant_profile_index_keys() {
+    let contracts = MemoryStateStore::new();
+    let tokens = token_store();
+    let concord = ConcordCoordinator::new(contracts.clone(), tokens.clone());
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let legacy_key = legacy_participant_profile_index_key(
+        &manager,
+        HARDWARE_CLAIM_PROFILE_ID,
+        "legacy-contract",
+        1,
+    );
+    contracts
+        .put(
+            &legacy_key,
+            json!({
+                "schema": "dev.deckr.concord.participant-profile-proposal-ref.v1",
+                "contractId": "legacy-contract",
+                "generation": 1,
+                "contractKey": concord_contract_key("legacy-contract", 1),
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "participant": manager.as_str(),
+                "contractRevision": 1,
+                "state": "open",
+                "updatedAt": "2024-01-01T00:00:00Z",
+            }),
+            None,
+        )
+        .await
+        .unwrap();
+    let contract = concord
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("real-contract".to_string()),
+            generation: 1,
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
+            terms: Some(json!({
+                "profile": HARDWARE_CLAIM_PROFILE_ID,
+                "claimId": "real-contract",
+                "controllerEndpoint": "controller:main",
+                "managerEndpoint": "hardware_manager:mirabox-main",
+                "devices": []
+            })),
+            created_by: Some(controller),
+            supersedes: None,
+        })
+        .await
+        .unwrap();
+
+    let discovered = concord
+        .contracts(deckr::concord::ContractFilters {
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID),
+            participant: Some(&manager),
+            state: Some(ContractState::Open),
+            ..deckr::concord::ContractFilters::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].key, contract.key);
+
+    let materialized = ConcordCoordinator::new(
+        MaterializedStateStore::start(contracts.clone(), "contracts.")
+            .await
+            .unwrap(),
+        MaterializedStateStore::start(tokens, "contracts.")
+            .await
+            .unwrap(),
+    );
+    materialized.wait_current().await.unwrap();
+    let cached = materialized
+        .contracts_cached(deckr::concord::ContractFilters {
+            profile: Some(HARDWARE_CLAIM_PROFILE_ID),
+            participant: Some(&manager),
+            state: Some(ContractState::Open),
+            ..deckr::concord::ContractFilters::default()
+        })
+        .unwrap();
+    assert_eq!(cached.len(), 1);
+    assert_eq!(cached[0].key, contract.key);
 }
 
 #[tokio::test]
