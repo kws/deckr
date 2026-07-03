@@ -88,7 +88,7 @@ async def _receive_managed_event_type(stream, *event_types):
                 return event
 
 
-async def _receive_notification_source(stream, source: str):
+async def _receive_notification_source(stream, source):
     with anyio.fail_after(1):
         while True:
             notification = await stream.receive()
@@ -1891,10 +1891,10 @@ async def test_concord_participant_periodic_reconcile_recovers_missed_notificati
         accept_contract=lambda _contract, _record: True,
     )
 
-    async def drop_notification(_reason: str) -> None:
-        return None
+    async def drop_notification(_notification):
+        return ()
 
-    monkeypatch.setattr(lifecycle._notifications, "request", drop_notification)  # noqa: SLF001
+    monkeypatch.setattr(lifecycle, "reconcile_notification", drop_notification)
 
     async with anyio.create_task_group() as task_group:
         lifecycle.start(task_group)
@@ -2023,6 +2023,171 @@ async def test_concord_participant_reconcile_uses_materialized_contract_index() 
 
 
 @pytest.mark.asyncio
+async def test_concord_cached_contract_notifications_distinguish_sources() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+
+    async with service.watch_contract_notifications_cached(
+        HARDWARE_CLAIM_PROFILE_ID,
+        participant=manager,
+    ) as notifications:
+        contract = await service._create_contract(
+            (manager, controller),
+            contract_id="hardware-contract-1",
+            profile=HARDWARE_CLAIM_PROFILE_ID,
+            terms=_hardware_claim_terms(),
+            created_by=controller,
+        )
+        contract_notification = await _receive_notification_source(
+            notifications,
+            "contract",
+        )
+        assert contract_notification.operation == "put"
+        assert contract_notification.contract == contract
+        assert contract_notification.contract_id == contract.contract_id
+        assert contract_notification.generation == contract.generation
+        assert contract_notification.profile == HARDWARE_CLAIM_PROFILE_ID
+
+        await service._attach(contract, controller, "controller-session")
+        token_notification = await _receive_notification_source(
+            notifications,
+            "token",
+        )
+        assert token_notification.operation == "put"
+        assert token_notification.contract is None
+        assert token_notification.contract_id == contract.contract_id
+        assert token_notification.generation == contract.generation
+        assert token_notification.participant == controller
+        assert token_notification.profile == HARDWARE_CLAIM_PROFILE_ID
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_token_notification_does_not_discover_unmanaged_contract(
+    monkeypatch,
+) -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    controller_token = await service._attach(contract, controller, "controller-session")
+    accepted: list[str] = []
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda candidate, _record: (
+            accepted.append(candidate.key) or True
+        ),
+        refresh_interval=30.0,
+        reconcile_interval=30.0,
+    )
+
+    async def fail_contracts(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("token notification must not discover contracts")
+
+    monkeypatch.setattr(service, "contracts", fail_contracts)
+    notification = concord_module._ConcordContractNotification(  # noqa: SLF001
+        concord_module._ConcordNotificationSource.TOKEN,  # noqa: SLF001
+        "put",
+        contract.contract_id,
+        contract.generation,
+        participant=controller,
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        change=KvChange(
+            service.token_bucket,
+            controller_token.key,
+            controller_token.revision,
+            "put",
+        ),
+    )
+
+    managed = await lifecycle.reconcile_notification(notification)
+
+    assert managed == ()
+    assert accepted == []
+    assert lifecycle.managed_contracts == ()
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_token_notification_reconciles_only_managed_contract(
+    monkeypatch,
+) -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract_a = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    token_a = await service._attach(contract_a, controller, "controller-session")
+    contract_b = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-2",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(claim_id="claim-2"),
+        created_by=controller,
+    )
+    await service._attach(contract_b, controller, "controller-session")
+    accepted: list[str] = []
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda candidate, _record: (
+            accepted.append(candidate.key) or True
+        ),
+        refresh_interval=30.0,
+        reconcile_interval=30.0,
+    )
+    managed = await lifecycle.reconcile(reason="warmup")
+    assert {item.contract.key for item in managed} == {contract_a.key, contract_b.key}
+    accepted.clear()
+
+    async def fail_contracts(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("token notification must not scan candidate contracts")
+
+    monkeypatch.setattr(service, "contracts", fail_contracts)
+    refreshed = await service._refresh_token(token_a)
+    notification = concord_module._ConcordContractNotification(  # noqa: SLF001
+        concord_module._ConcordNotificationSource.TOKEN,  # noqa: SLF001
+        "put",
+        contract_a.contract_id,
+        contract_a.generation,
+        participant=controller,
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        change=KvChange(
+            service.token_bucket,
+            refreshed.key,
+            refreshed.revision,
+            "put",
+        ),
+    )
+
+    managed = await lifecycle.reconcile_notification(notification)
+
+    assert {item.contract.key for item in managed} == {contract_a.key, contract_b.key}
+    assert accepted == [contract_a.key]
+
+
+@pytest.mark.asyncio
 async def test_concord_participant_manager_notification_reconciles_expiry_and_cancel() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
@@ -2036,7 +2201,6 @@ async def test_concord_participant_manager_notification_reconciles_expiry_and_ca
         profile=HARDWARE_CLAIM_PROFILE_ID,
         accept_contract=lambda _contract, _record: True,
         reconcile_interval=30.0,
-        notification_batch_interval=0.01,
     )
 
     async with lifecycle.watch() as events, anyio.create_task_group() as task_group:
@@ -2855,6 +3019,61 @@ async def test_concord_contract_generation_gap_rebuilds_from_buckets() -> None:
 
         assert service.is_current()
         assert await service.get_contract(pointer) == contract
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_concord_generation_gap_rebuild_notifies_watchers() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(  # noqa: SLF001
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+
+    async with anyio.create_task_group() as tg:
+        service.start(tg)
+        await service.wait_current()
+        bucket_generation = service._coordinator._contract_bucket.generation  # noqa: SLF001
+
+        async with service.watch(
+            HARDWARE_CLAIM_PROFILE_ID,
+            replay_current=False,
+        ) as events:
+            async with service._lock:  # noqa: SLF001
+                service._clear_indexes_locked()  # noqa: SLF001
+                service._contract_bucket_generation = 0  # noqa: SLF001
+                service._token_bucket_generation = (  # noqa: SLF001
+                    service._coordinator._token_bucket.generation  # noqa: SLF001
+                )
+                service._maintenance_bucket_generation = (  # noqa: SLF001
+                    service._maintenance_bucket.generation  # noqa: SLF001
+                )
+
+            await service._apply_contract_change(  # noqa: SLF001
+                KvChange(
+                    service.contract_bucket,
+                    contract.key,
+                    contract.revision,
+                    "put",
+                    view_generation=bucket_generation,
+                )
+            )
+            event = await _receive_event_type(
+                events,
+                ConcordEventType.CONTRACT_PENDING,
+                ConcordEventType.CONTRACT_PROPOSED,
+            )
+
+        assert event.contract is not None
+        assert event.contract.contract_id == contract.contract_id
+        assert event.contract.generation == contract.generation
         tg.cancel_scope.cancel()
 
 
