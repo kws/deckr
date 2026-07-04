@@ -11,12 +11,25 @@ from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import Beacon, BeaconAdvertisementSpec, BeaconDirectory
-from deckr.contracts.messages import service_address
+from deckr.concord import (
+    ConcordManagedContract,
+    ContractHandle,
+    ContractRecord,
+    ContractState,
+    ContractValidity,
+    ContractValidityStatus,
+    canonical_json_hash,
+)
+from deckr.contracts.authority import ContractPointer
+from deckr.contracts.keys import encode_key_token
+from deckr.contracts.messages import entity_subject, service_address
 from deckr.services import (
+    AuthorizedServiceCommand,
     ServiceAdvertisementPayload,
     ServiceBackendStatus,
     ServiceDescriptor,
     ServiceProtocol,
+    ServiceUseAuthorizationError,
     ServiceUseTerms,
     ServiceViewChange,
     ServiceViewEntry,
@@ -24,12 +37,14 @@ from deckr.services import (
     ServiceViewRef,
     ServiceViewStore,
     UnsupportedServiceScope,
+    authorize_service_command,
     newest_service_descriptor,
     parse_service_descriptor,
     service_descriptor_from_terms,
     service_use_terms,
     service_view_key,
 )
+from deckr.services.messages import ServiceCommandBody, service_command_message
 from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
 
 
@@ -101,7 +116,7 @@ async def _descriptor(
     return descriptor
 
 
-async def _service_view_context():
+async def _service_view_context(*, contract_id: str = "service-contract-1"):
     beacon = _memory_beacon()
     protocol = _protocol()
     await _publish_service_advertisement(beacon, protocol)
@@ -112,12 +127,169 @@ async def _service_view_context():
         operations={"ensureItems"},
         views={"items"},
     )
-    lease = _FakeServiceUseLease(descriptor=descriptor, terms=terms)
+    lease = _FakeServiceUseLease(
+        descriptor=descriptor,
+        terms=terms,
+        contract=_contract_handle(contract_id=contract_id),
+    )
     view_ref = ServiceViewRef(
         "deckr_openhab_service_view_v1",
         service_view_key("openhab-home", "items", "Kitchen Light"),
     )
     return protocol, lease, view_ref
+
+
+def _contract_handle(
+    *,
+    contract_id: str = "service-contract-1",
+    generation: int = 1,
+) -> ContractHandle:
+    return ContractHandle(
+        key=f"{contract_id}:{generation}",
+        contract_id=contract_id,
+        generation=generation,
+        participants=tuple(
+            sorted(
+                (
+                    action_provider_address("provider-main"),
+                    service_address("openhab-home"),
+                ),
+                key=str,
+            )
+        ),
+        attached_participants=tuple(
+            sorted(
+                (
+                    action_provider_address("provider-main"),
+                    service_address("openhab-home"),
+                ),
+                key=str,
+            )
+        ),
+        revision=1,
+        state=ContractState.OPEN,
+        profile=_protocol().use_profile,
+    )
+
+
+def _contract_pointer(contract: ContractHandle) -> ContractPointer:
+    return ContractPointer(contractId=contract.contract_id, generation=contract.generation)
+
+
+def _service_view_storage_key(view: ServiceViewRef, contract: ContractHandle) -> str:
+    pointer = _contract_pointer(contract)
+    return (
+        f"{view.key}.contract.{encode_key_token(pointer.contract_id)}."
+        f"{pointer.generation}"
+    )
+
+
+def _service_view_payload(
+    view: ServiceViewRef,
+    lease: _FakeServiceUseLease,
+    payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    pointer = _contract_pointer(lease.contract)
+    return {
+        **dict(payload or {"item": "Kitchen Light", "state": "ON"}),
+        "viewKey": view.key,
+        "serviceId": lease.descriptor.service_id,
+        "serviceNamespace": lease.descriptor.namespace,
+        "sessionId": lease.descriptor.session_id,
+        "contractId": pointer.contract_id,
+        "generation": pointer.generation,
+    }
+
+
+def _contract_record(
+    contract: ContractHandle,
+    terms: ServiceUseTerms,
+) -> ContractRecord:
+    terms_payload = terms.to_dict()
+    return ContractRecord(
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+        participants=contract.participants,
+        attached_participants=contract.attached_participants,
+        state=contract.state,
+        profile=contract.profile,
+        terms=terms_payload,
+        terms_hash=canonical_json_hash(terms_payload),
+    )
+
+
+def _managed_contract(
+    contract: ContractHandle,
+    terms: ServiceUseTerms,
+    *,
+    status: ContractValidityStatus = ContractValidityStatus.VALID,
+) -> ConcordManagedContract:
+    record = _contract_record(contract, terms)
+    return ConcordManagedContract(
+        contract=contract,
+        record=record,
+        validity=ContractValidity(
+            status,
+            contract=record if status == ContractValidityStatus.VALID else None,
+        ),
+    )
+
+
+def _service_command(
+    contract: ContractHandle,
+    *,
+    operation: str = "ensureItems",
+    namespace: str = "dev.deckr.openhab.service",
+) -> Any:
+    return service_command_message(
+        sender=action_provider_address("provider-main"),
+        sender_session_id="provider-session",
+        recipient=service_address("openhab-home"),
+        recipient_session_id="service-session",
+        subject=entity_subject(
+            "service",
+            serviceId="openhab-home",
+            namespace=namespace,
+            operation=operation,
+        ),
+        body=ServiceCommandBody(
+            serviceNamespace=namespace,
+            operation=operation,
+            params={},
+        ),
+        contract=_contract_pointer(contract),
+    )
+
+
+class _FakeServiceParticipant:
+    participant = service_address("openhab-home")
+    session_id = "service-session"
+
+    def __init__(self, managed: tuple[ConcordManagedContract, ...]) -> None:
+        self._managed = managed
+        self.reconcile_calls = 0
+        self.validate_calls: list[tuple[ContractHandle, dict[str, str]]] = []
+
+    @property
+    def managed_contracts(self) -> tuple[ConcordManagedContract, ...]:
+        return self._managed
+
+    async def reconcile(self, *, reason: str = "manual reconcile"):
+        del reason
+        self.reconcile_calls += 1
+        return self._managed
+
+    async def validate(
+        self,
+        contract: ContractHandle,
+        *,
+        current_sessions: Mapping[str, str] | None = None,
+    ) -> ContractValidity:
+        self.validate_calls.append((contract, dict(current_sessions or {})))
+        for managed in self._managed:
+            if managed.contract.key == contract.key:
+                return managed.validity
+        return ContractValidity(ContractValidityStatus.MISSING_CONTRACT)
 
 
 async def _receive_service_change(stream):
@@ -444,6 +616,93 @@ def test_service_descriptor_from_terms_without_beacon_candidate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_authorize_service_command_matches_exact_contract_pointer() -> None:
+    protocol, lease, _view_ref = await _service_view_context()
+    managed = _managed_contract(lease.contract, lease.terms)
+    participant = _FakeServiceParticipant((managed,))
+    command = _service_command(
+        lease.contract,
+        operation="ensureItems",
+        namespace=protocol.namespace,
+    )
+
+    result = await authorize_service_command(
+        participant,
+        command,
+        service_id="openhab-home",
+        protocol=protocol,
+        operation="ensureItems",
+    )
+
+    assert isinstance(result, AuthorizedServiceCommand)
+    assert result.contract == lease.contract
+    assert result.record == managed.record
+    assert result.terms == lease.terms
+    assert participant.reconcile_calls == 0
+    assert participant.validate_calls == [
+        (
+            lease.contract,
+            {str(action_provider_address("provider-main")): "provider-session"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_authorize_service_command_rejects_unmanaged_contract_pointer() -> None:
+    protocol, lease, _view_ref = await _service_view_context()
+    managed = _managed_contract(lease.contract, lease.terms)
+    participant = _FakeServiceParticipant((managed,))
+    other_contract = _contract_handle(contract_id="service-contract-2")
+    command = _service_command(
+        other_contract,
+        operation="ensureItems",
+        namespace=protocol.namespace,
+    )
+
+    with pytest.raises(ServiceUseAuthorizationError) as exc_info:
+        await authorize_service_command(
+            participant,
+            command,
+            service_id="openhab-home",
+            protocol=protocol,
+            operation="ensureItems",
+        )
+
+    assert exc_info.value.code == "contract_not_managed"
+    assert participant.reconcile_calls == 1
+    assert participant.validate_calls == []
+
+
+@pytest.mark.asyncio
+async def test_authorize_service_command_rejects_operation_outside_terms() -> None:
+    protocol, lease, _view_ref = await _service_view_context()
+    managed = _managed_contract(lease.contract, lease.terms)
+    participant = _FakeServiceParticipant((managed,))
+    command = _service_command(
+        lease.contract,
+        operation="sendCommand",
+        namespace=protocol.namespace,
+    )
+
+    with pytest.raises(ServiceUseAuthorizationError) as exc_info:
+        await authorize_service_command(
+            participant,
+            command,
+            service_id="openhab-home",
+            protocol=protocol,
+            operation="sendCommand",
+        )
+
+    assert exc_info.value.code == "scope_mismatch"
+    assert participant.validate_calls == [
+        (
+            lease.contract,
+            {str(action_provider_address("provider-main")): "provider-session"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_service_view_store_uses_explicit_lease_scope() -> None:
     beacon = _memory_beacon()
     protocol = _protocol()
@@ -473,6 +732,7 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
             service_id="openhab-home",
             service_namespace=protocol.namespace,
             session_id="service-session",
+            contract=lease.contract,
         )
 
         current = await view_store.get(lease, view_ref)
@@ -487,6 +747,7 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
                 service_id="openhab-home",
                 service_namespace=protocol.namespace,
                 session_id="service-session",
+                contract=lease.contract,
                 revision=created.revision,
             )
             change = await changes.receive()
@@ -500,6 +761,7 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
                 service_id="openhab-home",
                 service_namespace=protocol.namespace,
                 session_id="service-session",
+                contract=lease.contract,
                 revision=created.revision,
             )
 
@@ -530,6 +792,7 @@ async def test_service_view_store_logs_write_apply_and_stale_revision(caplog) ->
                 service_id="openhab-home",
                 service_namespace=protocol.namespace,
                 session_id="service-session",
+                contract=lease.contract,
             )
             await _receive_service_change(changes)
 
@@ -546,6 +809,7 @@ async def test_service_view_store_logs_write_apply_and_stale_revision(caplog) ->
                 view_ref.key,
                 created.revision,
                 created,
+                created.storage_key,
             )
         )
 
@@ -555,8 +819,13 @@ async def test_service_view_store_logs_write_apply_and_stale_revision(caplog) ->
 
 
 @pytest.mark.asyncio
-async def test_service_view_watch_hides_puts_for_different_service_fence() -> None:
+async def test_service_view_watch_hides_puts_for_different_contract() -> None:
     protocol, lease, view_ref = await _service_view_context()
+    other_lease = _FakeServiceUseLease(
+        descriptor=lease.descriptor,
+        terms=lease.terms,
+        contract=_contract_handle(contract_id="service-contract-2"),
+    )
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
     view_store = ServiceViewStore(bucket=raw)
 
@@ -568,19 +837,26 @@ async def test_service_view_watch_hides_puts_for_different_service_fence() -> No
             await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "ON"},
-                service_id="other-service",
+                service_id="openhab-home",
                 service_namespace=protocol.namespace,
-                session_id="other-session",
+                session_id="service-session",
+                contract=other_lease.contract,
             )
             await _assert_no_service_change(changes)
 
         assert await view_store.get(lease, view_ref) is None
+        assert await view_store.get(other_lease, view_ref) is not None
         tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
-async def test_service_view_watch_replacement_with_other_fence_removes_visible_entry() -> None:
+async def test_service_view_watch_keeps_successor_contract_entry_isolated() -> None:
     protocol, lease, view_ref = await _service_view_context()
+    other_lease = _FakeServiceUseLease(
+        descriptor=lease.descriptor,
+        terms=lease.terms,
+        contract=_contract_handle(contract_id="service-contract-2"),
+    )
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
     view_store = ServiceViewStore(bucket=raw)
 
@@ -593,32 +869,33 @@ async def test_service_view_watch_replacement_with_other_fence_removes_visible_e
             service_id="openhab-home",
             service_namespace=protocol.namespace,
             session_id="service-session",
+            contract=lease.contract,
         )
 
         async with view_store.watch(lease, view_ref) as changes:
-            replacement = await view_store.update(
+            replacement = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "OFF"},
-                service_id="other-service",
+                service_id="openhab-home",
                 service_namespace=protocol.namespace,
-                session_id="other-session",
-                revision=created.revision,
+                session_id="service-session",
+                contract=other_lease.contract,
             )
-            change = await _receive_service_change(changes)
-
-            assert change.operation == "delete"
-            assert change.key == view_ref.key
-            assert change.revision == replacement.revision
-            assert change.entry is None
             await _assert_no_service_change(changes)
 
-        assert await view_store.get(lease, view_ref) is None
+        assert await view_store.get(lease, view_ref) == created
+        assert await view_store.get(other_lease, view_ref) == replacement
         tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
 async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry() -> None:
     protocol, lease, view_ref = await _service_view_context()
+    other_lease = _FakeServiceUseLease(
+        descriptor=lease.descriptor,
+        terms=lease.terms,
+        contract=_contract_handle(contract_id="service-contract-2"),
+    )
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
     view_store = ServiceViewStore(bucket=raw)
 
@@ -630,27 +907,36 @@ async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry(
             first_hidden = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "ON"},
-                service_id="other-service",
+                service_id="openhab-home",
                 service_namespace=protocol.namespace,
-                session_id="other-session",
+                session_id="service-session",
+                contract=other_lease.contract,
             )
             await _assert_no_service_change(changes)
 
-            await view_store.delete(view=view_ref, revision=first_hidden.revision)
+            await view_store.delete(
+                view=view_ref,
+                contract=other_lease.contract,
+                revision=first_hidden.revision,
+            )
             await _assert_no_service_change(changes)
 
             second_hidden = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "OFF"},
-                service_id="other-service",
+                service_id="openhab-home",
                 service_namespace=protocol.namespace,
-                session_id="other-session",
+                session_id="service-session",
+                contract=other_lease.contract,
             )
             await _assert_no_service_change(changes)
 
-            await raw.expire(view_ref.key)
+            await raw.expire(second_hidden.storage_key)
             with anyio.fail_after(1):
-                while view_store._revision_by_key[view_ref.key] <= second_hidden.revision:
+                while (
+                    view_store._revision_by_key[second_hidden.storage_key]
+                    <= second_hidden.revision
+                ):
                     await anyio.sleep(0)
             await _assert_no_service_change(changes)
 
@@ -660,17 +946,11 @@ async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry(
 
 @pytest.mark.asyncio
 async def test_service_view_store_recovers_absent_key_after_watch_restart() -> None:
-    protocol, lease, view_ref = await _service_view_context()
+    _protocol, lease, view_ref = await _service_view_context()
     raw = _RecoveringServiceViewBucket(bucket=view_ref.store_name)
     raw.add(
-        view_ref.key,
-        {
-            "item": "Kitchen Light",
-            "state": "ON",
-            "serviceId": "openhab-home",
-            "serviceNamespace": protocol.namespace,
-            "sessionId": "service-session",
-        },
+        _service_view_storage_key(view_ref, lease.contract),
+        _service_view_payload(view_ref, lease),
     )
     view_store = ServiceViewStore(bucket=raw)
 
@@ -679,7 +959,7 @@ async def test_service_view_store_recovers_absent_key_after_watch_restart() -> N
         await view_store.wait_ready()
         assert await view_store.get(lease, view_ref) is not None
 
-        raw.remove_without_publish(view_ref.key)
+        raw.remove_without_publish(_service_view_storage_key(view_ref, lease.contract))
         raw.close_current_watch()
 
         with anyio.fail_after(1):
@@ -690,17 +970,11 @@ async def test_service_view_store_recovers_absent_key_after_watch_restart() -> N
 
 @pytest.mark.asyncio
 async def test_service_view_store_get_waits_while_materialized_view_stale() -> None:
-    protocol, lease, view_ref = await _service_view_context()
+    _protocol, lease, view_ref = await _service_view_context()
     raw = _RecoveringServiceViewBucket(bucket=view_ref.store_name)
     raw.add(
-        view_ref.key,
-        {
-            "item": "Kitchen Light",
-            "state": "ON",
-            "serviceId": "openhab-home",
-            "serviceNamespace": protocol.namespace,
-            "sessionId": "service-session",
-        },
+        _service_view_storage_key(view_ref, lease.contract),
+        _service_view_payload(view_ref, lease),
     )
     view_store = ServiceViewStore(bucket=raw)
 
@@ -718,7 +992,7 @@ async def test_service_view_store_get_waits_while_materialized_view_stale() -> N
             await view_store.get(lease, view_ref)
         assert scope.cancelled_caught
 
-        raw.remove_without_publish(view_ref.key)
+        raw.remove_without_publish(_service_view_storage_key(view_ref, lease.contract))
         raw.resume_next_watch()
         with anyio.fail_after(1):
             while await view_store.get(lease, view_ref) is not None:
@@ -741,6 +1015,7 @@ async def test_service_view_store_get_rebuilds_generation_stale_cache() -> None:
             service_id="openhab-home",
             service_namespace=protocol.namespace,
             session_id="service-session",
+            contract=lease.contract,
         )
         assert await view_store.get(lease, view_ref) == created
 
@@ -763,15 +1038,13 @@ async def test_service_view_store_startup_replay_does_not_overflow_subscriber_qu
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name, buffer_size=40)
     for index in range(12):
         item = "Kitchen Light" if index == 0 else f"Kitchen Light {index}"
-        await raw.put(
+        item_ref = ServiceViewRef(
+            view_ref.store_name,
             service_view_key("openhab-home", "items", item),
-            {
-                "item": item,
-                "state": "ON",
-                "serviceId": "openhab-home",
-                "serviceNamespace": protocol.namespace,
-                "sessionId": "service-session",
-            },
+        )
+        await raw.put(
+            _service_view_storage_key(item_ref, lease.contract),
+            _service_view_payload(item_ref, lease, {"item": item, "state": "ON"}),
         )
     view_store = ServiceViewStore(bucket=raw, buffer_size=5)
 
@@ -804,6 +1077,7 @@ async def test_service_view_store_generation_gap_rebuilds_from_bucket() -> None:
             service_id="openhab-home",
             service_namespace=protocol.namespace,
             session_id="service-session",
+            contract=lease.contract,
         )
         other = await view_store.put(
             view=other_ref,
@@ -811,10 +1085,11 @@ async def test_service_view_store_generation_gap_rebuilds_from_bucket() -> None:
             service_id="openhab-home",
             service_namespace=protocol.namespace,
             session_id="service-session",
+            contract=lease.contract,
         )
         await view_store.wait_current()
         bucket_generation = view_store._bucket.generation  # noqa: SLF001
-        other_entry = view_store._bucket.get_cached(other.key)  # noqa: SLF001
+        other_entry = view_store._bucket.get_cached(other.storage_key)  # noqa: SLF001
         assert other_entry is not None
 
         async with view_store._lock:  # noqa: SLF001
@@ -825,7 +1100,7 @@ async def test_service_view_store_generation_gap_rebuilds_from_bucket() -> None:
         await view_store._apply_kv_change(  # noqa: SLF001
             KvChange(
                 view_store.bucket,
-                other.key,
+                other.storage_key,
                 other.revision,
                 "put",
                 other_entry,
@@ -853,10 +1128,15 @@ async def test_service_view_store_delete_updates_cache_immediately() -> None:
             service_id="openhab-home",
             service_namespace=protocol.namespace,
             session_id="service-session",
+            contract=lease.contract,
         )
 
         async with view_store.watch(lease, view_ref) as changes:
-            await view_store.delete(view=view_ref, revision=created.revision)
+            await view_store.delete(
+                view=view_ref,
+                contract=lease.contract,
+                revision=created.revision,
+            )
             change = await _receive_service_change(changes)
 
         assert change.operation == "delete"
@@ -875,15 +1155,16 @@ async def test_service_view_store_forwards_expire_and_delete_events() -> None:
         await view_store.wait_ready()
 
         async with view_store.watch(lease, view_ref) as changes:
-            await view_store.put(
+            created = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "ON"},
                 service_id="openhab-home",
                 service_namespace=protocol.namespace,
                 session_id="service-session",
+                contract=lease.contract,
             )
             await _receive_service_change(changes)
-            await raw.expire(view_ref.key)
+            await raw.expire(created.storage_key)
             expired = await _receive_service_change(changes)
 
             recreated = await view_store.put(
@@ -892,9 +1173,10 @@ async def test_service_view_store_forwards_expire_and_delete_events() -> None:
                 service_id="openhab-home",
                 service_namespace=protocol.namespace,
                 session_id="service-session",
+                contract=lease.contract,
             )
             await _receive_service_change(changes)
-            await raw.delete(view_ref.key, revision=recreated.revision)
+            await raw.delete(recreated.storage_key, revision=recreated.revision)
             deleted = await _receive_service_change(changes)
 
         assert expired.operation == "expire"
@@ -903,9 +1185,16 @@ async def test_service_view_store_forwards_expire_and_delete_events() -> None:
 
 
 class _FakeServiceUseLease:
-    def __init__(self, *, descriptor: ServiceDescriptor, terms: ServiceUseTerms) -> None:
+    def __init__(
+        self,
+        *,
+        descriptor: ServiceDescriptor,
+        terms: ServiceUseTerms,
+        contract: ContractHandle | None = None,
+    ) -> None:
         self.descriptor = descriptor
         self.terms = terms
+        self.contract = contract or _contract_handle()
 
     async def refresh(self) -> None:
         return None

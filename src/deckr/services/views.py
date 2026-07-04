@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 import anyio
 
+from deckr.contracts.authority import ContractPointer
+from deckr.contracts.keys import encode_key_token
 from deckr.contracts.models import freeze_json, thaw_json
 from deckr.services.runtime import (
     ServiceUseLease,
@@ -30,12 +32,14 @@ _HASH_SIZE = 12
 @dataclass(frozen=True, slots=True)
 class ServiceViewEntry:
     bucket: str
+    storage_key: str
     key: str
     value: Mapping[str, Any]
     revision: int
     service_id: str
     service_namespace: str
     session_id: str
+    contract: ContractPointer
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +49,7 @@ class ServiceViewChange:
     key: str
     revision: int
     entry: ServiceViewEntry | None = None
+    storage_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,11 +57,13 @@ class _ServiceViewLeaseFence:
     service_id: str
     service_namespace: str
     session_id: str
+    contract: ContractPointer
 
 
 @dataclass(slots=True)
 class _ServiceViewSubscriber:
     key: str
+    storage_key: str
     fence: _ServiceViewLeaseFence
     visible: bool
 
@@ -125,8 +132,9 @@ class ServiceViewStore:
         self._assert_authorized(lease, view)
         await lease.refresh()
         await self.wait_current()
+        storage_key = _storage_key_for_lease(view, lease)
         async with self._lock:
-            entry = self._entries.get(view.key)
+            entry = self._entries.get(storage_key)
         if entry is None:
             return None
         if not _entry_matches_lease(entry, lease):
@@ -141,6 +149,7 @@ class ServiceViewStore:
         service_id: str,
         service_namespace: str,
         session_id: str,
+        contract: ContractPointer | Mapping[str, Any] | Any,
         revision: int | None = None,
         ttl: float | None = None,
     ) -> ServiceViewEntry:
@@ -151,17 +160,21 @@ class ServiceViewStore:
             )
         if self._started:
             await self.wait_current()
+        pointer = _coerce_contract_pointer(contract)
+        storage_key = _storage_key(view.key, pointer)
         value = _fenced_payload(
             payload,
+            view_key=view.key,
             service_id=service_id,
             service_namespace=service_namespace,
             session_id=session_id,
+            contract=pointer,
         )
         entry = (
-            await self._bucket.put(view.key, value, ttl=ttl)
+            await self._bucket.put(storage_key, value, ttl=ttl)
             if revision is None
             else await self._bucket.update(
-                view.key,
+                storage_key,
                 value,
                 revision=revision,
                 ttl=ttl,
@@ -172,7 +185,7 @@ class ServiceViewStore:
             "Service view write bucket=%s key=%s revision=%s service=%s "
             "namespace=%s session=%s operation=%s payload_hash=%s",
             self.bucket,
-            view.key,
+            storage_key,
             entry.revision,
             service_id,
             service_namespace,
@@ -187,6 +200,7 @@ class ServiceViewStore:
                 view.key,
                 entry.revision,
                 service_entry,
+                storage_key,
             ),
             view_generation=_bucket_generation_cached(self._bucket),
         )
@@ -200,6 +214,7 @@ class ServiceViewStore:
         service_id: str,
         service_namespace: str,
         session_id: str,
+        contract: ContractPointer | Mapping[str, Any] | Any,
         ttl: float | None = None,
     ) -> ServiceViewEntry:
         if view.store_name != self.bucket:
@@ -209,19 +224,23 @@ class ServiceViewStore:
             )
         if self._started:
             await self.wait_current()
+        pointer = _coerce_contract_pointer(contract)
+        storage_key = _storage_key(view.key, pointer)
         value = _fenced_payload(
             payload,
+            view_key=view.key,
             service_id=service_id,
             service_namespace=service_namespace,
             session_id=session_id,
+            contract=pointer,
         )
-        entry = await self._bucket.create(view.key, value, ttl=ttl)
+        entry = await self._bucket.create(storage_key, value, ttl=ttl)
         service_entry = _service_view_entry_from_kv(entry)
         logger.debug(
             "Service view write bucket=%s key=%s revision=%s service=%s "
             "namespace=%s session=%s operation=create payload_hash=%s",
             self.bucket,
-            view.key,
+            storage_key,
             entry.revision,
             service_id,
             service_namespace,
@@ -235,6 +254,7 @@ class ServiceViewStore:
                 view.key,
                 entry.revision,
                 service_entry,
+                storage_key,
             ),
             view_generation=_bucket_generation_cached(self._bucket),
         )
@@ -248,6 +268,7 @@ class ServiceViewStore:
         service_id: str,
         service_namespace: str,
         session_id: str,
+        contract: ContractPointer | Mapping[str, Any] | Any,
         revision: int,
         ttl: float | None = None,
     ) -> ServiceViewEntry:
@@ -257,6 +278,7 @@ class ServiceViewStore:
             service_id=service_id,
             service_namespace=service_namespace,
             session_id=session_id,
+            contract=contract,
             revision=revision,
             ttl=ttl,
         )
@@ -265,6 +287,7 @@ class ServiceViewStore:
         self,
         *,
         view: ServiceViewRef,
+        contract: ContractPointer | Mapping[str, Any] | Any,
         revision: int | None = None,
     ) -> None:
         if view.store_name != self.bucket:
@@ -274,17 +297,25 @@ class ServiceViewStore:
             )
         if self._started:
             await self.wait_current()
-        marker_revision = await self._bucket.delete(view.key, revision=revision)
+        pointer = _coerce_contract_pointer(contract)
+        storage_key = _storage_key(view.key, pointer)
+        marker_revision = await self._bucket.delete(storage_key, revision=revision)
         if marker_revision is None:
             return
         logger.debug(
             "Service view write bucket=%s key=%s revision=%s operation=delete",
             self.bucket,
-            view.key,
+            storage_key,
             marker_revision,
         )
         await self._apply_service_change(
-            ServiceViewChange("delete", self.bucket, view.key, marker_revision),
+            ServiceViewChange(
+                "delete",
+                self.bucket,
+                view.key,
+                marker_revision,
+                storage_key=storage_key,
+            ),
             view_generation=_bucket_generation_cached(self._bucket),
         )
 
@@ -301,10 +332,12 @@ class ServiceViewStore:
             max_buffer_size=self._buffer_size
         )
         fence = _lease_fence(lease)
+        storage_key = _storage_key_for_lease(view, lease)
         async with self._lock:
-            current = self._entries.get(view.key)
+            current = self._entries.get(storage_key)
             self._subscribers[send] = _ServiceViewSubscriber(
                 key=view.key,
+                storage_key=storage_key,
                 fence=fence,
                 visible=current is not None and _entry_matches_fence(current, fence),
             )
@@ -351,9 +384,12 @@ class ServiceViewStore:
                 ServiceViewChange(
                     "put",
                     self.bucket,
-                    change.key,
+                    entry.key
+                    if entry is not None
+                    else _logical_key_from_storage_key(change.key),
                     change.revision,
                     entry,
+                    change.key,
                 ),
                 view_generation=change.view_generation,
             )
@@ -362,8 +398,9 @@ class ServiceViewStore:
             ServiceViewChange(
                 change.operation,
                 self.bucket,
-                change.key,
+                _logical_key_from_storage_key(change.key),
                 change.revision,
+                storage_key=change.key,
             ),
             view_generation=change.view_generation,
         )
@@ -401,7 +438,8 @@ class ServiceViewStore:
                     self._bucket_generation,
                 )
                 return
-            current_revision = self._revision_by_key.get(change.key, 0)
+            storage_key = _change_storage_key(change)
+            current_revision = self._revision_by_key.get(storage_key, 0)
             if change.revision <= current_revision:
                 self._advance_bucket_generation_locked(view_generation)
                 logger.debug(
@@ -416,11 +454,11 @@ class ServiceViewStore:
                     view_generation,
                 )
                 return
-            self._revision_by_key[change.key] = change.revision
+            self._revision_by_key[storage_key] = change.revision
             if change.operation == "put" and change.entry is not None:
-                self._entries[change.key] = change.entry
+                self._entries[storage_key] = change.entry
             else:
-                self._entries.pop(change.key, None)
+                self._entries.pop(storage_key, None)
             self._advance_bucket_generation_locked(view_generation)
             deliveries: list[
                 tuple[
@@ -429,7 +467,7 @@ class ServiceViewStore:
                 ]
             ] = []
             for subscriber, state in self._subscribers.items():
-                if state.key != change.key:
+                if state.storage_key != storage_key:
                     continue
                 delivery = _subscriber_delivery(change, state)
                 if delivery is not None:
@@ -447,15 +485,18 @@ class ServiceViewStore:
         entry = change.entry
         logger.debug(
             "Service view change applied bucket=%s key=%s operation=%s "
-            "revision=%s service=%s namespace=%s session=%s payload_hash=%s "
-            "delivery_count=%s",
+            "revision=%s storage_key=%s service=%s namespace=%s session=%s "
+            "contract=%s generation=%s payload_hash=%s delivery_count=%s",
             change.bucket,
             change.key,
             change.operation,
             change.revision,
+            _change_storage_key(change),
             entry.service_id if entry is not None else None,
             entry.service_namespace if entry is not None else None,
             entry.session_id if entry is not None else None,
+            entry.contract.contract_id if entry is not None else None,
+            entry.contract.generation if entry is not None else None,
             _payload_hash(entry.value) if entry is not None else None,
             delivered_count,
         )
@@ -486,16 +527,21 @@ class ServiceViewStore:
 def _fenced_payload(
     payload: Mapping[str, Any],
     *,
+    view_key: str,
     service_id: str,
     service_namespace: str,
     session_id: str,
+    contract: ContractPointer,
 ) -> Mapping[str, Any]:
     return freeze_json(
         {
             **thaw_json(payload),
+            "viewKey": view_key,
             "serviceId": service_id,
             "serviceNamespace": service_namespace,
             "sessionId": session_id,
+            "contractId": contract.contract_id,
+            "generation": contract.generation,
         }
     )
 
@@ -512,17 +558,25 @@ def _payload_hash(payload: Mapping[str, Any]) -> str:
 
 def _service_view_entry_from_kv(entry: KvEntry) -> ServiceViewEntry:
     value = freeze_json(dict(entry.value))
+    key = _required_value(value, "viewKey")
     service_id = _required_value(value, "serviceId")
     service_namespace = _required_value(value, "serviceNamespace")
     session_id = _required_value(value, "sessionId")
+    contract_id = _required_value(value, "contractId")
+    generation = value.get("generation")
+    if not isinstance(generation, int):
+        raise ValueError("service view value requires generation")
+    contract = ContractPointer(contractId=contract_id, generation=generation)
     return ServiceViewEntry(
         bucket=entry.bucket,
-        key=entry.key,
+        storage_key=entry.key,
+        key=key,
         value=value,
         revision=entry.revision,
         service_id=service_id,
         service_namespace=service_namespace,
         session_id=session_id,
+        contract=contract,
     )
 
 
@@ -543,6 +597,7 @@ def _lease_fence(lease: ServiceUseLease) -> _ServiceViewLeaseFence:
         service_id=descriptor.service_id,
         service_namespace=descriptor.namespace,
         session_id=descriptor.session_id,
+        contract=_contract_pointer_from_handle(lease.contract),
     )
 
 
@@ -554,6 +609,7 @@ def _entry_matches_fence(
         entry.service_id == fence.service_id
         and entry.service_namespace == fence.service_namespace
         and entry.session_id == fence.session_id
+        and entry.contract == fence.contract
     )
 
 
@@ -572,6 +628,7 @@ def _subscriber_delivery(
                 change.bucket,
                 change.key,
                 change.revision,
+                storage_key=change.storage_key,
             )
         return None
 
@@ -579,6 +636,43 @@ def _subscriber_delivery(
         state.visible = False
         return change
     return None
+
+
+def _storage_key_for_lease(view: ServiceViewRef, lease: ServiceUseLease) -> str:
+    return _storage_key(view.key, _contract_pointer_from_handle(lease.contract))
+
+
+def _storage_key(logical_key: str, contract: ContractPointer) -> str:
+    return (
+        f"{logical_key}.contract.{encode_key_token(contract.contract_id)}."
+        f"{contract.generation}"
+    )
+
+
+def _logical_key_from_storage_key(storage_key: str) -> str:
+    return storage_key.rsplit(".contract.", 1)[0]
+
+
+def _change_storage_key(change: ServiceViewChange) -> str:
+    return change.storage_key or change.key
+
+
+def _coerce_contract_pointer(
+    value: ContractPointer | Mapping[str, Any] | Any,
+) -> ContractPointer:
+    if isinstance(value, ContractPointer):
+        return value
+    if isinstance(value, Mapping):
+        return ContractPointer.model_validate(value)
+    contract_id = getattr(value, "contract_id", None)
+    generation = getattr(value, "generation", None)
+    if contract_id is not None and generation is not None:
+        return ContractPointer(contractId=contract_id, generation=generation)
+    return ContractPointer.model_validate(value)
+
+
+def _contract_pointer_from_handle(value: Any) -> ContractPointer:
+    return ContractPointer(contractId=value.contract_id, generation=value.generation)
 
 
 def _change_generation_is_next(

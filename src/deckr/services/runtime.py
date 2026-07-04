@@ -20,12 +20,16 @@ from deckr.beacon import Candidate
 from deckr.concord import (
     ConcordAgreementLease,
     ConcordConflict,
+    ConcordManagedContract,
+    ConcordParticipant,
     ContractHandle,
+    ContractRecord,
     ContractValidityStatus,
     canonical_json_hash,
 )
+from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
-from deckr.contracts.messages import EndpointAddress, service_address
+from deckr.contracts.messages import DeckrMessage, EndpointAddress, service_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
 
@@ -365,6 +369,13 @@ class ServiceUseLease:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AuthorizedServiceCommand:
+    contract: ContractHandle
+    record: ContractRecord
+    terms: ServiceUseTerms
+
+
 class ServiceUnavailable(Exception):
     def __init__(
         self,
@@ -380,6 +391,105 @@ class ServiceUnavailable(Exception):
 
 class UnsupportedServiceScope(ValueError):
     pass
+
+
+class ServiceUseAuthorizationError(ValueError):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        diagnostics: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.diagnostics = dict(diagnostics or {})
+
+
+async def authorize_service_command(
+    participant: ConcordParticipant,
+    message: DeckrMessage,
+    *,
+    service_id: str,
+    protocol: ServiceProtocol,
+    operation: str,
+) -> AuthorizedServiceCommand:
+    """Validate that a service command is authorized by its exact Concord pointer."""
+
+    pointer = message.contract
+    if pointer is None:
+        raise ServiceUseAuthorizationError(
+            "missing_contract",
+            "Service command requires a Concord contract pointer",
+        )
+    managed = _managed_contract_for_pointer(
+        participant.managed_contracts,
+        pointer,
+    )
+    if managed is None:
+        await participant.reconcile(reason="service command authorization")
+        managed = _managed_contract_for_pointer(
+            participant.managed_contracts,
+            pointer,
+        )
+    if managed is None:
+        raise ServiceUseAuthorizationError(
+            "contract_not_managed",
+            "Service command contract is not managed by this participant",
+            {"contractId": pointer.contract_id, "generation": pointer.generation},
+        )
+
+    validity = await participant.validate(
+        managed.contract,
+        current_sessions={
+            str(message.sender): message.sender_session_id,
+        },
+    )
+    if not validity.valid or validity.contract is None:
+        raise ServiceUseAuthorizationError(
+            f"contract_{validity.status.value}",
+            "Service command contract is not valid",
+            {
+                "contractId": pointer.contract_id,
+                "generation": pointer.generation,
+                "status": validity.status.value,
+                "reason": validity.reason,
+            },
+        )
+
+    try:
+        terms = ServiceUseTerms.model_validate(validity.contract.terms or {})
+    except ValueError as exc:
+        raise ServiceUseAuthorizationError(
+            "invalid_terms",
+            "Service command contract has invalid service-use terms",
+            {"reason": str(exc)},
+        ) from exc
+
+    if not _service_command_terms_match(
+        validity.contract,
+        terms,
+        participant=participant,
+        sender=message.sender,
+        service_id=service_id,
+        protocol=protocol,
+        operation=operation,
+    ):
+        raise ServiceUseAuthorizationError(
+            "scope_mismatch",
+            "Service command contract does not authorize this command",
+            {
+                "contractId": pointer.contract_id,
+                "generation": pointer.generation,
+                "serviceId": service_id,
+                "operation": operation,
+            },
+        )
+    return AuthorizedServiceCommand(
+        contract=managed.contract,
+        record=validity.contract,
+        terms=terms,
+    )
 
 
 def service_view_key(service_id: str, family: str, *tokens: str) -> str:
@@ -634,6 +744,44 @@ def _view_ref_authorized(lease: ServiceUseLease, view: ServiceViewRef) -> bool:
         if any(view.key.startswith(prefix) for prefix in prefixes):
             return True
     return False
+
+
+def _managed_contract_for_pointer(
+    managed_contracts: Collection[ConcordManagedContract],
+    pointer: ContractPointer,
+) -> ConcordManagedContract | None:
+    for managed in managed_contracts:
+        contract = managed.contract
+        if (
+            contract.contract_id == pointer.contract_id
+            and contract.generation == pointer.generation
+        ):
+            return managed
+    return None
+
+
+def _service_command_terms_match(
+    record: ContractRecord,
+    terms: ServiceUseTerms,
+    *,
+    participant: ConcordParticipant,
+    sender: EndpointAddress,
+    service_id: str,
+    protocol: ServiceProtocol,
+    operation: str,
+) -> bool:
+    expected_participants = {str(terms.service_endpoint), str(terms.client_endpoint)}
+    return (
+        {str(item) for item in record.participants} == expected_participants
+        and terms.profile == protocol.use_profile
+        and terms.service_id == service_id
+        and terms.service_endpoint == participant.participant
+        and terms.service_namespace == protocol.namespace
+        and terms.service_session_id == participant.session_id
+        and terms.client_endpoint == sender
+        and operation in terms.allowed_operations
+        and operation in protocol.operations
+    )
 
 
 def _require_text(value: str, *, field_name: str) -> str:
