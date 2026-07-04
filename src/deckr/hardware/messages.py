@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import Field, JsonValue, field_serializer, field_validator
 
+from deckr.contracts.authority import ContractPointer
 from deckr.contracts.messages import (
     HARDWARE_MESSAGES_LANE,
     HARDWARE_MESSAGES_SCHEMA_ID,
@@ -438,6 +439,7 @@ def hardware_message(
     subject: EntitySubject,
     in_reply_to: str | None = None,
     causation_id: str | None = None,
+    contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
     target = (
         recipient
@@ -456,6 +458,7 @@ def hardware_message(
         body=hardware_body_to_dict(parsed_body),
         inReplyTo=in_reply_to,
         causationId=causation_id,
+        contract=contract,
     )
 
 
@@ -472,6 +475,7 @@ def control_input_message(
     sequence: int | None = None,
     occurred_at: datetime | None = None,
     sources: tuple[DeviceSourceReference, ...] = (),
+    contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
     device_ref = DeviceRef(
         managerId=manager_id,
@@ -501,6 +505,7 @@ def control_input_message(
                 capabilityId=capability_id,
             )
         ),
+        contract=contract,
     )
 
 
@@ -512,6 +517,7 @@ def control_command_for_capability(
     command_type: str,
     params: JsonObject | None = None,
     recipient_session_id: str | None = None,
+    contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
     device = ref.device_ref
     if device is None:
@@ -527,6 +533,7 @@ def control_command_for_capability(
         command_type=command_type,
         params=params,
         recipient_session_id=recipient_session_id,
+        contract=contract,
     )
 
 
@@ -541,6 +548,7 @@ def control_command_message(
     control_id: str | None = None,
     params: JsonObject | None = None,
     recipient_session_id: str | None = None,
+    contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
     device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
     body = ControlCommandMessage(
@@ -564,6 +572,7 @@ def control_command_message(
                 capabilityId=capability_id,
             )
         ),
+        contract=contract,
     )
 
 
@@ -579,10 +588,11 @@ def hardware_message_schema() -> dict[str, Any]:
                     envelope_ref,
                     {
                         "type": "object",
-                        "required": ["lane", "messageType", "body"],
+                        "required": ["lane", "messageType", "contract", "body"],
                         "properties": {
                             "lane": {"const": HARDWARE_MESSAGES_LANE},
                             "messageType": {"const": message_type},
+                            "contract": {"$ref": "#/$defs/ContractPointer"},
                             "body": body_ref,
                         },
                     },

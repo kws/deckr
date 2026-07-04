@@ -1119,6 +1119,25 @@
       "title": "CapabilityRequirementSelector",
       "type": "object"
     },
+    "ContractPointer": {
+      "additionalProperties": false,
+      "properties": {
+        "contractId": {
+          "title": "Contractid",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "contractId",
+        "generation"
+      ],
+      "title": "ContractPointer",
+      "type": "object"
+    },
     "ControlRef": {
       "additionalProperties": false,
       "description": "Reference to a control on a concrete device.",
@@ -1160,6 +1179,17 @@
           ],
           "default": null,
           "title": "Causationid"
+        },
+        "contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContractPointer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "createdAt": {
           "format": "date-time",
@@ -1967,6 +1997,7 @@
             "body": {
               "$ref": "#/$defs/ActionAvailabilityRequestBody"
             },
+            "contract": false,
             "lane": {
               "const": "actions"
             },
@@ -1993,6 +2024,7 @@
             "body": {
               "$ref": "#/$defs/ActionAvailabilitySnapshotBody"
             },
+            "contract": false,
             "lane": {
               "const": "actions"
             },
@@ -2019,6 +2051,7 @@
             "body": {
               "$ref": "#/$defs/ActionAvailabilityChangedBody"
             },
+            "contract": false,
             "lane": {
               "const": "actions"
             },
@@ -2045,6 +2078,7 @@
             "body": {
               "$ref": "#/$defs/ActionInterestUpdateBody"
             },
+            "contract": false,
             "lane": {
               "const": "actions"
             },
@@ -2071,6 +2105,9 @@
             "body": {
               "$ref": "#/$defs/ActionInstanceLifecycleBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2081,7 +2118,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2097,6 +2135,9 @@
             "body": {
               "$ref": "#/$defs/ActionInstanceLifecycleBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2107,7 +2148,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2123,6 +2165,9 @@
             "body": {
               "$ref": "#/$defs/BindingAttachedBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2133,7 +2178,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2149,6 +2195,9 @@
             "body": {
               "$ref": "#/$defs/BindingDetachedBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2159,7 +2208,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2174,6 +2224,9 @@
           "properties": {
             "body": {
               "$ref": "#/$defs/PageSessionLifecycleBody"
+            },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
             },
             "lane": {
               "const": "actions"
@@ -2185,7 +2238,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2201,6 +2255,9 @@
             "body": {
               "$ref": "#/$defs/PageSessionLifecycleBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2211,7 +2268,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2227,6 +2285,9 @@
             "body": {
               "$ref": "#/$defs/ActionLifecycleRejectedBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2237,7 +2298,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2253,6 +2315,9 @@
             "body": {
               "$ref": "#/$defs/CapabilityInputBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2263,7 +2328,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2279,6 +2345,9 @@
             "body": {
               "$ref": "#/$defs/BindingOutputBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2289,7 +2358,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2305,6 +2375,9 @@
             "body": {
               "$ref": "#/$defs/BindingOverlayBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2315,7 +2388,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2331,6 +2405,9 @@
             "body": {
               "$ref": "#/$defs/BindingOverlayClearBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2341,7 +2418,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2357,6 +2435,9 @@
             "body": {
               "$ref": "#/$defs/SettingsRequestBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2367,7 +2448,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2383,6 +2465,9 @@
             "body": {
               "$ref": "#/$defs/SettingsPatchBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2393,7 +2478,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2409,6 +2495,9 @@
             "body": {
               "$ref": "#/$defs/SettingsReplaceBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2419,7 +2508,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2435,6 +2525,9 @@
             "body": {
               "$ref": "#/$defs/SettingsSnapshot"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2445,7 +2538,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2461,6 +2555,9 @@
             "body": {
               "$ref": "#/$defs/OpenPageBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2471,7 +2568,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2487,6 +2585,9 @@
             "body": {
               "$ref": "#/$defs/ReplacePageBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2497,7 +2598,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }
@@ -2513,6 +2615,9 @@
             "body": {
               "$ref": "#/$defs/EmptyActionBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "actions"
             },
@@ -2523,7 +2628,8 @@
           "required": [
             "lane",
             "messageType",
-            "body"
+            "body",
+            "contract"
           ],
           "type": "object"
         }

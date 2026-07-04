@@ -15,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from deckr.contracts.authority import ContractPointer
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
 HARDWARE_MESSAGES_LANE = "hardware_messages"
@@ -343,6 +344,7 @@ class DeckrMessage(DeckrModel):
     sender_session_id: str = Field(alias="senderSessionId")
     recipient: MessageTarget
     recipient_session_id: str | None = Field(default=None, alias="recipientSessionId")
+    contract: ContractPointer | None = None
     subject: EntitySubject
     created_at: datetime = Field(default_factory=_now_utc, alias="createdAt")
     expires_at: datetime | None = Field(default=None, alias="expiresAt")

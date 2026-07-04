@@ -390,6 +390,25 @@
       "title": "CommandReplyMessage",
       "type": "object"
     },
+    "ContractPointer": {
+      "additionalProperties": false,
+      "properties": {
+        "contractId": {
+          "title": "Contractid",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "contractId",
+        "generation"
+      ],
+      "title": "ContractPointer",
+      "type": "object"
+    },
     "ControlCommandMessage": {
       "additionalProperties": false,
       "properties": {
@@ -517,6 +536,17 @@
           ],
           "default": null,
           "title": "Causationid"
+        },
+        "contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContractPointer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "createdAt": {
           "format": "date-time",
@@ -821,6 +851,9 @@
             "body": {
               "$ref": "#/$defs/ControlInputMessage"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "hardware_messages"
             },
@@ -831,6 +864,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"
@@ -847,6 +881,9 @@
             "body": {
               "$ref": "#/$defs/ControlCommandMessage"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "hardware_messages"
             },
@@ -857,6 +894,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"
@@ -873,6 +911,9 @@
             "body": {
               "$ref": "#/$defs/CapabilityStateChangedMessage"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "hardware_messages"
             },
@@ -883,6 +924,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"
@@ -899,6 +941,9 @@
             "body": {
               "$ref": "#/$defs/CapabilityStateRequestMessage"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "hardware_messages"
             },
@@ -909,6 +954,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"
@@ -925,6 +971,9 @@
             "body": {
               "$ref": "#/$defs/CapabilityStateReplyMessage"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "hardware_messages"
             },
@@ -935,6 +984,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"
@@ -951,6 +1001,9 @@
             "body": {
               "$ref": "#/$defs/CommandAcceptedMessage"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "hardware_messages"
             },
@@ -961,6 +1014,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"
@@ -977,6 +1031,9 @@
             "body": {
               "$ref": "#/$defs/CommandRejectedMessage"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "hardware_messages"
             },
@@ -987,6 +1044,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"
@@ -1003,6 +1061,9 @@
             "body": {
               "$ref": "#/$defs/CommandReplyMessage"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "hardware_messages"
             },
@@ -1013,6 +1074,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"

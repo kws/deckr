@@ -267,6 +267,7 @@ def _fixtures() -> list[dict[str, Any]]:
             senderSessionId="provider-session",
             recipient=endpoint_target(controller_address("controller-main")),
             recipientSessionId="controller-session",
+            contract={"contractId": "action-session-contract-1", "generation": 1},
             subject=entity_subject(
                 "settings",
                 controllerId="controller-main",
@@ -289,6 +290,7 @@ def _fixtures() -> list[dict[str, Any]]:
             value={"eventType": "press"},
             sequence=1,
             occurred_at=FIXED_NOW,
+            contract={"contractId": "hardware-contract-1", "generation": 1},
         ),
         message_id="fixture-hardware-control-input",
     )
@@ -300,6 +302,7 @@ def _fixtures() -> list[dict[str, Any]]:
             senderSessionId="controller-session",
             recipient=endpoint_target(service_address("media-home")),
             recipientSessionId="service-session",
+            contract={"contractId": "service-use-contract-1", "generation": 1},
             subject=entity_subject(
                 "service",
                 serviceId="media-home",
@@ -448,6 +451,16 @@ def _fixtures() -> list[dict[str, Any]]:
             title="Invalid settingsRequest missing target",
             schema_path="schemas/actions/actions.v1.schema.json",
             payload={**settings_request, "body": {}},
+            valid=False,
+        ),
+        _fixture(
+            artifact_id="dev.deckr.fixture.actions.settings_request.invalid_missing_contract.v1",
+            path="fixtures/invalid/actions/settings-request-missing-contract.v1.json",
+            title="Invalid settingsRequest missing contract",
+            schema_path="schemas/actions/actions.v1.schema.json",
+            payload={
+                key: value for key, value in settings_request.items() if key != "contract"
+            },
             valid=False,
         ),
         _fixture(

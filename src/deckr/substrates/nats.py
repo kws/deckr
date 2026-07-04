@@ -313,6 +313,9 @@ def _headers_for(message: DeckrMessage) -> Mapping[str, str]:
     }
     if message.recipient_session_id is not None:
         headers["Deckr-Recipient-Session"] = message.recipient_session_id
+    if message.contract is not None:
+        headers["Deckr-Contract-Id"] = message.contract.contract_id
+        headers["Deckr-Contract-Generation"] = str(message.contract.generation)
     if message.in_reply_to is not None:
         headers["Deckr-In-Reply-To"] = message.in_reply_to
     return headers
@@ -328,6 +331,12 @@ def _recipient_header(message: DeckrMessage) -> str:
 def _validate_headers(headers: Mapping[str, str] | None, message: DeckrMessage) -> None:
     if headers is None:
         return
+    contract_id = headers.get("Deckr-Contract-Id")
+    contract_generation = headers.get("Deckr-Contract-Generation")
+    if (contract_id is None) != (contract_generation is None):
+        raise ValueError("NATS contract headers must be provided together")
+    if message.contract is None and contract_id is not None:
+        raise ValueError("NATS contract headers disagree with Deckr envelope")
     expected = _headers_for(message)
     for key, value in expected.items():
         header_value = headers.get(key)

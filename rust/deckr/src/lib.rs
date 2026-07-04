@@ -1,3 +1,4 @@
+pub mod authority;
 pub mod beacon;
 pub mod canonical_json;
 pub mod concord;

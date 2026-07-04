@@ -70,6 +70,7 @@ class _HardwareEndpoint(Protocol):
         message_type: str,
         body: Mapping[str, Any],
         causation_id: str | None = None,
+        contract: Mapping[str, Any] | None = None,
     ) -> DeckrMessage: ...
 
     async def reply_to(
@@ -293,6 +294,10 @@ class HardwareManagerRuntime:
             body=hw_messages.hardware_body_to_dict(event),
             subject=message.subject,
             causation_id=message.causation_id,
+            contract={
+                "contractId": claim.contract.contract_id,
+                "generation": claim.contract.generation,
+            },
         )
         return True
 
@@ -323,7 +328,7 @@ class HardwareManagerRuntime:
             claim = await self._command_claim(
                 ref.device_id,
                 envelope,
-                refresh=True,
+                refresh_if_matching_contract=True,
             )
             if claim is None:
                 await self._reject_command(envelope, body, reason="unauthorized")
@@ -351,16 +356,33 @@ class HardwareManagerRuntime:
         device_id: str,
         envelope: DeckrMessage,
         *,
-        refresh: bool = False,
+        refresh_if_matching_contract: bool = False,
     ) -> LiveHardwareClaim | None:
         if self._closed:
             return None
+        if envelope.contract is None:
+            return None
         claim = self._claims_by_device.get(device_id)
-        if refresh or claim is None or envelope.sender != claim.controller_endpoint:
+        if claim is None:
             await self._reconcile_claims(reason="command authorization")
             claim = self._claims_by_device.get(device_id)
         if claim is None or envelope.sender != claim.controller_endpoint:
             return None
+        if (
+            envelope.contract.contract_id != claim.contract.contract_id
+            or envelope.contract.generation != claim.contract.generation
+        ):
+            return None
+        if refresh_if_matching_contract:
+            await self._reconcile_claims(reason="command authorization")
+            claim = self._claims_by_device.get(device_id)
+            if claim is None or envelope.sender != claim.controller_endpoint:
+                return None
+            if (
+                envelope.contract.contract_id != claim.contract.contract_id
+                or envelope.contract.generation != claim.contract.generation
+            ):
+                return None
         return claim
 
     async def _publish_advertisement(self) -> None:
@@ -664,6 +686,8 @@ class HardwareManagerRuntime:
         *,
         reason: hw_messages.CommandRejectionReason,
     ) -> None:
+        if envelope.contract is None:
+            return
         if isinstance(body, hw_messages.ControlCommandMessage):
             reply_body = hw_messages.CommandRejectedMessage(
                 deviceRef=body.device_ref,

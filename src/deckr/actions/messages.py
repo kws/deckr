@@ -22,6 +22,7 @@ from deckr.actions.endpoints import (
     action_provider_address,
     require_provider_instance_id,
 )
+from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import (
     ACTION_MESSAGES_SCHEMA_ID,
@@ -1058,6 +1059,7 @@ def action_message(
     subject: EntitySubject,
     in_reply_to: str | None = None,
     causation_id: str | None = None,
+    contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
     parsed_body = action_body_for_type(message_type, body or {})
     return DeckrMessage(
@@ -1071,6 +1073,7 @@ def action_message(
         body=parsed_body.to_dict(),
         inReplyTo=in_reply_to,
         causationId=causation_id,
+        contract=contract,
     )
 
 
@@ -1648,6 +1651,21 @@ ACTION_BODY_BY_MESSAGE_TYPE: dict[str, type[ActionMessageBody]] = {
 OpenPageBody.model_rebuild()
 ReplacePageBody.model_rebuild()
 
+_ACTION_NO_CONTRACT_MESSAGE_TYPES = frozenset(
+    {
+        ACTION_AVAILABILITY_CHANGED,
+        ACTION_AVAILABILITY_REQUEST,
+        ACTION_AVAILABILITY_SNAPSHOT,
+        ACTION_INTEREST_UPDATE,
+    }
+)
+
+_ACTION_OPTIONAL_CONTRACT_MESSAGE_TYPES = frozenset(
+    {
+        ACTION_EXTENSION,
+    }
+)
+
 
 def action_message_schema() -> dict[str, Any]:
     """Return the canonical ``actions`` lane JSON Schema artifact."""
@@ -1657,18 +1675,25 @@ def action_message_schema() -> dict[str, Any]:
     variants: list[dict[str, Any]] = []
     for message_type, body_type in ACTION_BODY_BY_MESSAGE_TYPE.items():
         body_ref = _add_schema_model(definitions, body_type)
+        required = ["lane", "messageType", "body"]
+        properties: dict[str, Any] = {
+            "lane": {"const": ACTIONS_LANE},
+            "messageType": {"const": message_type},
+            "body": body_ref,
+        }
+        if message_type in _ACTION_NO_CONTRACT_MESSAGE_TYPES:
+            properties["contract"] = False
+        elif message_type not in _ACTION_OPTIONAL_CONTRACT_MESSAGE_TYPES:
+            required.append("contract")
+            properties["contract"] = {"$ref": "#/$defs/ContractPointer"}
         variants.append(
             {
                 "allOf": [
                     envelope_ref,
                     {
                         "type": "object",
-                        "required": ["lane", "messageType", "body"],
-                        "properties": {
-                            "lane": {"const": ACTIONS_LANE},
-                            "messageType": {"const": message_type},
-                            "body": body_ref,
-                        },
+                        "required": required,
+                        "properties": properties,
                     },
                 ]
             }

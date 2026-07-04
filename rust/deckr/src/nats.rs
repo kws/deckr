@@ -181,6 +181,7 @@ impl EndpointSession {
         };
         reply.recipient_session_id = Some(request.sender_session_id.clone());
         reply.in_reply_to = Some(request.message_id.clone());
+        reply.contract = request.contract.clone();
         self.send(&reply).await
     }
 

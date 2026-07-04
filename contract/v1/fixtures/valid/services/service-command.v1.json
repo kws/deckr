@@ -6,6 +6,10 @@
     },
     "serviceNamespace": "org.example.media.service"
   },
+  "contract": {
+    "contractId": "service-use-contract-1",
+    "generation": 1
+  },
   "createdAt": "2026-04-29T10:00:00Z",
   "lane": "services",
   "messageId": "fixture-service-command",

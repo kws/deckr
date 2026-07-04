@@ -344,6 +344,7 @@ These core contracts include:
 
 - the Deckr logical message envelope
 - endpoint and delivery metadata
+- optional Concord contract authority metadata
 - endpoint addresses and entity subjects
 - core lane message body types
 - core event types
@@ -355,6 +356,21 @@ other transport-local frame.
 
 Transport framing may exist outside the Deckr message envelope, but it is not
 the lane message contract.
+
+When a message depends on Concord authority, the envelope carries the relevant
+contract instance as `contract.contractId` plus `contract.generation`. This
+field answers "under which live agreement is this message authorized?" It does
+not replace endpoint sessions, device refs, binding ids, page sessions, service
+view refs, route ids, or output generations; those remain routing, target
+selection, and stale-state fencing data inside an already-authorized agreement.
+Lane contracts decide per message type whether the field is required,
+forbidden, or not applicable.
+
+No component may authorize a protected hardware, action, service, or view
+message by route identity alone or by scanning for any live Concord contract
+that happens to match the sender. Protected message receivers must validate the
+exact envelope contract pointer against Concord participant-token validity and
+the sender/receiver endpoint sessions required by that profile.
 
 Python is expected to author these core contracts using Pydantic models.
 
@@ -817,6 +833,10 @@ capability state, and replies; it is not an authority for device inventory
 lifecycle. A disappeared claimed device must be reflected by cancelling the
 matching Concord claim or by no longer maintaining the manager participant
 token, not by a lane notification.
+Hardware messages that operate under a hardware claim carry the claim's
+`contractId` and `generation` in the Deckr envelope. Device refs and capability
+subjects identify which device/control/capability inside that claim is targeted;
+they are not authority by themselves.
 
 Components may report readiness through `RunContext.status` or the convenience
 reporting helpers. The component manager combines component-reported local
@@ -964,6 +984,8 @@ to understand component-specific settings.
 - The public Python runtime API is AnyIO-native; backend-specific async objects
   must not leak into Deckr contracts.
 - Core Deckr message envelopes and payloads live in `deckr`.
+- Protected lane messages carry the authorizing Concord contract pointer in the
+  Deckr envelope; route ids and domain refs are not substitute authority.
 - Pydantic models in `deckr` are the canonical Python authoring format for core
   message contracts.
 - JSON Schema generated from those contracts is the interoperability artifact

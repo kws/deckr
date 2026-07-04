@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { validateContractPointer, type ContractPointer } from "./authority.ts";
 import { endpointAddress } from "./endpoint.ts";
 import { StateConflict, StateUnavailable, ValidationError } from "./errors.ts";
 import {
@@ -22,6 +23,7 @@ import {
 } from "./state.ts";
 
 export { canonicalJson, canonicalJsonBytes, canonicalJsonHash } from "./json.ts";
+export { validateContractPointer, type ContractPointer } from "./authority.ts";
 
 export const CONCORD_CONTRACT_SCHEMA_ID = "dev.deckr.concord.contract.v1";
 export const CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID =
@@ -82,11 +84,6 @@ export const ConcordManagedContractEventType = Object.freeze({
 });
 export type ConcordManagedContractEventType =
   (typeof ConcordManagedContractEventType)[keyof typeof ConcordManagedContractEventType];
-
-export interface ContractPointer {
-  contractId: string;
-  generation: number;
-}
 
 export interface TokenObservation {
   generation: number;
@@ -264,14 +261,6 @@ export function concordStaleObservationKey(input: {
   generation: number;
 }): string {
   return ["stale", encodeKeyToken(input.contractId), String(input.generation)].join(".");
-}
-
-export function validateContractPointer(value: unknown): ContractPointer {
-  const raw = requireJsonObject(value, "Concord contract pointer");
-  return {
-    contractId: requireText(raw.contractId, "contractId"),
-    generation: requirePositiveInteger(raw.generation, "generation"),
-  };
 }
 
 export function validateContractRecord(value: unknown): ContractRecord {

@@ -16,6 +16,7 @@ from typing import Any, Literal
 import anyio
 from pydantic import Field, field_serializer, field_validator, model_validator
 
+from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
@@ -284,23 +285,6 @@ def canonical_json_bytes(value: Mapping[str, Any] | DeckrModel) -> bytes:
 
 def canonical_json_hash(value: Mapping[str, Any] | DeckrModel) -> str:
     return "sha256:" + hashlib.sha256(canonical_json_bytes(value)).hexdigest()
-
-
-class ContractPointer(DeckrModel):
-    contract_id: str = Field(alias="contractId")
-    generation: int
-
-    @field_validator("contract_id")
-    @classmethod
-    def _validate_contract_id(cls, value: str) -> str:
-        return _require_text(value, field_name="contract id")
-
-    @field_validator("generation")
-    @classmethod
-    def _validate_generation(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("generation must be greater than zero")
-        return value
 
 
 class TokenObservation(DeckrModel):

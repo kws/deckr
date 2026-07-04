@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from deckr.contracts.authority import ContractPointer
 from deckr.contracts.lanes import SERVICE_LANE_CONTRACT
 from deckr.contracts.messages import (
     SERVICES_LANE,
@@ -23,6 +24,8 @@ from deckr.services.messages import (
     service_command_reply_message,
     service_message_schema,
 )
+
+_CONTRACT = ContractPointer(contractId="service-contract-1", generation=1)
 
 
 def test_service_endpoint_helpers_round_trip() -> None:
@@ -51,6 +54,7 @@ def test_services_lane_contract_accepts_direct_command_reply() -> None:
             operation="play",
             params={"zone": "Kitchen"},
         ),
+        contract=_CONTRACT,
     )
     reply = service_command_reply_message(
         sender=service_address("sonos-home"),
@@ -65,6 +69,7 @@ def test_services_lane_contract_accepts_direct_command_reply() -> None:
             status=ServiceCommandStatus.OK,
             result={"accepted": True},
         ),
+        contract=_CONTRACT,
     )
 
     validate_message_for_contract(command, contract)
@@ -109,6 +114,7 @@ def test_services_lane_validation_thaws_frozen_json_body() -> None:
             operation="ensureItems",
             params={"items": ["KajsRoomScene"], "refresh": True},
         ),
+        contract=_CONTRACT,
     )
     reply = service_command_reply_message(
         sender=service_address("openhab-home"),
@@ -123,6 +129,7 @@ def test_services_lane_validation_thaws_frozen_json_body() -> None:
             status=ServiceCommandStatus.OK,
             result={"items": {"KajsRoomScene": {"state": "ON"}}},
         ),
+        contract=_CONTRACT,
     )
 
     validate_message_for_contract(command, contract)

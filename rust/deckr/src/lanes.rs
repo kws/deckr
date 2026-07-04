@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::authority::ContractPointer;
 use crate::endpoint::{
     EndpointAddress, ACTION_PROVIDER_FAMILY, CONTROLLER_FAMILY, HARDWARE_MANAGER_FAMILY,
     SERVICE_FAMILY,
@@ -538,6 +539,8 @@ pub struct DeckrMessage {
     pub recipient: MessageTarget,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recipient_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract: Option<ContractPointer>,
     pub subject: EntitySubject,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -558,6 +561,7 @@ impl DeckrMessage {
         manager_id: &str,
         sender_session_id: &str,
         device_id: &str,
+        contract: ContractPointer,
         body: HardwareMessageBody,
     ) -> Result<Self> {
         Self::hardware(
@@ -572,6 +576,7 @@ impl DeckrMessage {
             None,
             manager_id,
             device_id,
+            contract,
             body,
         )
     }
@@ -582,6 +587,7 @@ impl DeckrMessage {
         device_id: &str,
         controller_endpoint: &str,
         controller_session_id: &str,
+        contract: ContractPointer,
         body: HardwareMessageBody,
     ) -> Result<Self> {
         Self::hardware(
@@ -593,6 +599,7 @@ impl DeckrMessage {
             Some(controller_session_id.to_string()),
             manager_id,
             device_id,
+            contract,
             body,
         )
     }
@@ -603,6 +610,7 @@ impl DeckrMessage {
         manager_id: &str,
         manager_session_id: &str,
         device_id: &str,
+        contract: ContractPointer,
         body: HardwareMessageBody,
     ) -> Result<Self> {
         Self::hardware(
@@ -614,6 +622,7 @@ impl DeckrMessage {
             Some(manager_session_id.to_string()),
             manager_id,
             device_id,
+            contract,
             body,
         )
     }
@@ -625,8 +634,10 @@ impl DeckrMessage {
         recipient_session_id: Option<String>,
         manager_id: &str,
         device_id: &str,
+        contract: ContractPointer,
         body: HardwareMessageBody,
     ) -> Result<Self> {
+        contract.validate()?;
         let subject = match body.capability_id() {
             Some(capability_id) => EntitySubject::hardware_capability(
                 manager_id,
@@ -646,6 +657,7 @@ impl DeckrMessage {
             sender_session_id,
             recipient,
             recipient_session_id,
+            contract: Some(contract),
             subject,
             created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             expires_at: None,
@@ -714,6 +726,9 @@ impl DeckrMessage {
         EndpointAddress::parse(&self.sender)?;
         require_non_empty(&self.sender_session_id, "sender session id")?;
         self.recipient.validate()?;
+        if let Some(contract) = &self.contract {
+            contract.validate()?;
+        }
         if let Some(recipient_session_id) = &self.recipient_session_id {
             require_non_empty(recipient_session_id, "recipient session id")?;
             if !matches!(self.recipient, MessageTarget::Endpoint { .. }) {
@@ -736,6 +751,11 @@ impl DeckrMessage {
             ));
         }
         if self.lane == HARDWARE_MESSAGES_LANE {
+            if self.contract.is_none() {
+                return Err(Error::Invalid(
+                    "hardware_messages messages require a Concord contract pointer".to_string(),
+                ));
+            }
             self.hardware_body()?;
         }
         Ok(())
@@ -1608,6 +1628,16 @@ pub fn headers_for(message: &DeckrMessage) -> BTreeMap<String, String> {
             recipient_session_id.clone(),
         );
     }
+    if let Some(contract) = &message.contract {
+        headers.insert(
+            "Deckr-Contract-Id".to_string(),
+            contract.contract_id.clone(),
+        );
+        headers.insert(
+            "Deckr-Contract-Generation".to_string(),
+            contract.generation.to_string(),
+        );
+    }
     if let Some(in_reply_to) = &message.in_reply_to {
         headers.insert("Deckr-In-Reply-To".to_string(), in_reply_to.clone());
     }
@@ -1616,6 +1646,18 @@ pub fn headers_for(message: &DeckrMessage) -> BTreeMap<String, String> {
 
 pub fn validate_headers(headers: &BTreeMap<String, String>, message: &DeckrMessage) -> Result<()> {
     message.validate()?;
+    let contract_id = headers.get("Deckr-Contract-Id");
+    let contract_generation = headers.get("Deckr-Contract-Generation");
+    if contract_id.is_some() != contract_generation.is_some() {
+        return Err(Error::Invalid(
+            "NATS contract headers must be provided together".to_string(),
+        ));
+    }
+    if message.contract.is_none() && contract_id.is_some() {
+        return Err(Error::Invalid(
+            "NATS contract headers disagree with Deckr envelope".to_string(),
+        ));
+    }
     let expected = headers_for(message);
     for (key, expected_value) in expected {
         if let Some(actual) = headers.get(&key) {

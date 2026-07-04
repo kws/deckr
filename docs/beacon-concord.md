@@ -267,6 +267,44 @@ startup/watch-reconnect cache rebuilds, and explicit low-frequency repair.
 Running full discovery on a fast renewal cadence, including the shared
 five-second state-renewal cadence, is forbidden.
 
+### Contract Pointers On Lane Messages
+
+Any lane message whose legitimacy depends on an existing Concord agreement must
+carry the authorizing contract instance in the `DeckrMessage` envelope:
+
+```json
+{
+  "contract": {
+    "contractId": "opaque-contract-id",
+    "generation": 1
+  }
+}
+```
+
+The pointer identifies the live Concord contract generation under which the
+message claims authority. Receivers must validate that exact contract id and
+generation against Concord participant-token validity and the sender/receiver
+endpoint sessions required by the profile. Receivers must not authorize
+protected messages by scanning for any matching live contract, by trusting a
+lane-local route id, or by treating Beacon, endpoint presence, current-state
+records, catalogs, or service-use ids as substitute authority.
+
+Lane-local identifiers still matter, but they answer different questions:
+
+- `contract.contractId` plus `contract.generation`: which live Concord
+  agreement authorizes this message
+- `senderSessionId` and `recipientSessionId`: which runtime endpoint sessions
+  sent and receive the message, checked against Concord participant tokens
+- device refs, action instance ids, binding ids, page session ids, service view
+  refs, route ids, and output generations: which object, route, or stale-state
+  fence is targeted within the authorized agreement
+
+Core lane policy determines whether `contract` is required, forbidden, or not
+applicable for a message type. Hardware control/input/state messages and
+protected service/action commands require it. Public discovery, advertisements,
+availability probes, interest updates, and lifecycle candidates do not carry
+Concord authority in the lane envelope.
+
 ### Concord Maintenance
 
 Core Concord maintenance is optional and Concord-only. The lane-less component

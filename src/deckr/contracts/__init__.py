@@ -7,11 +7,13 @@ from deckr.contracts.artifacts import (
     contract_manifest,
     read_contract_artifact,
 )
+from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
     DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     SERVICE_LANE_CONTRACT,
+    ContractRequirement,
     MessageContract,
     MessageContractRegistry,
 )
@@ -70,6 +72,8 @@ __all__ = [
     "CORE_LANE_SCHEMA_IDS",
     "DECKR_MESSAGE_PROTOCOL_VERSION",
     "DEFAULT_MESSAGE_CONTRACT_REGISTRY",
+    "ContractPointer",
+    "ContractRequirement",
     "DeckrModel",
     "DeckrMessage",
     "EndpointAddress",

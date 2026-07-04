@@ -8,11 +8,39 @@ import {
   type EndpointTarget,
   type MessageTarget,
 } from "./endpoint.ts";
+import { validateContractPointer, type ContractPointer } from "./authority.ts";
 import { ValidationError } from "./errors.ts";
 import { cloneJson, requireJsonObject, requireText, type JsonObject } from "./json.ts";
 import { encodeKeyToken } from "./keys.ts";
 
 const LANE_PREFIX = "deckr.msg";
+const REQUIRED_CONTRACT_ACTION_MESSAGES = new Set([
+  "actionExtension",
+  "actionInstanceCreated",
+  "actionInstanceDestroyed",
+  "actionLifecycleRejected",
+  "bindingAttached",
+  "bindingDetached",
+  "bindingOutput",
+  "bindingOverlay",
+  "bindingOverlayClear",
+  "capabilityInput",
+  "closePage",
+  "openPage",
+  "pageSessionClosed",
+  "pageSessionOpened",
+  "replacePage",
+  "settingsPatch",
+  "settingsReplace",
+  "settingsRequest",
+  "settingsSnapshot",
+]);
+const FORBIDDEN_CONTRACT_ACTION_MESSAGES = new Set([
+  "actionAvailabilityChanged",
+  "actionAvailabilityRequest",
+  "actionAvailabilitySnapshot",
+  "actionInterestUpdate",
+]);
 
 export interface EntitySubject {
   kind: string;
@@ -29,6 +57,7 @@ export interface DeckrMessage {
   senderSessionId: string;
   recipient: MessageTarget;
   recipientSessionId?: string;
+  contract?: ContractPointer;
   subject: EntitySubject;
   createdAt: string;
   expiresAt?: string;
@@ -46,6 +75,7 @@ export interface BuildMessageInput {
   senderSessionId: string;
   recipient: string | MessageTarget;
   recipientSessionId?: string;
+  contract?: ContractPointer;
   subject: EntitySubject;
   body: JsonObject;
   messageId?: string;
@@ -88,6 +118,7 @@ export function buildMessage(input: BuildMessageInput): DeckrMessage {
     ...(input.recipientSessionId === undefined
       ? {}
       : { recipientSessionId: requireText(input.recipientSessionId, "recipient session id") }),
+    ...(input.contract === undefined ? {} : { contract: input.contract }),
     subject: input.subject,
     createdAt,
     ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -120,6 +151,9 @@ export function validateDeckrMessage(value: unknown): DeckrMessage {
   if (raw.recipientSessionId !== undefined) {
     message.recipientSessionId = requireText(raw.recipientSessionId, "recipientSessionId");
   }
+  if (raw.contract !== undefined) {
+    message.contract = validateContractPointer(raw.contract);
+  }
   if (raw.expiresAt !== undefined) {
     message.expiresAt = requireText(raw.expiresAt, "expiresAt");
   }
@@ -138,6 +172,7 @@ export function validateDeckrMessage(value: unknown): DeckrMessage {
   if (raw.trace !== undefined) {
     message.trace = requireJsonObject(raw.trace, "trace");
   }
+  validateContractRequirement(message);
   return message;
 }
 
@@ -178,6 +213,12 @@ export function headersFor(message: DeckrMessage): Record<string, string> {
     ...(message.recipientSessionId === undefined
       ? {}
       : { "Deckr-Recipient-Session": message.recipientSessionId }),
+    ...(message.contract === undefined
+      ? {}
+      : {
+          "Deckr-Contract-Id": message.contract.contractId,
+          "Deckr-Contract-Generation": String(message.contract.generation),
+        }),
     ...(message.inReplyTo === undefined ? {} : { "Deckr-In-Reply-To": message.inReplyTo }),
   };
 }
@@ -193,14 +234,16 @@ export function validateHeaderHints(
   if (headers === undefined || headers === null) {
     return;
   }
+  const contractId = headerValue(headers, "Deckr-Contract-Id");
+  const contractGeneration = headerValue(headers, "Deckr-Contract-Generation");
+  if ((contractId === undefined) !== (contractGeneration === undefined)) {
+    throw new ValidationError("NATS contract headers must be provided together");
+  }
+  if (message.contract === undefined && contractId !== undefined) {
+    throw new ValidationError("NATS contract headers disagree with Deckr envelope");
+  }
   for (const [name, expected] of Object.entries(headersFor(message))) {
-    let actual: string | string[] | undefined | null;
-    if (typeof (headers as HeaderReader).get === "function") {
-      actual = (headers as HeaderReader).get(name);
-    } else {
-      actual = (headers as Record<string, string>)[name];
-    }
-    const actualText = Array.isArray(actual) ? actual[0] : actual;
+    const actualText = headerValue(headers, name);
     if (actualText !== undefined && actualText !== null && actualText !== expected) {
       throw new ValidationError(`NATS header ${name} disagrees with Deckr envelope`);
     }
@@ -286,6 +329,52 @@ function validateSubject(value: unknown): EntitySubject {
     out[requireText(key, "subject identifier key")] = requireText(item, "subject identifier value");
   }
   return { kind: requireText(raw.kind, "subject kind"), identifiers: out };
+}
+
+function validateContractRequirement(message: DeckrMessage): void {
+  if (message.lane === "hardware_messages") {
+    if (message.contract === undefined) {
+      throw new ValidationError("hardware_messages messages require a Concord contract pointer");
+    }
+    return;
+  }
+  if (message.lane === "services") {
+    if (["serviceCommand", "serviceCommandReply"].includes(message.messageType)) {
+      if (message.contract === undefined) {
+        throw new ValidationError("services messages require a Concord contract pointer");
+      }
+    }
+    return;
+  }
+  if (message.lane !== "actions") {
+    return;
+  }
+  if (FORBIDDEN_CONTRACT_ACTION_MESSAGES.has(message.messageType)) {
+    if (message.contract !== undefined) {
+      throw new ValidationError("public action messages must not carry a Concord contract pointer");
+    }
+    return;
+  }
+  if (
+    REQUIRED_CONTRACT_ACTION_MESSAGES.has(message.messageType) &&
+    message.contract === undefined
+  ) {
+    throw new ValidationError("protected action messages require a Concord contract pointer");
+  }
+}
+
+function headerValue(
+  headers: HeaderReader | Record<string, string>,
+  name: string,
+): string | undefined {
+  let actual: string | string[] | undefined | null;
+  if (typeof (headers as HeaderReader).get === "function") {
+    actual = (headers as HeaderReader).get(name);
+  } else {
+    actual = (headers as Record<string, string>)[name];
+  }
+  const actualText = Array.isArray(actual) ? actual[0] : actual;
+  return actualText ?? undefined;
 }
 
 function fail(message: string): never {

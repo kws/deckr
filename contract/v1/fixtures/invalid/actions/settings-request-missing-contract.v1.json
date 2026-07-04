@@ -10,10 +10,6 @@
       "scope": "action_instance"
     }
   },
-  "contract": {
-    "contractId": "action-session-contract-1",
-    "generation": 1
-  },
   "createdAt": "2026-04-29T10:00:00Z",
   "lane": "actions",
   "messageId": "fixture-action-settings-request",

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::authority::ContractPointer;
 use crate::concord::{ConcordManagedContract, ContractValidityStatus};
 use crate::endpoint::EndpointAddress;
 use crate::lanes::{DeviceDescriptor, DeviceRef};
@@ -12,6 +13,7 @@ use crate::Result;
 struct HardwareClaimRoute {
     controller_endpoint: EndpointAddress,
     controller_session_id: String,
+    contract: ContractPointer,
     contract_key: String,
     claim_id: String,
 }
@@ -20,6 +22,7 @@ struct HardwareClaimRoute {
 struct HardwareClaimRecipient<'a> {
     endpoint: &'a EndpointAddress,
     session_id: &'a str,
+    contract: &'a ContractPointer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +41,7 @@ impl HardwareClaimRouting {
         Some(HardwareClaimRecipient {
             endpoint: &claim.controller_endpoint,
             session_id: &claim.controller_session_id,
+            contract: &claim.contract,
         })
     }
 
@@ -110,6 +114,10 @@ impl HardwareClaimRouting {
                     HardwareClaimRoute {
                         controller_endpoint: terms.controller_endpoint.clone(),
                         controller_session_id: controller_token.session_id.clone(),
+                        contract: ContractPointer {
+                            contract_id: managed.contract.contract_id.clone(),
+                            generation: managed.contract.generation,
+                        },
                         contract_key: managed.contract.key.clone(),
                         claim_id: terms.claim_id.clone(),
                     },
@@ -190,10 +198,14 @@ fn hardware_beacon_payload(
     Ok(payload)
 }
 
-fn claim_route_identity(claim: &HardwareClaimRoute) -> (&EndpointAddress, &str, &str, &str) {
+fn claim_route_identity(
+    claim: &HardwareClaimRoute,
+) -> (&EndpointAddress, &str, &str, u64, &str, &str) {
     (
         &claim.controller_endpoint,
         &claim.controller_session_id,
+        &claim.contract.contract_id,
+        claim.contract.generation,
         &claim.contract_key,
         &claim.claim_id,
     )
@@ -213,6 +225,7 @@ pub mod runtime {
     use tokio::time;
     use uuid::Uuid;
 
+    use crate::authority::ContractPointer;
     use crate::beacon::{AdvertisementHandle, BeaconAdvertiser};
     use crate::concord::{
         ConcordContractNotification, ConcordCoordinator, ConcordManagedContract,
@@ -238,6 +251,7 @@ pub mod runtime {
         Rejected {
             reason: String,
             reply: Option<DeckrMessage>,
+            refresh_claims: bool,
         },
         Ignored,
     }
@@ -456,6 +470,7 @@ pub mod runtime {
                 &device_ref.device_id,
                 recipient.endpoint.as_str(),
                 recipient.session_id,
+                recipient.contract.clone(),
                 body,
             )
             .map(Some)
@@ -466,6 +481,22 @@ pub mod runtime {
                 return Ok(HardwareCommandDecision::Rejected {
                     reason: "expired".to_string(),
                     reply: self.command_rejection_reply(&envelope, "expired")?,
+                    refresh_claims: false,
+                });
+            }
+            if envelope.contract.is_none() {
+                if envelope.recipient_endpoint() != Some(self.endpoint.as_str())
+                    || envelope
+                        .recipient_session_id
+                        .as_deref()
+                        .is_some_and(|session_id| session_id != self.session_id)
+                {
+                    return Ok(HardwareCommandDecision::Ignored);
+                }
+                return Ok(HardwareCommandDecision::Rejected {
+                    reason: "unauthorized".to_string(),
+                    reply: None,
+                    refresh_claims: false,
                 });
             }
             if !envelope.is_directly_deliverable_to(&self.endpoint, &self.session_id)? {
@@ -478,6 +509,7 @@ pub mod runtime {
                     return Ok(HardwareCommandDecision::Rejected {
                         reason: "malformed".to_string(),
                         reply: None,
+                        refresh_claims: false,
                     });
                 }
             };
@@ -491,25 +523,31 @@ pub mod runtime {
                 return Ok(HardwareCommandDecision::Rejected {
                     reason: "stale".to_string(),
                     reply: self.command_rejection_reply(&envelope, "stale")?,
+                    refresh_claims: false,
                 });
             }
             if !self.devices.contains_key(&device_id) {
                 return Ok(HardwareCommandDecision::Rejected {
                     reason: "stale".to_string(),
                     reply: self.command_rejection_reply(&envelope, "stale")?,
+                    refresh_claims: false,
                 });
             }
-            if self
-                .routing
-                .claim_recipient(&device_id)
-                .is_none_or(|recipient| {
-                    recipient.endpoint.as_str() != envelope.sender
-                        || recipient.session_id != envelope.sender_session_id
-                })
+            let Some(recipient) = self.routing.claim_recipient(&device_id) else {
+                return Ok(HardwareCommandDecision::Rejected {
+                    reason: "unauthorized".to_string(),
+                    reply: self.command_rejection_reply(&envelope, "unauthorized")?,
+                    refresh_claims: true,
+                });
+            };
+            if recipient.endpoint.as_str() != envelope.sender
+                || recipient.session_id != envelope.sender_session_id
+                || envelope.contract.as_ref() != Some(recipient.contract)
             {
                 return Ok(HardwareCommandDecision::Rejected {
                     reason: "unauthorized".to_string(),
                     reply: self.command_rejection_reply(&envelope, "unauthorized")?,
+                    refresh_claims: false,
                 });
             }
             Ok(HardwareCommandDecision::Authorized {
@@ -523,6 +561,7 @@ pub mod runtime {
             &self,
             recipient_endpoint: &EndpointAddress,
             recipient_session_id: &str,
+            contract: ContractPointer,
             body: HardwareMessageBody,
             reason: &str,
         ) -> Result<Option<DeckrMessage>> {
@@ -569,6 +608,7 @@ pub mod runtime {
                 &device_id,
                 recipient_endpoint.as_str(),
                 recipient_session_id,
+                contract,
                 reply_body,
             )
             .map(Some)
@@ -579,9 +619,13 @@ pub mod runtime {
             envelope: &DeckrMessage,
             reason: &str,
         ) -> Result<Option<DeckrMessage>> {
+            let Some(contract) = envelope.contract.clone() else {
+                return Ok(None);
+            };
             self.rejection_reply_to(
                 &EndpointAddress::parse(&envelope.sender)?,
                 &envelope.sender_session_id,
+                contract,
                 envelope.hardware_body()?,
                 reason,
             )
@@ -852,8 +896,10 @@ pub mod runtime {
             };
             if matches!(
                 decision,
-                HardwareCommandDecision::Rejected { ref reason, .. }
-                    if reason == "unauthorized" || reason == "stale"
+                HardwareCommandDecision::Rejected {
+                    refresh_claims: true,
+                    ..
+                }
             ) {
                 self.reconcile_claims("command authorization").await?;
                 decision = {
@@ -952,6 +998,9 @@ pub mod runtime {
                 inner.state.rejection_reply_to(
                     &EndpointAddress::parse(&envelope.sender)?,
                     &envelope.sender_session_id,
+                    envelope.contract.clone().ok_or_else(|| {
+                        crate::Error::Invalid("hardware command missing contract".to_string())
+                    })?,
                     envelope.hardware_body()?,
                     reason,
                 )?
@@ -1223,6 +1272,133 @@ pub mod runtime {
             reset_handler.reset_hardware_device(device_id).await?;
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::lanes::DeviceRef;
+
+        fn contract_pointer(contract_id: &str) -> ContractPointer {
+            ContractPointer {
+                contract_id: contract_id.to_string(),
+                generation: 1,
+            }
+        }
+
+        fn command(
+            controller_id: &str,
+            controller_session_id: &str,
+            contract: Option<ContractPointer>,
+        ) -> DeckrMessage {
+            let mut message = DeckrMessage::hardware_command(
+                controller_id,
+                controller_session_id,
+                "manager-main",
+                "manager-session",
+                "deck",
+                contract_pointer("claim-a"),
+                HardwareMessageBody::ControlCommand {
+                    device_ref: DeviceRef {
+                        manager_id: "manager-main".to_string(),
+                        device_id: "deck".to_string(),
+                        fingerprint: None,
+                    },
+                    control_id: Some("screen".to_string()),
+                    capability_id: "raster.bitmap".to_string(),
+                    command_type: "clear".to_string(),
+                    params: Default::default(),
+                },
+            )
+            .unwrap();
+            message.contract = contract;
+            message
+        }
+
+        fn state_with_device() -> HardwareManagerState {
+            let mut state =
+                HardwareManagerState::new("manager-main", "manager-session").unwrap();
+            state
+                .set_device(DeviceDescriptor {
+                    device_id: "deck".to_string(),
+                    fingerprint: "fingerprint:deck".to_string(),
+                    display_name: "Deck".to_string(),
+                    manufacturer: None,
+                    model: None,
+                    serial_number: None,
+                    controls: Vec::new(),
+                    capabilities: Vec::new(),
+                })
+                .unwrap();
+            state
+        }
+
+        fn state_with_claim() -> HardwareManagerState {
+            let mut state = state_with_device();
+            state.routing.claims.insert(
+                "deck".to_string(),
+                super::super::HardwareClaimRoute {
+                    controller_endpoint: EndpointAddress::parse("controller:main").unwrap(),
+                    controller_session_id: "controller-session".to_string(),
+                    contract: contract_pointer("claim-a"),
+                    contract_key: "contracts.claim-a.1.meta".to_string(),
+                    claim_id: "claim-a".to_string(),
+                },
+            );
+            state
+        }
+
+        fn assert_unauthorized_refresh(
+            decision: HardwareCommandDecision,
+            expected_refresh: bool,
+        ) {
+            match decision {
+                HardwareCommandDecision::Rejected {
+                    reason,
+                    refresh_claims,
+                    ..
+                } => {
+                    assert_eq!(reason, "unauthorized");
+                    assert_eq!(refresh_claims, expected_refresh);
+                }
+                other => panic!("expected unauthorized rejection, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn command_authorization_marks_missing_cached_claim_refresh_needed() {
+            let state = state_with_device();
+            let decision = state
+                .authorize_command(command(
+                    "main",
+                    "controller-session",
+                    Some(contract_pointer("claim-a")),
+                ))
+                .unwrap();
+
+            assert_unauthorized_refresh(decision, true);
+        }
+
+        #[test]
+        fn command_authorization_final_rejects_known_route_mismatches() {
+            for message in [
+                command(
+                    "other",
+                    "controller-session",
+                    Some(contract_pointer("claim-a")),
+                ),
+                command("main", "other-session", Some(contract_pointer("claim-a"))),
+                command(
+                    "main",
+                    "controller-session",
+                    Some(contract_pointer("claim-other")),
+                ),
+                command("main", "controller-session", None),
+            ] {
+                let decision = state_with_claim().authorize_command(message).unwrap();
+                assert_unauthorized_refresh(decision, false);
+            }
+        }
     }
 
     #[cfg(feature = "nats")]

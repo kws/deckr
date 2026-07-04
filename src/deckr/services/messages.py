@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_serializer, field_validator
 
+from deckr.contracts.authority import ContractPointer
 from deckr.contracts.messages import (
     SERVICE_MESSAGES_SCHEMA_ID,
     SERVICES_LANE,
@@ -150,6 +151,7 @@ def service_message(
     subject: EntitySubject,
     in_reply_to: str | None = None,
     causation_id: str | None = None,
+    contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
     parsed_body = service_body_for_type(message_type, body)
     return DeckrMessage(
@@ -163,6 +165,7 @@ def service_message(
         body=parsed_body.to_dict(),
         inReplyTo=in_reply_to,
         causationId=causation_id,
+        contract=contract,
     )
 
 
@@ -175,6 +178,7 @@ def service_command_message(
     body: ServiceCommandBody | Mapping[str, Any],
     subject: EntitySubject,
     causation_id: str | None = None,
+    contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
     return service_message(
         sender=sender,
@@ -185,6 +189,7 @@ def service_command_message(
         body=body,
         subject=subject,
         causation_id=causation_id,
+        contract=contract,
     )
 
 
@@ -198,6 +203,7 @@ def service_command_reply_message(
     subject: EntitySubject,
     in_reply_to: str,
     causation_id: str | None = None,
+    contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
     return service_message(
         sender=sender,
@@ -209,6 +215,7 @@ def service_command_reply_message(
         subject=subject,
         in_reply_to=in_reply_to,
         causation_id=causation_id,
+        contract=contract,
     )
 
 
@@ -226,10 +233,11 @@ def service_message_schema() -> dict[str, Any]:
                     envelope_ref,
                     {
                         "type": "object",
-                        "required": ["lane", "messageType", "body"],
+                        "required": ["lane", "messageType", "contract", "body"],
                         "properties": {
                             "lane": {"const": SERVICES_LANE},
                             "messageType": {"const": message_type},
+                            "contract": {"$ref": "#/$defs/ContractPointer"},
                             "body": body_ref,
                         },
                     },

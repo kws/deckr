@@ -47,6 +47,8 @@ from deckr.substrates.nats import (
     _subject_for,
 )
 
+_CONTRACT = {"contractId": "contract-1", "generation": 1}
+
 
 def _settings_target() -> dict[str, str]:
     return {
@@ -79,6 +81,7 @@ async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> Non
             subject=entity_subject("settings", contextId="ctx"),
             message_type="settingsRequest",
             body={"target": _settings_target()},
+            contract=_CONTRACT,
         )
 
     deckr._message_bus.publish.assert_awaited_once_with(sent)
@@ -115,6 +118,7 @@ async def test_endpoint_session_id_is_reused_across_lanes() -> None:
             subject=entity_subject("settings", contextId="ctx"),
             message_type="settingsRequest",
             body={"target": _settings_target()},
+            contract=_CONTRACT,
         )
         service_message = await controller.send(
             lane=SERVICES_LANE,
@@ -131,6 +135,7 @@ async def test_endpoint_session_id_is_reused_across_lanes() -> None:
                 "operation": "play",
                 "params": {},
             },
+            contract={"contractId": "service-contract-1", "generation": 1},
         )
 
     assert action_message.sender_session_id == "controller-fixed"
@@ -156,6 +161,7 @@ async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
                 "extensionSchemaId": "test.broadcast.v1",
                 "data": {"title": "Ready"},
             },
+            contract=_CONTRACT,
         )
 
     contract = deckr.lane_contracts.contract_for(ACTIONS_LANE)
@@ -192,6 +198,7 @@ async def test_lane_validation_rejects_wrong_sender_family() -> None:
                 subject=entity_subject("settings", contextId="ctx"),
                 message_type="settingsRequest",
                 body={"target": _settings_target()},
+                contract=_CONTRACT,
             )
 
 
@@ -214,6 +221,7 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
                 recipientSessionId=message.sender_session_id,
                 subject=message.subject,
                 inReplyTo=message.message_id,
+                contract=message.contract,
                 body={"target": _settings_target(), "settings": {"theme": "dark"}},
             )
             assert await reply_is_accepted(reply, request=message, accept=accept)
@@ -226,6 +234,7 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
             subject=entity_subject("settings", contextId="ctx"),
             message_type="settingsRequest",
             body={"target": _settings_target()},
+            contract=_CONTRACT,
         )
 
     assert reply.message_type == "settingsSnapshot"
@@ -308,6 +317,7 @@ def test_sender_session_is_syntactic_and_not_presence_gated() -> None:
         senderSessionId="stale-session",
         recipient=endpoint_target(controller),
         subject=entity_subject("settings", contextId="ctx"),
+        contract=_CONTRACT,
         body={"target": _settings_target()},
     )
 
@@ -328,6 +338,7 @@ def test_recipient_session_mismatch_is_not_deliverable() -> None:
         recipient=endpoint_target(controller_address("main")),
         recipientSessionId="wrong-session",
         subject=entity_subject("settings", contextId="ctx"),
+        contract=_CONTRACT,
         body={"target": _settings_target()},
     )
 
@@ -437,6 +448,7 @@ def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() ->
                 subject=entity_subject("settings", contextId="ctx"),
                 message_type="settingsRequest",
                 body={"target": _settings_target()},
+                contract=_CONTRACT,
             )
 
     message = anyio.run(build)
@@ -445,6 +457,8 @@ def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() ->
     assert _headers_for(message)["Deckr-Sender"] == "action_provider:python"
     assert _headers_for(message)["Deckr-Sender-Session"] == message.sender_session_id
     assert _headers_for(message)["Deckr-Recipient"] == "controller:main"
+    assert _headers_for(message)["Deckr-Contract-Id"] == "contract-1"
+    assert _headers_for(message)["Deckr-Contract-Generation"] == "1"
 
 
 class _FakeLaneMsg:
@@ -540,6 +554,7 @@ def _settings_request_message() -> DeckrMessage:
         senderSessionId="provider-session",
         recipient=endpoint_target(controller_address("main")),
         subject=entity_subject("settings", contextId="ctx"),
+        contract=_CONTRACT,
         body={"target": _settings_target()},
     )
 
@@ -559,6 +574,7 @@ def _settings_reply_message(
         recipientSessionId=request.sender_session_id,
         subject=request.subject,
         inReplyTo=in_reply_to or request.message_id,
+        contract=request.contract,
         body={"target": _settings_target(), "settings": {"theme": theme}},
     )
 
@@ -600,6 +616,7 @@ async def test_nats_subject_payload_mismatch_is_dropped_and_logged(caplog) -> No
         recipient=endpoint_target(controller_address("main")),
         recipientSessionId="controller-session",
         subject=entity_subject("settings", contextId="ctx"),
+        contract=_CONTRACT,
         body={"target": _settings_target()},
     )
 
@@ -679,6 +696,7 @@ async def test_nats_lane_subscriber_buffer_full_unsubscribes(caplog) -> None:
         recipient=endpoint_target(controller),
         recipientSessionId="controller-session",
         subject=entity_subject("settings", contextId="ctx-1"),
+        contract=_CONTRACT,
         body={"target": _settings_target()},
     )
     second = DeckrMessage(
@@ -689,6 +707,7 @@ async def test_nats_lane_subscriber_buffer_full_unsubscribes(caplog) -> None:
         recipient=endpoint_target(controller),
         recipientSessionId="controller-session",
         subject=entity_subject("settings", contextId="ctx-2"),
+        contract=_CONTRACT,
         body={"target": _settings_target()},
     )
 

@@ -92,6 +92,31 @@ envelope when reading from NATS. Endpoint subscriptions attach only to the
 endpoint's direct subject and the matching broadcast-family subject for each
 lane.
 
+Protected lane messages carry Concord authority in the canonical
+`DeckrMessage.contract` envelope field:
+
+```json
+{
+  "contract": {
+    "contractId": "opaque-contract-id",
+    "generation": 1
+  }
+}
+```
+
+The NATS substrate mirrors that pointer into advisory headers:
+
+```text
+Deckr-Contract-Id: opaque-contract-id
+Deckr-Contract-Generation: 1
+```
+
+These headers are delivery and diagnostics hints only. The payload remains
+authoritative. Readers reject partial contract headers and reject contract
+headers that disagree with the envelope, but absence of a header does not remove
+an envelope contract pointer. NATS subjects and headers must not be used as
+authorization in place of Concord validation.
+
 ## Lane Delivery
 
 Components acquire endpoint sessions with:
@@ -111,6 +136,11 @@ The endpoint session stamps `sender` and `senderSessionId`, validates the messag
 contract for the requested lane through the message bus, and publishes the
 envelope. Subscribers receive messages only when the envelope recipient matches
 the local endpoint/session and message contract.
+If a lane contract marks a message type as requiring a Concord contract pointer,
+`EndpointSession.send(...)` must receive `contract={"contractId": ..., "generation": ...}`
+or validation fails before publish. Message types that are public discovery,
+availability, or interest traffic may forbid `contract`; in those cases the
+sender must not attach an authority pointer.
 
 Request/reply is a message-bus operation over ordinary `DeckrMessage`
 envelopes. The requester publishes the request with a NATS reply inbox and
@@ -514,7 +544,9 @@ If lane messages are not delivered:
 1. Validate the `DeckrMessage` envelope and lane contract.
 2. Check sender and recipient endpoint families.
 3. Check direct recipient session filters when `recipientSessionId` is set.
-4. Confirm NATS subject/header hints match the payload.
+4. For protected traffic, confirm the envelope `contract` points at the exact
+   live Concord contract generation expected by the receiving profile.
+5. Confirm NATS subject/header hints match the payload.
 
 If broker load or JetStream consumer counts grow unexpectedly:
 

@@ -334,6 +334,10 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
     senderSessionId: clientEndpoint.sessionId,
     recipient: descriptor!.endpoint,
     recipientSessionId: descriptor!.sessionId,
+    contract: {
+      contractId: agreement.contract.contractId,
+      generation: agreement.contract.generation,
+    },
     messageType: "serviceCommand",
     subject: entitySubject("service", {
       serviceId: "music",
@@ -361,6 +365,10 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
     senderSessionId: clientEndpoint.sessionId,
     recipient: descriptor!.endpoint,
     recipientSessionId: descriptor!.sessionId,
+    contract: {
+      contractId: agreement.contract.contractId,
+      generation: agreement.contract.generation,
+    },
     messageType: "serviceCommand",
     subject: entitySubject("service", {
       serviceId: "music",

@@ -3,6 +3,8 @@
     {
       "fixture": "fixtures/valid/actions/settings-request.v1.json",
       "headers": {
+        "Deckr-Contract-Generation": "1",
+        "Deckr-Contract-Id": "action-session-contract-1",
         "Deckr-Message-Id": "fixture-action-settings-request",
         "Deckr-Message-Type": "settingsRequest",
         "Deckr-Recipient": "controller:controller-main",

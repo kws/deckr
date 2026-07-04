@@ -9,9 +9,9 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time;
 
+use crate::authority::ContractPointer;
 use crate::beacon::{Beacon, BeaconFeatureEvent, BeaconFeatureEventType, Candidate};
 use crate::canonical_json::canonical_json_hash_value;
-use crate::concord::ContractPointer;
 use crate::endpoint::{service_address, EndpointAddress};
 use crate::keys::{
     encode_key_token, service_use_scope_index_key as make_service_use_scope_index_key,

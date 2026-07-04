@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use deckr::authority::ContractPointer;
 use deckr::beacon::{
     beacon_advertisement_key, beacon_advertisement_store_policy, find_candidates,
     AdvertisementRecord, BeaconAdvertiser, DEFAULT_BEACON_TTL_SECONDS,
@@ -904,6 +905,10 @@ fn endpoint_delivery_honors_recipient_session() {
         "mirabox-main",
         "manager-session",
         "deck",
+        ContractPointer {
+            contract_id: "hardware-contract-1".to_string(),
+            generation: 1,
+        },
         HardwareMessageBody::ControlCommand {
             device_ref: deckr::lanes::DeviceRef {
                 manager_id: "mirabox-main".to_string(),

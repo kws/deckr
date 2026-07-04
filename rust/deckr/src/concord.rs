@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::authority::ContractPointer;
 use crate::canonical_json::canonical_json_hash_value;
 use crate::endpoint::EndpointAddress;
 use crate::keys::{
@@ -66,13 +67,6 @@ pub enum ContractValidityStatus {
     SessionMismatch,
     TermsHashMismatch,
     Unavailable,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ContractPointer {
-    pub contract_id: String,
-    pub generation: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -266,18 +260,6 @@ impl ParticipantTokenRecord {
                     "token observation generation must be greater than zero".to_string(),
                 ));
             }
-        }
-        Ok(())
-    }
-}
-
-impl ContractPointer {
-    pub fn validate(&self) -> Result<()> {
-        require_text(&self.contract_id, "contract id")?;
-        if self.generation == 0 {
-            return Err(Error::Invalid(
-                "generation must be greater than zero".to_string(),
-            ));
         }
         Ok(())
     }

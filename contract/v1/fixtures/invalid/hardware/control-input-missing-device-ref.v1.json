@@ -2,6 +2,10 @@
   "body": {
     "eventType": "press"
   },
+  "contract": {
+    "contractId": "hardware-contract-1",
+    "generation": 1
+  },
   "createdAt": "2026-04-29T10:00:00Z",
   "lane": "hardware_messages",
   "messageId": "fixture-hardware-control-input",

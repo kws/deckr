@@ -10,7 +10,12 @@ from typing import Any, Protocol
 
 import anyio
 
-from deckr.contracts.lanes import MessageContract, MessageContractRegistry
+from deckr.contracts.authority import ContractPointer
+from deckr.contracts.lanes import (
+    ContractRequirement,
+    MessageContract,
+    MessageContractRegistry,
+)
 from deckr.contracts.messages import (
     ACTIONS_LANE,
     CORE_LANE_NAMES,
@@ -114,6 +119,7 @@ class EndpointSession:
         ttl_ms: int | None = None,
         causation_id: str | None = None,
         trace: TraceContext | None = None,
+        contract: ContractPointer | Mapping[str, Any] | None = None,
     ) -> DeckrMessage:
         self._ensure_active()
         message = self._message(
@@ -126,6 +132,7 @@ class EndpointSession:
             ttl_ms=ttl_ms,
             causation_id=causation_id,
             trace=trace,
+            contract=contract,
         )
         validate_message_for_contract(message, self._contract_for(lane))
         await self._message_bus.publish(message)
@@ -145,6 +152,7 @@ class EndpointSession:
         ttl_ms: int | None = None,
         causation_id: str | None = None,
         trace: TraceContext | None = None,
+        contract: ContractPointer | Mapping[str, Any] | None = None,
     ) -> DeckrMessage:
         self._ensure_active()
         if timeout <= 0:
@@ -159,6 +167,7 @@ class EndpointSession:
             ttl_ms=ttl_ms,
             causation_id=causation_id,
             trace=trace,
+            contract=contract,
         )
         validate_message_for_contract(message, self._contract_for(lane))
         return await self._message_bus.request(
@@ -189,6 +198,7 @@ class EndpointSession:
             inReplyTo=request.message_id,
             causationId=causation_id,
             trace=trace,
+            contract=request.contract,
             body=body,
         )
         validate_message_for_contract(reply, self._contract_for(request.lane))
@@ -230,6 +240,7 @@ class EndpointSession:
         ttl_ms: int | None,
         causation_id: str | None,
         trace: TraceContext | None,
+        contract: ContractPointer | Mapping[str, Any] | None,
     ) -> DeckrMessage:
         return DeckrMessage(
             lane=lane,
@@ -242,6 +253,7 @@ class EndpointSession:
             ttlMs=ttl_ms,
             causationId=causation_id,
             trace=trace,
+            contract=contract,
             body=body,
         )
 
@@ -400,6 +412,7 @@ def validate_message_for_contract(
             contract=contract,
             lane=message.lane,
         )
+        _validate_contract_requirement(message, contract)
         return
     if message.recipient_session_id is not None:
         raise ValueError("recipientSessionId is only valid for endpoint recipients")
@@ -414,6 +427,7 @@ def validate_message_for_contract(
         contract=contract,
         lane=message.lane,
     )
+    _validate_contract_requirement(message, contract)
 
 
 def message_is_deliverable(
@@ -444,6 +458,8 @@ async def reply_is_accepted(
         return False
     if reply.in_reply_to != request.message_id:
         return False
+    if reply.contract != request.contract:
+        return False
     if (
         reply.recipient_session_id is not None
         and reply.recipient_session_id != request.sender_session_id
@@ -467,6 +483,23 @@ def _validate_recipient_family(
         return
     if family not in contract.allowed_recipient_families:
         raise ValueError(f"Recipient family {family!r} is not allowed on lane {lane!r}")
+
+
+def _validate_contract_requirement(
+    message: DeckrMessage,
+    contract: MessageContract,
+) -> None:
+    requirement = contract.contract_requirement_for(message.message_type)
+    if requirement == ContractRequirement.REQUIRED and message.contract is None:
+        raise ValueError(
+            f"Message type {message.message_type!r} on lane {message.lane!r} "
+            "requires a Concord contract pointer"
+        )
+    if requirement == ContractRequirement.FORBIDDEN and message.contract is not None:
+        raise ValueError(
+            f"Message type {message.message_type!r} on lane {message.lane!r} "
+            "must not carry a Concord contract pointer"
+        )
 
 
 def _validate_known_lane_body(message: DeckrMessage) -> None:

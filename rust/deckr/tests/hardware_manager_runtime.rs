@@ -3,6 +3,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use deckr::authority::ContractPointer;
 use deckr::beacon::{Beacon, BeaconAdvertiser};
 use deckr::concord::{
     concord_participant_token_key, ConcordCoordinator, ContractHandle, ContractState,
@@ -224,12 +225,25 @@ fn control_input(device_id: &str) -> HardwareMessageBody {
 }
 
 fn control_command(controller_id: &str, controller_session: &str) -> DeckrMessage {
+    control_command_with_contract(
+        controller_id,
+        controller_session,
+        default_contract_id(controller_id),
+    )
+}
+
+fn control_command_with_contract(
+    controller_id: &str,
+    controller_session: &str,
+    contract_id: &str,
+) -> DeckrMessage {
     DeckrMessage::hardware_command(
         controller_id,
         controller_session,
         "manager-main",
         "manager-session",
         "deck",
+        contract_pointer(contract_id),
         HardwareMessageBody::ControlCommand {
             device_ref: DeviceRef {
                 manager_id: "manager-main".to_string(),
@@ -252,6 +266,7 @@ fn capability_state_request(controller_id: &str, controller_session: &str) -> De
         "manager-main",
         "manager-session",
         "deck",
+        contract_pointer(default_contract_id(controller_id)),
         HardwareMessageBody::CapabilityStateRequest {
             device_ref: DeviceRef {
                 manager_id: "manager-main".to_string(),
@@ -265,6 +280,21 @@ fn capability_state_request(controller_id: &str, controller_session: &str) -> De
         },
     )
     .unwrap()
+}
+
+fn contract_pointer(contract_id: &str) -> ContractPointer {
+    ContractPointer {
+        contract_id: contract_id.to_string(),
+        generation: 1,
+    }
+}
+
+fn default_contract_id(controller_id: &str) -> &str {
+    match controller_id {
+        "a" => "claim-a",
+        "b" => "claim-b",
+        _ => "claim-a",
+    }
 }
 
 async fn create_claim(
@@ -421,8 +451,11 @@ async fn publishes_beacon_payload_and_skips_noop_refresh() {
     assert_eq!(deck.capacity.available_instances, Some(1));
 
     create_claim(&h.concord, "claim-b", "main", "controller-session").await;
-    h.lane
-        .publish_inbound(control_command("main", "controller-session"));
+    h.lane.publish_inbound(control_command_with_contract(
+        "main",
+        "controller-session",
+        "claim-b",
+    ));
     wait_for_handler_messages(&h, 1).await;
     wait_for_capacity(&h, "deck", 1).await;
     let payload = hardware_payload(&h.beacon_state).await;

@@ -76,6 +76,12 @@ def _last_reply_body(deckr) -> hw_messages.HardwareMessageBody:
     return hw_messages.hardware_body_from_message(reply)
 
 
+def _contract_pointer(contract=None) -> dict[str, int | str]:
+    if contract is None:
+        return {"contractId": "claim-a", "generation": 1}
+    return {"contractId": contract.contract_id, "generation": contract.generation}
+
+
 async def _wait_until(predicate, *, message: str) -> None:
     for _ in range(100):
         if predicate():
@@ -105,6 +111,7 @@ def _capability_state_request_message(
     control_id: str | None = "0,0",
     state_type: str | None = "bitmap",
     recipient_session_id: str | None = None,
+    contract=None,
 ) -> hw_messages.DeckrMessage:
     device_ref = DeviceRef(managerId=manager_id, deviceId=device_id)
     body = hw_messages.CapabilityStateRequestMessage(
@@ -127,6 +134,7 @@ def _capability_state_request_message(
                 capabilityId=capability_id,
             )
         ),
+        contract=_contract_pointer(contract),
     )
 
 
@@ -270,6 +278,7 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
             control_id="0,0",
             capability_id="raster.bitmap",
             command_type="clear",
+            contract=_contract_pointer(contract),
         )
         assert await runtime._handle_command(command)
         assert delivered_commands == [command]
@@ -279,7 +288,9 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         await controller_cm.__aexit__(None, None, None)
 
 
-async def test_command_authorization_reconciles_fresh_claim_before_rejecting() -> None:
+async def test_command_authorization_reconciles_fresh_claim_before_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     delivered_commands = []
 
     async def command_handler(message):
@@ -300,6 +311,20 @@ async def test_command_authorization_reconciles_fresh_claim_before_rejecting() -
             controller_endpoint.session_id,
         )
         assert runtime.live_claims == ()
+        reconcile_calls = 0
+        original_reconcile = HardwareManagerRuntime._reconcile_claims
+
+        async def counted_reconcile(self, *, reason: str) -> None:
+            nonlocal reconcile_calls
+            if self is runtime:
+                reconcile_calls += 1
+            await original_reconcile(self, reason=reason)
+
+        monkeypatch.setattr(
+            HardwareManagerRuntime,
+            "_reconcile_claims",
+            counted_reconcile,
+        )
 
         command = hw_messages.control_command_message(
             controller_id="controller-main",
@@ -309,13 +334,130 @@ async def test_command_authorization_reconciles_fresh_claim_before_rejecting() -
             control_id="0,0",
             capability_id="raster.bitmap",
             command_type="clear",
+            contract=_contract_pointer(contract),
         )
         deckr._message_bus.publish_reply.reset_mock()
 
         assert await runtime._handle_command(command)
         assert delivered_commands == [command]
+        assert reconcile_calls == 1
         assert len(runtime.live_claims) == 1
         deckr._message_bus.publish_reply.assert_not_called()
+    finally:
+        await runtime.stop()
+        await endpoint_cm.__aexit__(None, None, None)
+        await controller_cm.__aexit__(None, None, None)
+
+
+async def test_command_authorization_rejects_missing_contract_without_reconcile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deckr, endpoint_cm, runtime = await _runtime()
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
+    controller_endpoint = await controller_cm.__aenter__()
+    try:
+        await runtime._publish_advertisement()
+        await _add_device(runtime, _descriptor())
+        assert runtime.live_claims == ()
+        reconcile_calls = 0
+        original_reconcile = HardwareManagerRuntime._reconcile_claims
+
+        async def counted_reconcile(self, *, reason: str) -> None:
+            nonlocal reconcile_calls
+            if self is runtime:
+                reconcile_calls += 1
+            await original_reconcile(self, reason=reason)
+
+        monkeypatch.setattr(
+            HardwareManagerRuntime,
+            "_reconcile_claims",
+            counted_reconcile,
+        )
+
+        command = hw_messages.control_command_message(
+            controller_id="controller-main",
+            sender_session_id=controller_endpoint.session_id,
+            manager_id="manager-main",
+            device_id="stream-deck-mini",
+            control_id="0,0",
+            capability_id="raster.bitmap",
+            command_type="clear",
+            contract=None,
+        )
+        deckr._message_bus.publish_reply.reset_mock()
+
+        assert not await runtime._handle_command(command)
+        assert reconcile_calls == 0
+        deckr._message_bus.publish_reply.assert_not_called()
+    finally:
+        await runtime.stop()
+        await endpoint_cm.__aexit__(None, None, None)
+        await controller_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize(
+    "command_update",
+    (
+        {"controller_id": "controller-other"},
+        {"contract": {"contractId": "claim-other", "generation": 1}},
+        {"contract": None},
+    ),
+)
+async def test_command_authorization_rejects_known_route_mismatch_without_reconcile(
+    command_update: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delivered_commands = []
+
+    async def command_handler(message):
+        delivered_commands.append(message)
+        return True
+
+    deckr, endpoint_cm, runtime = await _runtime(command_handler=command_handler)
+    controller_cm = deckr.endpoint(controller_address("controller-main"))
+    controller_endpoint = await controller_cm.__aenter__()
+    concord = _concord(deckr)
+    try:
+        await runtime._publish_advertisement()
+        await _add_device(runtime, _descriptor())
+        contract = await _claim(runtime, concord)
+        await concord._attach(
+            contract,
+            controller_endpoint.address,
+            controller_endpoint.session_id,
+        )
+        await runtime._reconcile_claims(reason="test live")
+
+        reconcile_calls = 0
+        original_reconcile = HardwareManagerRuntime._reconcile_claims
+
+        async def counted_reconcile(self, *, reason: str) -> None:
+            nonlocal reconcile_calls
+            if self is runtime:
+                reconcile_calls += 1
+            await original_reconcile(self, reason=reason)
+
+        monkeypatch.setattr(
+            HardwareManagerRuntime,
+            "_reconcile_claims",
+            counted_reconcile,
+        )
+        command_kwargs = {
+            "controller_id": "controller-main",
+            "sender_session_id": controller_endpoint.session_id,
+            "manager_id": "manager-main",
+            "device_id": "stream-deck-mini",
+            "control_id": "0,0",
+            "capability_id": "raster.bitmap",
+            "command_type": "clear",
+            "contract": _contract_pointer(contract),
+        } | command_update
+        command = hw_messages.control_command_message(**command_kwargs)
+        deckr._message_bus.publish_reply.reset_mock()
+
+        assert not await runtime._handle_command(command)
+        assert delivered_commands == []
+        assert reconcile_calls == 0
     finally:
         await runtime.stop()
         await endpoint_cm.__aexit__(None, None, None)
@@ -361,6 +503,7 @@ async def test_start_subscription_and_stop_withdraw_beacon_and_authority() -> No
                     control_id="0,0",
                     capability_id="raster.bitmap",
                     command_type="clear",
+                    contract=_contract_pointer(contract),
                 )
                 deckr._message_bus.publish_reply.reset_mock()
                 await _send_to_runtime_subscription(deckr, command)
@@ -457,6 +600,7 @@ async def test_unclaimed_commands_are_rejected() -> None:
             control_id="0,0",
             capability_id="raster.bitmap",
             command_type="clear",
+            contract=_contract_pointer(),
         )
         deckr._message_bus.publish_reply.reset_mock()
         assert not await runtime._handle_command(command)
@@ -494,6 +638,7 @@ async def test_command_rejection_wire_replies_match_runtime_contract() -> None:
             control_id="0,0",
             capability_id="raster.bitmap",
             command_type="unsupported",
+            contract=_contract_pointer(contract),
         )
         deckr._message_bus.publish_reply.reset_mock()
         assert not await runtime._handle_command(unsupported_command)
@@ -503,7 +648,8 @@ async def test_command_rejection_wire_replies_match_runtime_contract() -> None:
         assert unsupported_body.message == "Hardware command unsupported"
 
         unsupported_state = _capability_state_request_message(
-            sender_session_id=controller_endpoint.session_id
+            sender_session_id=controller_endpoint.session_id,
+            contract=contract,
         )
         deckr._message_bus.publish_reply.reset_mock()
         assert not await runtime._handle_command(unsupported_state)
@@ -518,6 +664,7 @@ async def test_command_rejection_wire_replies_match_runtime_contract() -> None:
         stale_state = _capability_state_request_message(
             sender_session_id=controller_endpoint.session_id,
             device_id="missing-device",
+            contract=contract,
         )
         deckr._message_bus.publish_reply.reset_mock()
         assert not await runtime._handle_command(stale_state)

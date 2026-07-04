@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from deckr.contracts.messages import (
     ACTIONS_LANE,
@@ -15,6 +16,12 @@ EndpointFamilies = frozenset[str]
 BroadcastTargets = Mapping[str, str]
 
 
+class ContractRequirement(StrEnum):
+    OPTIONAL = "optional"
+    REQUIRED = "required"
+    FORBIDDEN = "forbidden"
+
+
 @dataclass(frozen=True, slots=True)
 class MessageContract:
     lane: str
@@ -24,6 +31,16 @@ class MessageContract:
     allowed_recipient_families: EndpointFamilies | None = None
     broadcast_targets: BroadcastTargets = field(default_factory=dict)
     default_broadcast_hop_limit: int | None = None
+    default_contract_requirement: ContractRequirement = ContractRequirement.OPTIONAL
+    contract_requirements: Mapping[str, ContractRequirement] = field(
+        default_factory=dict
+    )
+
+    def contract_requirement_for(self, message_type: str) -> ContractRequirement:
+        return self.contract_requirements.get(
+            message_type,
+            self.default_contract_requirement,
+        )
 
 
 class MessageContractRegistry:
@@ -101,6 +118,22 @@ SERVICE_LANE_CONTRACT = MessageContract(
     allowed_recipient_families=frozenset(
         {"action_provider", "controller", "service"}
     ),
+    default_contract_requirement=ContractRequirement.REQUIRED,
+)
+
+ACTION_NO_CONTRACT_MESSAGE_TYPES = frozenset(
+    {
+        "actionAvailabilityChanged",
+        "actionAvailabilityRequest",
+        "actionAvailabilitySnapshot",
+        "actionInterestUpdate",
+    }
+)
+
+ACTION_OPTIONAL_CONTRACT_MESSAGE_TYPES = frozenset(
+    {
+        "actionExtension",
+    }
 )
 
 CORE_LANE_CONTRACTS: Mapping[str, MessageContract] = {
@@ -115,6 +148,17 @@ CORE_LANE_CONTRACTS: Mapping[str, MessageContract] = {
             "controllers": "controller",
         },
         default_broadcast_hop_limit=1,
+        default_contract_requirement=ContractRequirement.REQUIRED,
+        contract_requirements={
+            **{
+                message_type: ContractRequirement.FORBIDDEN
+                for message_type in ACTION_NO_CONTRACT_MESSAGE_TYPES
+            },
+            **{
+                message_type: ContractRequirement.OPTIONAL
+                for message_type in ACTION_OPTIONAL_CONTRACT_MESSAGE_TYPES
+            },
+        },
     ),
     HARDWARE_MESSAGES_LANE: MessageContract(
         lane=HARDWARE_MESSAGES_LANE,
@@ -126,6 +170,7 @@ CORE_LANE_CONTRACTS: Mapping[str, MessageContract] = {
             "controllers": "controller",
         },
         default_broadcast_hop_limit=1,
+        default_contract_requirement=ContractRequirement.REQUIRED,
     ),
 }
 

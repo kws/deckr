@@ -49,6 +49,25 @@
       "title": "BroadcastTarget",
       "type": "object"
     },
+    "ContractPointer": {
+      "additionalProperties": false,
+      "properties": {
+        "contractId": {
+          "title": "Contractid",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "contractId",
+        "generation"
+      ],
+      "title": "ContractPointer",
+      "type": "object"
+    },
     "DeckrMessage": {
       "additionalProperties": false,
       "description": "Transport-neutral Deckr logical message envelope.",
@@ -71,6 +90,17 @@
           ],
           "default": null,
           "title": "Causationid"
+        },
+        "contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContractPointer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "createdAt": {
           "format": "date-time",
@@ -395,6 +425,9 @@
             "body": {
               "$ref": "#/$defs/ServiceCommandBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "services"
             },
@@ -405,6 +438,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"
@@ -421,6 +455,9 @@
             "body": {
               "$ref": "#/$defs/ServiceCommandReplyBody"
             },
+            "contract": {
+              "$ref": "#/$defs/ContractPointer"
+            },
             "lane": {
               "const": "services"
             },
@@ -431,6 +468,7 @@
           "required": [
             "lane",
             "messageType",
+            "contract",
             "body"
           ],
           "type": "object"

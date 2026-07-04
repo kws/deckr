@@ -23,6 +23,8 @@ from deckr.contracts.messages import (
 )
 from deckr.lanes import message_is_deliverable, validate_message_for_contract
 
+_CONTRACT = {"contractId": "contract-1", "generation": 1}
+
 
 @pytest.mark.parametrize(
     "address",
@@ -204,6 +206,7 @@ def _valid_action_extension(**overrides) -> DeckrMessage:
         "senderSessionId": "session-provider",
         "recipient": endpoint_target(controller_address("main")),
         "subject": entity_subject("extension", contextId="ctx"),
+        "contract": _CONTRACT,
         "body": {
             "extensionType": "test.extension",
             "extensionSchemaId": "test.extension.v1",

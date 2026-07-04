@@ -6,6 +6,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from deckr.beacon import (
@@ -97,6 +98,37 @@ def test_contract_fixtures_validate_against_declared_schemas() -> None:
             assert errors == [], artifact["path"]
         else:
             assert errors, artifact["path"]
+
+
+@pytest.mark.parametrize(
+    ("schema_path", "fixture_path"),
+    [
+        (
+            "schemas/actions/actions.v1.schema.json",
+            "fixtures/valid/actions/settings-request.v1.json",
+        ),
+        (
+            "schemas/hardware/hardware-messages.v1.schema.json",
+            "fixtures/valid/hardware/control-input.v1.json",
+        ),
+        (
+            "schemas/services/services.v1.schema.json",
+            "fixtures/valid/services/service-command.v1.json",
+        ),
+    ],
+)
+def test_protected_lane_schemas_reject_null_contract(
+    schema_path: str,
+    fixture_path: str,
+) -> None:
+    root = _bundle_root()
+    schema = _json(root / schema_path)
+    fixture = _json(root / fixture_path)
+    fixture["contract"] = None
+
+    errors = list(Draft202012Validator(schema).iter_errors(fixture))
+
+    assert errors
 
 
 def test_key_token_vectors_match_python_helpers() -> None:

@@ -10,12 +10,11 @@ import {
   ContractState,
   ContractValidityStatus,
   canonicalJsonHash,
-  validateContractPointer,
-  type ContractPointer,
   type ContractHandle,
   type ContractRecord,
   type ConcordAgreementSpec,
 } from "./concord.ts";
+import { validateContractPointer, type ContractPointer } from "./authority.ts";
 import { endpointAddress, endpointTarget, serviceAddress } from "./endpoint.ts";
 import { ServiceUnavailable, StateConflict, StateUnavailable, ValidationError } from "./errors.ts";
 import {
@@ -174,6 +173,7 @@ export interface RegisteredEndpointLane {
     subject: EntitySubject;
     messageType: string;
     body: JsonObject;
+    contract?: ContractPointer;
     timeout?: number;
     accept?: (message: DeckrMessage) => boolean;
   }): Promise<DeckrMessage>;
@@ -724,27 +724,33 @@ export class ServiceUseAuthorizer {
     ) {
       return AuthorizationDecision.NOT_APPLICABLE;
     }
+    if (message.contract === undefined) {
+      return AuthorizationDecision.DENIED;
+    }
     await this.reconcileContracts();
-    for (const managed of this.manager.managedContracts()) {
-      const terms = this.matchingTermsRecord(managed.contract, managed.record);
-      if (terms === null) {
-        continue;
-      }
-      if (terms.clientEndpoint !== message.sender) {
-        continue;
-      }
-      if (!terms.allowedOperations.includes(body.operation)) {
-        continue;
-      }
-      const validity = await this.manager.validate(managed.contract, {
-        currentSessions: {
-          [terms.serviceEndpoint]: this.endpoint.sessionId,
-          [terms.clientEndpoint]: message.senderSessionId,
-        },
-      });
-      if (validity.status === ContractValidityStatus.VALID) {
-        return AuthorizationDecision.AUTHORIZED;
-      }
+    const managed = this.manager.managedContracts().find(
+      (item) =>
+        item.contract.contractId === message.contract!.contractId &&
+        item.contract.generation === message.contract!.generation,
+    );
+    if (managed === undefined) {
+      return AuthorizationDecision.DENIED;
+    }
+    const terms = this.matchingTermsRecord(managed.contract, managed.record);
+    if (terms === null || terms.clientEndpoint !== message.sender) {
+      return AuthorizationDecision.DENIED;
+    }
+    if (!terms.allowedOperations.includes(body.operation)) {
+      return AuthorizationDecision.DENIED;
+    }
+    const validity = await this.manager.validate(managed.contract, {
+      currentSessions: {
+        [terms.serviceEndpoint]: this.endpoint.sessionId,
+        [terms.clientEndpoint]: message.senderSessionId,
+      },
+    });
+    if (validity.status === ContractValidityStatus.VALID) {
+      return AuthorizationDecision.AUTHORIZED;
     }
     return AuthorizationDecision.DENIED;
   }
@@ -833,6 +839,10 @@ export class ServiceCommandChannel {
         serviceNamespace: lease.descriptor.namespace,
         operation,
         params,
+      },
+      contract: {
+        contractId: lease.agreement.contract.contractId,
+        generation: lease.agreement.contract.generation,
       },
       timeout: options.timeoutMs,
     });
