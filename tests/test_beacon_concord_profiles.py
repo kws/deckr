@@ -262,7 +262,7 @@ def _concord(
     contract_bucket: MemoryJsonKvBucket | object,
     token_bucket: MemoryJsonKvBucket | object,
     *,
-    token_bucket_ttl_seconds: int = 120,
+    token_bucket_ttl_seconds: int | float = 120,
 ) -> Concord:
     inner_token_bucket = getattr(token_bucket, "_inner", token_bucket)
     if isinstance(inner_token_bucket, MemoryJsonKvBucket):
@@ -1038,6 +1038,49 @@ async def test_beacon_heartbeat_uses_jittered_bucket_ttl(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_beacon_heartbeat_reschedules_after_manual_update(
+    monkeypatch,
+) -> None:
+    samples: list[tuple[float, float]] = []
+
+    def sample(lower: float, upper: float) -> float:
+        samples.append((lower, upper))
+        return lower if len(samples) == 1 else upper
+
+    monkeypatch.setattr("deckr.beacon.random.uniform", sample)
+    raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=1)
+    beacon = Beacon(raw)
+
+    async with anyio.create_task_group() as tg:
+        beacon.start(tg)
+        await beacon.wait_ready()
+        advertisement = await beacon.advertise(
+            BeaconAdvertisementSpec(
+                feature_id=HARDWARE_FEATURE_ID,
+                endpoint=hardware_manager_address("manager-main"),
+                session_id="manager-session",
+                advertisement_id="advertisement-1",
+                payload=_hardware_payload().to_dict(),
+            )
+        )
+        await anyio.sleep(0.1)
+        updated = await advertisement.update(payload={"status": "updated"})
+
+        with anyio.fail_after(1):
+            while True:
+                current = await raw.get(updated.key)
+                assert current is not None
+                record = AdvertisementRecord.model_validate(current.value)
+                if record.refresh_seq > updated.refresh_seq:
+                    break
+                await anyio.sleep(0.01)
+        tg.cancel_scope.cancel()
+
+    assert samples[0] == (0.5, 0.75)
+    assert samples[1] == (0.5, 0.75)
+
+
+@pytest.mark.asyncio
 async def test_beacon_noop_updates_do_not_bypass_heartbeat_cadence() -> None:
     beacon, raw = _beacon()
     advertisement = await beacon.advertise(
@@ -1309,6 +1352,22 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
     assert validity.tokens[str(controller)].key == controller_token.key
     assert validity.tokens[str(manager)].key == manager_token.key
 
+    repeated_manager_token = await concord._attach(
+        contract,
+        manager,
+        "manager-session",
+        token_id="manager-token",
+    )
+    assert repeated_manager_token.key == manager_token.key
+    assert repeated_manager_token.revision == manager_token.revision
+    with pytest.raises(ConcordConflict, match="already attached"):
+        await concord._attach(
+            contract,
+            manager,
+            "manager-session",
+            token_id="manager-token-2",
+        )
+
     refreshed = await concord._refresh_token(controller_token)
     assert refreshed.refresh_seq == 2
     assert (
@@ -1495,6 +1554,46 @@ async def test_concord_participant_lease_rate_limits_token_writes(monkeypatch) -
 
     assert refreshed.refresh_seq == first.refresh_seq + 1
     assert refreshed.revision != first.revision
+
+
+@pytest.mark.asyncio
+async def test_concord_participant_heartbeat_reschedules_after_early_wake(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("deckr.concord.random.uniform", lambda _lower, upper: upper)
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state, token_bucket_ttl_seconds=1)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+
+    async with anyio.create_task_group() as tg:
+        agreement = await service.propose(
+            ConcordAgreementSpec(
+                profile=HARDWARE_CLAIM_PROFILE_ID,
+                participants=(manager, controller),
+                local_participant=controller,
+                local_session_id="controller-session",
+                terms=_hardware_claim_terms(),
+                refresh_interval=0.2,
+                log_label="TestConcord",
+            ),
+            start_soon=tg.start_soon,
+        )
+        token = agreement.local_token
+        assert token is not None
+        assert token.refresh_seq == 1
+
+        with anyio.fail_after(0.88):
+            while True:
+                entry = await token_state.get(token.key)
+                assert entry is not None
+                record = ParticipantTokenRecord.model_validate(entry.value)
+                if record.refresh_seq > token.refresh_seq:
+                    break
+                await anyio.sleep(0.01)
+
+        tg.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio

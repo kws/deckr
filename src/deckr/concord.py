@@ -927,7 +927,29 @@ class _ConcordKvStore:
         parsed_participant = parse_endpoint_address(participant)
         if parsed_participant not in record.participants:
             raise ValueError("participant is not named by the Concord contract")
+        key = concord_participant_token_key(
+            contract_id=record.contract_id,
+            generation=record.generation,
+            participant=parsed_participant,
+        )
         if parsed_participant in record.attached_participants:
+            token_entry = await self._token_bucket.get(key)
+            if token_entry is not None:
+                existing_token = ParticipantTokenRecord.model_validate(
+                    token_entry.value
+                )
+                if _token_matches_attach_request(
+                    existing_token,
+                    record=record,
+                    participant=parsed_participant,
+                    session_id=session_id,
+                    token_id=token_id,
+                ):
+                    return _participant_handle(
+                        key,
+                        existing_token,
+                        token_entry.revision,
+                    )
             raise ConcordConflict("Concord participant is already attached")
         ttl = await self._token_bucket.ttl_seconds()
         token = ParticipantTokenRecord(
@@ -939,11 +961,6 @@ class _ConcordKvStore:
             refreshSeq=1,
             ttlSeconds=ttl,
             termsHash=record.terms_hash,
-        )
-        key = concord_participant_token_key(
-            contract_id=record.contract_id,
-            generation=record.generation,
-            participant=parsed_participant,
         )
         try:
             entry = await self._token_bucket.create(key, token, ttl=token.ttl_seconds)
@@ -1452,9 +1469,15 @@ class ConcordParticipantLease:
             or monotonic() - self._last_refresh_at >= self._refresh_interval
         )
 
+    def _next_heartbeat_delay(self) -> float:
+        if self._last_refresh_at is None:
+            return self._refresh_interval
+        elapsed = monotonic() - self._last_refresh_at
+        return max(0.0, self._refresh_interval - elapsed)
+
     async def heartbeat_loop(self) -> None:
         while not self._closed:
-            await anyio.sleep(self._refresh_interval)
+            await anyio.sleep(self._next_heartbeat_delay())
             if self._closed:
                 return
             try:

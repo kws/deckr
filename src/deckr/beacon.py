@@ -1430,9 +1430,7 @@ class BeaconAdvertisementLease:
 
     async def _heartbeat_loop(self) -> None:
         while not self._closed:
-            if self._refresh_interval is None:
-                self._refresh_interval = await self._next_refresh_interval()
-            await anyio.sleep(self._refresh_interval)
+            await anyio.sleep(await self._next_heartbeat_delay())
             if self._closed:
                 return
             try:
@@ -1512,6 +1510,14 @@ class BeaconAdvertisementLease:
             or self._refresh_interval is None
             or monotonic() - self._last_refresh_at >= self._refresh_interval
         )
+
+    async def _next_heartbeat_delay(self) -> float:
+        if self._refresh_interval is None:
+            self._refresh_interval = await self._next_refresh_interval()
+        if self._last_refresh_at is None:
+            return self._refresh_interval
+        elapsed = monotonic() - self._last_refresh_at
+        return max(0.0, self._refresh_interval - elapsed)
 
     async def _create_advertisement_from_current_state(self) -> AdvertisementHandle:
         return await self._beacon._create_advertisement(
