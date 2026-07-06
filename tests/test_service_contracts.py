@@ -107,12 +107,15 @@ def test_services_lane_validation_thaws_frozen_json_body() -> None:
             "service",
             serviceId="openhab-home",
             namespace="dev.deckr.openhab.service",
-            operation="ensureItems",
+            operation="setItemScope",
         ),
         body=ServiceCommandBody(
             serviceNamespace="dev.deckr.openhab.service",
-            operation="ensureItems",
-            params={"items": ["KajsRoomScene"], "refresh": True},
+            operation="setItemScope",
+            params={
+                "items": ["KajsRoomScene"],
+                "subscriberId": "provider:openhab-items:openhab-home",
+            },
         ),
         contract=_CONTRACT,
     )
@@ -125,9 +128,9 @@ def test_services_lane_validation_thaws_frozen_json_body() -> None:
         in_reply_to=command.message_id,
         body=ServiceCommandReplyBody(
             serviceNamespace="dev.deckr.openhab.service",
-            operation="ensureItems",
+            operation="setItemScope",
             status=ServiceCommandStatus.OK,
-            result={"items": {"KajsRoomScene": {"state": "ON"}}},
+            result={},
         ),
         contract=_CONTRACT,
     )

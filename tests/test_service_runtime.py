@@ -51,7 +51,7 @@ from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
 def _protocol(
     service_id: str = "openhab-home",
     *,
-    operations: tuple[str, ...] = ("ensureItems", "refreshItem", "sendCommand"),
+    operations: tuple[str, ...] = ("setItemScope", "sendCommand"),
 ) -> ServiceProtocol:
     del service_id
     return ServiceProtocol(
@@ -124,7 +124,7 @@ async def _service_view_context(*, contract_id: str = "service-contract-1"):
     terms = service_use_terms(
         descriptor,
         action_provider_address("provider-main"),
-        operations={"ensureItems"},
+        operations={"setItemScope"},
         views={"items"},
     )
     lease = _FakeServiceUseLease(
@@ -238,7 +238,7 @@ def _managed_contract(
 def _service_command(
     contract: ContractHandle,
     *,
-    operation: str = "ensureItems",
+    operation: str = "setItemScope",
     namespace: str = "dev.deckr.openhab.service",
 ) -> Any:
     return service_command_message(
@@ -366,10 +366,10 @@ def test_service_protocol_payload_terms_and_view_keys() -> None:
         serviceNamespace=protocol.namespace,
         serviceSessionId="service-session",
         clientEndpoint=action_provider_address("provider-main"),
-        allowedOperations=("ensureItems",),
+        allowedOperations=("setItemScope",),
         allowedViews={"items": ("views.openhab-home.items.",)},
     )
-    assert terms.to_dict()["allowedOperations"] == ["ensureItems"]
+    assert terms.to_dict()["allowedOperations"] == ["setItemScope"]
     assert terms.to_dict()["allowedViews"] == {
         "items": ["views.openhab-home.items."]
     }
@@ -569,11 +569,11 @@ async def test_service_use_terms_grant_only_requested_scope() -> None:
     terms = service_use_terms(
         descriptor,
         action_provider_address("provider-main"),
-        operations={"ensureItems"},
+        operations={"setItemScope"},
         views={"items"},
     )
 
-    assert terms.allowed_operations == ("ensureItems",)
+    assert terms.allowed_operations == ("setItemScope",)
     assert terms.allowed_views == {"items": ("views.openhab-home.items.",)}
     assert "sendCommand" not in terms.allowed_operations
 
@@ -601,7 +601,7 @@ def test_service_descriptor_from_terms_without_beacon_candidate() -> None:
         serviceNamespace=protocol.namespace,
         serviceSessionId="service-session",
         clientEndpoint=action_provider_address("provider-main"),
-        allowedOperations=("ensureItems",),
+        allowedOperations=("setItemScope",),
         allowedViews={"items": ("views.openhab-backup.items.",)},
     )
 
@@ -622,7 +622,7 @@ async def test_authorize_service_command_matches_exact_contract_pointer() -> Non
     participant = _FakeServiceParticipant((managed,))
     command = _service_command(
         lease.contract,
-        operation="ensureItems",
+        operation="setItemScope",
         namespace=protocol.namespace,
     )
 
@@ -631,7 +631,7 @@ async def test_authorize_service_command_matches_exact_contract_pointer() -> Non
         command,
         service_id="openhab-home",
         protocol=protocol,
-        operation="ensureItems",
+        operation="setItemScope",
     )
 
     assert isinstance(result, AuthorizedServiceCommand)
@@ -655,7 +655,7 @@ async def test_authorize_service_command_rejects_unmanaged_contract_pointer() ->
     other_contract = _contract_handle(contract_id="service-contract-2")
     command = _service_command(
         other_contract,
-        operation="ensureItems",
+        operation="setItemScope",
         namespace=protocol.namespace,
     )
 
@@ -665,7 +665,7 @@ async def test_authorize_service_command_rejects_unmanaged_contract_pointer() ->
             command,
             service_id="openhab-home",
             protocol=protocol,
-            operation="ensureItems",
+            operation="setItemScope",
         )
 
     assert exc_info.value.code == "contract_not_managed"
@@ -711,7 +711,7 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
     terms = service_use_terms(
         descriptor,
         action_provider_address("provider-main"),
-        operations={"ensureItems"},
+        operations={"setItemScope"},
         views={"items"},
     )
     lease = _FakeServiceUseLease(descriptor=descriptor, terms=terms)

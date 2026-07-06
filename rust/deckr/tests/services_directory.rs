@@ -192,7 +192,7 @@ fn service_protocol(_service_id: &str) -> ServiceProtocol {
         "dev.deckr.openhab.service",
         "dev.deckr.openhab.service.advertisement.v1",
         "dev.deckr.openhab.service_use.v1",
-        ["refreshItem", "sendCommand"],
+        ["setItemScope", "sendCommand"],
         views,
     )
     .unwrap()

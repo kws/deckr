@@ -7,9 +7,9 @@
 
 ## Implementation Status
 
-As of July 6, 2026, the core and Sonos-focused implementation slices have
-landed in the working tree, but the full cross-plugin rewrite plan below is not
-complete.
+As of July 6, 2026, the core, Sonos, OpenHAB, and Kaj consumer implementation
+slices have landed in the working tree, but the full cross-plugin rewrite plan
+below is not complete.
 
 Completed so far:
 
@@ -45,13 +45,28 @@ Completed so far:
   `releaseZones` were removed rather than kept as compatibility aliases.
 - Kaj status bar uses the Sonos message session instead of owning direct
   Sonos retry/release logic.
+- `OpenHABServiceClient.item_subscription_session()` now returns a logical
+  message session backed by a shared OpenHAB item manager, accepts initial
+  `items`, and uses a provider-level OpenHAB item subscriber id for
+  `setItemScope`.
+- OpenHAB item sessions expose `messages`, `set_item_scope()`, and
+  lease-backed `command()` behavior. The retained item set is both the
+  authoritative state/watch set and the authority boundary for item-scoped
+  `sendCommand`.
+- OpenHAB provider-side scope cleanup uses `setItemScope`; `ensureItems`,
+  `releaseItems`, and `refreshItem` were removed rather than kept as
+  compatibility aliases.
+- OpenHAB item actions and Kaj OpenHAB consumers now open item sessions
+  directly during mount lifecycle and route item commands through the active
+  session.
+- Kaj status bar now uses matching direct Sonos and OpenHAB message-session
+  patterns.
 - `deckr/docs/usage.md` now documents managed subscriptions and shared command
   pools, and demotes direct service-use-loss helper usage to low-level
   infrastructure guidance.
 
 Known remaining work against this plan:
 
-- OpenHAB has not yet been migrated to the shared item subscription manager.
 - The explicit one-shot fallback policy for command scopes that should not be
   pooled still needs to be formalized.
 
@@ -80,10 +95,9 @@ semantics in each plugin client.
   interaction commands.
 - Keep Beacon and Concord semantics strict: no reattaching, no Beacon-as-
   liveness, no reused cancelled contracts, and no parallel lifecycle authority.
-- Keep service provider implementations mostly intact. OpenHAB already supports
-  contract-bound subscription sets through `ensureItems` / `releaseItems`.
-  Sonos uses the v1 `setZoneScope` operation as a full replacement retained
-  zone set.
+- Keep service provider implementations mostly intact. Sonos uses
+  `setZoneScope` and OpenHAB uses `setItemScope` as full replacement retained
+  resource sets.
 
 ## Original Problems And Remaining Gaps
 
@@ -92,15 +106,14 @@ places:
 
 - Kaj status bar owns Sonos retry/release/clear logic directly.
 - Sonos volume rotary owns its own zone subscribe loop and lease-loss handling.
-- OpenHAB item actions use a mixin that still owns retry, release, multi-watch
-  task cancellation, and service-use loss classification.
-- Sonos command clients retry after service-use loss, while OpenHAB command
-  clients currently do not.
+- OpenHAB item actions used a mixin that owned retry, release, multi-watch task
+  cancellation, and service-use loss classification.
+- Sonos command clients retried after service-use loss, while OpenHAB command
+  clients did not.
 
-The Sonos volume rotary, command, group, media shortcut, and media shortcuts
-paths now follow the intended session pattern. The other consumer-facing gaps
-are OpenHAB item subscriptions/commands and the Kaj status bar, which should be
-migrated after OpenHAB so it can consume both new client APIs consistently.
+The Sonos volume rotary, command, group, media shortcut, media shortcuts,
+OpenHAB item action, Garage key, and Kaj status bar paths now follow the
+intended session pattern.
 
 That duplication created bugs and inconsistent behavior, and the same risks
 remain for consumers that have not yet moved behind domain service clients:
@@ -233,13 +246,10 @@ For a service id and compatible scope, the manager should:
   `provider:<provider-instance-id>:openhab-items`.
 - Track logical subscribers keyed by local handle id or binding id.
 - Maintain the union of requested resources across logical subscribers.
-- For replacement-set domains such as Sonos, call one resource-scope operation
-  with the full retained union whenever the shared set changes or a successor
-  contract is negotiated. The retained union is both the state/watch set and
-  the resource-command authority boundary.
-- For additive external domains such as current OpenHAB, call `ensureItems`
-  with the retained union when needed and `releaseItems` only for resources
-  that leave the retained union.
+- For replacement-set domains such as Sonos and OpenHAB, call one
+  resource-scope operation with the full retained union whenever the shared set
+  changes or a successor contract is negotiated. The retained union is both the
+  state/watch set and the resource-command authority boundary.
 - Watch each retained service view once and fan out messages to interested
   logical sessions.
 - Emit `RECONNECTING` on lease loss, then negotiate a successor contract and
@@ -255,12 +265,12 @@ Dynamic resource methods should have explicit local semantics:
 
 - `set_zone_scope(zones)` replaces the logical Sonos zone scope. An empty set
   clears that logical scope and removes zone-command authority.
-- `ensure_items(items)` / `drop_items(items)` remain the logical OpenHAB item
-  add/drop API until the replacement OpenHAB API is designed.
+- `set_item_scope(items)` replaces the logical OpenHAB item scope. An empty set
+  clears that logical scope and removes item-command authority.
 - Context exit drops all resources owned by the logical session.
 
-The Sonos service command name is `setZoneScope`. OpenHAB still uses
-`ensureItems` and `releaseItems` until its replacement API is designed.
+The Sonos service command name is `setZoneScope`. The OpenHAB service command
+name is `setItemScope`.
 
 ## Core Reusable Library
 
@@ -374,24 +384,25 @@ Expected consumer simplifications:
 
 ### OpenHAB
 
-Rewrite `OpenHABServiceClient.item_subscription_session()` and the item watcher
-mixin around a shared OpenHAB item manager.
+Rewrite `OpenHABServiceClient.item_subscription_session()` around a shared
+OpenHAB item manager.
 
 The OpenHAB manager should:
 
 - Use one retained union of items per service id.
 - Fan out item view messages by item name.
 - Convert missing item views into `UNAVAILABLE`, not service-use loss.
-- Hide ensure/release replies and lease-loss retries from actions.
+- Hide retained-scope replies and lease-loss retries from actions.
 - Keep action callbacks focused on item state changes or subscription-state
   messages.
 
 Expected consumer simplifications:
 
-- `OpenHABItemWatcherMixin` becomes a thin adapter over logical sessions, or is
-  replaced by direct session usage in actions.
+- `OpenHABItemWatcherMixin` is retired from the public/recommended consumer
+  API; actions use direct item sessions.
 - Item actions no longer import service-use-loss helper functions.
-- OpenHAB command calls gain the same successor retry behavior as Sonos.
+- OpenHAB item commands use the active retained item session and do not fall
+  back to command-pool or one-shot service-use leases.
 
 ## Service Provider Boundary
 
@@ -445,7 +456,7 @@ slices:
    using fake descriptors, leases, commands, and view streams.
 2. Sonos client rewrite using the core manager, including volume rotary and
    resource-session action cleanup.
-3. OpenHAB client rewrite using the core manager, including item watcher/action
+3. OpenHAB client rewrite using the core manager, including item action
    migration.
 4. Kaj status bar migration after OpenHAB, so it can use the new Sonos and
    OpenHAB client APIs together.
@@ -494,11 +505,12 @@ Sonos tests:
 
 OpenHAB tests:
 
-- Multiple item actions share one retained `ensureItems` set.
+- Multiple item actions share one retained `setItemScope` set.
 - Missing item view emits `UNAVAILABLE` to the item subscriber.
 - Item watcher/action code no longer imports or directly calls service-use-loss
   helper functions.
-- OpenHAB command calls retry on service-use loss consistently with Sonos.
+- OpenHAB item commands carry `subscriberId`, target only retained items, and
+  do not fall back to a command pool when the retained session is absent.
 - Existing provider-side subscription cleanup behavior still passes.
 
 Integration-style tests:

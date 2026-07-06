@@ -314,36 +314,14 @@ latency, and creates avoidable short-lived Concord churn.
 ## Low-Level Lease Loss Helpers
 
 Low-level service infrastructure can still classify service-use loss with the
-shared helpers instead of maintaining terminal-code sets:
+shared helpers instead of maintaining terminal-code sets. Those helpers are for
+core subscription managers, command pools, and provider/runtime infrastructure
+that is directly responsible for negotiating successor service-use contracts.
 
-```python
-from deckr.services import (
-    ServiceUnavailable,
-    service_command_reply_ends_service_use,
-    service_unavailable_ends_service_use,
-)
-
-
-async def call_with_successor_retry(services, lease) -> None:
-    try:
-        reply = await services.command(lease, "presence.report", {"state": "away"})
-    except ServiceUnavailable as exc:
-        if service_unavailable_ends_service_use(exc):
-            return await negotiate_successor_service_use()
-        raise
-
-    if service_command_reply_ends_service_use(reply):
-        return await negotiate_successor_service_use()
-
-    if reply.status != "ok":
-        await render_unavailable(reply.error)
-```
-
-The helpers own classification for cancelled contracts, missing contracts,
-missing or invalid participant tokens, session or generation mismatches, and
-service-side `contract_not_managed` reports. Ordinary action and display code
-should not need these helpers; subscription managers and command pools should
-hide them behind domain messages and replies.
+Ordinary action and display code should consume domain service-client APIs:
+managed subscription sessions expose lifecycle through `session.messages`, and
+command pools return ordinary service-domain replies. Consumers should not
+import lease-loss helpers or treat missing payloads as lifecycle authority.
 
 ## Provider Boundary
 
