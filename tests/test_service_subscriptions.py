@@ -75,6 +75,52 @@ async def test_shared_resource_subscription_missing_view_is_unavailable() -> Non
 
 
 @pytest.mark.asyncio
+async def test_shared_resource_subscription_does_not_replay_stale_latest_after_drop() -> None:
+    async with anyio.create_task_group() as tg:
+        services = _FakeServices(tg)
+        manager = _manager(services)
+
+        first = await manager.open_session({"Kitchen"})
+        await _next_state(first, ServiceSubscriptionState.READY)
+        await first.drop({"Kitchen"})
+        with anyio.fail_after(1):
+            while services.release_calls != [frozenset({"Kitchen"})]:
+                await anyio.sleep(0)
+
+        second = await manager.open_session({"Kitchen"})
+        message = await second.messages.receive()
+
+        assert message.state is ServiceSubscriptionState.PENDING
+        assert message.payload is None
+
+        await first.aclose()
+        await second.aclose()
+        await manager.aclose()
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_shared_resource_subscription_does_not_replay_stale_latest_after_close() -> None:
+    async with anyio.create_task_group() as tg:
+        services = _FakeServices(tg)
+        manager = _manager(services)
+
+        first = await manager.open_session({"Kitchen"})
+        await _next_state(first, ServiceSubscriptionState.READY)
+        await first.aclose()
+
+        second = await manager.open_session({"Kitchen"})
+        message = await second.messages.receive()
+
+        assert message.state is ServiceSubscriptionState.PENDING
+        assert message.payload is None
+
+        await second.aclose()
+        await manager.aclose()
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_shared_resource_subscription_reconnects_after_lease_loss() -> None:
     async with anyio.create_task_group() as tg:
         services = _FakeServices(tg)
@@ -103,6 +149,36 @@ async def test_shared_resource_subscription_reconnects_after_lease_loss() -> Non
             frozenset({"Kitchen"}),
             frozenset({"Kitchen"}),
         ]
+
+        await session.aclose()
+        await manager.aclose()
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_shared_resource_subscription_active_command_requires_retained_resource() -> None:
+    async with anyio.create_task_group() as tg:
+        services = _FakeServices(tg)
+        manager = _manager(services)
+
+        session = await manager.open_session({"Kitchen"})
+        await _next_state(session, ServiceSubscriptionState.READY)
+
+        watched = await manager.command_on_active_lease(
+            "play",
+            {"zone": "Kitchen"},
+            required_resource="Kitchen",
+        )
+        unwatched = await manager.command_on_active_lease(
+            "play",
+            {"zone": "Bedroom"},
+            required_resource="Bedroom",
+        )
+
+        assert watched is not None
+        assert watched.status == ServiceCommandStatus.OK
+        assert unwatched is None
+        assert [call["operation"] for call in services.command_calls] == ["play"]
 
         await session.aclose()
         await manager.aclose()

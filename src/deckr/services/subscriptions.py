@@ -233,11 +233,13 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             if subscriber is None:
                 return
             subscriber.resources.difference_update(requested)
+            self._prune_latest_locked()
             self._notify_changed_locked()
 
     async def close_session(self, session_id: str) -> None:
         async with self._lock:
             subscriber = self._subscribers.pop(session_id, None)
+            self._prune_latest_locked()
             self._notify_changed_locked()
         if subscriber is not None:
             await subscriber.send.aclose()
@@ -249,27 +251,13 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         *,
         timeout_seconds: float | None = None,
     ) -> ServiceCommandReplyBody:
-        lease = await self._active_command_lease(operation)
-        if lease is not None:
-            try:
-                reply = await self._services.command(
-                    lease,
-                    operation,
-                    params,
-                    timeout_seconds=timeout_seconds,
-                )
-            except ServiceUnavailable as exc:
-                if service_unavailable_ends_service_use(exc):
-                    await self._mark_active_lease_lost(lease, exc)
-                else:
-                    raise
-            else:
-                if not service_command_reply_ends_service_use(reply):
-                    return reply
-                await self._mark_active_lease_lost(
-                    lease,
-                    _service_unavailable_from_reply(reply),
-                )
+        reply = await self.command_on_active_lease(
+            operation,
+            params,
+            timeout_seconds=timeout_seconds,
+        )
+        if reply is not None:
+            return reply
 
         if self._command_pool is None:
             raise ServiceUnavailable(
@@ -283,6 +271,40 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             service_use_timeout_seconds=self._service_use_timeout_seconds,
             request_timeout_seconds=timeout_seconds,
         )
+
+    async def command_on_active_lease(
+        self,
+        operation: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        required_resource: ResourceT | None = None,
+        timeout_seconds: float | None = None,
+    ) -> ServiceCommandReplyBody | None:
+        lease = await self._active_command_lease(
+            operation,
+            required_resource=required_resource,
+        )
+        if lease is None:
+            return None
+        try:
+            reply = await self._services.command(
+                lease,
+                operation,
+                params,
+                timeout_seconds=timeout_seconds,
+            )
+        except ServiceUnavailable as exc:
+            if service_unavailable_ends_service_use(exc):
+                await self._mark_active_lease_lost(lease, exc)
+                return None
+            raise
+        if not service_command_reply_ends_service_use(reply):
+            return reply
+        await self._mark_active_lease_lost(
+            lease,
+            _service_unavailable_from_reply(reply),
+        )
+        return None
 
     async def aclose(self) -> None:
         async with self._lock:
@@ -298,9 +320,19 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         if done is not None:
             await done.wait()
 
-    async def _active_command_lease(self, operation: str) -> ServiceUseLease | None:
+    async def _active_command_lease(
+        self,
+        operation: str,
+        *,
+        required_resource: ResourceT | None = None,
+    ) -> ServiceUseLease | None:
         async with self._lock:
-            if operation not in self._operations:
+            if self._closed or operation not in self._operations:
+                return None
+            if (
+                required_resource is not None
+                and required_resource not in self._retained_resources_locked()
+            ):
                 return None
             return self._active_lease
 
@@ -517,6 +549,12 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             retained.update(subscriber.resources)
         return frozenset(retained)
 
+    def _prune_latest_locked(self) -> None:
+        retained = self._retained_resources_locked()
+        for resource in tuple(self._latest):
+            if resource not in retained:
+                self._latest.pop(resource, None)
+
     async def _emit_state(
         self,
         resources: Collection[ResourceT],
@@ -565,6 +603,8 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         message: ServiceSubscriptionMessage[ResourceT],
     ) -> None:
         async with self._lock:
+            if resource not in self._retained_resources_locked():
+                return
             self._latest[resource] = message
             deliveries = [
                 (session_id, subscriber.send)
@@ -579,6 +619,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             async with self._lock:
                 for session_id in stale:
                     self._subscribers.pop(session_id, None)
+                self._prune_latest_locked()
                 self._notify_changed_locked()
 
 
