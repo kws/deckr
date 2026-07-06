@@ -1,6 +1,7 @@
 """Shared service endpoint and message contracts."""
 
 from deckr.contracts.lanes import SERVICE_LANE_CONTRACT
+from deckr.services.client import DeckrServices
 from deckr.services.messages import (
     SERVICE_COMMAND,
     SERVICE_COMMAND_REPLY,
@@ -33,8 +34,10 @@ from deckr.services.runtime import (
     authorize_service_command,
     newest_service_descriptor,
     parse_service_descriptor,
+    service_command_reply_ends_service_use,
     service_descriptor_from_terms,
     service_descriptor_sort_key,
+    service_unavailable_ends_service_use,
     service_use_terms,
     service_view_key,
     service_view_prefix,
@@ -46,6 +49,7 @@ __all__ = [
     "SERVICE_COMMAND_REPLY",
     "SERVICE_LANE_CONTRACT",
     "AuthorizedServiceCommand",
+    "DeckrServices",
     "ServiceAdvertisementPayload",
     "ServiceBackendStatus",
     "ServiceCommandBody",
@@ -71,12 +75,14 @@ __all__ = [
     "parse_service_descriptor",
     "service_body",
     "service_body_for_type",
+    "service_command_reply_ends_service_use",
     "service_command_message",
     "service_command_reply_message",
     "service_descriptor_from_terms",
     "service_descriptor_sort_key",
     "service_message",
     "service_message_schema",
+    "service_unavailable_ends_service_use",
     "service_use_terms",
     "service_view_key",
     "service_view_prefix",

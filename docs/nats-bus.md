@@ -231,7 +231,10 @@ key:    stale.<contract-id-token>.<generation>
 schema: dev.deckr.concord.stale-observation.v1
 ```
 
-The runtime-facing Python API is `deckr.concord.Concord`.
+The implementation-level Python API for core runtime, hardware/service
+infrastructure, and conformance tests is `deckr.concord.Concord`. Ordinary
+service consumers should use `deckr.services` instead of constructing Concord
+agreements directly.
 
 ```python
 concord = deckr.concord
@@ -328,13 +331,13 @@ and replies; it must not be treated as the inventory authority. If a claimed
 device disappears, the hardware manager cancels the matching Concord claim or
 stops maintaining its participant token.
 
-The service API is intentionally layered instead of one broad runtime helper.
-`deckr.services` exports service profile and message contracts such as
-`ServiceProtocol`, `ServiceAdvertisementPayload`, `ServiceDescriptor`,
-`ServiceUseTerms`, `ServiceViewFamilyDefinition`, `ServiceViewFamily`,
-`ServiceViewRef`, service command schemas, descriptor parsing, terms
-construction, and service-view key helpers. Generic local discovery lives in
-`deckr.beacon.BeaconDirectory`. Services advertise descriptors through Beacon,
+The service API is intentionally layered. `deckr.services` exports service
+profile and message contracts such as `ServiceProtocol`,
+`ServiceAdvertisementPayload`, `ServiceDescriptor`, `ServiceUseTerms`,
+`ServiceViewFamilyDefinition`, `ServiceViewFamily`, `ServiceViewRef`, service
+command schemas, descriptor parsing, terms construction, and service-view key
+helpers. For normal feature clients it also exposes the managed
+`DeckrServices` client. Services advertise descriptors through Beacon,
 negotiate service-use authority through Concord, and, when the host explicitly
 enables the optional `services` lane, carry service command/reply messages as
 ordinary lane traffic. A service keeps its own advertisement fresh, skips
@@ -342,18 +345,19 @@ unchanged refresh writes when possible, best-effort withdraws on clean shutdown,
 and removes stale same-endpoint advertisements left by an earlier crashed
 session or changed configuration.
 
-Service consumers should create one long-lived `BeaconDirectory` for the service
-protocol feature and parse advertisements with `parse_service_descriptor()`.
-The directory is per feature id, not per service id; concrete view prefixes are
-derived from each descriptor's advertised service id. Resolving a service is
-therefore local predicate and selector logic over parsed descriptors. It must
-not scan Beacon KV, perform an exact NATS round trip, query Concord, or
-duplicate service-specific Beacon indexing in consumers. Directory results are
-discovery candidates only. Consumers derive `ServiceUseTerms.serviceUseId` as
-semantic terms material, then propose a fresh opaque Concord contract directly.
-The service-use id must not be used as a Concord contract id, reusable pointer,
-or authority lookup key. The Concord participants must be exactly the service
-endpoint and the client endpoint encoded in `ServiceUseTerms`.
+Service consumers should use `Deckr.services(endpoint)` and
+`DeckrServices.use_matching(...)`. The managed client owns the service protocol
+feature watch, descriptor parsing, local predicate/selector resolution,
+service-use negotiation, command authorization pointers, and fenced view
+reads/watches. Consumers must not scan Beacon KV, perform an exact NATS round
+trip for discovery, query Concord, duplicate service-specific Beacon indexing,
+classify Concord terminal statuses, or use Concord as a service catalog.
+`ServiceUseTerms.serviceUseId` remains semantic terms material only; it must not
+be used as a Concord contract id, reusable pointer, or authority lookup key.
+
+Direct Beacon directory construction, Concord agreement proposal, and direct
+`ServiceViewStore` use are infrastructure-level tools for core runtime code,
+service providers, hardware providers, and conformance tests.
 
 Protected service views are direct JetStream/KV views. Service/application code
 opens them by constructing `ServiceViewStore` from an explicit KV bucket and

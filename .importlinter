@@ -36,6 +36,8 @@ source_modules =
     deckr.runtime
 forbidden_modules =
     deckr.services
+ignore_imports =
+    deckr.runtime -> deckr.services
 allow_indirect_imports = True
 
 [importlinter:contract:hardware_must_not_import_actions]

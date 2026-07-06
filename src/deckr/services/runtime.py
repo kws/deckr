@@ -31,6 +31,41 @@ from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import DeckrMessage, EndpointAddress, service_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
+from deckr.services.messages import ServiceCommandReplyBody
+
+_TERMINAL_DURING_NEGOTIATION = frozenset(
+    {
+        ContractValidityStatus.CANCELLED,
+        ContractValidityStatus.MISSING_CONTRACT,
+        ContractValidityStatus.INVALID_CONTRACT,
+        ContractValidityStatus.INVALID_TOKEN,
+        ContractValidityStatus.MISSING_TOKEN,
+        ContractValidityStatus.GENERATION_MISMATCH,
+        ContractValidityStatus.SESSION_MISMATCH,
+        ContractValidityStatus.TERMS_HASH_MISMATCH,
+    }
+)
+
+_SERVICE_USE_LOSS_STATUSES = frozenset(
+    {
+        ContractValidityStatus.UNAVAILABLE.value,
+        *{status.value for status in _TERMINAL_DURING_NEGOTIATION},
+    }
+)
+
+_SERVICE_USE_LOSS_CODES = frozenset(
+    {
+        "contract_not_managed",
+        "service_use_conflict",
+        *{f"contract_{status}" for status in _SERVICE_USE_LOSS_STATUSES},
+    }
+)
+
+_SERVICE_USE_REPLY_ERROR_CODES = frozenset(
+    {
+        "service_use_contract_invalid",
+    }
+)
 
 
 class ServiceBackendStatus(StrEnum):
@@ -339,11 +374,15 @@ class ServiceUseLease:
         try:
             validity = await self.agreement.refresh()
         except ConcordConflict as exc:
+            status = (
+                terminal_concord_conflict_status(exc)
+                or ContractValidityStatus.INVALID_TOKEN
+            )
             raise ServiceUnavailable(
-                f"contract_{ContractValidityStatus.INVALID_TOKEN.value}",
+                f"contract_{status.value}",
                 "Service-use contract could not be refreshed",
                 {
-                    "status": ContractValidityStatus.INVALID_TOKEN.value,
+                    "status": status.value,
                     "reason": str(exc),
                     "contractId": self.contract.contract_id,
                     "generation": self.contract.generation,
@@ -404,6 +443,59 @@ class ServiceUseAuthorizationError(ValueError):
         self.code = code
         self.message = message
         self.diagnostics = dict(diagnostics or {})
+
+
+def terminal_concord_conflict_status(
+    exc: ConcordConflict,
+) -> ContractValidityStatus | None:
+    """Classify terminal Concord conflicts for service infrastructure."""
+
+    message = str(exc)
+    if (
+        "Concord contract is cancelled" in message
+        or message.startswith("Concord contract ")
+        and " is cancelled" in message
+    ):
+        return ContractValidityStatus.CANCELLED
+    if (
+        "Concord contract is missing" in message
+        or message.startswith("Concord contract ")
+        and " is missing" in message
+    ):
+        return ContractValidityStatus.MISSING_CONTRACT
+    if "Concord contract" in message and "changed identity" in message:
+        return ContractValidityStatus.INVALID_CONTRACT
+    if "Concord participant token is missing" in message:
+        return ContractValidityStatus.MISSING_TOKEN
+    if (
+        "Concord participant token is invalid" in message
+        or "Concord participant token changed owner" in message
+    ):
+        return ContractValidityStatus.INVALID_TOKEN
+    return None
+
+
+def service_unavailable_ends_service_use(exc: ServiceUnavailable) -> bool:
+    """Return whether a service-domain exception means the current lease is lost."""
+
+    if exc.code in _SERVICE_USE_LOSS_CODES:
+        return True
+    return _service_use_diagnostics_end_service_use(dict(exc.diagnostics))
+
+
+def service_command_reply_ends_service_use(reply: ServiceCommandReplyBody) -> bool:
+    """Return whether a service command reply reports ended service-use authority."""
+
+    error = getattr(reply, "error", None)
+    if error is None:
+        return False
+    if error.code in _SERVICE_USE_LOSS_CODES:
+        return True
+    if error.code not in _SERVICE_USE_REPLY_ERROR_CODES:
+        return False
+    return _service_use_diagnostics_end_service_use(
+        dict(getattr(error, "diagnostics", None) or {})
+    )
 
 
 async def authorize_service_command(
@@ -640,6 +732,12 @@ def newest_service_descriptor(
     return max(descriptors, key=service_descriptor_sort_key)
 
 
+def service_use_negotiation_terminal_status(
+    status: ContractValidityStatus,
+) -> bool:
+    return status in _TERMINAL_DURING_NEGOTIATION
+
+
 def _normalize_operations(
     descriptor: ServiceDescriptor,
     operations: Collection[str],
@@ -781,6 +879,14 @@ def _service_command_terms_match(
         and terms.client_endpoint == sender
         and operation in terms.allowed_operations
         and operation in protocol.operations
+    )
+
+
+def _service_use_diagnostics_end_service_use(diagnostics: Mapping[str, Any]) -> bool:
+    status = diagnostics.get("status")
+    reason = diagnostics.get("reason")
+    return status in _SERVICE_USE_LOSS_STATUSES or reason in (
+        _SERVICE_USE_LOSS_CODES | _SERVICE_USE_LOSS_STATUSES
     )
 
 

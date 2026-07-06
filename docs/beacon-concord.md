@@ -400,14 +400,16 @@ ids, advertisement payload profiles, terms profiles, and direct KV-backed
 service views. Deckr core does not define service-specific domain semantics
 such as Sonos zones, OpenHAB items, or package-owned view schemas.
 
-Service consumers discover service candidates through `BeaconDirectory` in
-`deckr.beacon`, using `parse_service_descriptor()` as the service profile parser.
-A directory is a local parsed view over one Beacon feature watch, not a
-directory for one service id. The service id and concrete view key prefixes come
-from each validated descriptor. Consumers must not raw-scan Beacon KV, scan all
-Beacon candidates and parse service descriptors ad hoc, or query Concord to
-discover available services. Directory output is only a candidate for a new
-service-use negotiation.
+Ordinary service consumers use the managed `deckr.services.DeckrServices`
+client. That client owns service candidate discovery through Beacon, descriptor
+parsing, local predicate/selector resolution, service-use negotiation through
+Concord, command contract pointers, and fenced service-view access. A service
+protocol feature watch is per feature id, not per service id; the service id and
+concrete view key prefixes come from each validated descriptor. Consumers must
+not raw-scan Beacon KV, scan all Beacon candidates and parse service descriptors
+ad hoc, classify Concord terminal statuses, or query Concord to discover
+available services. Discovery output is only a candidate for a new service-use
+negotiation.
 
 Service-use Concord contract ids are opaque runtime ids. Consumers derive
 `ServiceUseTerms.serviceUseId` from the selected descriptor, client endpoint,

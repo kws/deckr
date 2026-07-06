@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from message_bus_mocks import mock_deckr
 
+from deckr.actions.endpoints import action_provider_address
 from deckr.contracts.lanes import (
     DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     SERVICE_LANE_CONTRACT,
@@ -12,6 +13,7 @@ from deckr.contracts.lanes import (
 from deckr.contracts.messages import ACTIONS_LANE, HARDWARE_MESSAGES_LANE, SERVICES_LANE
 from deckr.lanes import Lane
 from deckr.runtime import Deckr
+from deckr.services import DeckrServices
 from deckr.substrates.nats import NatsSubstrate
 from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
 
@@ -40,6 +42,36 @@ def test_services_lane_requires_explicit_opt_in() -> None:
     )
 
     assert deckr.lane(SERVICES_LANE).contract == SERVICE_LANE_CONTRACT
+
+
+@pytest.mark.asyncio
+async def test_deckr_services_context_requires_services_lane() -> None:
+    async with (
+        mock_deckr() as deckr,
+        deckr.endpoint(
+            action_provider_address("python-dev.deckr.demo")
+        ) as endpoint,
+    ):
+        with pytest.raises(LookupError, match="Required lane 'services'"):
+            async with deckr.services(endpoint):
+                pass
+
+
+@pytest.mark.asyncio
+async def test_deckr_services_context_builds_managed_client() -> None:
+    async with (
+        mock_deckr(
+            lane_contracts=(SERVICE_LANE_CONTRACT,),
+            lanes=(SERVICES_LANE,),
+        ) as deckr,
+        deckr.endpoint(
+            action_provider_address("python-dev.deckr.demo")
+        ) as endpoint,
+        deckr.services(endpoint) as services,
+    ):
+        assert isinstance(services, DeckrServices)
+        assert not hasattr(services, "beacon")
+        assert not hasattr(services, "concord")
 
 
 @pytest.mark.asyncio

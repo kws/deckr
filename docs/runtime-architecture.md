@@ -796,13 +796,13 @@ Each Python action-provider runtime instance registers
 optional `services` lane, the provider runtime may also register on `services`
 so hosted action instances can use service command/reply lane messages and
 Concord-authorized service views without becoming service components themselves.
-Service discovery for those hosted actions and other service consumers goes
-through `deckr.beacon.BeaconDirectory` with the relevant service descriptor
-parser. A directory is shared for a service protocol feature rather than created
-per service id; each descriptor carries the advertised service id and derived
-view prefixes. Consumers select candidates locally for new Concord negotiation.
-They do not scan Beacon KV, duplicate descriptor parsing loops, or use Concord
-as a service catalog.
+Service discovery and service-use negotiation for those hosted actions and
+other feature consumers go through the managed `deckr.services.DeckrServices`
+client. The managed client owns the relevant service protocol feature watch,
+descriptor parsing, candidate selection, Concord negotiation, command contract
+pointers, and fenced view reads/watches. Consumers do not scan Beacon KV,
+duplicate descriptor parsing loops, classify Concord terminal statuses, or use
+Concord as a service catalog.
 
 ### Runtime-Local Component Status
 

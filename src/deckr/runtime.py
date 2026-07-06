@@ -11,6 +11,7 @@ from deckr.concord import (
     CONCORD_CONTRACT_BUCKET_POLICY,
     CONCORD_MAINTENANCE_BUCKET_POLICY,
     CONCORD_TOKEN_BUCKET_POLICY,
+    DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
     Concord,
 )
 from deckr.contracts.lanes import (
@@ -18,7 +19,7 @@ from deckr.contracts.lanes import (
     MessageContract,
     MessageContractRegistry,
 )
-from deckr.contracts.messages import CORE_LANE_NAMES, EndpointAddress
+from deckr.contracts.messages import CORE_LANE_NAMES, SERVICES_LANE, EndpointAddress
 from deckr.lanes import (
     EndpointSession,
     Lane,
@@ -107,6 +108,36 @@ class Deckr:
         if kv_bucket is None:
             raise RuntimeError("Deckr message bus does not provide NATS KV buckets")
         return kv_bucket(policy)
+
+    @asynccontextmanager
+    async def services(
+        self,
+        endpoint: EndpointSession,
+        *,
+        service_use_token_refresh_seconds: float = (
+            DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
+        ),
+    ) -> AsyncIterator[object]:
+        self.lane(SERVICES_LANE)
+        if self._task_group is None:
+            raise RuntimeError("Deckr runtime is not running")
+        if self._beacon is None or self._concord is None:
+            raise RuntimeError("Deckr runtime does not provide service-use support")
+
+        from deckr.services import DeckrServices
+
+        services = DeckrServices(
+            endpoint=endpoint,
+            beacon=self._beacon,
+            concord=self._concord,
+            task_group=self._task_group,
+            kv_bucket_for=self.kv_bucket,
+            service_use_token_refresh_seconds=service_use_token_refresh_seconds,
+        )
+        try:
+            yield services
+        finally:
+            await services.aclose()
 
     async def __aenter__(self) -> Deckr:
         if self._task_group is not None:
