@@ -79,6 +79,7 @@ class _Agreement:
         self._wait = wait
         self.cancelled: list[str | None] = []
         self.closed = False
+        self.close_count = 0
 
     async def refresh(self):
         if self._wait is not None and not self._wait.is_set():
@@ -92,6 +93,7 @@ class _Agreement:
         return True
 
     async def aclose(self) -> None:
+        self.close_count += 1
         self.closed = True
 
 
@@ -344,6 +346,27 @@ async def test_use_without_timeout_waits_until_contract_valid() -> None:
 
     assert agreement.cancelled == ["service_use_closed"]
     assert agreement.closed
+
+
+@pytest.mark.asyncio
+async def test_aclose_closes_active_service_use_lease_once() -> None:
+    agreement = _Agreement()
+    services = _services(agreement=agreement)
+    context = services.use(_descriptor(), operations={"play"})
+
+    lease = await context.__aenter__()
+    assert lease.descriptor.service_id == "demo-home"
+
+    await services.aclose()
+
+    assert agreement.cancelled == ["service_use_closed"]
+    assert agreement.closed
+    assert agreement.close_count == 1
+
+    await context.__aexit__(None, None, None)
+
+    assert agreement.cancelled == ["service_use_closed"]
+    assert agreement.close_count == 1
 
 
 @pytest.mark.asyncio

@@ -72,6 +72,7 @@ class DeckrServices:
         self._service_use_token_refresh_seconds = service_use_token_refresh_seconds
         self._directories: dict[_DirectoryKey, BeaconDirectory[ServiceDescriptor]] = {}
         self._view_stores: dict[str, ServiceViewStore] = {}
+        self._active_service_use_leases: dict[int, ServiceUseLease] = {}
 
     def directory(
         self,
@@ -192,15 +193,14 @@ class DeckrServices:
             views=views,
             timeout_seconds=timeout_seconds,
         )
+        self._active_service_use_leases[id(lease)] = lease
         try:
             yield lease
         finally:
-            try:
-                await lease.agreement.cancel("service_use_closed")
-            except ConcordConflict:
-                pass
-            finally:
-                await lease.agreement.aclose()
+            await self._close_active_service_use_lease(
+                lease,
+                reason="service_use_closed",
+            )
 
     async def command(
         self,
@@ -284,10 +284,30 @@ class DeckrServices:
             raise _service_view_unavailable(view) from exc
 
     async def aclose(self) -> None:
+        for lease in tuple(self._active_service_use_leases.values()):
+            await self._close_active_service_use_lease(
+                lease,
+                reason="service_use_closed",
+            )
         for directory in tuple(self._directories.values()):
             await directory.aclose()
         self._directories.clear()
         self._view_stores.clear()
+
+    async def _close_active_service_use_lease(
+        self,
+        lease: ServiceUseLease,
+        *,
+        reason: str,
+    ) -> None:
+        if self._active_service_use_leases.pop(id(lease), None) is None:
+            return
+        try:
+            await lease.agreement.cancel(reason)
+        except ConcordConflict:
+            pass
+        finally:
+            await lease.agreement.aclose()
 
     async def _propose_service_use(
         self,
