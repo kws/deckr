@@ -20,19 +20,20 @@ Completed so far:
   shared managers during service shutdown before closing remaining direct
   service-use leases.
 - Core tests cover overlapping logical sessions, retained resource union
-  behavior, last-subscriber release, missing view to `UNAVAILABLE`, lease-loss
-  reconnect and re-ensure, command-pool lease reuse, and command-pool
-  service-use-loss retry.
+  behavior, replacement-set updates, last-subscriber cleanup, missing view to
+  `UNAVAILABLE`, lease-loss reconnect and retained-scope reapply, command-pool
+  lease reuse, and command-pool service-use-loss retry.
 - `SonosServiceClient.zone_subscription_session()` now returns a logical
   message session backed by a shared Sonos zone manager, accepts initial
   `zones`, and uses a provider-level Sonos zone subscriber id for
-  `ensureZones` / `releaseZones`.
-- Sonos zone sessions now expose `messages`, `ensure_zones()`, `drop_zones()`,
-  and lease-backed `command()` behavior. Sonos view absence is converted into a
-  subscription `UNAVAILABLE` message instead of being treated as service-use
-  loss.
+  `setZoneScope`.
+- Sonos zone sessions now expose `messages`, `set_zone_scope()`, and
+  lease-backed `command()` behavior. The retained zone set is both the
+  authoritative state/watch set and the authority boundary for zone-scoped
+  commands. Sonos view absence is converted into a subscription `UNAVAILABLE`
+  message instead of being treated as service-use loss.
 - Sonos volume rotary now consumes subscription messages and no longer owns
-  explicit `ensureZones`, `watch_zone`, release, or service-use-loss
+  explicit scope mutation, view-watch, release, or service-use-loss
   classification boilerplate.
 - Sonos media, group, shortcut, and non-volume command actions now open zone
   sessions during mount or page-open lifecycle and route reads and writes
@@ -40,8 +41,10 @@ Completed so far:
 - Sonos no longer exposes a public one-shot client command API. Zone-bound
   actions keep a zone session open and do not hide a missing session behind
   command-pool fallback.
-- Existing Sonos provider-side subscription cleanup tests pass without provider
-  protocol changes.
+- Sonos provider-side scope cleanup uses `setZoneScope`; `ensureZones` and
+  `releaseZones` were removed rather than kept as compatibility aliases.
+- Kaj status bar uses the Sonos message session instead of owning direct
+  Sonos retry/release logic.
 - `deckr/docs/usage.md` now documents managed subscriptions and shared command
   pools, and demotes direct service-use-loss helper usage to low-level
   infrastructure guidance.
@@ -49,7 +52,6 @@ Completed so far:
 Known remaining work against this plan:
 
 - OpenHAB has not yet been migrated to the shared item subscription manager.
-- Kaj status bar has not yet been migrated to the new Sonos message session.
 - The explicit one-shot fallback policy for command scopes that should not be
   pooled still needs to be formalized.
 
@@ -78,9 +80,10 @@ semantics in each plugin client.
   interaction commands.
 - Keep Beacon and Concord semantics strict: no reattaching, no Beacon-as-
   liveness, no reused cancelled contracts, and no parallel lifecycle authority.
-- Keep service provider implementations mostly intact. OpenHAB and Sonos
-  already support contract-bound subscription sets through `ensureItems` /
-  `releaseItems` and `ensureZones` / `releaseZones`.
+- Keep service provider implementations mostly intact. OpenHAB already supports
+  contract-bound subscription sets through `ensureItems` / `releaseItems`.
+  Sonos uses the v1 `setZoneScope` operation as a full replacement retained
+  zone set.
 
 ## Original Problems And Remaining Gaps
 
@@ -121,7 +124,7 @@ async with sonos.zone_subscription_session(
     SONOS_SERVICE_ID,
     zones=zones,
 ) as session:
-    await session.ensure_zones(dynamic_zones)
+    await session.set_zone_scope(dynamic_zones)
 
     async for message in session.messages:
         if message.state is ServiceSubscriptionState.READY:
@@ -230,34 +233,34 @@ For a service id and compatible scope, the manager should:
   `provider:<provider-instance-id>:openhab-items`.
 - Track logical subscribers keyed by local handle id or binding id.
 - Maintain the union of requested resources across logical subscribers.
-- Call one `ensureZones` or `ensureItems` with the retained union when the
-  shared set changes or a successor contract is negotiated.
-- Call `releaseZones` or `releaseItems` only for resources that leave the
-  retained union.
+- For replacement-set domains such as Sonos, call one resource-scope operation
+  with the full retained union whenever the shared set changes or a successor
+  contract is negotiated. The retained union is both the state/watch set and
+  the resource-command authority boundary.
+- For additive external domains such as current OpenHAB, call `ensureItems`
+  with the retained union when needed and `releaseItems` only for resources
+  that leave the retained union.
 - Watch each retained service view once and fan out messages to interested
   logical sessions.
 - Emit `RECONNECTING` on lease loss, then negotiate a successor contract and
-  re-ensure the current retained union.
+  reapply the current retained union.
 - On session exit, unregister only that logical subscriber and shrink the
   retained set if no other subscriber needs the same resource.
 
-Single `ensureZones` / `ensureItems` calls with the retained union are
-acceptable. Because current service providers treat ensure as the set for the
-subscriber under that contract, the shared manager must send the full retained
-union for its provider-level subscriber id, not only newly added resources.
+Single retained-union updates are required for replacement-set domains. The
+shared manager must send the full retained union for its provider-level
+subscriber id, not only newly added resources.
 
 Dynamic resource methods should have explicit local semantics:
 
-- `ensure_zones(zones)` / `ensure_items(items)` adds or retains resources for
-  the logical session.
-- `drop_zones(zones)` / `drop_items(items)` removes resources from the logical
-  session without affecting other sessions.
+- `set_zone_scope(zones)` replaces the logical Sonos zone scope. An empty set
+  clears that logical scope and removes zone-command authority.
+- `ensure_items(items)` / `drop_items(items)` remain the logical OpenHAB item
+  add/drop API until the replacement OpenHAB API is designed.
 - Context exit drops all resources owned by the logical session.
 
-The service command names can remain `ensureZones`, `releaseZones`,
-`ensureItems`, and `releaseItems` on the wire unless the provider protocols are
-renamed deliberately as part of v1 cleanup. The public client method can be
-`drop_*` even if the wire operation is `release*`.
+The Sonos service command name is `setZoneScope`. OpenHAB still uses
+`ensureItems` and `releaseItems` until its replacement API is designed.
 
 ## Core Reusable Library
 
@@ -291,8 +294,8 @@ The generic manager should be configured with domain callbacks:
 
 - Resolve/select descriptor for the service id.
 - Build operations and view scope for a retained resource set.
-- Ensure retained resources for the active lease.
-- Release resources removed from the retained set.
+- Apply retained resources for the active lease, either as a full replacement
+  set or as domain-specific ensure/release mutations.
 - Build `ServiceViewRef` for a resource.
 - Convert view payload or view absence into a subscription message.
 - Optionally expose lease-backed commands allowed by the same subscription
@@ -313,7 +316,8 @@ Command execution should prefer:
 
 1. The action's own logical subscription session when the command is related to
    an already-retained resource, such as Sonos `playMusicItem`,
-   `resolveMusicShortcut`, `adjustVolume`, or `joinAll` for a configured zone.
+   `resolveMusicShortcut`, `adjustVolume`, or `leaveGroup` for a configured
+   zone.
 2. A provider-shared command session keyed by service id and compatible
    operation set only for operations with no durable resource session.
 3. A one-shot service-use contract when no shared lease exists or the command
@@ -349,13 +353,12 @@ The Sonos manager should:
 - Use one retained union of zones per service id and compatible operation set.
 - Include additional operations requested by consumers, such as `adjustVolume`,
   `play`, `pause`, `resolveMusicShortcut`, `resolveFavourite`,
-  `playMusicItem`, `listZones`, and group commands, in the shared lease scope
+  `playMusicItem`, `listZones`, and `leaveGroup`, in the shared lease scope
   needed by the action.
 - Fan out zone view messages by zone name.
 - Use the active shared lease for zone-related commands required by the logical
   session.
-- Keep service-side `ensureZones` / `releaseZones` semantics unless a v1 rename
-  is chosen separately.
+- Use Sonos `setZoneScope` as a full replacement retained zone set.
 
 Expected consumer simplifications:
 
@@ -411,7 +414,7 @@ presence, current-state buckets, endpoint sessions, catalogs, Beacon
 advertisements, or ad hoc lease records must not become lifecycle authority.
 
 Provider-side changes should be limited to tests or small protocol cleanup unless
-the manager reveals a concrete bug in `ensure*` / `release*` behavior.
+the manager reveals a concrete bug in retained-scope mutation behavior.
 
 ## Failure Modes
 
@@ -421,11 +424,11 @@ The manager should provide consistent behavior for these cases:
   available.
 - Service backend unavailable: logical sessions emit `UNAVAILABLE` with service
   diagnostics.
-- Ensure command reports ordinary unavailable/rejected: affected resources emit
-  `UNAVAILABLE` or `ERROR`, depending on service error code.
-- Ensure command or view watch reports service-use loss: all retained resources
-  on that lease emit `RECONNECTING`; the manager negotiates a successor and
-  re-ensures the retained union.
+- Retained-scope mutation reports ordinary unavailable/rejected: affected
+  resources emit `UNAVAILABLE` or `ERROR`, depending on service error code.
+- Retained-scope mutation or view watch reports service-use loss: all retained
+  resources on that lease emit `RECONNECTING`; the manager negotiates a
+  successor and reapplies the retained union.
 - Fenced view missing or deleted under a valid lease: affected resource emits
   `UNAVAILABLE`.
 - Logical session closes while a reconnect is in flight: its resources are
@@ -464,16 +467,21 @@ Core tests:
   retained resource union.
 - Dropping one logical session does not release a resource still retained by
   another session.
-- Lease loss triggers successor negotiation and re-ensures the retained union.
+- Lease loss triggers successor negotiation and reapplies the retained union.
 - View absence under a valid lease emits `UNAVAILABLE`, not `RECONNECTING`.
 - Command retry uses successor leases for service-use loss and does not retry
   ordinary service errors.
 
 Sonos tests:
 
-- Two zone consumers for the same zone result in one shared `ensureZones` set.
-- Adding/removing zones updates the retained union and calls `releaseZones` only
-  when the last logical subscriber drops a zone.
+- Two zone consumers for the same zone result in one shared `setZoneScope` set.
+- Adding/removing zones updates the retained union with a full `setZoneScope`
+  replacement, including remove-only and empty-set updates.
+- Zone-scoped Sonos commands carry `subscriberId`, target only retained zones,
+  and do not fall back to a command pool when the retained session is absent.
+- `joinGroup`, `joinAll`, and `splitAll` are not advertised or exposed; direct
+  calls are rejected as unsupported. `leaveGroup` remains scoped to the
+  retained zone.
 - Volume rotary uses the active shared lease for `adjustVolume`.
 - Zone-bound Sonos actions open `zone_subscription_session(...)` during
   mount/page-open lifecycle, include their needed command operations, and use
@@ -496,7 +504,7 @@ OpenHAB tests:
 Integration-style tests:
 
 - Simulate service restart: old contract becomes invalid, managers emit
-  `RECONNECTING`, negotiate a successor, re-ensure retained resources, and emit
+  `RECONNECTING`, negotiate a successor, reapply retained resources, and emit
   fresh `READY` messages.
 - Simulate action unmount during reconnect: no leaked logical subscribers and no
   release command against an ended lease.

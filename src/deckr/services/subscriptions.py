@@ -89,6 +89,9 @@ class ResourceSubscriptionSession(Generic[ResourceT]):
     async def ensure(self, resources: Collection[ResourceT]) -> None:
         await self._manager.ensure(self._session_id, resources)
 
+    async def set(self, resources: Collection[ResourceT]) -> None:
+        await self._manager.set(self._session_id, resources)
+
     async def drop(self, resources: Collection[ResourceT]) -> None:
         await self._manager.drop(self._session_id, resources)
 
@@ -97,11 +100,13 @@ class ResourceSubscriptionSession(Generic[ResourceT]):
         operation: str,
         params: Mapping[str, Any] | None = None,
         *,
+        required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
     ) -> ServiceCommandReplyBody:
         return await self._manager.command(
             operation,
             params,
+            required_resource=required_resource,
             timeout_seconds=timeout_seconds,
         )
 
@@ -126,7 +131,8 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         views: _ViewsForDescriptor,
         ensure_resources: Callable[
             [ServiceUseLease, frozenset[ResourceT]], Awaitable[None]
-        ],
+        ]
+        | None,
         release_resources: Callable[
             [ServiceUseLease, frozenset[ResourceT]], Awaitable[None]
         ]
@@ -137,6 +143,10 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             ServiceSubscriptionMessage[ResourceT],
         ],
         command_pool: SharedServiceCommandPool | None = None,
+        set_resources: Callable[
+            [ServiceUseLease, frozenset[ResourceT]], Awaitable[None]
+        ]
+        | None = None,
         service_use_timeout_seconds: float | None = None,
         reconnect_delay_seconds: float = 0.05,
         subscriber_buffer_size: int = 100,
@@ -145,6 +155,15 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             raise ValueError("reconnect_delay_seconds must not be negative")
         if subscriber_buffer_size <= 0:
             raise ValueError("subscriber_buffer_size must be greater than zero")
+        if set_resources is None and ensure_resources is None:
+            raise ValueError("ensure_resources or set_resources is required")
+        if set_resources is not None and (
+            ensure_resources is not None or release_resources is not None
+        ):
+            raise ValueError(
+                "set_resources replacement mode cannot be combined with "
+                "ensure_resources or release_resources"
+            )
         self._services = services
         self._name = name
         self._descriptor = descriptor
@@ -152,6 +171,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         self._views = views
         self._ensure_resources = ensure_resources
         self._release_resources = release_resources
+        self._set_resources = set_resources
         self._view_for_resource = view_for_resource
         self._message_from_view = message_from_view
         self._command_pool = command_pool
@@ -197,6 +217,30 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         for message in initial:
             _send_nowait(send, message)
         return ResourceSubscriptionSession(self, session_id, receive)
+
+    async def set(
+        self,
+        session_id: str,
+        resources: Collection[ResourceT],
+    ) -> None:
+        requested = set(resources)
+        async with self._lock:
+            subscriber = self._subscribers.get(session_id)
+            if subscriber is None:
+                return
+            previous = set(subscriber.resources)
+            if previous == requested:
+                return
+            added = requested.difference(previous)
+            subscriber.resources = requested
+            self._prune_latest_locked()
+            for resource in added:
+                if resource not in self._latest:
+                    _send_nowait(
+                        subscriber.send,
+                        _state_message(resource, ServiceSubscriptionState.PENDING),
+                    )
+            self._notify_changed_locked()
 
     async def ensure(
         self,
@@ -249,16 +293,28 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         operation: str,
         params: Mapping[str, Any] | None = None,
         *,
+        required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
     ) -> ServiceCommandReplyBody:
         reply = await self.command_on_active_lease(
             operation,
             params,
+            required_resource=required_resource,
             timeout_seconds=timeout_seconds,
         )
         if reply is not None:
             return reply
 
+        if required_resource is not None:
+            raise ServiceUnavailable(
+                "service_subscription_command_unavailable",
+                "No compatible active subscription lease is available",
+                {
+                    "operation": operation,
+                    "manager": self._name,
+                    "resource": repr(required_resource),
+                },
+            )
         if self._command_pool is None:
             raise ServiceUnavailable(
                 "service_subscription_command_unavailable",
@@ -415,27 +471,34 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             resources = await self._retained_resources()
             if not resources:
                 return
-            await self._ensure_resources(lease, resources)
+            await self._apply_retained_resources(lease, resources)
             while resources:
                 generation = await self._snapshot_generation()
                 await self._watch_until_change(lease, resources, generation)
                 async with self._lock:
-                    if self._closed:
-                        return
+                    closed = self._closed
                     lease_lost = self._active_lease_lost
                     self._active_lease_lost = None
+                if closed:
+                    if lease_lost is None:
+                        await self._clear_retained_resources(lease, resources)
+                    return
                 if lease_lost is not None:
                     raise lease_lost
                 updated = await self._retained_resources()
                 removed = resources.difference(updated)
                 added = updated.difference(resources)
-                if removed and self._release_resources is not None:
-                    await self._release_resources(lease, removed)
-                if not updated:
-                    return
                 if added:
                     await self._emit_state(added, ServiceSubscriptionState.PENDING)
-                    await self._ensure_resources(lease, updated)
+                await self._apply_retained_resource_change(
+                    lease,
+                    previous=resources,
+                    updated=updated,
+                    removed=removed,
+                    added=added,
+                )
+                if not updated:
+                    return
                 resources = updated
         finally:
             async with self._lock:
@@ -443,6 +506,49 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
                     self._active_lease = None
                     self._active_lease_lost = None
             await context.__aexit__(None, None, None)
+
+    async def _apply_retained_resources(
+        self,
+        lease: ServiceUseLease,
+        resources: frozenset[ResourceT],
+    ) -> None:
+        if self._set_resources is not None:
+            await self._set_resources(lease, resources)
+            return
+        assert self._ensure_resources is not None
+        await self._ensure_resources(lease, resources)
+
+    async def _apply_retained_resource_change(
+        self,
+        lease: ServiceUseLease,
+        *,
+        previous: frozenset[ResourceT],
+        updated: frozenset[ResourceT],
+        removed: frozenset[ResourceT],
+        added: frozenset[ResourceT],
+    ) -> None:
+        if self._set_resources is not None:
+            if updated != previous:
+                await self._set_resources(lease, updated)
+            return
+        if removed and self._release_resources is not None:
+            await self._release_resources(lease, removed)
+        if added:
+            assert self._ensure_resources is not None
+            await self._ensure_resources(lease, updated)
+
+    async def _clear_retained_resources(
+        self,
+        lease: ServiceUseLease,
+        resources: frozenset[ResourceT],
+    ) -> None:
+        if not resources:
+            return
+        if self._set_resources is not None:
+            await self._set_resources(lease, frozenset())
+            return
+        if self._release_resources is not None:
+            await self._release_resources(lease, resources)
 
     async def _watch_until_change(
         self,

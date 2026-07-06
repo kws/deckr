@@ -156,6 +156,77 @@ async def test_shared_resource_subscription_reconnects_after_lease_loss() -> Non
 
 
 @pytest.mark.asyncio
+async def test_shared_resource_subscription_replacement_sets_retained_union() -> None:
+    async with anyio.create_task_group() as tg:
+        services = _FakeServices(tg)
+        services.views["Bedroom"] = {"volume": 20}
+        manager = _manager(services, replacement=True)
+
+        first = await manager.open_session({"Kitchen"})
+        await _next_state(first, ServiceSubscriptionState.READY)
+        second = await manager.open_session({"Bedroom"})
+        await _next_state(second, ServiceSubscriptionState.READY)
+
+        with anyio.fail_after(1):
+            while services.set_calls != [
+                frozenset({"Kitchen"}),
+                frozenset({"Bedroom", "Kitchen"}),
+            ]:
+                await anyio.sleep(0)
+
+        await first.set(set())
+        with anyio.fail_after(1):
+            while services.set_calls[-1] != frozenset({"Bedroom"}):
+                await anyio.sleep(0)
+
+        await second.set(set())
+        with anyio.fail_after(1):
+            while services.set_calls[-1] != frozenset():
+                await anyio.sleep(0)
+
+        assert services.set_calls == [
+            frozenset({"Kitchen"}),
+            frozenset({"Bedroom", "Kitchen"}),
+            frozenset({"Bedroom"}),
+            frozenset(),
+        ]
+        assert services.set_lease_closed == [False, False, False, False]
+
+        await first.aclose()
+        await second.aclose()
+        await manager.aclose()
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_shared_resource_subscription_replacement_reapplies_after_reconnect() -> None:
+    async with anyio.create_task_group() as tg:
+        services = _FakeServices(tg)
+        services.watch_failures = {
+            1: ServiceUnavailable("contract_cancelled", "cancelled")
+        }
+        services.views_by_generation = {
+            1: {"Kitchen": {"volume": 12}},
+            2: {"Kitchen": {"volume": 13}},
+        }
+        manager = _manager(services, replacement=True, reconnect_delay_seconds=0)
+
+        session = await manager.open_session({"Kitchen"})
+        await _next_state(session, ServiceSubscriptionState.READY)
+        await _next_state(session, ServiceSubscriptionState.RECONNECTING)
+        await _next_state(session, ServiceSubscriptionState.READY)
+
+        assert services.set_calls == [
+            frozenset({"Kitchen"}),
+            frozenset({"Kitchen"}),
+        ]
+
+        await session.aclose()
+        await manager.aclose()
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_shared_resource_subscription_active_command_requires_retained_resource() -> None:
     async with anyio.create_task_group() as tg:
         services = _FakeServices(tg)
@@ -182,6 +253,38 @@ async def test_shared_resource_subscription_active_command_requires_retained_res
 
         await session.aclose()
         await manager.aclose()
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_shared_resource_subscription_required_resource_avoids_command_pool() -> None:
+    async with anyio.create_task_group() as tg:
+        services = _FakeServices(tg)
+        pool = SharedServiceCommandPool(
+            services,
+            name="demo",
+            descriptor=services.descriptor,
+            default_service_use_timeout_seconds=1.0,
+        )
+        manager = _manager(services, command_pool=pool)
+
+        session = await manager.open_session({"Kitchen"})
+        await _next_state(session, ServiceSubscriptionState.READY)
+
+        with pytest.raises(ServiceUnavailable) as exc_info:
+            await manager.command(
+                "play",
+                {"zone": "Bedroom"},
+                required_resource="Bedroom",
+            )
+
+        assert exc_info.value.code == "service_subscription_command_unavailable"
+        assert services.command_calls == []
+        assert len(services.use_calls) == 1
+
+        await session.aclose()
+        await manager.aclose()
+        await pool.aclose()
         tg.cancel_scope.cancel()
 
 
@@ -267,21 +370,29 @@ async def _next_state(
 def _manager(
     services: _FakeServices,
     *,
+    command_pool: SharedServiceCommandPool | None = None,
+    replacement: bool = False,
     reconnect_delay_seconds: float = 0.01,
 ) -> SharedResourceSubscriptionManager[str]:
     return SharedResourceSubscriptionManager(
         services,
         name="demo-zones",
         descriptor=services.descriptor,
-        operations={"ensureZones", "releaseZones", "play"},
+        operations=(
+            {"setZoneScope", "play"}
+            if replacement
+            else {"retainResources", "releaseResources", "play"}
+        ),
         views={"zones"},
-        ensure_resources=services.ensure_resources,
-        release_resources=services.release_resources,
+        ensure_resources=None if replacement else services.ensure_resources,
+        release_resources=None if replacement else services.release_resources,
         view_for_resource=lambda descriptor, zone: ServiceViewRef(
             "demo_views",
             f"service/{descriptor.service_id}/zones/{zone}",
         ),
         message_from_view=_message_from_view,
+        command_pool=command_pool,
+        set_resources=services.set_resources if replacement else None,
         service_use_timeout_seconds=1.0,
         reconnect_delay_seconds=reconnect_delay_seconds,
     )
@@ -310,6 +421,8 @@ class _FakeServices:
         self.command_calls: list[dict[str, Any]] = []
         self.ensure_calls: list[frozenset[str]] = []
         self.release_calls: list[frozenset[str]] = []
+        self.set_calls: list[frozenset[str]] = []
+        self.set_lease_closed: list[bool] = []
         self.leases: list[_FakeLease] = []
         self.views: dict[str, Mapping[str, Any] | None] = {
             "Kitchen": {"volume": 12}
@@ -402,6 +515,14 @@ class _FakeServices:
         del lease
         self.release_calls.append(resources)
 
+    async def set_resources(
+        self,
+        lease,
+        resources: frozenset[str],
+    ) -> None:
+        self.set_calls.append(resources)
+        self.set_lease_closed.append(lease.closed)
+
 
 class _FakeLease:
     def __init__(self, *, descriptor: ServiceDescriptor, generation: int) -> None:
@@ -426,7 +547,7 @@ def _descriptor() -> ServiceDescriptor:
         advertisement_profile="dev.deckr.demo.advertisement.v1",
         use_profile="dev.deckr.demo.use.v1",
         supported_operations=frozenset(
-            {"ensureZones", "releaseZones", "play"}
+            {"retainResources", "releaseResources", "setZoneScope", "play"}
         ),
         views={
             "zones": ServiceViewFamily(

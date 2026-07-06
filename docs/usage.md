@@ -166,7 +166,13 @@ refreshes the lease before delivering watched changes.
 
 Long-lived feature code should normally use a domain service client that wraps
 service-use leases in a logical subscription session. The session exposes
-resource-state messages instead of Concord lifecycle mechanics:
+resource-state messages instead of Concord lifecycle mechanics.
+
+A resource session owns a retained set of service resources under a live
+Concord service-use contract. That retained set is both the authoritative state
+set and the command authority boundary for the session: views are authoritative
+only for retained resources, and resource-scoped commands must go through the
+active session and target a retained resource.
 
 ```python
 from deckr.services import ServiceSubscriptionState
@@ -224,6 +230,11 @@ class SonosPlayButton(DeckrAction):
         await self._session.command("play", {"zone": self.zone_name})
 ```
 
+Normal feature input should not send resource commands while the corresponding
+resource state is `PENDING`, `UNAVAILABLE`, `RECONNECTING`, or `ERROR`. Render
+the pending, unavailable, reconnecting, or error state instead and wait for a
+fresh `READY` message before accepting ordinary resource commands.
+
 `ServiceSubscriptionState` is the shared state vocabulary:
 
 - `PENDING`: requested, but no fresh authoritative payload is available yet.
@@ -244,9 +255,12 @@ receives a state message it treats as terminal, such as `RECONNECTING` or
 
 Service clients build these sessions with `SharedResourceSubscriptionManager`.
 The manager owns descriptor resolution, service-use negotiation, retained
-resource union, `ensure*` / `release*` calls, view watching, fanout, reconnect,
-and best-effort cleanup. Domain clients provide callbacks for resource
-identity, ensure/release operations, view refs, and payload-to-message mapping.
+resource union, resource-scope updates, view watching, fanout, reconnect, and
+best-effort cleanup. Domain clients provide callbacks for resource identity,
+resource scope mutation, view refs, and payload-to-message mapping. Domains
+whose wire API treats scope as full replacement should use `set_resources(...)`
+and `ResourceSubscriptionSession.set(...)`; domains with additive external APIs
+can still use `ensure_resources(...)` and `release_resources(...)`.
 
 ## Shared Commands
 
@@ -292,10 +306,10 @@ before use, retries with a successor session when service-use authority is lost,
 and returns ordinary service-domain replies to the caller.
 
 When a command is associated with a retained subscribed resource, the domain
-service client should use the compatible active subscription session. Falling
-back to a command pool for that same resource hides a disconnected session from
-the action, adds first-interaction latency, and creates avoidable short-lived
-Concord churn.
+service client should use the compatible active subscription session with a
+required retained resource. Falling back to a command pool for that same
+resource hides a disconnected session from the action, adds first-interaction
+latency, and creates avoidable short-lived Concord churn.
 
 ## Low-Level Lease Loss Helpers
 
