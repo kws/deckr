@@ -50,9 +50,6 @@ Known remaining work against this plan:
 - Sonos media-shortcuts code still has one direct
   `service_command_reply_ends_service_use()` import and should be cleaned up in
   the broader command-only/action cleanup.
-- `reconnect=False` is accepted by the Sonos session API shape but does not yet
-  change manager behavior; the implemented path is the normal reconnecting
-  behavior.
 - Command pooling is implemented, but the explicit one-shot fallback policy for
   scopes that should not be pooled still needs to be formalized.
 
@@ -113,7 +110,6 @@ The author-facing API should preserve the simple shape:
 async with sonos.zone_subscription_session(
     SONOS_SERVICE_ID,
     zones=zones,
-    reconnect=True,
 ) as session:
     await session.ensure_zones(dynamic_zones)
 
@@ -130,7 +126,6 @@ OpenHAB should mirror this:
 async with openhab.item_subscription_session(
     OPENHAB_SERVICE_ID,
     items=items,
-    reconnect=True,
 ) as session:
     async for message in session.messages:
         ...
@@ -141,6 +136,11 @@ provider-shared service-use contract, not a private Concord contract for that
 single action. Public session methods update this logical handle's requested
 resources; the shared manager owns the actual service-use contract and service
 commands.
+
+Reconnect behavior is manager-owned, not a per-session boolean. If a consumer
+does not want to wait for a successor service-use contract, it should exit the
+context manager when it receives a state message it treats as terminal, such as
+`RECONNECTING` or `ERROR`.
 
 Use a small shared state enum:
 

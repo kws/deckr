@@ -176,15 +176,17 @@ async with sonos.zone_subscription_session(
     "sonos-home",
     zones={"Kitchen"},
     operations={"adjustVolume", "play", "pause"},
-    reconnect=True,
 ) as session:
     async for message in session.messages:
         if message.state is ServiceSubscriptionState.READY:
             await render_zone(message.resource, message.payload)
+        elif message.state is ServiceSubscriptionState.RECONNECTING:
+            break
         elif message.state is ServiceSubscriptionState.UNAVAILABLE:
             await render_unavailable(message.resource)
         elif message.state is ServiceSubscriptionState.ERROR:
             await render_error(message.resource, message.error)
+            break
 ```
 
 `ServiceSubscriptionState` is the shared state vocabulary:
@@ -198,6 +200,12 @@ async with sonos.zone_subscription_session(
 
 Feature code should use `message.state`; it should not infer lifecycle from
 `message.payload is None`.
+
+Managers reconnect by default after service-use loss because a logical session
+may share one provider-scoped lease with other sessions. Feature code that does
+not want to wait for a successor lease should exit the context manager when it
+receives a state message it treats as terminal, such as `RECONNECTING` or
+`ERROR`.
 
 Service clients build these sessions with `SharedResourceSubscriptionManager`.
 The manager owns descriptor resolution, service-use negotiation, retained
