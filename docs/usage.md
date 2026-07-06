@@ -162,10 +162,88 @@ async def watch_presence_status(person_id: str) -> None:
 the current payload first and then subsequent changes. The managed client
 refreshes the lease before delivering watched changes.
 
-## Handling Lost Service Use
+## Managed Subscriptions
 
-Feature code should classify service-use loss with the shared helpers instead
-of maintaining terminal-code sets.
+Long-lived feature code should normally use a domain service client that wraps
+service-use leases in a logical subscription session. The session exposes
+resource-state messages instead of Concord lifecycle mechanics:
+
+```python
+from deckr.services import ServiceSubscriptionState
+
+
+async with sonos.zone_subscription_session(
+    "sonos-home",
+    zones={"Kitchen"},
+    operations={"adjustVolume", "play", "pause"},
+    reconnect=True,
+) as session:
+    async for message in session.messages:
+        if message.state is ServiceSubscriptionState.READY:
+            await render_zone(message.resource, message.payload)
+        elif message.state is ServiceSubscriptionState.UNAVAILABLE:
+            await render_unavailable(message.resource)
+        elif message.state is ServiceSubscriptionState.ERROR:
+            await render_error(message.resource, message.error)
+```
+
+`ServiceSubscriptionState` is the shared state vocabulary:
+
+- `PENDING`: requested, but no fresh authoritative payload is available yet.
+- `READY`: payload is current under the active service-use contract.
+- `UNAVAILABLE`: the service or fenced view reports the resource unavailable.
+- `RECONNECTING`: the previous service-use contract ended and a successor is
+  being negotiated.
+- `ERROR`: an unclassified failure was surfaced to the subscription manager.
+
+Feature code should use `message.state`; it should not infer lifecycle from
+`message.payload is None`.
+
+Service clients build these sessions with `SharedResourceSubscriptionManager`.
+The manager owns descriptor resolution, service-use negotiation, retained
+resource union, `ensure*` / `release*` calls, view watching, fanout, reconnect,
+and best-effort cleanup. Domain clients provide callbacks for resource
+identity, ensure/release operations, view refs, and payload-to-message mapping.
+
+## Shared Commands
+
+Service clients should route command-only calls through
+`SharedServiceCommandPool` instead of opening a fresh Concord service-use
+contract for every button press:
+
+```python
+from deckr.services import SharedServiceCommandPool
+
+
+pool = services.get_shared_manager(
+    ("example-command-pool", "presence-home"),
+    lambda: SharedServiceCommandPool(
+        services,
+        name="example-presence-commands",
+        descriptor=lambda timeout: resolve_presence_descriptor(timeout),
+        default_service_use_timeout_seconds=30.0,
+    ),
+)
+
+reply = await pool.command(
+    "presence.report",
+    {"state": "home"},
+    request_timeout_seconds=8.0,
+)
+```
+
+The command pool reuses compatible active leases, refreshes before use, retries
+with a successor lease when service-use authority is lost, and returns ordinary
+service-domain replies to the caller.
+
+When a command is associated with a retained subscribed resource, the domain
+subscription session can first try the active subscription lease and fall back
+to the command pool when no compatible subscription lease is available.
+
+## Low-Level Lease Loss Helpers
+
+Low-level service infrastructure can still classify service-use loss with the
+shared helpers instead of maintaining terminal-code sets:
 
 ```python
 from deckr.services import (
@@ -192,8 +270,9 @@ async def call_with_successor_retry(services, lease) -> None:
 
 The helpers own classification for cancelled contracts, missing contracts,
 missing or invalid participant tokens, session or generation mismatches, and
-service-side `contract_not_managed` reports. Plugins should not duplicate those
-rules.
+service-side `contract_not_managed` reports. Ordinary action and display code
+should not need these helpers; subscription managers and command pools should
+hide them behind domain messages and replies.
 
 ## Provider Boundary
 

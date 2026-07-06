@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Collection, Mapping
+from collections.abc import AsyncIterator, Callable, Collection, Hashable, Mapping
 from contextlib import asynccontextmanager
 from time import monotonic
 from typing import Any
@@ -73,6 +73,7 @@ class DeckrServices:
         self._directories: dict[_DirectoryKey, BeaconDirectory[ServiceDescriptor]] = {}
         self._view_stores: dict[str, ServiceViewStore] = {}
         self._active_service_use_leases: dict[int, ServiceUseLease] = {}
+        self._shared_managers: dict[Hashable, Any] = {}
 
     def directory(
         self,
@@ -283,7 +284,21 @@ class DeckrServices:
         except KvUnavailable as exc:
             raise _service_view_unavailable(view) from exc
 
+    def get_shared_manager(self, key: Hashable, factory: Callable[[], Any]) -> Any:
+        """Return a runtime-scoped shared service helper."""
+
+        manager = self._shared_managers.get(key)
+        if manager is None:
+            manager = factory()
+            self._shared_managers[key] = manager
+        return manager
+
     async def aclose(self) -> None:
+        for manager in tuple(self._shared_managers.values()):
+            aclose = getattr(manager, "aclose", None)
+            if callable(aclose):
+                await aclose()
+        self._shared_managers.clear()
         for lease in tuple(self._active_service_use_leases.values()):
             await self._close_active_service_use_lease(
                 lease,

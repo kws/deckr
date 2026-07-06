@@ -42,6 +42,13 @@ from deckr.services.runtime import (
     service_view_key,
     service_view_prefix,
 )
+from deckr.services.subscriptions import (
+    ResourceSubscriptionSession,
+    ServiceSubscriptionMessage,
+    ServiceSubscriptionState,
+    SharedResourceSubscriptionManager,
+    SharedServiceCommandPool,
+)
 from deckr.services.views import ServiceViewChange, ServiceViewEntry, ServiceViewStore
 
 __all__ = [
@@ -59,6 +66,8 @@ __all__ = [
     "ServiceError",
     "ServiceMessageBody",
     "ServiceProtocol",
+    "ServiceSubscriptionMessage",
+    "ServiceSubscriptionState",
     "ServiceUnavailable",
     "ServiceUseAuthorizationError",
     "ServiceUseLease",
@@ -69,7 +78,10 @@ __all__ = [
     "ServiceViewFamilyDefinition",
     "ServiceViewRef",
     "ServiceViewStore",
+    "SharedResourceSubscriptionManager",
+    "SharedServiceCommandPool",
     "UnsupportedServiceScope",
+    "ResourceSubscriptionSession",
     "authorize_service_command",
     "newest_service_descriptor",
     "parse_service_descriptor",

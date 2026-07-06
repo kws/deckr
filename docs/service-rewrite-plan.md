@@ -5,6 +5,57 @@
 > before v1. When implemented, the resulting behavior should be promoted into
 > BAU docs, code, tests, and examples.
 
+## Implementation Status
+
+As of July 6, 2026, the first implementation slice has landed in the working
+tree but the full rewrite plan below is not complete.
+
+Completed so far:
+
+- `deckr.services` now exports the shared subscription state enum, generic
+  subscription message model, logical resource subscription session, shared
+  resource subscription manager, and shared service command pool.
+- `DeckrServices` now owns a runtime-scoped shared manager cache and closes
+  shared managers during service shutdown before closing remaining direct
+  service-use leases.
+- Core tests cover overlapping logical sessions, retained resource union
+  behavior, last-subscriber release, missing view to `UNAVAILABLE`, lease-loss
+  reconnect and re-ensure, command-pool lease reuse, and command-pool
+  service-use-loss retry.
+- `SonosServiceClient.zone_subscription_session()` now returns a logical
+  message session backed by a shared Sonos zone manager, accepts initial
+  `zones`, and uses a provider-level Sonos zone subscriber id for
+  `ensureZones` / `releaseZones`.
+- Sonos zone sessions now expose `messages`, `ensure_zones()`, `drop_zones()`,
+  and lease-backed `command()` behavior. Sonos view absence is converted into a
+  subscription `UNAVAILABLE` message instead of being treated as service-use
+  loss.
+- `SonosServiceClient.command()` now uses a shared command pool, so Sonos
+  command-only callers reuse compatible service-use leases and retry
+  service-use-loss replies through the shared helper layer.
+- Sonos volume rotary now consumes subscription messages and no longer owns
+  explicit `ensureZones`, `watch_zone`, release, or service-use-loss
+  classification boilerplate.
+- The generic Sonos command action is covered through the pooled
+  `SonosServiceClient.command()` path. Existing Sonos provider-side
+  subscription cleanup tests pass without provider protocol changes.
+- `deckr/docs/usage.md` now documents managed subscriptions and shared command
+  pools, and demotes direct service-use-loss helper usage to low-level
+  infrastructure guidance.
+
+Known remaining work against this plan:
+
+- OpenHAB has not yet been migrated to the shared item subscription manager.
+- Kaj status bar has not yet been migrated to the new Sonos message session.
+- Sonos media-shortcuts code still has one direct
+  `service_command_reply_ends_service_use()` import and should be cleaned up in
+  the broader command-only/action cleanup.
+- `reconnect=False` is accepted by the Sonos session API shape but does not yet
+  change manager behavior; the implemented path is the normal reconnecting
+  behavior.
+- Command pooling is implemented, but the explicit one-shot fallback policy for
+  scopes that should not be pooled still needs to be formalized.
+
 Deckr services already use the right authority model: Beacon discovers
 candidate services, Concord owns service-use authority, and service views are
 fenced by the live service-use contract. The current consumer API still exposes
