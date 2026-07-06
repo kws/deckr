@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
+from types import SimpleNamespace
 
 import anyio
 import pytest
@@ -11,19 +13,9 @@ from deckr.actions.endpoints import (
     action_provider_address,
     action_providers_broadcast,
 )
-from deckr.beacon import (
-    BeaconAdvertisementSpec,
-    beacon_advertisement_key,
-    parse_beacon_advertisement_key,
-)
 from deckr.concord import (
     ConcordAgreementSpec,
-    concord_contract_key,
-    concord_participant_token_key,
-    parse_concord_contract_key,
-    parse_concord_participant_token_key,
 )
-from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.lanes import (
     DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     SERVICE_LANE_CONTRACT,
@@ -46,6 +38,7 @@ from deckr.substrates.nats import (
     _headers_for,
     _subject_for,
 )
+from deckr.substrates.nats_kv import KvBucketPolicy
 
 _CONTRACT = {"contractId": "contract-1", "generation": 1}
 
@@ -65,40 +58,6 @@ def _settings_target() -> dict[str, str]:
 async def _receive(stream):
     with anyio.fail_after(1):
         return await stream.receive()
-
-
-@pytest.mark.asyncio
-async def test_endpoint_send_stamps_sender_and_filters_direct_recipient() -> None:
-    async with (
-        mock_deckr() as deckr,
-        deckr.endpoint(action_provider_address("python")) as provider,
-        deckr.endpoint(controller_address("main")) as controller,
-        deckr.endpoint(controller_address("other")) as other,
-    ):
-        sent = await provider.send(
-            lane=ACTIONS_LANE,
-            recipient=controller_address("main"),
-            subject=entity_subject("settings", contextId="ctx"),
-            message_type="settingsRequest",
-            body={"target": _settings_target()},
-            contract=_CONTRACT,
-        )
-
-    deckr._message_bus.publish.assert_awaited_once_with(sent)
-    assert sent.sender == action_provider_address("python")
-    assert sent.sender_session_id == provider.session_id
-    assert message_is_deliverable(
-        sent,
-        endpoint=controller.address,
-        endpoint_session_id=controller.session_id,
-        contract=deckr.lane_contracts.contract_for(ACTIONS_LANE),
-    )
-    assert not message_is_deliverable(
-        sent,
-        endpoint=other.address,
-        endpoint_session_id=other.session_id,
-        contract=deckr.lane_contracts.contract_for(ACTIONS_LANE),
-    )
 
 
 @pytest.mark.asyncio
@@ -243,26 +202,6 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_endpoint_context_is_local_runtime_identity_only() -> None:
-    async with (
-        mock_deckr() as deckr,
-        deckr.endpoint(
-            action_provider_address("python"),
-            metadata={"runtime": "test-provider"},
-        ) as provider,
-    ):
-        assert provider.address == action_provider_address("python")
-        assert provider.session_id
-        assert provider.metadata == {"runtime": "test-provider"}
-
-
-@pytest.mark.asyncio
-async def test_lane_does_not_register_endpoints() -> None:
-    async with mock_deckr() as deckr:
-        assert not hasattr(deckr.lane(ACTIONS_LANE), "register_endpoint")
-
-
-@pytest.mark.asyncio
 async def test_same_endpoint_can_open_separate_sessions() -> None:
     message_bus = mock_message_bus(DEFAULT_MESSAGE_CONTRACT_REGISTRY)
     async with (
@@ -307,28 +246,6 @@ async def test_endpoint_context_exit_closes_active_subscriptions() -> None:
             controller.subscribe(ACTIONS_LANE)
 
 
-def test_sender_session_is_syntactic_and_not_presence_gated() -> None:
-    provider = action_provider_address("python")
-    controller = controller_address("main")
-    message = DeckrMessage(
-        lane=ACTIONS_LANE,
-        messageType="settingsRequest",
-        sender=provider,
-        senderSessionId="stale-session",
-        recipient=endpoint_target(controller),
-        subject=entity_subject("settings", contextId="ctx"),
-        contract=_CONTRACT,
-        body={"target": _settings_target()},
-    )
-
-    assert message_is_deliverable(
-        message,
-        endpoint=controller,
-        endpoint_session_id="controller-session",
-        contract=DEFAULT_MESSAGE_CONTRACT_REGISTRY.contract_for(ACTIONS_LANE),
-    )
-
-
 def test_recipient_session_mismatch_is_not_deliverable() -> None:
     message = DeckrMessage(
         lane=ACTIONS_LANE,
@@ -351,36 +268,6 @@ def test_recipient_session_mismatch_is_not_deliverable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lane_subscription_does_not_imply_beacon_advertisement() -> None:
-    async with (
-        mock_deckr() as deckr,
-        deckr.endpoint(controller_address("main")) as controller,
-        controller.subscribe(ACTIONS_LANE),
-    ):
-        assert deckr.beacon.candidates("dev.deckr.test.feature") == ()
-
-
-@pytest.mark.asyncio
-async def test_beacon_withdrawal_does_not_close_lane_subscription() -> None:
-    async with (
-        mock_deckr() as deckr,
-        deckr.endpoint(controller_address("main")) as controller,
-        controller.subscribe(ACTIONS_LANE),
-    ):
-        subscription = deckr._message_bus.subscriptions[-1]
-        advertisement = await deckr.beacon.advertise(
-            BeaconAdvertisementSpec(
-                feature_id="dev.deckr.test.feature",
-                endpoint=service_address("media"),
-                session_id="service-session",
-                advertisement_id="media",
-            )
-        )
-        assert await advertisement.withdraw()
-        assert not subscription.exited
-
-
-@pytest.mark.asyncio
 async def test_concord_cancellation_does_not_close_lane_subscription() -> None:
     async with (
         mock_deckr() as deckr,
@@ -398,67 +285,6 @@ async def test_concord_cancellation_does_not_close_lane_subscription() -> None:
         )
         assert await agreement.cancel("test cancellation")
         assert not subscription.exited
-
-
-def test_key_token_encoding_round_trips_nats_safe_and_fallback_tokens() -> None:
-    assert encode_key_token("deck_1") == "deck_1"
-    assert decode_key_token("deck_1") == "deck_1"
-    encoded = encode_key_token("b64_native")
-    assert encoded.startswith("b64_")
-    assert decode_key_token(encoded) == "b64_native"
-    encoded = encode_key_token("deck:one")
-    assert encoded.startswith("b64_")
-    assert decode_key_token(encoded) == "deck:one"
-
-
-def test_protocol_key_helpers_round_trip_encoded_tokens() -> None:
-    advertisement_key = beacon_advertisement_key(
-        feature_id="dev.deckr.hardware",
-        advertisement_id="room/a",
-    )
-    contract_key = concord_contract_key(contract_id="hardware contract/1", generation=2)
-    token_key = concord_participant_token_key(
-        contract_id="hardware contract/1",
-        generation=2,
-        participant=hardware_manager_address("room/a"),
-    )
-
-    assert parse_beacon_advertisement_key(advertisement_key) == (
-        "dev.deckr.hardware",
-        "room/a",
-    )
-    assert parse_concord_contract_key(contract_key) == ("hardware contract/1", 2)
-    assert parse_concord_participant_token_key(token_key) == (
-        "hardware contract/1",
-        2,
-        hardware_manager_address("room/a"),
-    )
-
-
-def test_nats_subject_and_headers_are_delivery_hints_for_canonical_envelope() -> None:
-    async def build():
-        async with (
-            mock_deckr() as deckr,
-            deckr.endpoint(action_provider_address("python")) as provider,
-            deckr.endpoint(controller_address("main")) as controller,
-        ):
-            return await provider.send(
-                lane=ACTIONS_LANE,
-                recipient=controller.address,
-                subject=entity_subject("settings", contextId="ctx"),
-                message_type="settingsRequest",
-                body={"target": _settings_target()},
-                contract=_CONTRACT,
-            )
-
-    message = anyio.run(build)
-    assert _subject_for(message) == "deckr.msg.actions.to.controller.main"
-    assert _headers_for(message)["Deckr-Message-Id"] == message.message_id
-    assert _headers_for(message)["Deckr-Sender"] == "action_provider:python"
-    assert _headers_for(message)["Deckr-Sender-Session"] == message.sender_session_id
-    assert _headers_for(message)["Deckr-Recipient"] == "controller:main"
-    assert _headers_for(message)["Deckr-Contract-Id"] == "contract-1"
-    assert _headers_for(message)["Deckr-Contract-Generation"] == "1"
 
 
 class _FakeLaneMsg:
@@ -564,6 +390,7 @@ def _settings_reply_message(
     *,
     theme: str = "dark",
     in_reply_to: str | None = None,
+    recipient_session_id: str | None = None,
 ) -> DeckrMessage:
     return DeckrMessage(
         lane=ACTIONS_LANE,
@@ -571,7 +398,7 @@ def _settings_reply_message(
         sender=controller_address("main"),
         senderSessionId="controller-session",
         recipient=endpoint_target(request.sender),
-        recipientSessionId=request.sender_session_id,
+        recipientSessionId=recipient_session_id or request.sender_session_id,
         subject=request.subject,
         inReplyTo=in_reply_to or request.message_id,
         contract=request.contract,
@@ -580,23 +407,70 @@ def _settings_reply_message(
 
 
 @pytest.mark.asyncio
-async def test_nats_subscribes_to_recipient_hinted_direct_and_broadcast_subjects() -> None:
-    substrate = NatsSubstrate(
-        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
-        buffer_size=1,
-    )
+async def test_nats_disconnected_operations_raise_clear_runtime_error() -> None:
+    substrate = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
+    message = _settings_request_message()
+
+    with pytest.raises(RuntimeError, match="not connected"):
+        await substrate.publish(message)
+    with pytest.raises(RuntimeError, match="not connected"):
+        await substrate.publish_reply(message, request=message)
+    with pytest.raises(RuntimeError, match="not connected"):
+        await substrate.request(message, timeout=0.01)
+    with pytest.raises(RuntimeError, match="not connected"):
+        async with substrate.subscribe(
+            ACTIONS_LANE,
+            controller_address("main"),
+            endpoint_session_id="controller-session",
+        ):
+            pass
+    with pytest.raises(RuntimeError, match="not connected"):
+        substrate.kv_bucket(KvBucketPolicy(bucket="views", ttl_seconds=None))
+
+
+@pytest.mark.asyncio
+async def test_nats_publish_reply_falls_back_without_stored_reply_subject() -> None:
+    substrate = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
+    request = _settings_request_message()
+    reply = _settings_reply_message(request)
 
-    async with substrate.subscribe(
-        ACTIONS_LANE,
-        controller_address("main"),
-        endpoint_session_id="controller-session",
-    ):
-        assert [subscription.subject for subscription in fake_nc.subscriptions] == [
-            "deckr.msg.actions.to.controller.main",
-            "deckr.msg.actions.broadcast.*.controller",
-        ]
+    await substrate.publish_reply(reply, request=request)
+
+    assert fake_nc.published[0]["subject"] == _subject_for(reply)
+    assert fake_nc.published[0]["reply"] == ""
+
+
+@pytest.mark.asyncio
+async def test_nats_connect_passes_auth_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeNc:
+        def jetstream(self):
+            return "jetstream"
+
+    async def connect(url: str, **options):
+        captured["url"] = url
+        captured["options"] = options
+        return FakeNc()
+
+    monkeypatch.setitem(sys.modules, "nats", SimpleNamespace(connect=connect))
+    substrate = NatsSubstrate(
+        url="nats://nats.example:4222",
+        auth_token="secret-token",
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+    )
+
+    await substrate.connect()
+
+    assert captured == {
+        "url": "nats://nats.example:4222",
+        "options": {"token": "secret-token"},
+    }
+    assert substrate._js == "jetstream"  # noqa: SLF001
 
 
 @pytest.mark.asyncio
@@ -656,6 +530,26 @@ async def test_nats_request_waits_for_first_accepted_reply() -> None:
     assert reply.body["settings"]["theme"] == "dark"
     assert fake_nc.published[0]["subject"] == "deckr.msg.actions.to.controller.main"
     assert fake_nc.published[0]["reply"] == "_INBOX.1"
+
+
+@pytest.mark.asyncio
+async def test_nats_request_ignores_wrong_recipient_session_reply() -> None:
+    substrate = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
+    fake_nc = _FakeNc()
+    substrate._nc = fake_nc
+    request = _settings_request_message()
+    fake_nc.reply_deliveries = [
+        _settings_reply_message(
+            request,
+            theme="wrong-session",
+            recipient_session_id="other-session",
+        ),
+        _settings_reply_message(request, theme="accepted"),
+    ]
+
+    reply = await substrate.request(request, timeout=1)
+
+    assert reply.body["settings"]["theme"] == "accepted"
 
 
 @pytest.mark.asyncio

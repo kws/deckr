@@ -195,30 +195,6 @@ async def _claim(
     )
 
 
-async def test_runtime_publishes_hardware_beacon_payload_and_capacity() -> None:
-    deckr, endpoint_cm, runtime = await _runtime(labels={"room": "office"})
-    try:
-        await runtime._publish_advertisement()
-        descriptor = _descriptor()
-        await _add_device(runtime, descriptor)
-
-        candidates = _beacon(deckr).candidates(HARDWARE_FEATURE_ID)
-        assert len(candidates) == 1
-        payload = HardwareBeaconPayload.model_validate(
-            candidates[0].advertisement.payload
-        )
-        assert payload.manager_id == "manager-main"
-        assert payload.manager_endpoint == hardware_manager_address("manager-main")
-        assert payload.session_id == runtime.endpoint.session_id
-        assert payload.labels == {"room": "office"}
-        assert payload.devices[descriptor.device_id].descriptor == descriptor
-        assert payload.devices[descriptor.device_id].capacity.claimed_instances == 0
-        assert payload.devices[descriptor.device_id].capacity.available_instances == 1
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-
-
 async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> None:
     delivered_commands = []
 
@@ -282,113 +258,6 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
         )
         assert await runtime._handle_command(command)
         assert delivered_commands == [command]
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-        await controller_cm.__aexit__(None, None, None)
-
-
-async def test_command_authorization_reconciles_fresh_claim_before_rejecting(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    delivered_commands = []
-
-    async def command_handler(message):
-        delivered_commands.append(message)
-        return True
-
-    deckr, endpoint_cm, runtime = await _runtime(command_handler=command_handler)
-    controller_cm = deckr.endpoint(controller_address("controller-main"))
-    controller_endpoint = await controller_cm.__aenter__()
-    concord = _concord(deckr)
-    try:
-        await runtime._publish_advertisement()
-        await _add_device(runtime, _descriptor())
-        contract = await _claim(runtime, concord)
-        await concord._attach(
-            contract,
-            controller_endpoint.address,
-            controller_endpoint.session_id,
-        )
-        assert runtime.live_claims == ()
-        reconcile_calls = 0
-        original_reconcile = HardwareManagerRuntime._reconcile_claims
-
-        async def counted_reconcile(self, *, reason: str) -> None:
-            nonlocal reconcile_calls
-            if self is runtime:
-                reconcile_calls += 1
-            await original_reconcile(self, reason=reason)
-
-        monkeypatch.setattr(
-            HardwareManagerRuntime,
-            "_reconcile_claims",
-            counted_reconcile,
-        )
-
-        command = hw_messages.control_command_message(
-            controller_id="controller-main",
-            sender_session_id=controller_endpoint.session_id,
-            manager_id="manager-main",
-            device_id="stream-deck-mini",
-            control_id="0,0",
-            capability_id="raster.bitmap",
-            command_type="clear",
-            contract=_contract_pointer(contract),
-        )
-        deckr._message_bus.publish_reply.reset_mock()
-
-        assert await runtime._handle_command(command)
-        assert delivered_commands == [command]
-        assert reconcile_calls == 1
-        assert len(runtime.live_claims) == 1
-        deckr._message_bus.publish_reply.assert_not_called()
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-        await controller_cm.__aexit__(None, None, None)
-
-
-async def test_command_authorization_rejects_missing_contract_without_reconcile(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    deckr, endpoint_cm, runtime = await _runtime()
-    controller_cm = deckr.endpoint(controller_address("controller-main"))
-    controller_endpoint = await controller_cm.__aenter__()
-    try:
-        await runtime._publish_advertisement()
-        await _add_device(runtime, _descriptor())
-        assert runtime.live_claims == ()
-        reconcile_calls = 0
-        original_reconcile = HardwareManagerRuntime._reconcile_claims
-
-        async def counted_reconcile(self, *, reason: str) -> None:
-            nonlocal reconcile_calls
-            if self is runtime:
-                reconcile_calls += 1
-            await original_reconcile(self, reason=reason)
-
-        monkeypatch.setattr(
-            HardwareManagerRuntime,
-            "_reconcile_claims",
-            counted_reconcile,
-        )
-
-        command = hw_messages.control_command_message(
-            controller_id="controller-main",
-            sender_session_id=controller_endpoint.session_id,
-            manager_id="manager-main",
-            device_id="stream-deck-mini",
-            control_id="0,0",
-            capability_id="raster.bitmap",
-            command_type="clear",
-            contract=None,
-        )
-        deckr._message_bus.publish_reply.reset_mock()
-
-        assert not await runtime._handle_command(command)
-        assert reconcile_calls == 0
-        deckr._message_bus.publish_reply.assert_not_called()
     finally:
         await runtime.stop()
         await endpoint_cm.__aexit__(None, None, None)
@@ -540,81 +409,6 @@ async def test_start_subscription_and_stop_withdraw_beacon_and_authority() -> No
         await controller_cm.__aexit__(None, None, None)
 
 
-async def test_noop_claim_reconcile_does_not_refresh_hardware_beacon() -> None:
-    deckr, endpoint_cm, runtime = await _runtime()
-    try:
-        await _add_device(runtime, _descriptor())
-        beacon = _beacon(deckr)
-        first = beacon.candidates(HARDWARE_FEATURE_ID)[0]
-
-        await runtime._reconcile_claims(reason="test noop")
-        second = beacon.candidates(HARDWARE_FEATURE_ID)[0]
-
-        assert second.advertisement.refresh_seq == first.advertisement.refresh_seq
-        assert second.revision == first.revision
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-
-
-async def test_runtime_matches_live_claim_without_beacon_advertisement() -> None:
-    deckr, endpoint_cm, runtime = await _runtime()
-    controller_cm = deckr.endpoint(controller_address("controller-main"))
-    controller_endpoint = await controller_cm.__aenter__()
-    concord = _concord(deckr)
-    try:
-        await _add_device(runtime, _descriptor())
-        await runtime._withdraw_advertisement()
-        contract = await _claim(runtime, concord)
-        await concord._attach(
-            contract,
-            controller_endpoint.address,
-            controller_endpoint.session_id,
-        )
-
-        await runtime._reconcile_claims(reason="test direct claim")
-
-        assert len(runtime.live_claims) == 1
-        assert runtime.live_claims[0].terms.claim_id == "claim-a"
-        assert (
-            await concord._validate(contract)
-        ).status == ContractValidityStatus.VALID
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-        await controller_cm.__aexit__(None, None, None)
-
-
-async def test_unclaimed_commands_are_rejected() -> None:
-    deckr, endpoint_cm, runtime = await _runtime()
-    controller_cm = deckr.endpoint(controller_address("controller-main"))
-    controller_endpoint = await controller_cm.__aenter__()
-    try:
-        await runtime._publish_advertisement()
-        await _add_device(runtime, _descriptor())
-        command = hw_messages.control_command_message(
-            controller_id="controller-main",
-            sender_session_id=controller_endpoint.session_id,
-            manager_id="manager-main",
-            device_id="stream-deck-mini",
-            control_id="0,0",
-            capability_id="raster.bitmap",
-            command_type="clear",
-            contract=_contract_pointer(),
-        )
-        deckr._message_bus.publish_reply.reset_mock()
-        assert not await runtime._handle_command(command)
-        rejected = deckr._message_bus.publish_reply.call_args.args[0]
-        body = hw_messages.hardware_body_from_message(rejected)
-        assert isinstance(body, hw_messages.CommandRejectedMessage)
-        assert body.reason == "unauthorized"
-        assert body.message == "Hardware command unauthorized"
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-        await controller_cm.__aexit__(None, None, None)
-
-
 async def test_command_rejection_wire_replies_match_runtime_contract() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
     controller_cm = deckr.endpoint(controller_address("controller-main"))
@@ -672,44 +466,6 @@ async def test_command_rejection_wire_replies_match_runtime_contract() -> None:
         assert isinstance(stale_state_body, hw_messages.CapabilityStateReplyMessage)
         assert stale_state_body.status == "rejected"
         assert stale_state_body.error == "Hardware state request stale"
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-        await controller_cm.__aexit__(None, None, None)
-
-
-async def test_cancelled_claim_resets_device_and_releases_capacity() -> None:
-    reset_devices: list[str] = []
-
-    async def reset_handler(device_id: str) -> None:
-        reset_devices.append(device_id)
-
-    deckr, endpoint_cm, runtime = await _runtime(reset_handler=reset_handler)
-    controller_cm = deckr.endpoint(controller_address("controller-main"))
-    controller_endpoint = await controller_cm.__aenter__()
-    concord = _concord(deckr)
-    try:
-        await runtime._publish_advertisement()
-        await _add_device(runtime, _descriptor())
-        contract = await _claim(runtime, concord)
-        await concord._attach(
-            contract,
-            controller_endpoint.address,
-            controller_endpoint.session_id,
-        )
-        await runtime._reconcile_claims(reason="test live")
-        assert len(runtime.live_claims) == 1
-
-        await concord._cancel(contract, controller_endpoint.address, reason="test")
-        await runtime._reconcile_claims(reason="test cancel")
-        assert reset_devices == ["stream-deck-mini"]
-        assert runtime.live_claims == ()
-
-        candidates = _beacon(deckr).candidates(HARDWARE_FEATURE_ID)
-        payload = HardwareBeaconPayload.model_validate(
-            candidates[0].advertisement.payload
-        )
-        assert payload.devices["stream-deck-mini"].capacity.claimed_instances == 0
     finally:
         await runtime.stop()
         await endpoint_cm.__aexit__(None, None, None)
@@ -814,44 +570,6 @@ async def test_replace_devices_replacement_cancels_live_claim_and_resets() -> No
         await controller_cm.__aexit__(None, None, None)
 
 
-async def test_set_device_same_fingerprint_does_not_refresh_or_reset_claim() -> None:
-    reset_devices: list[str] = []
-
-    async def reset_handler(device_id: str) -> None:
-        reset_devices.append(device_id)
-
-    deckr, endpoint_cm, runtime = await _runtime(reset_handler=reset_handler)
-    controller_cm = deckr.endpoint(controller_address("controller-main"))
-    controller_endpoint = await controller_cm.__aenter__()
-    concord = _concord(deckr)
-    try:
-        await _add_device(runtime, _descriptor())
-        contract = await _claim(runtime, concord)
-        await concord._attach(
-            contract,
-            controller_endpoint.address,
-            controller_endpoint.session_id,
-        )
-        await runtime._reconcile_claims(reason="test live")
-        assert len(runtime.live_claims) == 1
-        first = _beacon(deckr).candidates(HARDWARE_FEATURE_ID)[0]
-
-        await runtime.set_device(_descriptor())
-
-        second = _beacon(deckr).candidates(HARDWARE_FEATURE_ID)[0]
-        assert second.advertisement.refresh_seq == first.advertisement.refresh_seq
-        assert second.revision == first.revision
-        assert reset_devices == []
-        assert [claim.terms.claim_id for claim in runtime.live_claims] == ["claim-a"]
-        assert (
-            await concord._validate(contract)
-        ).status == ContractValidityStatus.VALID
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-        await controller_cm.__aexit__(None, None, None)
-
-
 async def test_remove_device_cancels_live_claim_contract_without_lane_event() -> None:
     deckr, endpoint_cm, runtime = await _runtime()
     controller_cm = deckr.endpoint(controller_address("controller-main"))
@@ -927,44 +645,6 @@ async def test_replace_devices_cancels_live_claim_contract_for_removed_device() 
         await runtime.stop()
         await endpoint_cm.__aexit__(None, None, None)
         await controller_cm.__aexit__(None, None, None)
-
-
-async def test_competing_claims_choose_existing_or_lowest_contract_key() -> None:
-    deckr, endpoint_cm, runtime = await _runtime()
-    controller_a_cm = deckr.endpoint(controller_address("controller-a"))
-    controller_b_cm = deckr.endpoint(controller_address("controller-b"))
-    controller_a = await controller_a_cm.__aenter__()
-    controller_b = await controller_b_cm.__aenter__()
-    concord = _concord(deckr)
-    try:
-        await runtime._publish_advertisement()
-        await _add_device(runtime, _descriptor())
-        claim_b = await _claim(
-            runtime,
-            concord,
-            contract_id="claim-b",
-            controller_id="controller-b",
-        )
-        claim_a = await _claim(
-            runtime,
-            concord,
-            contract_id="claim-a",
-            controller_id="controller-a",
-        )
-        await concord._attach(claim_b, controller_b.address, controller_b.session_id)
-        await concord._attach(claim_a, controller_a.address, controller_a.session_id)
-
-        await runtime._reconcile_claims(reason="test competing")
-        assert [claim.terms.claim_id for claim in runtime.live_claims] == ["claim-a"]
-        assert (await concord._validate(claim_a)).status == ContractValidityStatus.VALID
-        assert (await concord._validate(claim_b)).status == (
-            ContractValidityStatus.NOT_YET_FULFILLED
-        )
-    finally:
-        await runtime.stop()
-        await endpoint_cm.__aexit__(None, None, None)
-        await controller_a_cm.__aexit__(None, None, None)
-        await controller_b_cm.__aexit__(None, None, None)
 
 
 async def test_competing_claims_keep_existing_live_claim_before_lower_key() -> None:

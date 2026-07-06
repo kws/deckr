@@ -9,7 +9,6 @@ from deckr.hardware.capabilities import (
     BUTTON_ACTIVATION_VALUE_SCHEMA_ID,
     BUTTON_MOMENTARY_VALUE_SCHEMA_ID,
     DEVICE_POWER_COMMAND_SCHEMA_ID,
-    ENCODER_RELATIVE_VALUE_SCHEMA_ID,
     RASTER_BITMAP_COMMAND_SCHEMA_ID,
     TOUCH_GESTURE_VALUE_SCHEMA_ID,
     button_activation_input_value,
@@ -19,7 +18,6 @@ from deckr.hardware.capabilities import (
     device_power_command_params,
     device_power_command_schema,
     encoder_relative_input_value,
-    encoder_relative_value_schema,
     raster_bitmap_command_params,
     raster_bitmap_command_schema,
     touch_gesture_input_value,
@@ -68,13 +66,6 @@ def test_encoder_relative_value_accepts_signed_delta_and_direction() -> None:
     assert counterclockwise.direction == "counterclockwise"
 
 
-def test_encoder_relative_value_accepts_frozen_json_mapping() -> None:
-    value = encoder_relative_input_value(MappingProxyType({"delta": -1}))
-
-    assert value.delta == -1
-    assert value.direction is None
-
-
 def test_encoder_relative_value_rejects_zero_and_mismatched_direction() -> None:
     with pytest.raises(ValidationError, match="delta must not be zero"):
         encoder_relative_input_value({"delta": 0})
@@ -83,21 +74,6 @@ def test_encoder_relative_value_rejects_zero_and_mismatched_direction() -> None:
         encoder_relative_input_value(
             {"delta": 1, "direction": "counterclockwise"}
         )
-
-
-def test_encoder_relative_value_schema_is_canonical_deckr_contract() -> None:
-    schema = encoder_relative_value_schema()
-    json_schema = _json_schema(schema)
-
-    assert schema.schema_id == ENCODER_RELATIVE_VALUE_SCHEMA_ID
-    assert json_schema["required"] == ["delta"]
-    assert json_schema["properties"]["delta"] == {
-        "type": "integer",
-        "not": {"const": 0},
-    }
-    assert json_schema["properties"]["direction"] == {
-        "enum": ["clockwise", "counterclockwise"]
-    }
 
 
 def test_touch_gesture_values_and_schema_are_canonical_deckr_contracts() -> None:

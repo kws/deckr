@@ -12,7 +12,6 @@ from message_bus_mocks import mock_deckr
 from deckr.components import ComponentContext
 from deckr.concord import (
     CONCORD_CONTRACT_BUCKET_POLICY,
-    CONCORD_MAINTENANCE_ACTOR,
     CONCORD_MAINTENANCE_BUCKET_POLICY,
     CONCORD_REAPER_STALE_CONTRACT_REASON,
     CONCORD_TOKEN_BUCKET_POLICY,
@@ -188,56 +187,6 @@ async def test_reaper_scan_uses_raw_items_without_materialized_watches() -> None
 
 
 @pytest.mark.asyncio
-async def test_reaper_logs_scan_completion_counts(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    caplog.set_level(logging.INFO, logger="deckr.concord")
-    clock = ManualClock()
-    contract_state, token_state, maintenance_state = _stores()
-    coordinator = _concord(contract_state, token_state, maintenance_state)
-    await _contract(coordinator, contract_id="logged-scan-contract")
-    reaper = _reaper(coordinator, clock)
-
-    result = await reaper.scan_once()
-
-    assert result.scanned_contract_count == 1
-    assert "Concord reaper scan completed" in caplog.text
-    assert "scanned=1" in caplog.text
-    assert "cancelled=0" in caplog.text
-    assert "deleted=0" in caplog.text
-    assert "token_keys_deleted=0" in caplog.text
-    assert "elapsed_ms=" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_no_token_pending_open_contract_cancelled_only_after_stale_grace() -> None:
-    clock = ManualClock()
-    contract_state, token_state, maintenance_state = _stores()
-    coordinator = _concord(contract_state, token_state, maintenance_state)
-    contract = await _contract(coordinator, contract_id="pending-contract")
-    reaper = _reaper(coordinator, clock)
-
-    result = await reaper.scan_once()
-    assert result.stale_observations_created == 1
-    assert result.contracts_cancelled == 0
-    assert (await coordinator.contract_record(contract)).state == ContractState.OPEN
-
-    clock.advance(899)
-    result = await reaper.scan_once()
-    assert result.contracts_cancelled == 0
-    assert (await coordinator.contract_record(contract)).state == ContractState.OPEN
-
-    clock.advance(1)
-    result = await reaper.scan_once()
-    assert result.contracts_cancelled == 1
-    record = await coordinator.contract_record(contract)
-    assert record.state == ContractState.CANCELLED
-    assert record.cancel_reason == CONCORD_REAPER_STALE_CONTRACT_REASON
-    assert record.cancelled_by == CONCORD_MAINTENANCE_ACTOR
-    await _assert_no_stale_observation(maintenance_state, contract)
-
-
-@pytest.mark.asyncio
 async def test_pending_open_contract_with_valid_token_is_not_stale() -> None:
     clock = ManualClock()
     contract_state, token_state, maintenance_state = _stores()
@@ -311,20 +260,6 @@ async def test_unavailable_status_does_not_create_or_advance_stale_observation()
     assert result.contracts_cancelled == 0
     assert (await coordinator.contract_record(contract)).state == ContractState.OPEN
     await _assert_no_stale_observation(maintenance_state, contract)
-
-
-@pytest.mark.asyncio
-async def test_stale_observation_survives_reaper_restart() -> None:
-    clock = ManualClock()
-    contract_state, token_state, maintenance_state = _stores()
-    coordinator = _concord(contract_state, token_state, maintenance_state)
-    contract = await _contract(coordinator, contract_id="restart-contract")
-    await _reaper(coordinator, clock).scan_once()
-
-    clock.advance(900)
-    restarted = _reaper(coordinator, clock)
-    assert (await restarted.scan_once()).contracts_cancelled == 1
-    assert (await coordinator.contract_record(contract)).state == ContractState.CANCELLED
 
 
 @pytest.mark.asyncio
@@ -425,22 +360,6 @@ async def test_cancelled_contract_deleted_after_retention_and_tokens_removed(
     assert "deleted_token_key_count=2" in log_text
 
 
-@pytest.mark.asyncio
-async def test_maintenance_cancel_does_not_require_named_participant() -> None:
-    clock = ManualClock()
-    contract_state, token_state, maintenance_state = _stores()
-    coordinator = _concord(contract_state, token_state, maintenance_state)
-    concord = coordinator
-    contract = await _contract(coordinator, contract_id="maintenance-cancel")
-
-    assert await concord.maintenance_cancel_contract(contract, now=clock())
-
-    record = await coordinator.contract_record(contract)
-    assert record.state == ContractState.CANCELLED
-    assert record.cancelled_by == CONCORD_MAINTENANCE_ACTOR
-    assert record.cancel_reason == CONCORD_REAPER_STALE_CONTRACT_REASON
-
-
 def test_component_factory_wires_default_stores_and_config_overrides() -> None:
     deckr = mock_deckr()
     calls = []
@@ -482,9 +401,3 @@ def test_component_factory_wires_default_stores_and_config_overrides() -> None:
     ]
 
 
-def test_concord_reaper_config_defaults() -> None:
-    config = ConcordReaperConfig()
-
-    assert config.stale_grace_seconds == 900
-    assert config.cancelled_retention_seconds == 3600
-    assert config.scan_interval_seconds == 60

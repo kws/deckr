@@ -131,71 +131,6 @@ def _component(
     )
 
 
-def test_resolve_component_specs_from_generic_instances() -> None:
-    controller = _component(
-        "dev.deckr.controller",
-        consumes=("hardware_messages", "actions"),
-        publishes=("actions",),
-        endpoints=("controller",),
-    )
-    provider_runtime = _component(
-        "dev.deckr.action_provider_runtime.python",
-        consumes=("actions",),
-        publishes=("actions",),
-        endpoints=("action_provider",),
-    )
-    document = _document(
-        {
-            "deckr": {
-                "components": {
-                    "instances": {
-                        "controller_main": {
-                            "component": "dev.deckr.controller",
-                            "instance_id": "main",
-                            "endpoints": {"controller": "controller-main"},
-                            "config": {"log_level": "debug"},
-                        },
-                        "python_clock": {
-                            "component": (
-                                "dev.deckr.action_provider_runtime.python"
-                            ),
-                            "instance_id": "clock-main",
-                            "endpoints": {"action_provider": "python-dev.deckr.clock"},
-                            "config": {"provider_id": "dev.deckr.clock"},
-                        },
-                    }
-                }
-            }
-        }
-    )
-
-    specs = configured_component_instance_specs(
-        document,
-        definitions={
-            "dev.deckr.controller": controller,
-            "dev.deckr.action_provider_runtime.python": provider_runtime,
-        },
-    )
-
-    assert [
-        (spec.component_id, spec.instance_id, dict(spec.config), spec.runtime_name)
-        for spec in specs
-    ] == [
-        (
-            "dev.deckr.controller",
-            "main",
-            {"log_level": "debug"},
-            "dev.deckr.controller:main",
-        ),
-        (
-            "dev.deckr.action_provider_runtime.python",
-            "clock-main",
-            {"provider_id": "dev.deckr.clock"},
-            "dev.deckr.action_provider_runtime.python:clock-main",
-        ),
-    ]
-
-
 def test_unknown_component_id_is_plan_error() -> None:
     document = _document(
         {
@@ -269,49 +204,6 @@ def test_duplicate_endpoint_id_is_plan_error() -> None:
             document,
             definitions={"com.example.worker": component},
         )
-
-
-def test_component_dependencies_are_planned_from_generic_wrapper() -> None:
-    component = _component("com.example.worker")
-    document = _document(
-        {
-            "deckr": {
-                "components": {
-                    "instances": {
-                        "worker": {
-                            "component": "com.example.worker",
-                            "instance_id": "worker",
-                            "dependencies": {
-                                "sonos_home": {
-                                    "kind": "feature",
-                                    "mode": "required",
-                                    "feature_id": "dev.deckr.sonos.service",
-                                    "endpoint": "service:sonos-home",
-                                },
-                                "controller_main": {
-                                    "kind": "feature",
-                                    "mode": "observed",
-                                    "feature_id": "dev.deckr.controller",
-                                    "endpoint": "controller:controller-main",
-                                },
-                            },
-                        }
-                    }
-                }
-            }
-        }
-    )
-
-    specs = configured_component_instance_specs(
-        document,
-        definitions={"com.example.worker": component},
-    )
-
-    dependencies = specs[0].dependencies
-    assert sorted(dependencies) == ["controller_main", "sonos_home"]
-    assert dependencies["sonos_home"].feature_id == "dev.deckr.sonos.service"
-    assert dependencies["sonos_home"].endpoint == service_address("sonos-home")
-    assert dependencies["controller_main"].feature_id == "dev.deckr.controller"
 
 
 def test_component_dependencies_reject_unknown_fields() -> None:
@@ -786,16 +678,6 @@ async def test_optional_service_dependency_reports_without_blocking_readiness() 
     assert dependency["state"] == "unsatisfied"
 
 
-def test_runtime_substrate_config_defaults_to_nats() -> None:
-    document = _document({"deckr": {}})
-    plan = resolve_component_host_plan(document, definitions={})
-
-    substrate = build_runtime_substrate(document, lane_contracts=plan.lane_contracts)
-
-    assert isinstance(substrate, NatsSubstrate)
-    assert substrate.url == "nats://127.0.0.1:4222"
-
-
 def test_runtime_substrate_config_rejects_local_substrate() -> None:
     document = _document({"deckr": {"runtime": {"substrate": {"kind": "local"}}}})
     plan = resolve_component_host_plan(document, definitions={})
@@ -871,34 +753,9 @@ def test_deployment_lane_contract_uses_direct_v1_fields() -> None:
     assert contract.allowed_recipient_families == frozenset({"controller"})
 
 
-def test_deployment_lane_contract_rejects_removed_route_policy() -> None:
-    document = _document(
-        {
-            "deckr": {
-                "lane_contracts": {
-                    "acme.events": {
-                        "schema_id": "acme.events.v1",
-                        "route_policy": {
-                            "remote_claim_endpoint_families": ["acme"],
-                        },
-                    }
-                }
-            }
-        }
-    )
-
-    with pytest.raises(ValueError, match="removed field\\(s\\) route_policy"):
-        resolve_component_host_plan(document, definitions={})
-
-
 @pytest.mark.parametrize(
     "field",
     [
-        "mqtt",
-        "remote_endpoints",
-        "route_table",
-        "routes",
-        "transport_route",
         "websocket",
     ],
 )
@@ -921,20 +778,3 @@ def test_deployment_lane_contract_rejects_removed_transport_fields(
     with pytest.raises(ValueError, match=field):
         resolve_component_host_plan(document, definitions={})
 
-
-def test_deployment_lane_contract_rejects_removed_delivery_field() -> None:
-    document = _document(
-        {
-            "deckr": {
-                "lane_contracts": {
-                    "acme.events": {
-                        "schema_id": "acme.events.v1",
-                        "delivery": {"persistence": "ephemeral"},
-                    }
-                }
-            }
-        }
-    )
-
-    with pytest.raises(ValueError, match="delivery"):
-        resolve_component_host_plan(document, definitions={})

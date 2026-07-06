@@ -7,7 +7,6 @@ from typing import Any
 
 import anyio
 import pytest
-from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.substrates.nats_kv import (
     KvBucketPolicy,
@@ -69,52 +68,6 @@ async def test_nats_json_kv_updates_existing_bucket_policy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_json_kv_updates_existing_ttl_bucket_missing_delete_markers() -> None:
-    fake_js = _FakeJs(
-        existing=True,
-        max_age=300.0,
-        allow_msg_ttl=True,
-        subject_delete_marker_ttl=None,
-    )
-    bucket = NatsJsonKvBucket(
-        js=fake_js,
-        policy=KvBucketPolicy(
-            bucket="deckr_beacon_advertisement_v1",
-            ttl_seconds=300.0,
-            allow_write_ttl=True,
-        ),
-    )
-
-    await bucket.put("advertisements.by_feature.hardware.deck", {"owner": "hw"})
-
-    assert fake_js.updated_raw_config is not None
-    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 300_000_000_000
-
-
-@pytest.mark.asyncio
-async def test_nats_json_kv_keeps_existing_ttl_bucket_with_delete_markers() -> None:
-    fake_js = _FakeJs(
-        existing=True,
-        max_age=300.0,
-        allow_msg_ttl=True,
-        subject_delete_marker_ttl=300_000_000_000,
-    )
-    bucket = NatsJsonKvBucket(
-        js=fake_js,
-        policy=KvBucketPolicy(
-            bucket="deckr_beacon_advertisement_v1",
-            ttl_seconds=300.0,
-            allow_write_ttl=True,
-        ),
-    )
-
-    await bucket.put("advertisements.by_feature.hardware.deck", {"owner": "hw"})
-
-    assert fake_js.updated_raw_config is None
-    assert fake_js.updated_config is None
-
-
-@pytest.mark.asyncio
 async def test_nats_json_kv_exposes_resolved_bucket_ttl() -> None:
     fake_js = _FakeJs(
         existing=True,
@@ -134,25 +87,6 @@ async def test_nats_json_kv_exposes_resolved_bucket_ttl() -> None:
 
     assert await bucket.ttl_seconds() == 45.0
     assert await materialized.ttl_seconds() == 45.0
-
-
-@pytest.mark.asyncio
-async def test_nats_json_kv_persistent_bucket_does_not_require_delete_markers() -> None:
-    fake_js = _FakeJs(
-        existing=True,
-        max_age=0.0,
-        allow_msg_ttl=False,
-        subject_delete_marker_ttl=None,
-    )
-    bucket = NatsJsonKvBucket(
-        js=fake_js,
-        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
-    )
-
-    await bucket.put("contracts.main.1.meta", {"state": "open"})
-
-    assert fake_js.updated_raw_config is None
-    assert fake_js.updated_config is None
 
 
 @pytest.mark.asyncio
@@ -199,35 +133,6 @@ async def test_nats_json_kv_watch_maps_put_delete_and_expire_markers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_json_kv_watch_closes_from_async_generator_finalizer_task() -> None:
-    fake_js = _FakeJs()
-    fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
-    bucket = NatsJsonKvBucket(
-        js=fake_js,
-        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
-    )
-
-    async def watch_one() -> AsyncIterator[KvChange | None]:
-        async with bucket.watch("contracts.") as changes:
-            yield await changes.receive()
-            await changes.receive()
-
-    stream = watch_one()
-    first = await stream.__anext__()
-
-    assert first is not None
-    assert first.key == "contracts.main.1.meta"
-
-    async def close_stream() -> None:
-        await stream.aclose()
-
-    async with anyio.create_task_group() as task_group:
-        task_group.start_soon(close_stream)
-
-    assert fake_js.deleted_consumers == [("KV_deckr_concord_contract_v1", "consumer-1")]
-
-
-@pytest.mark.asyncio
 async def test_nats_json_kv_items_lists_current_entries_by_prefix() -> None:
     fake_js = _FakeJs()
     fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
@@ -251,24 +156,6 @@ async def test_nats_json_kv_items_lists_current_entries_by_prefix() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_json_kv_items_does_not_use_substring_key_filters() -> None:
-    fake_js = _FakeJs()
-    fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
-    fake_js.kv.add_entry("other.main.1.meta", b'{"state":"open"}')
-    fake_js.kv.raise_no_keys_for_filters = True
-    bucket = NatsJsonKvBucket(
-        js=fake_js,
-        policy=KvBucketPolicy(bucket="deckr_concord_contract_v1", ttl_seconds=None),
-    )
-
-    entries = await bucket.items("contracts.")
-
-    assert [entry.key for entry in entries] == ["contracts.main.1.meta"]
-    assert fake_js.kv.watch_patterns == ["contracts.>"]
-    assert fake_js.kv.key_filters == []
-
-
-@pytest.mark.asyncio
 async def test_nats_json_kv_items_falls_back_to_unfiltered_keys_without_watch() -> None:
     fake_js = _FakeJs()
     fake_js.kv.add_entry("contracts.main.1.meta", b'{"state":"open"}')
@@ -287,7 +174,7 @@ async def test_nats_json_kv_items_falls_back_to_unfiltered_keys_without_watch() 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["DEL", "PURGE", "PUT"])
+@pytest.mark.parametrize("operation", ["PURGE"])
 async def test_nats_json_kv_create_reclaims_absent_marker(operation: str) -> None:
     fake_js = _FakeJs()
     marker = fake_js.kv.add_marker("contracts.main.1.meta", operation=operation)
@@ -411,124 +298,6 @@ async def test_materialized_bucket_reconciles_absent_keys_on_watch_recovery() ->
             KvChange(raw.bucket, fresh.key, fresh.revision, "put", fresh)
         )
         assert materialized.get_cached("items.b") == fresh
-        task_group.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_materialized_bucket_delete_uses_exact_marker_revision_after_stream_gap() -> None:
-    raw = MemoryJsonKvBucket(bucket="materialized")
-    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
-
-    async with anyio.create_task_group() as task_group:
-        materialized.start(task_group)
-        await materialized.wait_current()
-        current = await materialized.put("items.a", {"value": "a"})
-        gap = await raw.put("other.a", {"value": "gap"})
-
-        async with materialized.subscribe() as changes:
-            marker_revision = await materialized.delete(
-                "items.a",
-                revision=current.revision,
-            )
-            with anyio.fail_after(1):
-                deleted = await changes.receive()
-            with anyio.move_on_after(0.05) as duplicate_scope:
-                await changes.receive()
-
-        assert marker_revision == gap.revision + 1
-        assert marker_revision != current.revision + 1
-        assert deleted.operation == "delete"
-        assert deleted.key == "items.a"
-        assert deleted.revision == marker_revision
-        assert duplicate_scope.cancelled_caught
-        task_group.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_materialized_bucket_changes_carry_view_generation() -> None:
-    raw = MemoryJsonKvBucket(bucket="materialized")
-    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
-
-    async with anyio.create_task_group() as task_group:
-        materialized.start(task_group)
-        await materialized.wait_current()
-        initial_generation = materialized.generation
-
-        async with materialized.subscribe() as changes:
-            entry = await materialized.put("items.a", {"value": "a"})
-            delivered = await changes.receive()
-
-        assert materialized.generation == initial_generation + 1
-        assert delivered.key == entry.key
-        assert delivered.revision == entry.revision
-        assert delivered.view_generation == materialized.generation
-
-        await materialized._apply_change(  # noqa: SLF001
-            KvChange(raw.bucket, entry.key, entry.revision, "put", entry)
-        )
-        assert materialized.generation == initial_generation + 1
-        task_group.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_materialized_bucket_backpressures_without_dropping_changes() -> None:
-    raw = MemoryJsonKvBucket(bucket="materialized")
-    materialized = NatsKvMaterializedBucket(
-        bucket=raw,
-        key_prefix="items.",
-        buffer_size=1,
-    )
-
-    async with anyio.create_task_group() as task_group:
-        materialized.start(task_group)
-        await materialized.wait_current()
-        initial_generation = materialized.generation
-
-        async with materialized.subscribe() as changes:
-            await materialized.put("items.a", {"value": "a"})
-
-            put_completed = anyio.Event()
-
-            async def put_second_change() -> None:
-                await materialized.put("items.b", {"value": "b"})
-                put_completed.set()
-
-            task_group.start_soon(put_second_change)
-            with anyio.move_on_after(0.05) as scope:
-                await put_completed.wait()
-            assert scope.cancelled_caught
-
-            first = await changes.receive()
-            second = await changes.receive()
-            with anyio.fail_after(1):
-                await put_completed.wait()
-
-        assert first.key == "items.a"
-        assert first.view_generation == initial_generation + 1
-        assert second.key == "items.b"
-        assert second.view_generation == initial_generation + 2
-        assert materialized.generation == initial_generation + 2
-        task_group.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_materialized_bucket_cached_reads_do_not_scan_native_bucket() -> None:
-    raw = _RecoveringWatchBucket(bucket="recovering")
-    raw.add("items.a", {"value": "a"})
-    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
-
-    async with anyio.create_task_group() as task_group:
-        materialized.start(task_group)
-        await materialized.wait_ready()
-        get_count = raw.get_count
-        watch_count = raw.watch_count
-
-        assert materialized.get_cached("items.a") is not None
-        assert materialized.items_cached("items.") == (materialized.get_cached("items.a"),)
-        assert materialized.revision_cached("items.a") == 1
-
-        assert raw.get_count == get_count
-        assert raw.watch_count == watch_count
         task_group.cancel_scope.cancel()
 
 

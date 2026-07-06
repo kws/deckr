@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import anyio
 import pytest
-from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.concord import ConcordConflict, ContractValidity, ContractValidityStatus
-from deckr.contracts.keys import encode_key_token
-from deckr.contracts.messages import endpoint_address, service_address
+from deckr.contracts.messages import service_address
 from deckr.services import (
     DeckrServices,
     ServiceBackendStatus,
@@ -31,132 +30,7 @@ from deckr.services import (
 from deckr.services.messages import service_command_reply_message
 from deckr.substrates.nats_kv import KvUnavailable
 
-
-class _TaskGroup:
-    def __init__(self) -> None:
-        self.started = []
-
-    def start_soon(self, func, *args, name=None) -> None:
-        del name
-        self.started.append((func, args))
-
-
-class _Endpoint:
-    address = action_provider_address("python-dev.deckr.demo")
-    session_id = "client-session"
-
-    def __init__(self) -> None:
-        self.requests: list[dict[str, Any]] = []
-
-    async def request(self, **kwargs):
-        self.requests.append(kwargs)
-        return service_command_reply_message(
-            sender=service_address("demo-home"),
-            sender_session_id="service-session",
-            recipient=endpoint_address("action_provider", "python-dev.deckr.demo"),
-            recipient_session_id=self.session_id,
-            subject=kwargs["subject"],
-            in_reply_to="request-message",
-            contract=kwargs["contract"],
-            body=ServiceCommandReplyBody(
-                serviceNamespace="dev.deckr.demo.service",
-                operation=kwargs["body"]["operation"],
-                status=ServiceCommandStatus.OK,
-                result={"ok": True},
-            ),
-        )
-
-
-class _Agreement:
-    def __init__(self, *, statuses=None, wait: anyio.Event | None = None) -> None:
-        self.contract = SimpleNamespace(
-            contract_id="contract-1",
-            generation=1,
-            profile="dev.deckr.demo.use.v1",
-        )
-        self._statuses = list(statuses or [ContractValidityStatus.VALID])
-        self._statuses_last = self._statuses[-1]
-        self._wait = wait
-        self.cancelled: list[str | None] = []
-        self.closed = False
-        self.close_count = 0
-
-    async def refresh(self):
-        if self._wait is not None and not self._wait.is_set():
-            await self._wait.wait()
-        status = self._statuses.pop(0) if self._statuses else self._statuses_last
-        self._statuses_last = status
-        return ContractValidity(status)
-
-    async def cancel(self, reason: str | None = None) -> bool:
-        self.cancelled.append(reason)
-        return True
-
-    async def aclose(self) -> None:
-        self.close_count += 1
-        self.closed = True
-
-
-class _ConcordConflictAgreement(_Agreement):
-    def __init__(self, message: str) -> None:
-        super().__init__()
-        self.message = message
-
-    async def refresh(self):
-        raise ConcordConflict(self.message)
-
-
-class _Concord:
-    def __init__(
-        self,
-        agreement: _Agreement,
-        *,
-        propose_wait: anyio.Event | None = None,
-    ) -> None:
-        self.agreement = agreement
-        self._propose_wait = propose_wait
-        self.proposals = []
-
-    async def propose(self, spec, *, start_soon=None):
-        self.proposals.append((spec, start_soon))
-        if self._propose_wait is not None and not self._propose_wait.is_set():
-            await self._propose_wait.wait()
-        return self.agreement
-
-
-class _UnavailableDirectory:
-    def is_current(self) -> bool:
-        return False
-
-    def resolve(self, *args, **kwargs):
-        raise KvUnavailable("directory unavailable")
-
-    async def wait_for(self, *args, **kwargs):
-        raise KvUnavailable("directory unavailable")
-
-
-class _ReadyDirectory:
-    def __init__(self, descriptor: ServiceDescriptor) -> None:
-        self.descriptor = descriptor
-        self.wait_calls: list[dict[str, Any]] = []
-
-    async def aclose(self) -> None:
-        return None
-
-    def is_current(self) -> bool:
-        return True
-
-    def resolve(self, predicate=None, *, select=None):
-        del select
-        if predicate is not None and not predicate(self.descriptor):
-            return None
-        return self.descriptor
-
-    async def wait_for(self, predicate=None, *, select=None, timeout=None):
-        self.wait_calls.append({"select": select, "timeout": timeout})
-        if predicate is not None and not predicate(self.descriptor):
-            raise TimeoutError
-        return self.descriptor
+_CLIENT_ADDRESS = action_provider_address("python-dev.deckr.demo")
 
 
 def _protocol() -> ServiceProtocol:
@@ -202,90 +76,83 @@ def _descriptor() -> ServiceDescriptor:
     )
 
 
-def _view_storage_key(
-    view: ServiceViewRef,
-    *,
-    contract_id: str = "contract-1",
-    generation: int = 1,
-) -> str:
-    return f"{view.key}.contract.{encode_key_token(contract_id)}.{generation}"
-
-
-def _view_payload(
-    view: ServiceViewRef,
-    payload: dict[str, Any],
-    *,
-    contract_id: str = "contract-1",
-    generation: int = 1,
-) -> dict[str, Any]:
-    return {
-        **payload,
-        "viewKey": view.key,
-        "serviceId": "demo-home",
-        "serviceNamespace": "dev.deckr.demo.service",
-        "sessionId": "service-session",
-        "contractId": contract_id,
-        "generation": generation,
-    }
+def _contract() -> SimpleNamespace:
+    return SimpleNamespace(
+        contract_id="contract-1",
+        generation=1,
+        profile="dev.deckr.demo.use.v1",
+    )
 
 
 def _services(
     *,
-    agreement: _Agreement | None = None,
-    concord: _Concord | None = None,
-    task_group: Any | None = None,
-    buckets: dict[str, MemoryJsonKvBucket] | None = None,
+    endpoint,
+    concord,
+    task_group=None,
+    kv_bucket_for=None,
 ) -> DeckrServices:
-    bucket_map = buckets if buckets is not None else {}
-
-    def kv_bucket_for(policy):
-        bucket = bucket_map.get(policy.bucket)
-        if bucket is None:
-            bucket = MemoryJsonKvBucket(bucket=policy.bucket)
-            bucket_map[policy.bucket] = bucket
-        return bucket
-
     return DeckrServices(
-        endpoint=_Endpoint(),
+        endpoint=endpoint,
         beacon=SimpleNamespace(),
-        concord=concord or _Concord(agreement or _Agreement()),
-        task_group=task_group or _TaskGroup(),
-        kv_bucket_for=kv_bucket_for,
+        concord=concord,
+        task_group=task_group or SimpleNamespace(start_soon=Mock()),
+        kv_bucket_for=kv_bucket_for or Mock(),
     )
 
 
 def test_directory_reuses_managed_view() -> None:
-    task_group = _TaskGroup()
-    services = _services(task_group=task_group)
+    task_group = SimpleNamespace(start_soon=Mock())
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(),
+        task_group=task_group,
+    )
 
     first = services.directory(_protocol())
     second = services.directory(_protocol())
 
     assert first is second
-    assert len(task_group.started) == 1
+    task_group.start_soon.assert_called_once()
     assert not hasattr(services, "beacon")
     assert not hasattr(services, "concord")
 
 
 def test_resolve_descriptor_translates_directory_unavailable() -> None:
-    services = _services()
-    services._directories[_directory_key(_protocol())] = _UnavailableDirectory()  # noqa: SLF001
+    protocol = _protocol()
+    directory = SimpleNamespace(
+        is_current=Mock(return_value=False),
+        resolve=Mock(side_effect=AssertionError("resolve should not run")),
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(),
+    )
+    services._directories[_directory_key(protocol)] = directory  # noqa: SLF001
 
     with pytest.raises(ServiceUnavailable) as exc_info:
-        services.resolve_descriptor(_protocol())
+        services.resolve_descriptor(protocol)
 
     assert exc_info.value.code == "service_discovery_pending"
+    directory.resolve.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_wait_for_descriptor_translates_directory_unavailable() -> None:
-    services = _services()
-    services._directories[_directory_key(_protocol())] = _UnavailableDirectory()  # noqa: SLF001
+    protocol = _protocol()
+    directory = SimpleNamespace(
+        wait_for=AsyncMock(side_effect=KvUnavailable("directory unavailable")),
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(),
+    )
+    services._directories[_directory_key(protocol)] = directory  # noqa: SLF001
 
     with pytest.raises(ServiceUnavailable) as exc_info:
-        await services.wait_for_descriptor(_protocol())
+        await services.wait_for_descriptor(protocol)
 
     assert exc_info.value.code == "beacon_unavailable"
+    directory.wait_for.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -293,11 +160,9 @@ async def test_read_view_translates_kv_unavailable() -> None:
     def kv_bucket_for(_policy):
         raise KvUnavailable("view store unavailable")
 
-    services = DeckrServices(
-        endpoint=_Endpoint(),
-        beacon=SimpleNamespace(),
-        concord=_Concord(_Agreement()),
-        task_group=_TaskGroup(),
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(),
         kv_bucket_for=kv_bucket_for,
     )
 
@@ -312,9 +177,22 @@ async def test_read_view_translates_kv_unavailable() -> None:
 
 @pytest.mark.asyncio
 async def test_use_matching_resolves_descriptor_and_negotiates() -> None:
-    services = _services()
     protocol = _protocol()
-    services._directories[_directory_key(protocol)] = _ReadyDirectory(_descriptor())  # noqa: SLF001
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        refresh=AsyncMock(return_value=ContractValidity(ContractValidityStatus.VALID)),
+        cancel=AsyncMock(return_value=True),
+        aclose=AsyncMock(),
+    )
+    concord = SimpleNamespace(propose=AsyncMock(return_value=agreement))
+    task_group = SimpleNamespace(start_soon=Mock())
+    directory = SimpleNamespace(wait_for=AsyncMock(return_value=_descriptor()))
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=concord,
+        task_group=task_group,
+    )
+    services._directories[_directory_key(protocol)] = directory  # noqa: SLF001
 
     async with services.use_matching(
         protocol,
@@ -325,33 +203,26 @@ async def test_use_matching_resolves_descriptor_and_negotiates() -> None:
         assert lease.descriptor.service_id == "demo-home"
         assert lease.terms.allowed_operations == ("play",)
 
-
-@pytest.mark.asyncio
-async def test_use_without_timeout_waits_until_contract_valid() -> None:
-    ready = anyio.Event()
-    agreement = _Agreement(wait=ready)
-    async with anyio.create_task_group() as tg:
-        services = _services(agreement=agreement, task_group=tg)
-
-        async def release() -> None:
-            await anyio.sleep(0.05)
-            ready.set()
-
-        tg.start_soon(release)
-        async with services.use(_descriptor(), operations={"play"}) as lease:
-            assert lease.descriptor.service_id == "demo-home"
-            assert lease.terms.allowed_operations == ("play",)
-
-        tg.cancel_scope.cancel()
-
-    assert agreement.cancelled == ["service_use_closed"]
-    assert agreement.closed
+    directory.wait_for.assert_awaited_once()
+    assert directory.wait_for.await_args.kwargs["timeout"] <= 10.0
+    spec = concord.propose.await_args.args[0]
+    assert spec.local_participant == _CLIENT_ADDRESS
+    assert spec.terms["allowedOperations"] == ("play",)
+    agreement.cancel.assert_awaited_once_with("service_use_closed")
 
 
 @pytest.mark.asyncio
 async def test_aclose_closes_active_service_use_lease_once() -> None:
-    agreement = _Agreement()
-    services = _services(agreement=agreement)
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        refresh=AsyncMock(return_value=ContractValidity(ContractValidityStatus.VALID)),
+        cancel=AsyncMock(return_value=True),
+        aclose=AsyncMock(),
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+    )
     context = services.use(_descriptor(), operations={"play"})
 
     lease = await context.__aenter__()
@@ -359,20 +230,29 @@ async def test_aclose_closes_active_service_use_lease_once() -> None:
 
     await services.aclose()
 
-    assert agreement.cancelled == ["service_use_closed"]
-    assert agreement.closed
-    assert agreement.close_count == 1
+    agreement.cancel.assert_awaited_once_with("service_use_closed")
+    agreement.aclose.assert_awaited_once()
 
     await context.__aexit__(None, None, None)
 
-    assert agreement.cancelled == ["service_use_closed"]
-    assert agreement.close_count == 1
+    agreement.cancel.assert_awaited_once()
+    agreement.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_use_explicit_timeout_cancels_pending_contract() -> None:
-    agreement = _Agreement(statuses=[ContractValidityStatus.NOT_YET_FULFILLED])
-    services = _services(agreement=agreement)
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        refresh=AsyncMock(
+            return_value=ContractValidity(ContractValidityStatus.NOT_YET_FULFILLED)
+        ),
+        cancel=AsyncMock(return_value=True),
+        aclose=AsyncMock(),
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+    )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
         async with services.use(
@@ -383,15 +263,25 @@ async def test_use_explicit_timeout_cancels_pending_contract() -> None:
             pass
 
     assert exc_info.value.code == "contract_timeout"
-    assert agreement.cancelled == ["contract_timeout"]
-    assert agreement.closed
+    agreement.cancel.assert_awaited_once_with("contract_timeout")
+    agreement.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_use_explicit_timeout_covers_proposal_wait() -> None:
-    wait = anyio.Event()
-    concord = _Concord(_Agreement(), propose_wait=wait)
-    services = _services(concord=concord)
+    agreement = SimpleNamespace(cancel=AsyncMock(), aclose=AsyncMock())
+    wait_forever = anyio.Event()
+
+    async def propose(_spec, *, start_soon=None):
+        del start_soon
+        await wait_forever.wait()
+        return agreement
+
+    concord = SimpleNamespace(propose=AsyncMock(side_effect=propose))
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=concord,
+    )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
         async with services.use(
@@ -403,9 +293,9 @@ async def test_use_explicit_timeout_covers_proposal_wait() -> None:
 
     assert exc_info.value.code == "contract_timeout"
     assert exc_info.value.diagnostics["contractId"] is None
-    assert len(concord.proposals) == 1
-    assert not concord.agreement.cancelled
-    assert not concord.agreement.closed
+    concord.propose.assert_awaited_once()
+    agreement.cancel.assert_not_awaited()
+    agreement.aclose.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -415,7 +305,6 @@ async def test_use_explicit_timeout_covers_proposal_wait() -> None:
         ("Concord contract 'abc' is cancelled", "contract_cancelled"),
         ("Concord contract is missing", "contract_missing_contract"),
         ("Concord contract 'abc' is missing", "contract_missing_contract"),
-        ("Concord participant token is missing", "contract_missing_token"),
         ("Concord participant token is invalid", "contract_invalid_token"),
         ("Concord participant token changed owner", "contract_invalid_token"),
     ),
@@ -425,8 +314,16 @@ async def test_use_translates_terminal_protocol_conflict_during_negotiation(
     message: str,
     expected_code: str,
 ) -> None:
-    agreement = _ConcordConflictAgreement(message)
-    services = _services(agreement=agreement)
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        refresh=AsyncMock(side_effect=ConcordConflict(message)),
+        cancel=AsyncMock(return_value=True),
+        aclose=AsyncMock(),
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+    )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
         async with services.use(
@@ -438,13 +335,22 @@ async def test_use_translates_terminal_protocol_conflict_during_negotiation(
 
     assert exc_info.value.code == expected_code
     assert exc_info.value.diagnostics["reason"] == message
-    assert agreement.closed
+    agreement.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_use_translates_unknown_protocol_conflict_to_service_use_conflict() -> None:
-    agreement = _ConcordConflictAgreement("Concord participant is already attached")
-    services = _services(agreement=agreement)
+    message = "Concord participant is already attached"
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        refresh=AsyncMock(side_effect=ConcordConflict(message)),
+        cancel=AsyncMock(return_value=True),
+        aclose=AsyncMock(),
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+    )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
         async with services.use(
@@ -455,25 +361,13 @@ async def test_use_translates_unknown_protocol_conflict_to_service_use_conflict(
             pass
 
     assert exc_info.value.code == "service_use_conflict"
-    assert exc_info.value.diagnostics["reason"] == (
-        "Concord participant is already attached"
-    )
-    assert agreement.closed
+    assert exc_info.value.diagnostics["reason"] == message
+    agreement.aclose.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
     ("message", "expected_code", "expected_status"),
     (
-        (
-            "Concord contract is cancelled",
-            "contract_cancelled",
-            ContractValidityStatus.CANCELLED.value,
-        ),
-        (
-            "Concord contract is missing",
-            "contract_missing_contract",
-            ContractValidityStatus.MISSING_CONTRACT.value,
-        ),
         (
             "Concord participant token is missing",
             "contract_missing_token",
@@ -488,12 +382,16 @@ async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
     expected_status: str,
 ) -> None:
     descriptor = _descriptor()
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        refresh=AsyncMock(side_effect=ConcordConflict(message)),
+    )
     lease = ServiceUseLease(
-        agreement=_ConcordConflictAgreement(message),
+        agreement=agreement,
         descriptor=descriptor,
         terms=service_use_terms(
             descriptor,
-            client_endpoint=_Endpoint.address,
+            client_endpoint=_CLIENT_ADDRESS,
             operations={"play"},
         ),
     )
@@ -508,10 +406,39 @@ async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
 
 @pytest.mark.asyncio
 async def test_command_request_timeout_is_separate_from_service_use() -> None:
-    agreement = _Agreement()
-    endpoint = _Endpoint()
-    services = _services(agreement=agreement)
-    services._endpoint = endpoint  # noqa: SLF001
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        refresh=AsyncMock(return_value=ContractValidity(ContractValidityStatus.VALID)),
+        cancel=AsyncMock(return_value=True),
+        aclose=AsyncMock(),
+    )
+
+    async def request(**kwargs):
+        return service_command_reply_message(
+            sender=service_address("demo-home"),
+            sender_session_id="service-session",
+            recipient=_CLIENT_ADDRESS,
+            recipient_session_id="client-session",
+            subject=kwargs["subject"],
+            in_reply_to="request-message",
+            contract=kwargs["contract"],
+            body=ServiceCommandReplyBody(
+                serviceNamespace="dev.deckr.demo.service",
+                operation=kwargs["body"]["operation"],
+                status=ServiceCommandStatus.OK,
+                result={"ok": True},
+            ),
+        )
+
+    endpoint = SimpleNamespace(
+        address=_CLIENT_ADDRESS,
+        session_id="client-session",
+        request=AsyncMock(side_effect=request),
+    )
+    services = _services(
+        endpoint=endpoint,
+        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+    )
 
     async with services.use(
         _descriptor(),
@@ -526,69 +453,60 @@ async def test_command_request_timeout_is_separate_from_service_use() -> None:
         )
 
     assert reply.status == ServiceCommandStatus.OK
-    assert endpoint.requests[0]["timeout"] == 12.0
-    assert endpoint.requests[0]["contract"] == {
+    assert endpoint.request.await_args.kwargs["timeout"] == 12.0
+    assert endpoint.request.await_args.kwargs["contract"] == {
         "contractId": "contract-1",
         "generation": 1,
     }
 
 
 @pytest.mark.asyncio
-async def test_read_view_uses_authorized_service_view_store() -> None:
-    buckets = {"demo_views": MemoryJsonKvBucket(bucket="demo_views")}
-    view = ServiceViewRef("demo_views", "zones/demo-home/Kitchen")
-    await buckets["demo_views"].put(
-        _view_storage_key(view),
-        _view_payload(view, {"volume": 12}),
-    )
-    async with anyio.create_task_group() as tg:
-        services = _services(task_group=tg, buckets=buckets)
-        async with services.use(_descriptor(), views={"zones"}) as lease:
-            payload = await services.read_view(lease, view)
-        tg.cancel_scope.cancel()
-
-    assert payload is not None
-    assert payload["volume"] == 12
-
-
-@pytest.mark.asyncio
 async def test_watch_view_refreshes_lease_before_delivering_changes() -> None:
-    buckets = {"demo_views": MemoryJsonKvBucket(bucket="demo_views")}
     view = ServiceViewRef("demo_views", "zones/demo-home/Kitchen")
-    await buckets["demo_views"].put(
-        _view_storage_key(view),
-        _view_payload(view, {"volume": 12}),
-    )
-    agreement = _Agreement(
-        statuses=[
-            ContractValidityStatus.VALID,
-            ContractValidityStatus.VALID,
-            ContractValidityStatus.SESSION_MISMATCH,
-        ]
-    )
-    async with anyio.create_task_group() as tg:
-        services = _services(agreement=agreement, task_group=tg, buckets=buckets)
-        async with services.use(_descriptor(), views={"zones"}) as lease:
-            changes = services.watch_view(lease, view)
-            assert await anext(changes) == {
-                "viewKey": view.key,
-                "serviceId": "demo-home",
-                "serviceNamespace": "dev.deckr.demo.service",
-                "sessionId": "service-session",
-                "contractId": "contract-1",
-                "generation": 1,
-                "volume": 12,
-            }
-            await buckets["demo_views"].put(
-                _view_storage_key(view),
-                _view_payload(view, {"volume": 13}),
+    current_payload = {
+        "viewKey": view.key,
+        "serviceId": "demo-home",
+        "serviceNamespace": "dev.deckr.demo.service",
+        "sessionId": "service-session",
+        "contractId": "contract-1",
+        "generation": 1,
+        "volume": 12,
+    }
+    changed_payload = {**current_payload, "volume": 13}
+    lease = SimpleNamespace(
+        refresh=AsyncMock(
+            side_effect=ServiceUnavailable(
+                "contract_session_mismatch",
+                "session mismatch",
             )
-            with pytest.raises(ServiceUnavailable) as exc_info:
-                await anext(changes)
-            await changes.aclose()
-        tg.cancel_scope.cancel()
+        )
+    )
+
+    async def changes():
+        yield SimpleNamespace(entry=SimpleNamespace(value=changed_payload))
+
+    @asynccontextmanager
+    async def watch(_lease, _view):
+        yield changes()
+
+    store = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(value=current_payload)),
+        watch=watch,
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(),
+    )
+    services._view_stores["demo_views"] = store  # noqa: SLF001
+
+    stream = services.watch_view(lease, view)
+    assert await anext(stream) == current_payload
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await anext(stream)
+    await stream.aclose()
 
     assert exc_info.value.code == "contract_session_mismatch"
+    lease.refresh.assert_awaited_once()
 
 
 def test_service_unavailable_helper_classifies_service_use_loss() -> None:

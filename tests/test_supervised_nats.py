@@ -7,17 +7,24 @@ import anyio
 import pytest
 
 from deckr.contracts.lanes import DEFAULT_MESSAGE_CONTRACT_REGISTRY
+from deckr.contracts.messages import service_address
 from deckr.core.config import ConfigDocument
 from deckr.launcher import build_runtime_substrate
 from deckr.substrates.nats import NatsSubstrate
+from deckr.substrates.nats_kv import KvBucketPolicy
 from deckr.substrates.supervised_nats import (
     NatsServerBinaryResolutionError,
     NatsServerBinaryResolver,
     NatsServerHandle,
+    NatsServerProcessExited,
+    NatsServerStartupError,
+    NatsServerSupervisor,
+    NatsServerVersionError,
     ResolvedNatsServerBinary,
     SupervisedNatsSubstrate,
     _config_text,
     _nats_url_from_ports_file,
+    _read_nats_server_version,
 )
 
 
@@ -70,6 +77,85 @@ def test_configured_nats_server_path_must_be_absolute() -> None:
 
     with pytest.raises(NatsServerBinaryResolutionError, match="absolute"):
         resolver.resolve()
+
+
+def test_nats_binary_resolver_reports_no_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "deckr.substrates.supervised_nats._bundled_nats_server_path",
+        lambda: None,
+    )
+    monkeypatch.setattr("deckr.substrates.supervised_nats.shutil.which", lambda _: None)
+
+    with pytest.raises(NatsServerBinaryResolutionError, match="No configured"):
+        NatsServerBinaryResolver().resolve()
+
+
+def test_nats_binary_resolver_rejects_missing_and_non_executable_paths(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing-nats-server"
+    with pytest.raises(NatsServerBinaryResolutionError, match="does not exist"):
+        NatsServerBinaryResolver(server_path=missing).resolve()
+
+    not_executable = tmp_path / "nats-server"
+    not_executable.write_text("#!/bin/sh\n")
+    not_executable.chmod(0o600)
+
+    with pytest.raises(NatsServerBinaryResolutionError, match="not executable"):
+        NatsServerBinaryResolver(server_path=not_executable).resolve()
+
+
+def test_nats_binary_resolver_rejects_bad_or_old_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "nats-server"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o700)
+
+    monkeypatch.setattr(
+        "deckr.substrates.supervised_nats.subprocess.run",
+        lambda *args, **kwargs: type(
+            "Result",
+            (),
+            {"returncode": 0, "stdout": "nats-server development build", "stderr": ""},
+        )(),
+    )
+    with pytest.raises(NatsServerVersionError, match="Could not determine"):
+        _read_nats_server_version(binary)
+
+    monkeypatch.setattr(
+        "deckr.substrates.supervised_nats.subprocess.run",
+        lambda *args, **kwargs: type(
+            "Result",
+            (),
+            {"returncode": 0, "stdout": "nats-server: v2.13.9", "stderr": ""},
+        )(),
+    )
+    with pytest.raises(NatsServerBinaryResolutionError, match="older than required"):
+        NatsServerBinaryResolver(server_path=binary).resolve()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {},
+        {"nats": []},
+        {"nats": [123]},
+        {"nats": ["http://127.0.0.1:4222"]},
+    ),
+)
+def test_nats_ports_file_rejects_invalid_payloads(
+    tmp_path: Path,
+    payload: dict[str, object],
+) -> None:
+    ports_file = tmp_path / "nats-server_123.ports"
+    ports_file.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="nats URL|invalid nats URL"):
+        _nats_url_from_ports_file(ports_file)
 
 
 def test_runtime_substrate_config_builds_supervised_nats(
@@ -310,3 +396,114 @@ async def test_supervised_substrate_starts_supervisor_before_nats(
         "lane_contracts": DEFAULT_MESSAGE_CONTRACT_REGISTRY,
         "buffer_size": 100,
     }
+
+
+@pytest.mark.asyncio
+async def test_supervisor_startup_timeout_includes_recent_logs(tmp_path: Path) -> None:
+    supervisor = NatsServerSupervisor(
+        startup_timeout=0.01,
+        runtime_dir=tmp_path / "runtime",
+    )
+    supervisor._process = type("Process", (), {"returncode": None})()  # noqa: SLF001
+    supervisor._ports_dir = tmp_path  # noqa: SLF001
+    supervisor._logs.extend(("stdout: listening soon", "stderr: not ready"))  # noqa: SLF001
+
+    with pytest.raises(NatsServerStartupError) as exc_info:
+        await supervisor._wait_until_ready()  # noqa: SLF001
+
+    assert "Recent nats-server output" in str(exc_info.value)
+    assert "stdout: listening soon" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_supervisor_monitor_raises_on_unexpected_process_exit(
+    tmp_path: Path,
+) -> None:
+    class Process:
+        async def wait(self) -> int:
+            return 7
+
+    supervisor = NatsServerSupervisor(runtime_dir=tmp_path)
+    supervisor._process = Process()  # noqa: SLF001
+    supervisor._logs.append("stderr: fatal")  # noqa: SLF001
+
+    with pytest.raises(NatsServerProcessExited) as exc_info:
+        await supervisor._raise_on_unexpected_exit()  # noqa: SLF001
+
+    assert "exited with code 7" in str(exc_info.value)
+    assert "stderr: fatal" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_supervised_connect_failure_stops_supervisor_and_clears_nats(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stopped: list[bool] = []
+
+    class FakeSupervisor:
+        async def start(self):
+            return NatsServerHandle(
+                url="nats://127.0.0.1:4222",
+                auth_token=None,
+                runtime_dir=tmp_path,
+                config_path=tmp_path / "nats.conf",
+                store_dir=tmp_path / "jetstream",
+                binary=ResolvedNatsServerBinary(
+                    path=tmp_path / "nats-server",
+                    version="2.14.0",
+                    source="test",
+                ),
+            )
+
+        async def stop(self) -> None:
+            stopped.append(True)
+
+        @property
+        def url(self):
+            return None
+
+    class FailingNatsSubstrate:
+        def __init__(self, **_kwargs) -> None:
+            return None
+
+        async def connect(self) -> None:
+            raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(
+        "deckr.substrates.supervised_nats.NatsSubstrate",
+        FailingNatsSubstrate,
+    )
+    substrate = SupervisedNatsSubstrate(
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+        supervisor=FakeSupervisor(),
+    )
+
+    with pytest.raises(RuntimeError, match="connect failed"):
+        await substrate.connect()
+
+    assert stopped == [True]
+    assert substrate._nats is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_supervised_delegated_operations_require_connection() -> None:
+    substrate = SupervisedNatsSubstrate(
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+        supervisor=object(),
+    )
+
+    with pytest.raises(RuntimeError, match="not connected"):
+        await substrate.publish(object())
+    with pytest.raises(RuntimeError, match="not connected"):
+        await substrate.publish_reply(object(), request=object())
+    with pytest.raises(RuntimeError, match="not connected"):
+        await substrate.request(object())
+    with pytest.raises(RuntimeError, match="not connected"):
+        substrate.subscribe(
+            "actions",
+            service_address("demo"),
+            endpoint_session_id="session",
+        )
+    with pytest.raises(RuntimeError, match="not connected"):
+        substrate.kv_bucket(KvBucketPolicy(bucket="views", ttl_seconds=None))

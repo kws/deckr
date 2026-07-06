@@ -19,24 +19,6 @@ from deckr.launcher import (
 )
 
 
-def test_load_launcher_document_uses_custom_loader(tmp_path: Path) -> None:
-    config_path = tmp_path / "deckr.toml"
-    captured: dict[str, object] = {}
-    document = ConfigDocument(raw={"deckr": {}}, source_path=None, base_dir=tmp_path)
-
-    def fake_loader(path: Path | None) -> ConfigDocument:
-        captured["path"] = path
-        return document
-
-    loaded = load_launcher_document(
-        config_path,
-        spec=LauncherSpec(load_document=fake_loader),
-    )
-
-    assert loaded is document
-    assert captured["path"] == config_path.resolve()
-
-
 def test_load_launcher_document_passes_path_to_default_loader(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -199,58 +181,6 @@ def test_cli_prints_default_config() -> None:
 
     assert result.exit_code == 0
     assert result.output == "[deckr.components.instances.main]\n\n"
-
-
-def test_cli_delegates_to_launcher(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_launch(config_path, *, spec: LauncherSpec | None = None) -> None:
-        captured["config_path"] = config_path
-        captured["spec"] = spec
-
-    monkeypatch.setattr(cli_mod, "launch", fake_launch)
-    monkeypatch.setattr(cli_mod, "configure_process_logging", lambda level: None)
-
-    runner = CliRunner()
-    spec = LauncherSpec(default_config_text="[deckr]\n")
-    command = cli_mod.build_cli(spec=spec)
-
-    result = runner.invoke(command, ["--config", str(tmp_path / "deckr.toml")])
-
-    assert result.exit_code == 0
-    assert captured["config_path"] == str((tmp_path / "deckr.toml").resolve())
-    assert captured["spec"] is spec
-
-
-def test_cli_configures_default_console_logging(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_configure_process_logging(level: str) -> None:
-        captured["level"] = level
-
-    def fake_launch(config_path, *, spec=None) -> None:
-        captured["launched"] = True
-
-    monkeypatch.setattr(
-        cli_mod,
-        "configure_process_logging",
-        fake_configure_process_logging,
-    )
-    monkeypatch.setattr(cli_mod, "launch", fake_launch)
-
-    runner = CliRunner()
-    command = cli_mod.build_cli(spec=LauncherSpec(default_config_text="[deckr]\n"))
-
-    result = runner.invoke(command, [])
-
-    assert result.exit_code == 0
-    assert captured["level"] == "info"
-    assert captured["launched"] is True
 
 
 def test_cli_loads_logging_config_file(

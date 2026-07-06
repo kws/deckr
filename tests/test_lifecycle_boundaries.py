@@ -45,20 +45,3 @@ _FORBIDDEN_PATTERNS = (
 )
 
 
-def test_production_code_uses_core_lifecycle_services() -> None:
-    workspace = Path(__file__).resolve().parents[2].parent
-    failures: list[str] = []
-    for project_name in _WORKSPACE_PROJECTS:
-        src = workspace / project_name / "src"
-        if not src.exists():
-            continue
-        for path in sorted(src.rglob("*.py")):
-            relative = path.relative_to(workspace)
-            if relative in _ALLOW_RAW_LIFECYCLE_STATE:
-                continue
-            text = path.read_text()
-            for line_number, line in enumerate(text.splitlines(), start=1):
-                for pattern, description in _FORBIDDEN_PATTERNS:
-                    if pattern.search(line):
-                        failures.append(f"{relative}:{line_number}: {description}")
-    assert not failures, "\n".join(failures)

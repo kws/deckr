@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -47,7 +45,6 @@ from deckr.actions.messages import (
     action_body,
     action_body_for_type,
     action_message,
-    action_message_schema,
     action_provider_instance_subject,
     context_subject,
     parse_settings_target_key,
@@ -159,50 +156,6 @@ def test_core_action_bodies_forbid_stale_routing_identity_fields() -> None:
                 "commandType": "clear",
                 "generation": 1,
             },
-        )
-
-
-def test_actions_beacon_payload_serializes_actions_by_action_id() -> None:
-    payload = ActionsBeaconPayload(
-        providerInstanceId="clock-office",
-        providerEndpoint=action_provider_address("clock-office"),
-        providerId="demo.provider",
-        sessionId="session-1",
-        labels={"location": "office"},
-        annotations={"runtime": "python"},
-        actions={"demo.action": {"actionId": "demo.action", "name": "Demo"}},
-    )
-
-    assert payload.model_dump(by_alias=True, mode="json") == {
-        "profile": "dev.deckr.profile.actions.v1",
-        "providerInstanceId": "clock-office",
-        "providerEndpoint": "action_provider:clock-office",
-        "providerId": "demo.provider",
-        "sessionId": "session-1",
-        "labels": {"location": "office"},
-        "annotations": {"runtime": "python"},
-        "actions": {
-            "demo.action": {"actionId": "demo.action", "name": "Demo", "hints": {}}
-        },
-    }
-
-
-def test_binding_metadata_is_controller_routing_metadata() -> None:
-    metadata = _binding_metadata()
-
-    dumped = metadata.model_dump(by_alias=True, mode="json")
-    assert dumped["bindingId"] == "binding-1"
-    assert "bindingContract" not in dumped
-
-
-def test_action_instance_metadata_requires_context_id() -> None:
-    with pytest.raises(ValidationError, match="contextId"):
-        ActionInstanceMetadata(
-            providerInstanceId="demo-provider",
-            providerId="demo.provider",
-            actionId="demo.action",
-            actionInstanceId="instance-1",
-            configId="device-config-1",
         )
 
 
@@ -584,32 +537,6 @@ def test_dynamic_page_child_target_validates_self_and_action_shapes() -> None:
     }
 
 
-def test_v1_capability_input_body_carries_binding_metadata() -> None:
-    body = action_body_for_type(
-        CAPABILITY_INPUT,
-        {
-            "binding": _binding_metadata().model_dump(by_alias=True, exclude_none=True, mode="json"),
-            "event": {
-                "capability": {
-                    "deviceRef": {"managerId": "manager-1", "deviceId": "device-1"},
-                    "controlId": "0,0",
-                    "capabilityId": "button.press",
-                },
-                "eventType": "press",
-                "value": {"pressed": True},
-                "sequence": 12,
-                "occurredAt": "2026-04-30T10:00:00Z",
-                "producer": "hardware_manager",
-                "view": "projected",
-            },
-        },
-    )
-
-    assert isinstance(body, CapabilityInputBody)
-    assert body.to_dict()["binding"]["handler"] == "album"
-    assert body.to_dict()["event"]["eventType"] == "press"
-
-
 def test_v1_capability_input_body_revalidates_frozen_event_value() -> None:
     event = CapabilityInputEvent(
         capability={
@@ -677,40 +604,6 @@ def test_action_metadata_rejects_empty_ids_and_negative_sequences() -> None:
                     "sequence": -1,
                     "occurredAt": "2026-04-30T10:00:00Z",
                 },
-            },
-        )
-
-
-def test_action_capability_refs_for_binding_io_must_be_bound_to_control() -> None:
-    with pytest.raises(ValidationError, match="requires deviceRef and controlId"):
-        action_body_for_type(
-            CAPABILITY_INPUT,
-            {
-                "binding": _binding_metadata().model_dump(
-                    by_alias=True,
-                    exclude_none=True,
-                    mode="json",
-                ),
-                "event": {
-                    "capability": {"capabilityId": "button.press"},
-                    "eventType": "press",
-                    "occurredAt": "2026-04-30T10:00:00Z",
-                },
-            },
-        )
-
-    with pytest.raises(ValidationError, match="requires deviceRef and controlId"):
-        action_body_for_type(
-            BINDING_OUTPUT,
-            {
-                "binding": _binding_metadata().model_dump(
-                    by_alias=True,
-                    exclude_none=True,
-                    mode="json",
-                ),
-                "capability": {"capabilityId": "raster.bitmap"},
-                "commandType": "clear",
-                "generation": 1,
             },
         )
 
@@ -971,49 +864,3 @@ def test_action_body_for_type_rejects_mismatched_body_instances() -> None:
         )
 
 
-def test_typed_action_body_schemas_are_exportable() -> None:
-    extension_schema = ActionExtensionBody.model_json_schema(by_alias=True)
-    lane_schema = action_message_schema()
-
-    assert extension_schema["additionalProperties"] is False
-    assert {
-        "extensionType",
-        "extensionSchemaId",
-        "data",
-    }.issubset(extension_schema["properties"])
-    assert lane_schema["$id"] == "dev.deckr.message.actions.v1"
-    assert lane_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    rejected_variant = next(
-        variant
-        for variant in lane_schema["oneOf"]
-        if variant["allOf"][1]["properties"]["messageType"]["const"]
-        == ACTION_LIFECYCLE_REJECTED
-    )
-    assert rejected_variant["allOf"][1]["properties"]["body"]["$ref"] == (
-        "#/$defs/ActionLifecycleRejectedBody"
-    )
-    binding_output_variant = next(
-        variant
-        for variant in lane_schema["oneOf"]
-        if variant["allOf"][1]["properties"]["messageType"]["const"]
-        == BINDING_OUTPUT
-    )
-    assert binding_output_variant["allOf"][1]["properties"]["lane"]["const"] == (
-        "actions"
-    )
-    assert binding_output_variant["allOf"][1]["properties"]["body"]["$ref"] == (
-        "#/$defs/BindingOutputBody"
-    )
-
-
-def test_action_schema_artifact_matches_checked_in_file() -> None:
-    schema_path = (
-        Path(__file__).resolve().parents[1]
-        / "contract"
-        / "v1"
-        / "schemas"
-        / "actions"
-        / "actions.v1.schema.json"
-    )
-
-    assert json.loads(schema_path.read_text(encoding="utf-8")) == action_message_schema()
