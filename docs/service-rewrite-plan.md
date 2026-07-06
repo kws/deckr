@@ -36,9 +36,12 @@ Completed so far:
 - Sonos volume rotary now consumes subscription messages and no longer owns
   explicit `ensureZones`, `watch_zone`, release, or service-use-loss
   classification boilerplate.
-- The generic Sonos command action is covered through the pooled
-  `SonosServiceClient.command()` path. Existing Sonos provider-side
-  subscription cleanup tests pass without provider protocol changes.
+- Sonos media, group, and shortcut command actions now use shared
+  `SonosServiceClient.command()` behavior where they do not need zone views.
+  Ordinary Sonos action code no longer imports service-use-loss helper
+  functions.
+- Existing Sonos provider-side subscription cleanup tests pass without provider
+  protocol changes.
 - `deckr/docs/usage.md` now documents managed subscriptions and shared command
   pools, and demotes direct service-use-loss helper usage to low-level
   infrastructure guidance.
@@ -47,9 +50,6 @@ Known remaining work against this plan:
 
 - OpenHAB has not yet been migrated to the shared item subscription manager.
 - Kaj status bar has not yet been migrated to the new Sonos message session.
-- Sonos media-shortcuts code still has one direct
-  `service_command_reply_ends_service_use()` import and should be cleaned up in
-  the broader command-only/action cleanup.
 - Command pooling is implemented, but the explicit one-shot fallback policy for
   scopes that should not be pooled still needs to be formalized.
 
