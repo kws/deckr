@@ -7,8 +7,9 @@
 
 ## Implementation Status
 
-As of July 6, 2026, the first implementation slice has landed in the working
-tree but the full rewrite plan below is not complete.
+As of July 6, 2026, the core and Sonos-focused implementation slices have
+landed in the working tree, but the full cross-plugin rewrite plan below is not
+complete.
 
 Completed so far:
 
@@ -30,16 +31,15 @@ Completed so far:
   and lease-backed `command()` behavior. Sonos view absence is converted into a
   subscription `UNAVAILABLE` message instead of being treated as service-use
   loss.
-- `SonosServiceClient.command()` now uses a shared command pool, so Sonos
-  command-only callers reuse compatible service-use leases and retry
-  service-use-loss replies through the shared helper layer.
 - Sonos volume rotary now consumes subscription messages and no longer owns
   explicit `ensureZones`, `watch_zone`, release, or service-use-loss
   classification boilerplate.
-- Sonos media, group, and shortcut command actions now use shared
-  `SonosServiceClient.command()` behavior where they do not need zone views.
-  Ordinary Sonos action code no longer imports service-use-loss helper
-  functions.
+- Sonos media, group, shortcut, and non-volume command actions now open zone
+  sessions during mount or page-open lifecycle and route reads and writes
+  through `session.command(...)`.
+- Sonos no longer exposes a public one-shot client command API. Zone-bound
+  actions keep a zone session open and do not hide a missing session behind
+  command-pool fallback.
 - Existing Sonos provider-side subscription cleanup tests pass without provider
   protocol changes.
 - `deckr/docs/usage.md` now documents managed subscriptions and shared command
@@ -50,8 +50,8 @@ Known remaining work against this plan:
 
 - OpenHAB has not yet been migrated to the shared item subscription manager.
 - Kaj status bar has not yet been migrated to the new Sonos message session.
-- Command pooling is implemented, but the explicit one-shot fallback policy for
-  scopes that should not be pooled still needs to be formalized.
+- The explicit one-shot fallback policy for command scopes that should not be
+  pooled still needs to be formalized.
 
 Deckr services already use the right authority model: Beacon discovers
 candidate services, Concord owns service-use authority, and service views are
@@ -69,19 +69,23 @@ semantics in each plugin client.
 
 - Let feature code subscribe to resource state messages instead of Concord
   lifecycle details.
+- Require ordinary feature code to perform all service reads, watches, and
+  writes through an explicit service session.
 - Reuse service-use contracts across same-provider logical subscribers where
   possible, especially for long-lived item and zone subscriptions.
-- Reduce command-only Concord churn by reusing compatible active service-use
-  leases or shared command leases.
+- Avoid input-path Concord churn by opening resource sessions as early as
+  possible in the action lifecycle and using those active sessions for
+  interaction commands.
 - Keep Beacon and Concord semantics strict: no reattaching, no Beacon-as-
   liveness, no reused cancelled contracts, and no parallel lifecycle authority.
 - Keep service provider implementations mostly intact. OpenHAB and Sonos
   already support contract-bound subscription sets through `ensureItems` /
   `releaseItems` and `ensureZones` / `releaseZones`.
 
-## Current Problems
+## Original Problems And Remaining Gaps
 
-Subscription consumers duplicate lifecycle code in several places:
+Before this rewrite, subscription consumers duplicated lifecycle code in several
+places:
 
 - Kaj status bar owns Sonos retry/release/clear logic directly.
 - Sonos volume rotary owns its own zone subscribe loop and lease-loss handling.
@@ -90,7 +94,13 @@ Subscription consumers duplicate lifecycle code in several places:
 - Sonos command clients retry after service-use loss, while OpenHAB command
   clients currently do not.
 
-This creates bugs and inconsistent behavior:
+The Sonos volume rotary, command, group, media shortcut, and media shortcuts
+paths now follow the intended session pattern. The other consumer-facing gaps
+are OpenHAB item subscriptions/commands and the Kaj status bar, which should be
+migrated after OpenHAB so it can consume both new client APIs consistently.
+
+That duplication created bugs and inconsistent behavior, and the same risks
+remain for consumers that have not yet moved behind domain service clients:
 
 - `None` from a fenced service view is sometimes treated as "successor lease
   required", but it can also mean ordinary view absence or deletion under the
@@ -119,6 +129,26 @@ async with sonos.zone_subscription_session(
         else:
             await render_pending_or_unavailable(message.resource, message)
 ```
+
+For ordinary feature code, this is a hard boundary: no service reads, service
+view watches, or service commands without a service session. A lower-level
+service-use lease also counts as a session for infrastructure code, but action
+code should normally see the domain session object, not Concord lease plumbing.
+
+Resource-bound actions should open their session as soon as the action lifecycle
+identifies the resource set:
+
+- binding actions: in `mounted()`, usually through a binding-scoped background
+  task;
+- dynamic pages: in `opened()` or before child actions begin resolving content;
+- page children: use the owning page/action session instead of opening a fresh
+  session per child.
+
+Input handlers should then call `session.command(...)` on the already-open
+session. If no session is currently active, the action should render a connected
+/ disconnected / unavailable state from the latest session message and return;
+it should not hide the missing session by opening a short-lived command lease on
+the press or rotation path.
 
 OpenHAB should mirror this:
 
@@ -268,21 +298,35 @@ The generic manager should be configured with domain callbacks:
 - Optionally expose lease-backed commands allowed by the same subscription
   scope.
 
-## Command-Only Actions
+## Command Paths
 
-Command-only clients currently open short service-use contracts for each call.
-This should remain a fallback, but not the only path.
+The original rewrite described command-only clients as opening short service-use
+contracts for each call. That is only acceptable as low-level infrastructure for
+operations that have no retained resource session.
+
+For ordinary action code, "command-only" must not mean "no session". Once an
+action binding knows the Sonos zone, OpenHAB item, or other service resource it
+acts on, it should open the matching domain session early in its lifecycle and
+use that session for both state reads and writes.
 
 Command execution should prefer:
 
-1. A compatible active subscription lease when the command is related to an
-   already-retained resource, such as Sonos `adjustVolume` for a watched zone.
-2. A provider-shared command lease keyed by service id and compatible operation
-   set when no subscription lease applies.
+1. The action's own logical subscription session when the command is related to
+   an already-retained resource, such as Sonos `playMusicItem`,
+   `resolveMusicShortcut`, `adjustVolume`, or `joinAll` for a configured zone.
+2. A provider-shared command session keyed by service id and compatible
+   operation set only for operations with no durable resource session.
 3. A one-shot service-use contract when no shared lease exists or the command
-   scope is too specific to pool safely.
+   scope is too specific to pool safely. This remains a service session; it
+   should not be reached by normal bound zone/item action interactions.
 
-Shared command leases should still obey Concord semantics:
+If a resource-bound action has no active logical session when input arrives, the
+correct user-facing behavior is to show disconnected/unavailable state and avoid
+the service command. Falling back to a short-lived command lease on that input
+path reintroduces latency and Concord churn, and hides the session health that
+the button should display.
+
+Shared command sessions should still obey Concord semantics:
 
 - Refresh before use.
 - Treat lease-loss replies and `ServiceUnavailable` codes as authority loss.
@@ -290,8 +334,8 @@ Shared command leases should still obey Concord semantics:
 - Return ordinary `ServiceCommandReplyBody` statuses to feature code without
   exposing Concord details.
 
-This should make OpenHAB command behavior match Sonos command retry behavior
-and reduce per-click Concord churn for common actions.
+This should make OpenHAB command behavior match the shared command-session
+behavior and reduce per-click Concord churn for common actions.
 
 ## Plugin-Specific Changes
 
@@ -304,20 +348,26 @@ The Sonos manager should:
 
 - Use one retained union of zones per service id and compatible operation set.
 - Include additional operations requested by consumers, such as `adjustVolume`,
-  `play`, and `pause`, in the shared lease scope.
+  `play`, `pause`, `resolveMusicShortcut`, `resolveFavourite`,
+  `playMusicItem`, `listZones`, and group commands, in the shared lease scope
+  needed by the action.
 - Fan out zone view messages by zone name.
-- Use the active shared lease for zone-related commands when possible.
+- Use the active shared lease for zone-related commands required by the logical
+  session.
 - Keep service-side `ensureZones` / `releaseZones` semantics unless a v1 rename
   is chosen separately.
 
 Expected consumer simplifications:
 
-- Kaj status bar stops managing `lease_usable`, explicit release, and
-  successor-loop boilerplate.
 - Sonos volume rotary consumes zone messages and calls session/manager commands
   instead of owning its own subscription loop.
-- Sonos media and group command actions can reuse shared command behavior where
-  they do not need zone views.
+- Sonos media shortcut, media shortcuts, play favourite, group, and command
+  actions open `zone_subscription_session(...)` as soon as they mount or open a
+  page, retain the configured zone, and call `session.command(...)` from render
+  and input paths.
+- Sonos action buttons can render connected, disconnected, unavailable, and
+  error states from session messages before interaction, and input handlers do
+  not pay first-press Concord negotiation latency.
 
 ### OpenHAB
 
@@ -390,13 +440,15 @@ slices:
 
 1. Core service subscription primitives in `deckr.services`, with unit tests
    using fake descriptors, leases, commands, and view streams.
-2. Sonos client rewrite using the core manager, including volume rotary and Kaj
-   status bar migration.
+2. Sonos client rewrite using the core manager, including volume rotary and
+   resource-session action cleanup.
 3. OpenHAB client rewrite using the core manager, including item watcher/action
    migration.
-4. Command lease reuse and command-only cleanup for Sonos, OpenHAB, and Kaj
+4. Kaj status bar migration after OpenHAB, so it can use the new Sonos and
+   OpenHAB client APIs together.
+5. Command session reuse and resource-session cleanup for OpenHAB and Kaj
    callers.
-5. Documentation and examples update after implementation, replacing old
+6. Documentation and examples update after implementation, replacing old
    service-use examples that show manual lease-loss handling.
 
 The core API and message/state names should be landed before plugin agents
@@ -423,8 +475,13 @@ Sonos tests:
 - Adding/removing zones updates the retained union and calls `releaseZones` only
   when the last logical subscriber drops a zone.
 - Volume rotary uses the active shared lease for `adjustVolume`.
-- Kaj status bar no longer clears media state on service-use reconnect, but does
-  mark/clear appropriately on ordinary unavailable messages.
+- Zone-bound Sonos actions open `zone_subscription_session(...)` during
+  mount/page-open lifecycle, include their needed command operations, and use
+  `session.command(...)` for render and input commands.
+- Zone-bound Sonos input handlers with no active session render unavailable or
+  disconnected state and do not call the service through a command-pool fallback.
+- Production Sonos action code does not import service-use-loss helper
+  functions and routes ordinary zone-bound interactions through zone sessions.
 - Existing service provider tests for contract cleanup still pass unchanged.
 
 OpenHAB tests:

@@ -189,6 +189,41 @@ async with sonos.zone_subscription_session(
             break
 ```
 
+Ordinary feature code must not read service views, watch service views, or send
+service commands unless it is doing so through an active service session. For a
+resource-bound action, open the domain session as early as the action lifecycle
+allows, usually when the binding is mounted or when a dynamic page opens. Keep
+the session while the binding/page is active so input handlers can respond
+without first negotiating Concord authority.
+
+Commands for a retained resource should use that same session:
+
+```python
+class SonosPlayButton(DeckrAction):
+    async def mounted(self) -> None:
+        self._session = None
+        self.tasks.start_soon(self._run_sonos_session)
+
+    async def _run_sonos_session(self) -> None:
+        try:
+            async with sonos.zone_subscription_session(
+                "sonos-home",
+                zones={self.zone_name},
+                operations={"play", "pause"},
+            ) as session:
+                self._session = session
+                async for message in session.messages:
+                    await render_connected_state(message)
+        finally:
+            self._session = None
+
+    async def input(self, event) -> None:
+        if self._session is None:
+            await self.binding.overlay("unavailable", title="UNAVAILABLE")
+            return
+        await self._session.command("play", {"zone": self.zone_name})
+```
+
 `ServiceSubscriptionState` is the shared state vocabulary:
 
 - `PENDING`: requested, but no fresh authoritative payload is available yet.
@@ -215,9 +250,21 @@ identity, ensure/release operations, view refs, and payload-to-message mapping.
 
 ## Shared Commands
 
-Service clients should route command-only calls through
-`SharedServiceCommandPool` instead of opening a fresh Concord service-use
-contract for every button press:
+`SharedServiceCommandPool` is low-level infrastructure for domain service
+clients that need a managed command session for operations that are not tied to
+an already-retained resource. It is not a substitute for opening a resource
+session during the action lifecycle.
+
+Zone-bound, item-bound, or otherwise resource-bound action code should open the
+domain session early and call `session.command(...)`. If that session is absent
+or currently disconnected, the action should render the appropriate
+disconnected/unavailable state instead of opening a short-lived command lease on
+the interaction path.
+
+Domain clients may still use `SharedServiceCommandPool` internally for
+operations with no retained resource session or for infrastructure fallbacks.
+The pool owns service-use sessions internally and reuses them instead of opening
+a fresh Concord service-use contract for every call:
 
 ```python
 from deckr.services import SharedServiceCommandPool
@@ -240,13 +287,15 @@ reply = await pool.command(
 )
 ```
 
-The command pool reuses compatible active leases, refreshes before use, retries
-with a successor lease when service-use authority is lost, and returns ordinary
-service-domain replies to the caller.
+The command pool reuses compatible command service-use sessions, refreshes
+before use, retries with a successor session when service-use authority is lost,
+and returns ordinary service-domain replies to the caller.
 
 When a command is associated with a retained subscribed resource, the domain
-subscription session can first try the active subscription lease and fall back
-to the command pool when no compatible subscription lease is available.
+service client should use the compatible active subscription session. Falling
+back to a command pool for that same resource hides a disconnected session from
+the action, adds first-interaction latency, and creates avoidable short-lived
+Concord churn.
 
 ## Low-Level Lease Loss Helpers
 
