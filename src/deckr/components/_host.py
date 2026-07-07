@@ -12,18 +12,9 @@ import anyio
 
 from deckr.beacon import (
     Beacon,
-    BeaconDirectory,
-    Candidate,
 )
 from deckr.components._defs import Component
 from deckr.components._runner import ComponentManager
-from deckr.components.dependencies import (
-    ComponentDependency,
-    DependencyCondition,
-    DependencyConditionState,
-    dependency_effective_readiness,
-    dependency_from_mapping,
-)
 from deckr.concord import Concord
 from deckr.contracts.lanes import (
     CORE_LANE_CONTRACTS,
@@ -225,7 +216,6 @@ class ComponentInstanceDefinition:
     instance_id: str
     config: Mapping[str, Any] = field(default_factory=dict)
     endpoints: Mapping[str, str] = field(default_factory=dict)
-    dependencies: Mapping[str, ComponentDependency] = field(default_factory=dict)
     runtime_name: str | None = None
     config_address: str | None = None
     generated_by: str | None = None
@@ -344,7 +334,6 @@ class ComponentInstanceSpec:
     runtime_name: str
     config: Mapping[str, Any]
     endpoints: Mapping[str, str]
-    dependencies: Mapping[str, ComponentDependency]
     definition: ComponentDefinition
     lanes: ResolvedLaneSet
     config_address: str | None = None
@@ -494,8 +483,6 @@ def resolve_component_host_plan(
     )
     lane_contracts = _build_lane_contract_registry(specs, document=document)
     _validate_component_lane_bindings(specs, lane_contracts)
-    _report_dependency_declarations(specs, report_events)
-    _report_endpoint_dependency_cycles(specs, report_events)
     return ComponentHostPlan(
         specs=specs,
         lane_contracts=lane_contracts,
@@ -543,14 +530,6 @@ async def start_components(
     async with anyio.create_task_group() as tg:
         await tg.start(component_manager.run)
         host = await _activate_component_plan(deckr, plan, component_manager)
-        if any(spec.dependencies for spec in plan.specs):
-            tg.start_soon(
-                _run_dependency_observer,
-                deckr,
-                plan,
-                component_manager,
-                name="deckr.component-dependencies",
-            )
         try:
             yield host
         finally:
@@ -559,7 +538,7 @@ async def start_components(
 
 
 GENERIC_INSTANCE_FIELDS = frozenset(
-    {"component", "instance_id", "runtime_name", "endpoints", "config", "dependencies"}
+    {"component", "instance_id", "runtime_name", "endpoints", "config"}
 )
 
 
@@ -639,35 +618,12 @@ def _component_instance_definition_from_mapping(
     if not isinstance(config, Mapping):
         raise ValueError(f"{config_address}.config must be a table")
 
-    dependencies_source = source.get("dependencies", {})
-    dependencies: dict[str, ComponentDependency] = {}
-    if not isinstance(dependencies_source, Mapping):
-        raise ValueError(f"{config_address}.dependencies must be a table")
-    for dependency_name, dependency_source in dependencies_source.items():
-        if not isinstance(dependency_name, str) or not dependency_name.strip():
-            raise ValueError(f"{config_address}.dependencies keys must be strings")
-        if not isinstance(dependency_source, Mapping):
-            raise ValueError(
-                f"{config_address}.dependencies.{dependency_name} must be a table"
-            )
-        normalized_name = dependency_name.strip()
-        if normalized_name in dependencies:
-            raise ValueError(
-                f"Duplicate dependency name in {config_address}: {normalized_name}"
-            )
-        dependencies[normalized_name] = dependency_from_mapping(
-            normalized_name,
-            dependency_source,
-            field_name=f"{config_address}.dependencies.{dependency_name}",
-        )
-
     return ComponentInstanceDefinition(
         component_id=component_id.strip(),
         instance_id=instance_id,
         runtime_name=runtime_name,
         config=dict(config),
         endpoints=endpoints,
-        dependencies=dependencies,
         config_address=config_address,
         generated_by=generated_by,
     )
@@ -781,7 +737,6 @@ def _generated_component_instance_definitions(
                     instance_id=item.instance_id,
                     config=dict(item.config),
                     endpoints=dict(item.endpoints),
-                    dependencies=dict(item.dependencies),
                     runtime_name=item.runtime_name,
                     config_address=item.config_address,
                     generated_by=source_id,
@@ -910,7 +865,6 @@ def _specs_from_instance_definitions(
                 runtime_name=runtime_name,
                 config=instance.config,
                 endpoints=instance.endpoints,
-                dependencies=instance.dependencies,
                 definition=definition,
                 lanes=definition.lanes_for(
                     config=instance.config,
@@ -939,78 +893,6 @@ def _specs_from_instance_definitions(
                 f"{count} instances were planned"
             )
     return specs
-
-
-def _report_dependency_declarations(
-    specs: Sequence[ComponentInstanceSpec],
-    report_events: list[PlanningEvent],
-) -> None:
-    for spec in specs:
-        for dependency in sorted(spec.dependencies.values(), key=lambda item: item.name):
-            report_events.append(
-                PlanningEvent(
-                    component_id=spec.component_id,
-                    instance_id=spec.instance_id,
-                    message=(
-                        "declared "
-                        f"{dependency.mode.value} {dependency.kind.value} "
-                        f"dependency {dependency.name}"
-                    ),
-                )
-            )
-
-
-def _report_endpoint_dependency_cycles(
-    specs: Sequence[ComponentInstanceSpec],
-    report_events: list[PlanningEvent],
-) -> None:
-    endpoint_owners: dict[tuple[str, str], str] = {}
-    for spec in specs:
-        for family, endpoint_id in spec.endpoints.items():
-            endpoint_owners[(family, endpoint_id)] = spec.instance_id
-
-    graph: dict[str, set[str]] = {spec.instance_id: set() for spec in specs}
-    for spec in specs:
-        for dependency in spec.dependencies.values():
-            if dependency.endpoint is None:
-                continue
-            target = endpoint_owners.get(
-                (dependency.endpoint.family, dependency.endpoint.endpoint_id)
-            )
-            if target is not None and target != spec.instance_id:
-                graph[spec.instance_id].add(target)
-
-    reported: set[tuple[str, ...]] = set()
-
-    def walk(start: str, current: str, path: tuple[str, ...]) -> None:
-        for target in sorted(graph.get(current, ())):
-            if target == start:
-                cycle = path + (target,)
-                canonical = _canonical_cycle(cycle)
-                if canonical not in reported:
-                    reported.add(canonical)
-                    report_events.append(
-                        PlanningEvent(
-                            instance_id=start,
-                            message=(
-                                "endpoint-filtered feature dependency cycle: "
-                                + " -> ".join(cycle)
-                            ),
-                        )
-                    )
-                continue
-            if target in path:
-                continue
-            walk(start, target, path + (target,))
-
-    for instance_id in sorted(graph):
-        walk(instance_id, instance_id, (instance_id,))
-
-
-def _canonical_cycle(cycle: tuple[str, ...]) -> tuple[str, ...]:
-    body = cycle[:-1]
-    rotations = tuple(body[index:] + body[:index] for index in range(len(body)))
-    return min(rotations)
 
 
 def _string_set(value: Any, *, field_name: str) -> frozenset[str]:
@@ -1395,148 +1277,4 @@ async def _activate_component_plan(
         components=tuple(created),
         lane_names=plan.lane_names,
         lanes=deckr.lanes,
-    )
-
-
-async def _run_dependency_observer(
-    deckr: Deckr,
-    plan: ComponentHostPlan,
-    component_manager: ComponentManager,
-) -> None:
-    specs = tuple(spec for spec in plan.specs if spec.dependencies)
-    beacon = deckr.beacon
-    feature_ids = sorted(
-        {
-            dependency.feature_id
-            for spec in specs
-            for dependency in spec.dependencies.values()
-        }
-    )
-    feature_snapshots: dict[str, dict[str, Candidate] | None] = {
-        feature_id: {} for feature_id in feature_ids
-    }
-    directories = {
-        feature_id: BeaconDirectory(
-            beacon,
-            feature_id,
-            _dependency_candidate,
-            log_label="ComponentHost dependency",
-        )
-        for feature_id in feature_ids
-    }
-    send, receive = anyio.create_memory_object_stream[object](max_buffer_size=1)
-
-    async def notify() -> None:
-        try:
-            send.send_nowait(object())
-        except anyio.WouldBlock:
-            pass
-
-    async def watch_feature(
-        feature_id: str,
-        directory: BeaconDirectory[Candidate],
-    ) -> None:
-        async for records in directory.watch_records():
-            feature_snapshots[feature_id] = {
-                candidate.key: candidate for candidate in records
-            }
-            await notify()
-
-    async with send, receive, anyio.create_task_group() as tg:
-        for directory in directories.values():
-            directory.start(tg)
-        try:
-            for feature_id, directory in directories.items():
-                tg.start_soon(watch_feature, feature_id, directory)
-            while True:
-                await _evaluate_dependency_readiness(
-                    specs,
-                    feature_snapshots=feature_snapshots,
-                    component_manager=component_manager,
-                )
-                with anyio.move_on_after(0.25) as scope:
-                    await receive.receive()
-                if scope.cancel_called:
-                    continue
-        finally:
-            for directory in directories.values():
-                await directory.aclose()
-
-
-def _dependency_candidate(candidate: Candidate) -> Candidate:
-    return candidate
-
-
-async def _evaluate_dependency_readiness(
-    specs: Sequence[ComponentInstanceSpec],
-    *,
-    feature_snapshots: Mapping[str, Mapping[str, Candidate] | None],
-    component_manager: ComponentManager,
-) -> None:
-    for spec in specs:
-        conditions: dict[str, DependencyCondition] = {}
-        for dependency in spec.dependencies.values():
-            conditions[dependency.name] = await _dependency_condition(
-                dependency,
-                feature_snapshots=feature_snapshots,
-            )
-        readiness, reasons, diagnostics = dependency_effective_readiness(conditions)
-        await component_manager.report_component_dependency_readiness(
-            spec.runtime_name,
-            readiness,
-            reasons=reasons,
-            diagnostics=diagnostics,
-        )
-
-
-async def _dependency_condition(
-    dependency: ComponentDependency,
-    *,
-    feature_snapshots: Mapping[str, Mapping[str, Candidate] | None],
-) -> DependencyCondition:
-    snapshot = feature_snapshots.get(dependency.feature_id)
-    if snapshot is None:
-        return DependencyCondition(
-            name=dependency.name,
-            kind=dependency.kind,
-            mode=dependency.mode,
-            state=DependencyConditionState.UNKNOWN,
-            reason="state_unavailable",
-        )
-    candidates = tuple(
-        sorted(
-            (
-                candidate
-                for candidate in snapshot.values()
-                if dependency.endpoint is None
-                or candidate.advertisement.endpoint == dependency.endpoint
-            ),
-            key=lambda candidate: candidate.key,
-        )
-    )
-    diagnostics = {
-        "featureId": dependency.feature_id,
-        **(
-            {"endpoint": str(dependency.endpoint)}
-            if dependency.endpoint is not None
-            else {}
-        ),
-    }
-    if not candidates:
-        return DependencyCondition(
-            name=dependency.name,
-            kind=dependency.kind,
-            mode=dependency.mode,
-            state=DependencyConditionState.UNSATISFIED,
-            reason="beacon_absent",
-            diagnostics=diagnostics,
-        )
-    diagnostics["candidates"] = len(candidates)
-    diagnostics["sessionId"] = candidates[0].advertisement.session_id
-    return DependencyCondition(
-        name=dependency.name,
-        kind=dependency.kind,
-        mode=dependency.mode,
-        state=DependencyConditionState.SATISFIED,
-        diagnostics=diagnostics,
     )

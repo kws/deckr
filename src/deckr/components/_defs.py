@@ -157,9 +157,6 @@ class RunningComponent:
     local_readiness_state: ReadinessState = ReadinessState.UNKNOWN
     local_readiness_reasons: tuple[str, ...] = ()
     local_diagnostics: Mapping[str, object] = field(default_factory=dict)
-    dependency_readiness_state: ReadinessState = ReadinessState.READY
-    dependency_readiness_reasons: tuple[str, ...] = ()
-    dependency_diagnostics: Mapping[str, object] = field(default_factory=dict)
     readiness_state: ReadinessState = ReadinessState.UNKNOWN
     readiness_reasons: tuple[str, ...] = ()
     diagnostics: Mapping[str, object] = field(default_factory=dict)

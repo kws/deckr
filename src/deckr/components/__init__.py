@@ -37,13 +37,6 @@ from deckr.components._host import (
     start_components,
 )
 from deckr.components._runner import ComponentManager
-from deckr.components.dependencies import (
-    ComponentDependency,
-    DependencyCondition,
-    DependencyConditionState,
-    DependencyKind,
-    DependencyMode,
-)
 
 __all__ = [
     "BaseComponent",
@@ -58,7 +51,6 @@ __all__ = [
     "ComponentInstanceSourceContext",
     "ComponentInstanceSourceDefinition",
     "ComponentInstanceSpec",
-    "ComponentDependency",
     "ComponentLifecycleEvent",
     "ComponentLifecycleEventType",
     "ComponentManager",
@@ -67,10 +59,6 @@ __all__ = [
     "ComponentState",
     "ComponentStatus",
     "ComponentStatusReporter",
-    "DependencyCondition",
-    "DependencyConditionState",
-    "DependencyKind",
-    "DependencyMode",
     "LaneRegistry",
     "PlanningEvent",
     "ReadinessState",

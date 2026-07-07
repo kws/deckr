@@ -7,13 +7,8 @@ import anyio
 import pytest
 from message_bus_mocks import mock_deckr
 
-from deckr.beacon import (
-    Beacon,
-    BeaconAdvertisementSpec,
-)
 from deckr.components import (
     BaseComponent,
-    ComponentCardinality,
     ComponentDefinition,
     ComponentInstanceDefinition,
     ComponentInstanceSourceContext,
@@ -26,7 +21,7 @@ from deckr.components import (
     start_components,
 )
 from deckr.contracts.lanes import MessageContract
-from deckr.contracts.messages import entity_subject, service_address
+from deckr.contracts.messages import entity_subject
 from deckr.core.config import ConfigDocument
 from deckr.lanes import Lane
 from deckr.launcher import build_runtime_substrate
@@ -206,7 +201,7 @@ def test_duplicate_endpoint_id_is_plan_error() -> None:
         )
 
 
-def test_component_dependencies_reject_unknown_fields() -> None:
+def test_component_dependencies_are_unknown_component_fields() -> None:
     component = _component("com.example.worker")
     document = _document(
         {
@@ -232,69 +227,17 @@ def test_component_dependencies_reject_unknown_fields() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="Unknown dependency field"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Unknown component instance field\(s\) in "
+            r"deckr\.components\.instances\.worker: dependencies"
+        ),
+    ):
         configured_component_instance_specs(
             document,
             definitions={"com.example.worker": component},
         )
-
-
-def test_endpoint_filtered_feature_dependency_cycles_are_reported_not_rejected() -> None:
-    worker = ComponentDefinition(
-        manifest=ComponentManifest(
-            component_id="com.example.worker",
-            endpoint_slots=("service",),
-            cardinality=ComponentCardinality.MULTI_INSTANCE,
-        ),
-        factory=lambda context: _DummyComponent(name=context.runtime_name),
-    )
-    document = _document(
-        {
-            "deckr": {
-                "components": {
-                    "instances": {
-                        "one": {
-                            "component": "com.example.worker",
-                            "instance_id": "one",
-                            "endpoints": {"service": "one"},
-                            "dependencies": {
-                                "two": {
-                                    "kind": "feature",
-                                    "mode": "required",
-                                    "feature_id": "com.example.worker",
-                                    "endpoint": "service:two",
-                                }
-                            },
-                        },
-                        "two": {
-                            "component": "com.example.worker",
-                            "instance_id": "two",
-                            "endpoints": {"service": "two"},
-                            "dependencies": {
-                                "one": {
-                                    "kind": "feature",
-                                    "mode": "required",
-                                    "feature_id": "com.example.worker",
-                                    "endpoint": "service:one",
-                                }
-                            },
-                        },
-                    }
-                }
-            }
-        }
-    )
-
-    plan = resolve_component_host_plan(
-        document,
-        definitions={"com.example.worker": worker},
-    )
-
-    messages = [event.message for event in plan.report.events]
-    assert any(
-        "endpoint-filtered feature dependency cycle" in message
-        for message in messages
-    )
 
 
 def test_instance_source_generates_component_instances() -> None:
@@ -555,129 +498,6 @@ async def test_start_components_passes_slot_endpoint_opener_and_protocols() -> N
         }
 
 
-@pytest.mark.asyncio
-async def test_required_service_dependency_controls_effective_readiness() -> None:
-    assert not hasattr(Beacon, "find")
-    definition = ComponentDefinition(
-        manifest=ComponentManifest(component_id="com.example.worker"),
-        factory=lambda context: _ReadyComponent(name=context.runtime_name),
-    )
-    document = _document(
-        {
-            "deckr": {
-                "components": {
-                    "instances": {
-                        "worker": {
-                            "component": "com.example.worker",
-                            "instance_id": "worker",
-                            "dependencies": {
-                                "sonos_home": {
-                                    "kind": "feature",
-                                    "mode": "required",
-                                    "feature_id": "dev.deckr.sonos.service",
-                                    "endpoint": "service:sonos-home",
-                                }
-                            },
-                        }
-                    }
-                }
-            }
-        }
-    )
-    plan = resolve_component_host_plan(
-        document,
-        definitions={"com.example.worker": definition},
-    )
-
-    async with mock_deckr(
-        lane_contracts=plan.lane_contracts,
-        lanes=plan.lane_names,
-    ) as deckr, start_components(deckr, plan) as component_host:
-        manager = component_host.component_manager
-        unready = await _wait_for_readiness(
-            manager,
-            "com.example.worker:worker",
-            ReadinessState.UNREADY,
-        )
-        assert unready.readiness_reasons == ("dependency.sonos_home.unsatisfied",)
-
-        advertisement = await deckr.beacon.advertise(
-            BeaconAdvertisementSpec(
-                feature_id="dev.deckr.sonos.service",
-                endpoint=service_address("sonos-home"),
-                session_id="service-session",
-                advertisement_id="sonos-home",
-                operations=("play",),
-            )
-        )
-
-        ready = await _wait_for_readiness(
-            manager,
-            "com.example.worker:worker",
-            ReadinessState.READY,
-        )
-        assert ready.readiness_reasons == ()
-
-        assert await advertisement.withdraw()
-        lost = await _wait_for_status(
-            manager,
-            "com.example.worker:worker",
-            lambda item: item.readiness_state == ReadinessState.UNREADY
-            and item.readiness_reasons == ("dependency.sonos_home.unsatisfied",),
-        )
-        assert lost.readiness_reasons == ("dependency.sonos_home.unsatisfied",)
-
-
-@pytest.mark.asyncio
-async def test_optional_service_dependency_reports_without_blocking_readiness() -> None:
-    definition = ComponentDefinition(
-        manifest=ComponentManifest(component_id="com.example.worker"),
-        factory=lambda context: _ReadyComponent(name=context.runtime_name),
-    )
-    document = _document(
-        {
-            "deckr": {
-                "components": {
-                    "instances": {
-                        "worker": {
-                            "component": "com.example.worker",
-                            "instance_id": "worker",
-                            "dependencies": {
-                                "sonos_home": {
-                                    "kind": "feature",
-                                    "mode": "optional",
-                                    "feature_id": "dev.deckr.sonos.service",
-                                    "endpoint": "service:sonos-home",
-                                }
-                            },
-                        }
-                    }
-                }
-            }
-        }
-    )
-    plan = resolve_component_host_plan(
-        document,
-        definitions={"com.example.worker": definition},
-    )
-
-    async with mock_deckr(
-        lane_contracts=plan.lane_contracts,
-        lanes=plan.lane_names,
-    ) as deckr, start_components(deckr, plan) as component_host:
-        del deckr
-        status = await _wait_for_status(
-            component_host.component_manager,
-            "com.example.worker:worker",
-            lambda item: item.readiness_state == ReadinessState.READY
-            and "dependencies" in item.diagnostics,
-        )
-
-    dependency = status.diagnostics["dependencies"]["sonos_home"]
-    assert dependency["mode"] == "optional"
-    assert dependency["state"] == "unsatisfied"
-
-
 def test_runtime_substrate_config_rejects_local_substrate() -> None:
     document = _document({"deckr": {"runtime": {"substrate": {"kind": "local"}}}})
     plan = resolve_component_host_plan(document, definitions={})
@@ -777,4 +597,3 @@ def test_deployment_lane_contract_rejects_removed_transport_fields(
 
     with pytest.raises(ValueError, match=field):
         resolve_component_host_plan(document, definitions={})
-

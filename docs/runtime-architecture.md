@@ -619,13 +619,11 @@ The generic instance wrapper fields are:
 - `instance_id`
 - optional `runtime_name`
 - optional `endpoints`
-- optional `dependencies`
 - optional `config`
 
 Other fields at this level are invalid. Labels, annotations, provider ids,
 manager ids, service namespaces, controller ids, and similar domain settings
-belong inside the component-private `config` table unless they are part of a
-declared generic dependency.
+belong inside the component-private `config` table.
 
 The runtime host must:
 
@@ -633,64 +631,13 @@ The runtime host must:
 - read explicit component instance definitions
 - run explicitly configured component instance sources
 - validate component ids, cardinality, endpoint slots, runtime names, endpoint
-  ids, dependency declarations, lane contracts, and component config hooks
+  ids, lane contracts, and component config hooks
 - pass only the instance's resolved private `config` mapping and generic runtime
   metadata to the component
 
 The runtime host must not inspect sibling component sections on behalf of a
 component, merge role-shaped parent namespaces implicitly, or interpret domain
 settings such as provider ids or manager ids as generic runtime identity.
-
-### Dependencies
-
-Component dependencies are optional generic instance metadata. They are
-readiness predicates, not activation rules.
-
-```toml
-[deckr.components.instances.media_actions.dependencies.media_home]
-kind = "feature"
-mode = "required"
-endpoint = "service:media-home"
-feature_id = "org.example.media.service"
-
-[deckr.components.instances.worker.dependencies.controller_main]
-kind = "feature"
-mode = "observed"
-feature_id = "dev.deckr.controller"
-endpoint = "controller:controller-main"
-```
-
-Supported dependency kinds are:
-
-- `feature`
-
-Supported modes are:
-
-- `required`
-- `optional`
-- `preferred`
-- `observed`
-
-Feature dependencies require a Beacon `feature_id`. They may include an
-endpoint filter when the component needs a specific configured endpoint.
-
-Dependencies never create component instances, start services, import local
-objects, block `start(ctx)`, block endpoint registration, or stop a component.
-The component host observes dependencies continuously through the runtime
-`Beacon` materialized view and semantic feature events. A running component can
-therefore be ready, unready, or unknown while its local lifecycle remains
-`running`.
-Dependency observations are readiness evidence only. They do not withdraw,
-invalidate, or cancel existing Concord agreements.
-
-Required dependencies with `unknown`, `degraded`, or `unsatisfied` conditions
-make the effective component readiness unready. Optional, preferred, and
-observed dependencies are reported in diagnostics without forcing effective
-readiness unready by themselves.
-
-Endpoint-filtered feature dependency cycles are reported as diagnostics in the
-planning report, but they are not plan errors. They are rendezvous predicates,
-not startup ordering.
 
 ### Activation
 

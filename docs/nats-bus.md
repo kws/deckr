@@ -384,25 +384,6 @@ Concord-governed and may be refreshed until Concord invalidates them. New or
 lost lease state requires current Beacon discovery and a new opaque Concord
 contract.
 
-## Component Dependencies
-
-Component dependencies observe Beacon features:
-
-```toml
-[deckr.components.instances.worker.dependencies.sonos_home]
-kind = "feature"
-mode = "required"
-feature_id = "org.example.sonos.service"
-endpoint = "service:sonos-home"
-```
-
-The endpoint filter is optional. A missing candidate makes required dependencies
-unready and optional dependencies diagnostic-only. Dependency observation uses
-`Beacon` semantic feature events from the runtime materialized KV view and does
-not use lane subscription state or per-dependency raw Beacon KV watches as an
-authority source. Dependency readiness is not agreement withdrawal; existing
-Concord contracts must be validated through Concord.
-
 ## Store Configuration
 
 NATS-backed protocol stores are opened with explicit policies. Beacon is opened

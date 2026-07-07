@@ -629,27 +629,6 @@ class ComponentManager(Component):
             status = _status_from_running(rc)
         await self._push_status(status)
 
-    async def report_component_dependency_readiness(
-        self,
-        name: str,
-        readiness_state: ReadinessState,
-        *,
-        reasons: Sequence[str] = (),
-        diagnostics: Mapping[str, object] | None = None,
-    ) -> None:
-        normalized_reasons = tuple(_normalize_status_reason(reason) for reason in reasons)
-        normalized_diagnostics = dict(diagnostics or {})
-        async with self._lock:
-            rc = self._running.get(name)
-            if rc is None:
-                return
-            rc.dependency_readiness_state = readiness_state
-            rc.dependency_readiness_reasons = normalized_reasons
-            rc.dependency_diagnostics = normalized_diagnostics
-            _refresh_effective_readiness(rc)
-            status = _status_from_running(rc)
-        await self._push_status(status)
-
     async def _push_status(self, status: ComponentStatus) -> None:
         try:
             await self._status_subscribers.push(status)
@@ -664,24 +643,9 @@ def _normalize_status_reason(reason: str) -> str:
 
 
 def _refresh_effective_readiness(rc: RunningComponent) -> None:
-    diagnostics = dict(rc.local_diagnostics)
-    diagnostics.update(rc.dependency_diagnostics)
-    if rc.local_readiness_state == ReadinessState.UNREADY:
-        rc.readiness_state = ReadinessState.UNREADY
-        rc.readiness_reasons = rc.local_readiness_reasons
-    elif rc.dependency_readiness_state == ReadinessState.UNREADY:
-        rc.readiness_state = ReadinessState.UNREADY
-        rc.readiness_reasons = rc.dependency_readiness_reasons
-    elif rc.local_readiness_state == ReadinessState.UNKNOWN:
-        rc.readiness_state = ReadinessState.UNKNOWN
-        rc.readiness_reasons = rc.local_readiness_reasons
-    elif rc.dependency_readiness_state == ReadinessState.UNKNOWN:
-        rc.readiness_state = ReadinessState.UNKNOWN
-        rc.readiness_reasons = rc.dependency_readiness_reasons
-    else:
-        rc.readiness_state = ReadinessState.READY
-        rc.readiness_reasons = ()
-    rc.diagnostics = diagnostics
+    rc.readiness_state = rc.local_readiness_state
+    rc.readiness_reasons = rc.local_readiness_reasons
+    rc.diagnostics = dict(rc.local_diagnostics)
 
 
 def _status_from_running(rc: RunningComponent) -> ComponentStatus:
