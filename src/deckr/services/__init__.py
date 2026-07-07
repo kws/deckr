@@ -26,7 +26,6 @@ from deckr.services.runtime import (
     ServiceUnavailable,
     ServiceUseAuthorizationError,
     ServiceUseLease,
-    ServiceUseTerms,
     ServiceViewFamily,
     ServiceViewFamilyDefinition,
     ServiceViewRef,
@@ -35,10 +34,8 @@ from deckr.services.runtime import (
     newest_service_descriptor,
     parse_service_descriptor,
     service_command_reply_ends_service_use,
-    service_descriptor_from_terms,
     service_descriptor_sort_key,
     service_unavailable_ends_service_use,
-    service_use_terms,
     service_view_key,
     service_view_prefix,
 )
@@ -47,7 +44,6 @@ from deckr.services.subscriptions import (
     ServiceSubscriptionMessage,
     ServiceSubscriptionState,
     SharedResourceSubscriptionManager,
-    SharedServiceCommandPool,
 )
 from deckr.services.views import ServiceViewChange, ServiceViewEntry, ServiceViewStore
 
@@ -71,7 +67,6 @@ __all__ = [
     "ServiceUnavailable",
     "ServiceUseAuthorizationError",
     "ServiceUseLease",
-    "ServiceUseTerms",
     "ServiceViewChange",
     "ServiceViewEntry",
     "ServiceViewFamily",
@@ -79,7 +74,6 @@ __all__ = [
     "ServiceViewRef",
     "ServiceViewStore",
     "SharedResourceSubscriptionManager",
-    "SharedServiceCommandPool",
     "UnsupportedServiceScope",
     "ResourceSubscriptionSession",
     "authorize_service_command",
@@ -90,12 +84,10 @@ __all__ = [
     "service_command_reply_ends_service_use",
     "service_command_message",
     "service_command_reply_message",
-    "service_descriptor_from_terms",
     "service_descriptor_sort_key",
     "service_message",
     "service_message_schema",
     "service_unavailable_ends_service_use",
-    "service_use_terms",
     "service_view_key",
     "service_view_prefix",
 ]

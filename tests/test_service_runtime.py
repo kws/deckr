@@ -18,7 +18,6 @@ from deckr.concord import (
     ContractState,
     ContractValidity,
     ContractValidityStatus,
-    canonical_json_hash,
 )
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
@@ -29,7 +28,6 @@ from deckr.services import (
     ServiceDescriptor,
     ServiceProtocol,
     ServiceUseAuthorizationError,
-    ServiceUseTerms,
     ServiceViewChange,
     ServiceViewEntry,
     ServiceViewFamilyDefinition,
@@ -39,8 +37,6 @@ from deckr.services import (
     authorize_service_command,
     newest_service_descriptor,
     parse_service_descriptor,
-    service_descriptor_from_terms,
-    service_use_terms,
     service_view_key,
 )
 from deckr.services.messages import ServiceCommandBody, service_command_message
@@ -120,15 +116,8 @@ async def _service_view_context(*, contract_id: str = "service-contract-1"):
     protocol = _protocol()
     await _publish_service_advertisement(beacon, protocol)
     descriptor = await _descriptor(beacon, protocol)
-    terms = service_use_terms(
-        descriptor,
-        action_provider_address("provider-main"),
-        operations={"setItemScope"},
-        views={"items"},
-    )
     lease = _FakeServiceUseLease(
         descriptor=descriptor,
-        terms=terms,
         contract=_contract_handle(contract_id=contract_id),
     )
     view_ref = ServiceViewRef(
@@ -202,9 +191,7 @@ def _service_view_payload(
 
 def _contract_record(
     contract: ContractHandle,
-    terms: ServiceUseTerms,
 ) -> ContractRecord:
-    terms_payload = terms.to_dict()
     return ContractRecord(
         contract_id=contract.contract_id,
         generation=contract.generation,
@@ -212,18 +199,17 @@ def _contract_record(
         attached_participants=contract.attached_participants,
         state=contract.state,
         profile=contract.profile,
-        terms=terms_payload,
-        terms_hash=canonical_json_hash(terms_payload),
+        terms=None,
+        terms_hash=None,
     )
 
 
 def _managed_contract(
     contract: ContractHandle,
-    terms: ServiceUseTerms,
     *,
     status: ContractValidityStatus = ContractValidityStatus.VALID,
 ) -> ConcordManagedContract:
-    record = _contract_record(contract, terms)
+    record = _contract_record(contract)
     return ConcordManagedContract(
         contract=contract,
         record=record,
@@ -239,9 +225,11 @@ def _service_command(
     *,
     operation: str = "setItemScope",
     namespace: str = "dev.deckr.openhab.service",
+    sender=None,
 ) -> Any:
+    sender = sender or action_provider_address("provider-main")
     return service_command_message(
-        sender=action_provider_address("provider-main"),
+        sender=sender,
         sender_session_id="provider-session",
         recipient=service_address("openhab-home"),
         recipient_session_id="service-session",
@@ -485,65 +473,9 @@ async def test_service_directory_tracks_beacon_events_without_stale_descriptors(
 
 
 @pytest.mark.asyncio
-async def test_service_use_terms_grant_only_requested_scope() -> None:
-    beacon = _memory_beacon()
-    protocol = _protocol()
-    await _publish_service_advertisement(beacon, protocol)
-    descriptor = await _descriptor(beacon, protocol)
-
-    terms = service_use_terms(
-        descriptor,
-        action_provider_address("provider-main"),
-        operations={"setItemScope"},
-        views={"items"},
-    )
-
-    assert terms.allowed_operations == ("setItemScope",)
-    assert terms.allowed_views == {"items": ("views.openhab-home.items.",)}
-    assert "sendCommand" not in terms.allowed_operations
-
-    with pytest.raises(UnsupportedServiceScope):
-        service_use_terms(
-            descriptor,
-            action_provider_address("provider-main"),
-            operations={"missingOperation"},
-        )
-    with pytest.raises(UnsupportedServiceScope):
-        service_use_terms(
-            descriptor,
-            action_provider_address("provider-main"),
-            views={"missingView"},
-        )
-
-
-def test_service_descriptor_from_terms_without_beacon_candidate() -> None:
-    protocol = _protocol()
-    terms = ServiceUseTerms(
-        profile=protocol.use_profile,
-        serviceUseId="service-use:test",
-        serviceId="openhab-backup",
-        serviceEndpoint=service_address("openhab-backup"),
-        serviceNamespace=protocol.namespace,
-        serviceSessionId="service-session",
-        clientEndpoint=action_provider_address("provider-main"),
-        allowedOperations=("setItemScope",),
-        allowedViews={"items": ("views.openhab-backup.items.",)},
-    )
-
-    descriptor = service_descriptor_from_terms(protocol, terms)
-
-    assert descriptor.candidate is None
-    assert descriptor.service_id == "openhab-backup"
-    assert descriptor.endpoint == service_address("openhab-backup")
-    assert descriptor.session_id == "service-session"
-    assert descriptor.supported_operations == frozenset(protocol.operations)
-    assert descriptor.views["items"].key_prefix == "views.openhab-backup.items."
-
-
-@pytest.mark.asyncio
 async def test_authorize_service_command_matches_exact_contract_pointer() -> None:
     protocol, lease, _view_ref = await _service_view_context()
-    managed = _managed_contract(lease.contract, lease.terms)
+    managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
     command = _service_command(
         lease.contract,
@@ -562,7 +494,6 @@ async def test_authorize_service_command_matches_exact_contract_pointer() -> Non
     assert isinstance(result, AuthorizedServiceCommand)
     assert result.contract == lease.contract
     assert result.record == managed.record
-    assert result.terms == lease.terms
     assert participant.reconcile_calls == 0
     assert participant.validate_calls == [
         (
@@ -575,7 +506,7 @@ async def test_authorize_service_command_matches_exact_contract_pointer() -> Non
 @pytest.mark.asyncio
 async def test_authorize_service_command_rejects_unmanaged_contract_pointer() -> None:
     protocol, lease, _view_ref = await _service_view_context()
-    managed = _managed_contract(lease.contract, lease.terms)
+    managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
     other_contract = _contract_handle(contract_id="service-contract-2")
     command = _service_command(
@@ -599,9 +530,39 @@ async def test_authorize_service_command_rejects_unmanaged_contract_pointer() ->
 
 
 @pytest.mark.asyncio
-async def test_authorize_service_command_rejects_operation_outside_terms() -> None:
+async def test_authorize_service_command_rejects_sender_not_named_by_contract() -> None:
     protocol, lease, _view_ref = await _service_view_context()
-    managed = _managed_contract(lease.contract, lease.terms)
+    managed = _managed_contract(lease.contract)
+    participant = _FakeServiceParticipant((managed,))
+    command = _service_command(
+        lease.contract,
+        sender=action_provider_address("other-provider"),
+        namespace=protocol.namespace,
+    )
+
+    with pytest.raises(ServiceUseAuthorizationError) as exc_info:
+        await authorize_service_command(
+            participant,
+            command,
+            service_id="openhab-home",
+            protocol=protocol,
+            operation="sendCommand",
+        )
+
+    assert exc_info.value.code == "scope_mismatch"
+    assert participant.validate_calls == [
+        (
+            lease.contract,
+            {str(action_provider_address("other-provider")): "provider-session"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_authorize_service_command_rejects_operation_outside_protocol() -> None:
+    protocol, lease, _view_ref = await _service_view_context()
+    protocol = _protocol(operations=("setItemScope",))
+    managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
     command = _service_command(
         lease.contract,
@@ -619,12 +580,6 @@ async def test_authorize_service_command_rejects_operation_outside_terms() -> No
         )
 
     assert exc_info.value.code == "scope_mismatch"
-    assert participant.validate_calls == [
-        (
-            lease.contract,
-            {str(action_provider_address("provider-main")): "provider-session"},
-        )
-    ]
 
 
 @pytest.mark.asyncio
@@ -633,13 +588,7 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
     protocol = _protocol()
     await _publish_service_advertisement(beacon, protocol)
     descriptor = await _descriptor(beacon, protocol)
-    terms = service_use_terms(
-        descriptor,
-        action_provider_address("provider-main"),
-        operations={"setItemScope"},
-        views={"items"},
-    )
-    lease = _FakeServiceUseLease(descriptor=descriptor, terms=terms)
+    lease = _FakeServiceUseLease(descriptor=descriptor)
     view_store = ServiceViewStore(
         bucket=MemoryJsonKvBucket(bucket="deckr_openhab_service_view_v1")
     )
@@ -748,7 +697,6 @@ async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry(
     protocol, lease, view_ref = await _service_view_context()
     other_lease = _FakeServiceUseLease(
         descriptor=lease.descriptor,
-        terms=lease.terms,
         contract=_contract_handle(contract_id="service-contract-2"),
     )
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
@@ -951,11 +899,9 @@ class _FakeServiceUseLease:
         self,
         *,
         descriptor: ServiceDescriptor,
-        terms: ServiceUseTerms,
         contract: ContractHandle | None = None,
     ) -> None:
         self.descriptor = descriptor
-        self.terms = terms
         self.contract = contract or _contract_handle()
 
     async def refresh(self) -> None:

@@ -34,7 +34,6 @@ from deckr.services.runtime import (
     ServiceViewRef,
     parse_service_descriptor,
     service_use_negotiation_terminal_status,
-    service_use_terms,
     terminal_concord_conflict_status,
 )
 from deckr.services.views import ServiceViewStore
@@ -151,8 +150,6 @@ class DeckrServices:
         self,
         protocol: ServiceProtocol,
         *,
-        operations: Collection[str] = (),
-        views: Collection[str] | Mapping[str, Collection[str]] = (),
         predicate: Callable[[ServiceDescriptor], bool] | None = None,
         select: Callable[[Collection[ServiceDescriptor]], ServiceDescriptor | None]
         | None = None,
@@ -171,8 +168,6 @@ class DeckrServices:
         )
         async with self.use(
             descriptor,
-            operations=operations,
-            views=views,
             timeout_seconds=_remaining_timeout(deadline),
         ) as lease:
             yield lease
@@ -182,16 +177,12 @@ class DeckrServices:
         self,
         descriptor: ServiceDescriptor,
         *,
-        operations: Collection[str] = (),
-        views: Collection[str] | Mapping[str, Collection[str]] = (),
         timeout_seconds: float | None = None,
     ) -> AsyncIterator[ServiceUseLease]:
         """Open a scoped service-use contract and close it on context exit."""
 
         lease = await self._propose_service_use(
             descriptor,
-            operations=operations,
-            views=views,
             timeout_seconds=timeout_seconds,
         )
         self._active_service_use_leases[id(lease)] = lease
@@ -328,16 +319,8 @@ class DeckrServices:
         self,
         descriptor: ServiceDescriptor,
         *,
-        operations: Collection[str],
-        views: Collection[str] | Mapping[str, Collection[str]],
         timeout_seconds: float | None,
     ) -> ServiceUseLease:
-        terms = service_use_terms(
-            descriptor,
-            client_endpoint=self._endpoint.address,
-            operations=operations,
-            views=views,
-        )
         agreement = None
 
         async def wait_for_valid() -> ServiceUseLease:
@@ -349,7 +332,7 @@ class DeckrServices:
                         local_participant=self._endpoint.address,
                         local_session_id=self._endpoint.session_id,
                         profile=descriptor.use_profile,
-                        terms=terms,
+                        terms=None,
                         refresh_interval=self._service_use_token_refresh_seconds,
                         log_label=f"DeckrServices[{descriptor.namespace}]",
                     ),
@@ -391,7 +374,6 @@ class DeckrServices:
                     return ServiceUseLease(
                         agreement=agreement,
                         descriptor=descriptor,
-                        terms=terms,
                     )
                 if service_use_negotiation_terminal_status(validity.status):
                     await agreement.aclose()

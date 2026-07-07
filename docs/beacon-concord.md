@@ -396,8 +396,8 @@ provider-session contract is valid; Beacon may only discover candidates for new
 or successor negotiations.
 
 Service packages may use generic Beacon and Concord with package-owned feature
-ids, advertisement payload profiles, terms profiles, and direct KV-backed
-service views. Deckr core does not define service-specific domain semantics
+ids, advertisement payload/use profiles, and direct KV-backed service views.
+Deckr core does not define service-specific domain semantics
 such as Sonos zones, OpenHAB items, or package-owned view schemas.
 
 Ordinary service consumers use the managed `deckr.services.DeckrServices`
@@ -411,21 +411,21 @@ ad hoc, classify Concord terminal statuses, or query Concord to discover
 available services. Discovery output is only a candidate for a new service-use
 negotiation.
 
-Service-use Concord contract ids are opaque runtime ids. Consumers derive
-`ServiceUseTerms.serviceUseId` from the selected descriptor, client endpoint,
-requested operations, and requested views as semantic terms material only. It is
-not a Concord contract id, not a reusable pointer, and not a lookup key for
-reviving old authority. New or lost service-use authority is established by
+Service-use Concord contract ids are opaque runtime ids. Service-use contracts
+carry the service-use profile but no service-specific `terms`; `terms` and
+`termsHash` are absent. New or lost service-use authority is established by
 proposing a fresh Concord contract. The Concord participants must be exactly the
-service endpoint and the client endpoint encoded in `ServiceUseTerms`.
+service endpoint and the client endpoint.
 
 After a service-use Concord contract is negotiated, service command and view
 authority follows that already-held lease and its participant tokens, not
-continued Beacon advertisement presence. Protected service views are authorized
-through the service-use contract and fenced by the advertised service identity
-and session. Consumers may refresh an already-held service-use lease while it
-remains valid, but new or lost lease state requires current Beacon discovery and
-a new opaque Concord contract. Protected view watches deliver payloads only
+continued Beacon advertisement presence. Commands must carry the exact contract
+pointer, name a protocol operation, and be sent by the peer named in the
+contract. Protected service views are authorized within the advertised
+view-family prefixes and fenced by the advertised service identity, session, and
+contract pointer. Consumers may refresh an already-held service-use lease while
+it remains valid, but new or lost lease state requires current Beacon discovery
+and a new opaque Concord contract. Protected view watches deliver payloads only
 while the stored entry matches the watcher's service-use fence. If a visible
 same-key entry is replaced by another service identity or session, the watcher
 observes only a removal-style event and must not receive the replacement

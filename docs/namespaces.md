@@ -130,8 +130,11 @@ runtime name, external host name, or provider id.
 Under Beacon/Concord, service packages advertise those namespaces with generic
 Beacon advertisements and, when needed, bind live service-specific agreements
 with generic Concord contracts. Deckr core validates the Beacon/Concord
-envelopes; the service package validates its payloads, terms, operations, and
-result/view schemas. After a service-specific Concord agreement is negotiated,
+envelopes; the service package validates its payloads, operations, and
+result/view schemas. Service-use Concord contracts are termless; command and
+view authority comes from the contract profile, exact participants, token
+validity, command pointer, and retained service resource scope. After a
+service-specific Concord agreement is negotiated,
 Beacon remains discovery input for future negotiations only; agreement validity
 and withdrawal are Concord concerns.
 
@@ -199,7 +202,7 @@ Do not use generic private bucket names such as `state`, `cache`, `services`,
 
 Package-owned private buckets must not redefine Beacon advertisements, Concord
 contract validity, or Deckr-owned hardware/action profile semantics. Service
-packages may define their own Beacon payloads, Concord terms, and direct
+packages may define their own Beacon payloads and direct
 KV-backed service-view buckets under their own public namespace.
 
 ## Pre-V1 Contract Rule

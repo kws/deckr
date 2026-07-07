@@ -25,7 +25,6 @@ from deckr.services import (
     ServiceViewRef,
     service_command_reply_ends_service_use,
     service_unavailable_ends_service_use,
-    service_use_terms,
 )
 from deckr.services.messages import service_command_reply_message
 from deckr.substrates.nats_kv import KvUnavailable
@@ -196,18 +195,16 @@ async def test_use_matching_resolves_descriptor_and_negotiates() -> None:
 
     async with services.use_matching(
         protocol,
-        operations={"play"},
         predicate=lambda descriptor: descriptor.service_id == "demo-home",
         timeout_seconds=10.0,
     ) as lease:
         assert lease.descriptor.service_id == "demo-home"
-        assert lease.terms.allowed_operations == ("play",)
 
     directory.wait_for.assert_awaited_once()
     assert directory.wait_for.await_args.kwargs["timeout"] <= 10.0
     spec = concord.propose.await_args.args[0]
     assert spec.local_participant == _CLIENT_ADDRESS
-    assert spec.terms["allowedOperations"] == ("play",)
+    assert spec.terms is None
     agreement.cancel.assert_awaited_once_with("service_use_closed")
 
 
@@ -223,7 +220,7 @@ async def test_aclose_closes_active_service_use_lease_once() -> None:
         endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
         concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
     )
-    context = services.use(_descriptor(), operations={"play"})
+    context = services.use(_descriptor())
 
     lease = await context.__aenter__()
     assert lease.descriptor.service_id == "demo-home"
@@ -257,7 +254,6 @@ async def test_use_explicit_timeout_cancels_pending_contract() -> None:
     with pytest.raises(ServiceUnavailable) as exc_info:
         async with services.use(
             _descriptor(),
-            operations={"play"},
             timeout_seconds=0.01,
         ):
             pass
@@ -286,7 +282,6 @@ async def test_use_explicit_timeout_covers_proposal_wait() -> None:
     with pytest.raises(ServiceUnavailable) as exc_info:
         async with services.use(
             _descriptor(),
-            operations={"play"},
             timeout_seconds=0.01,
         ):
             pass
@@ -328,7 +323,6 @@ async def test_use_translates_terminal_protocol_conflict_during_negotiation(
     with pytest.raises(ServiceUnavailable) as exc_info:
         async with services.use(
             _descriptor(),
-            operations={"play"},
             timeout_seconds=1.0,
         ):
             pass
@@ -355,7 +349,6 @@ async def test_use_translates_unknown_protocol_conflict_to_service_use_conflict(
     with pytest.raises(ServiceUnavailable) as exc_info:
         async with services.use(
             _descriptor(),
-            operations={"play"},
             timeout_seconds=1.0,
         ):
             pass
@@ -389,11 +382,6 @@ async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
     lease = ServiceUseLease(
         agreement=agreement,
         descriptor=descriptor,
-        terms=service_use_terms(
-            descriptor,
-            client_endpoint=_CLIENT_ADDRESS,
-            operations={"play"},
-        ),
     )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
@@ -442,7 +430,6 @@ async def test_command_request_timeout_is_separate_from_service_use() -> None:
 
     async with services.use(
         _descriptor(),
-        operations={"play"},
         timeout_seconds=30.0,
     ) as lease:
         reply = await services.command(

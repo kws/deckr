@@ -15,16 +15,13 @@ from deckr.services import (
     ServiceCommandReplyBody,
     ServiceCommandStatus,
     ServiceDescriptor,
-    ServiceError,
     ServiceSubscriptionMessage,
     ServiceSubscriptionState,
     ServiceUnavailable,
     ServiceViewFamily,
     ServiceViewRef,
     SharedResourceSubscriptionManager,
-    SharedServiceCommandPool,
 )
-from deckr.services.subscriptions import _views_key
 
 
 @pytest.mark.asyncio
@@ -285,7 +282,7 @@ async def test_shared_resource_subscription_active_command_requires_retained_res
 
 
 @pytest.mark.asyncio
-async def test_shared_resource_subscription_required_resource_avoids_command_pool() -> None:
+async def test_shared_resource_subscription_required_resource_must_be_retained() -> None:
     async with anyio.create_task_group() as tg:
         use_calls: list[dict[str, Any]] = []
         leases: list[Any] = []
@@ -322,13 +319,7 @@ async def test_shared_resource_subscription_required_resource_avoids_command_poo
             ensure_resources=AsyncMock(),
             release_resources=AsyncMock(),
         )
-        pool = SharedServiceCommandPool(
-            services,
-            name="demo",
-            descriptor=descriptor,
-            default_service_use_timeout_seconds=1.0,
-        )
-        manager = _manager(services, command_pool=pool)
+        manager = _manager(services)
 
         session = await manager.open_session({"Kitchen"})
         await _next_state(session, ServiceSubscriptionState.READY)
@@ -346,119 +337,7 @@ async def test_shared_resource_subscription_required_resource_avoids_command_poo
 
         await session.aclose()
         await manager.aclose()
-        await pool.aclose()
         tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_shared_command_pool_reuses_compatible_lease() -> None:
-    leases: list[Any] = []
-    use_calls: list[dict[str, Any]] = []
-    descriptor = AsyncMock(return_value=_descriptor())
-
-    @asynccontextmanager
-    async def use(
-        service_descriptor: ServiceDescriptor,
-        *,
-        operations=(),
-        views=(),
-        timeout_seconds=None,
-    ):
-        del timeout_seconds
-        lease = _lease(service_descriptor, generation=len(leases) + 1)
-        leases.append(lease)
-        use_calls.append({"operations": frozenset(operations), "views": views})
-        try:
-            yield lease
-        finally:
-            lease.closed = True
-
-    async def command(_lease, operation, _params=None, *, timeout_seconds=None):
-        del timeout_seconds
-        return _ok_reply(operation)
-
-    services = SimpleNamespace(
-        descriptor=descriptor,
-        use=use,
-        command=AsyncMock(side_effect=command),
-    )
-    pool = SharedServiceCommandPool(
-        services,
-        name="demo",
-        descriptor=descriptor,
-        default_service_use_timeout_seconds=1.0,
-    )
-
-    first = await pool.command("play", {"zone": "Kitchen"})
-    second = await pool.command("play", {"zone": "Kitchen"})
-
-    assert first.status == ServiceCommandStatus.OK
-    assert second.status == ServiceCommandStatus.OK
-    assert [call["operations"] for call in use_calls] == [frozenset({"play"})]
-    assert [await_call.args[1] for await_call in services.command.await_args_list] == [
-        "play",
-        "play",
-    ]
-
-    await pool.aclose()
-
-
-@pytest.mark.asyncio
-async def test_shared_command_pool_retries_after_service_use_reply() -> None:
-    leases: list[Any] = []
-    descriptor = AsyncMock(return_value=_descriptor())
-    command = AsyncMock(
-        side_effect=[
-            ServiceCommandReplyBody(
-                serviceNamespace="dev.deckr.demo.service",
-                operation="play",
-                status=ServiceCommandStatus.UNAVAILABLE,
-                error=ServiceError(
-                    code="service_use_contract_invalid",
-                    message="ended",
-                    diagnostics={"status": "cancelled"},
-                ),
-            ),
-            _ok_reply("play"),
-        ]
-    )
-
-    @asynccontextmanager
-    async def use(
-        service_descriptor: ServiceDescriptor,
-        *,
-        operations=(),
-        views=(),
-        timeout_seconds=None,
-    ):
-        del operations, views, timeout_seconds
-        lease = _lease(service_descriptor, generation=len(leases) + 1)
-        leases.append(lease)
-        try:
-            yield lease
-        finally:
-            lease.closed = True
-
-    services = SimpleNamespace(
-        descriptor=descriptor,
-        use=use,
-        command=command,
-    )
-    pool = SharedServiceCommandPool(
-        services,
-        name="demo",
-        descriptor=descriptor,
-        default_service_use_timeout_seconds=1.0,
-    )
-
-    reply = await pool.command("play", {"zone": "Kitchen"})
-
-    assert reply.status == ServiceCommandStatus.OK
-    assert descriptor.await_count == 2
-    assert [entry.closed for entry in leases] == [True, False]
-
-    await pool.aclose()
-    assert [entry.closed for entry in leases] == [True, True]
 
 
 def test_shared_resource_subscription_constructor_validation() -> None:
@@ -467,8 +346,6 @@ def test_shared_resource_subscription_constructor_validation() -> None:
         "services": services,
         "name": "demo-zones",
         "descriptor": AsyncMock(return_value=_descriptor()),
-        "operations": {"play"},
-        "views": {"zones"},
         "ensure_resources": AsyncMock(),
         "release_resources": AsyncMock(),
         "view_for_resource": lambda descriptor, zone: ServiceViewRef(
@@ -605,32 +482,6 @@ async def test_shared_resource_subscription_nonterminal_unavailable_does_not_rec
         await session.aclose()
         await manager.aclose()
         tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_shared_command_pool_closed_path() -> None:
-    pool = SharedServiceCommandPool(
-        SimpleNamespace(),
-        name="demo",
-        descriptor=AsyncMock(return_value=_descriptor()),
-    )
-
-    await pool.aclose()
-
-    with pytest.raises(ServiceUnavailable) as exc_info:
-        await pool.command("play", {"zone": "Kitchen"})
-
-    assert exc_info.value.code == "service_command_pool_closed"
-
-
-def test_shared_command_pool_views_key_normalizes_strings_and_mappings() -> None:
-    assert _views_key("zones") == ("zones",)
-    assert _views_key({"zones": "service/demo", "rooms": {"b", "a"}}) == (
-        ("rooms", ("a", "b")),
-        ("zones", ("service/demo",)),
-    )
-
-
 @pytest.mark.asyncio
 async def test_shared_resource_subscription_prunes_closed_but_not_full_subscribers() -> None:
     services = SimpleNamespace(
@@ -693,7 +544,6 @@ async def _wait_until(predicate) -> None:
 def _manager(
     services: Any,
     *,
-    command_pool: SharedServiceCommandPool | None = None,
     replacement: bool = False,
     reconnect_delay_seconds: float = 0.01,
     subscriber_buffer_size: int = 100,
@@ -702,12 +552,6 @@ def _manager(
         services,
         name="demo-zones",
         descriptor=services.descriptor,
-        operations=(
-            {"setZoneScope", "play"}
-            if replacement
-            else {"retainResources", "releaseResources", "play"}
-        ),
-        views={"zones"},
         ensure_resources=None if replacement else services.ensure_resources,
         release_resources=None if replacement else services.release_resources,
         view_for_resource=lambda descriptor, zone: ServiceViewRef(
@@ -715,7 +559,6 @@ def _manager(
             f"service/{descriptor.service_id}/zones/{zone}",
         ),
         message_from_view=_message_from_view,
-        command_pool=command_pool,
         set_resources=services.set_resources if replacement else None,
         service_use_timeout_seconds=1.0,
         reconnect_delay_seconds=reconnect_delay_seconds,

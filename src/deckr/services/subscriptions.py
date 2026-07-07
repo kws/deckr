@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Collection, Hashable, Mapping
-from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from enum import StrEnum
-from time import monotonic
 from types import MappingProxyType
 from typing import Any, Generic, TypeVar
 
@@ -26,8 +24,6 @@ from deckr.services.runtime import (
 logger = logging.getLogger(__name__)
 
 ResourceT = TypeVar("ResourceT", bound=Hashable)
-_Views = Collection[str] | Mapping[str, Collection[str]]
-_ViewsForDescriptor = _Views | Callable[[ServiceDescriptor], _Views]
 
 
 class ServiceSubscriptionState(StrEnum):
@@ -127,8 +123,6 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         *,
         name: str,
         descriptor: Callable[[float | None], Awaitable[ServiceDescriptor]],
-        operations: Collection[str],
-        views: _ViewsForDescriptor,
         ensure_resources: Callable[
             [ServiceUseLease, frozenset[ResourceT]], Awaitable[None]
         ]
@@ -142,7 +136,6 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             [ResourceT, Mapping[str, Any] | None],
             ServiceSubscriptionMessage[ResourceT],
         ],
-        command_pool: SharedServiceCommandPool | None = None,
         set_resources: Callable[
             [ServiceUseLease, frozenset[ResourceT]], Awaitable[None]
         ]
@@ -167,14 +160,11 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         self._services = services
         self._name = name
         self._descriptor = descriptor
-        self._operations = frozenset(operations)
-        self._views = views
         self._ensure_resources = ensure_resources
         self._release_resources = release_resources
         self._set_resources = set_resources
         self._view_for_resource = view_for_resource
         self._message_from_view = message_from_view
-        self._command_pool = command_pool
         self._service_use_timeout_seconds = service_use_timeout_seconds
         self._reconnect_delay_seconds = reconnect_delay_seconds
         self._subscriber_buffer_size = subscriber_buffer_size
@@ -315,17 +305,10 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
                     "resource": repr(required_resource),
                 },
             )
-        if self._command_pool is None:
-            raise ServiceUnavailable(
-                "service_subscription_command_unavailable",
-                "No compatible active subscription lease is available",
-                {"operation": operation, "manager": self._name},
-            )
-        return await self._command_pool.command(
-            operation,
-            params,
-            service_use_timeout_seconds=self._service_use_timeout_seconds,
-            request_timeout_seconds=timeout_seconds,
+        raise ServiceUnavailable(
+            "service_subscription_command_unavailable",
+            "No compatible active subscription lease is available",
+            {"operation": operation, "manager": self._name},
         )
 
     async def command_on_active_lease(
@@ -336,10 +319,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
     ) -> ServiceCommandReplyBody | None:
-        lease = await self._active_command_lease(
-            operation,
-            required_resource=required_resource,
-        )
+        lease = await self._active_command_lease(required_resource=required_resource)
         if lease is None:
             return None
         try:
@@ -378,12 +358,11 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
 
     async def _active_command_lease(
         self,
-        operation: str,
         *,
         required_resource: ResourceT | None = None,
     ) -> ServiceUseLease | None:
         async with self._lock:
-            if self._closed or operation not in self._operations:
+            if self._closed:
                 return None
             if (
                 required_resource is not None
@@ -459,8 +438,6 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
     async def _run_with_descriptor(self, descriptor: ServiceDescriptor) -> None:
         context = self._services.use(
             descriptor,
-            operations=self._operations,
-            views=_views_for_descriptor(self._views, descriptor),
             timeout_seconds=self._service_use_timeout_seconds,
         )
         lease = await context.__aenter__()
@@ -728,122 +705,6 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
                 self._prune_latest_locked()
                 self._notify_changed_locked()
 
-
-@dataclass(slots=True)
-class _CommandPoolEntry:
-    context: AbstractAsyncContextManager[ServiceUseLease]
-    lease: ServiceUseLease
-
-
-class SharedServiceCommandPool:
-    """Reuse compatible service-use leases for command-only service calls."""
-
-    def __init__(
-        self,
-        services: Any,
-        *,
-        name: str,
-        descriptor: Callable[[float | None], Awaitable[ServiceDescriptor]],
-        default_service_use_timeout_seconds: float | None = None,
-    ) -> None:
-        self._services = services
-        self._name = name
-        self._descriptor = descriptor
-        self._default_service_use_timeout_seconds = default_service_use_timeout_seconds
-        self._lock = anyio.Lock()
-        self._entries: dict[tuple[frozenset[str], tuple[Any, ...]], _CommandPoolEntry] = {}
-        self._closed = False
-
-    async def command(
-        self,
-        operation: str,
-        params: Mapping[str, Any] | None = None,
-        *,
-        operations: Collection[str] | None = None,
-        views: _Views = (),
-        service_use_timeout_seconds: float | None = None,
-        request_timeout_seconds: float | None = None,
-    ) -> ServiceCommandReplyBody:
-        required_operations = frozenset(operations or (operation,))
-        if operation not in required_operations:
-            required_operations = frozenset((*required_operations, operation))
-        key = (required_operations, _views_key(views))
-        deadline = _deadline(
-            service_use_timeout_seconds
-            if service_use_timeout_seconds is not None
-            else self._default_service_use_timeout_seconds
-        )
-        while True:
-            entry = await self._entry(key, required_operations, views, deadline)
-            try:
-                reply = await self._services.command(
-                    entry.lease,
-                    operation,
-                    params,
-                    timeout_seconds=request_timeout_seconds,
-                )
-            except ServiceUnavailable as exc:
-                if not service_unavailable_ends_service_use(exc):
-                    raise
-                await self._drop_entry(key, entry)
-                if _remaining_timeout(deadline) == 0:
-                    raise
-                continue
-            if not service_command_reply_ends_service_use(reply):
-                return reply
-            await self._drop_entry(key, entry)
-            if _remaining_timeout(deadline) == 0:
-                return reply
-
-    async def aclose(self) -> None:
-        async with self._lock:
-            self._closed = True
-            entries = tuple(self._entries.values())
-            self._entries.clear()
-        for entry in entries:
-            await entry.context.__aexit__(None, None, None)
-
-    async def _entry(
-        self,
-        key: tuple[frozenset[str], tuple[Any, ...]],
-        operations: frozenset[str],
-        views: _Views,
-        deadline: float | None,
-    ) -> _CommandPoolEntry:
-        async with self._lock:
-            if self._closed:
-                raise ServiceUnavailable(
-                    "service_command_pool_closed",
-                    "Service command pool is closed",
-                    {"pool": self._name},
-                )
-            entry = self._entries.get(key)
-            if entry is not None:
-                return entry
-            descriptor = await self._descriptor(_remaining_timeout(deadline))
-            context = self._services.use(
-                descriptor,
-                operations=operations,
-                views=views,
-                timeout_seconds=_remaining_timeout(deadline),
-            )
-            lease = await context.__aenter__()
-            entry = _CommandPoolEntry(context=context, lease=lease)
-            self._entries[key] = entry
-            return entry
-
-    async def _drop_entry(
-        self,
-        key: tuple[frozenset[str], tuple[Any, ...]],
-        entry: _CommandPoolEntry,
-    ) -> None:
-        async with self._lock:
-            if self._entries.get(key) is not entry:
-                return
-            self._entries.pop(key, None)
-        await entry.context.__aexit__(None, None, None)
-
-
 def _state_message(
     resource: ResourceT,
     state: ServiceSubscriptionState,
@@ -877,31 +738,6 @@ def _service_unavailable_from_reply(reply: ServiceCommandReplyBody) -> ServiceUn
     return ServiceUnavailable(error.code, error.message, dict(error.diagnostics))
 
 
-def _views_for_descriptor(
-    views: _ViewsForDescriptor,
-    descriptor: ServiceDescriptor,
-) -> _Views:
-    if callable(views):
-        return views(descriptor)
-    return views
-
-
-def _views_key(views: _Views) -> tuple[Any, ...]:
-    if isinstance(views, Mapping):
-        return tuple(
-            sorted(
-                (
-                    family,
-                    tuple(sorted((prefixes,) if isinstance(prefixes, str) else prefixes)),
-                )
-                for family, prefixes in views.items()
-            )
-        )
-    if isinstance(views, str):
-        return (views,)
-    return tuple(sorted(views))
-
-
 def _send_nowait(
     send: anyio.abc.ObjectSendStream[ServiceSubscriptionMessage[ResourceT]],
     message: ServiceSubscriptionMessage[ResourceT],
@@ -919,15 +755,3 @@ def _send_nowait(
         return True
     except (anyio.BrokenResourceError, anyio.ClosedResourceError):
         return False
-
-
-def _deadline(timeout_seconds: float | None) -> float | None:
-    if timeout_seconds is None:
-        return None
-    return monotonic() + max(0.0, float(timeout_seconds))
-
-
-def _remaining_timeout(deadline: float | None) -> float | None:
-    if deadline is None:
-        return None
-    return max(0.0, deadline - monotonic())

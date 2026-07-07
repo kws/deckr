@@ -511,13 +511,10 @@ class ServiceViewStore:
             raise UnsupportedServiceScope(
                 f"Service view {view.key!r} is not in bucket {self.bucket!r}"
             )
-        for family, prefixes in lease.terms.allowed_views.items():
-            view_family = lease.descriptor.views.get(family)
-            if view_family is None:
-                continue
+        for view_family in lease.descriptor.views.values():
             if view.store_name != view_family.store_name:
                 continue
-            if any(view.key.startswith(prefix) for prefix in prefixes):
+            if view.key.startswith(view_family.key_prefix):
                 return
         raise UnsupportedServiceScope(
             f"Service-use lease does not authorize view {view.key!r}"

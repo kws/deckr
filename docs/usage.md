@@ -100,7 +100,6 @@ async def report_presence() -> None:
             async with deckr.services(endpoint) as services:
                 async with services.use_matching(
                     EXAMPLE_PROTOCOL,
-                    operations={"presence.report"},
                     predicate=usable_presence_service,
                     timeout_seconds=30.0,
                 ) as lease:
@@ -119,10 +118,10 @@ async def report_presence() -> None:
 ```
 
 `use_matching(...)` owns discovery and service-use negotiation. The caller
-states required operations, views, matching policy, and an optional selector.
-The returned lease is valid only inside the context. If service-use authority is
-lost, the managed API raises `ServiceUnavailable` or a service command reply
-reports the service-domain error.
+states matching policy and an optional selector. The returned lease is valid
+only inside the context. If service-use authority is lost, the managed API
+raises `ServiceUnavailable` or a service command reply reports the
+service-domain error.
 
 ## Reading And Watching Views
 
@@ -149,7 +148,6 @@ async def watch_presence_status(person_id: str) -> None:
             async with deckr.services(endpoint) as services:
                 async with services.use_matching(
                     EXAMPLE_PROTOCOL,
-                    views={"status"},
                     predicate=usable_presence_service,
                     timeout_seconds=30.0,
                 ) as lease:
@@ -181,7 +179,6 @@ from deckr.services import ServiceSubscriptionState
 async with sonos.zone_subscription_session(
     "sonos-home",
     zones={"Kitchen"},
-    operations={"adjustVolume", "play", "pause"},
 ) as session:
     async for message in session.messages:
         if message.state is ServiceSubscriptionState.READY:
@@ -215,7 +212,6 @@ class SonosPlayButton(DeckrAction):
             async with sonos.zone_subscription_session(
                 "sonos-home",
                 zones={self.zone_name},
-                operations={"play", "pause"},
             ) as session:
                 self._session = session
                 async for message in session.messages:
@@ -262,66 +258,17 @@ whose wire API treats scope as full replacement should use `set_resources(...)`
 and `ResourceSubscriptionSession.set(...)`; domains with additive external APIs
 can still use `ensure_resources(...)` and `release_resources(...)`.
 
-## Shared Commands
-
-`SharedServiceCommandPool` is low-level infrastructure for domain service
-clients that need a managed command session for operations that are not tied to
-an already-retained resource. It is not a substitute for opening a resource
-session during the action lifecycle.
-
-Zone-bound, item-bound, or otherwise resource-bound action code should open the
-domain session early and call `session.command(...)`. If that session is absent
-or currently disconnected, the action should render the appropriate
-disconnected/unavailable state instead of opening a short-lived command lease on
-the interaction path.
-
-Domain clients may still use `SharedServiceCommandPool` internally for
-operations with no retained resource session or for infrastructure fallbacks.
-The pool owns service-use sessions internally and reuses them instead of opening
-a fresh Concord service-use contract for every call:
-
-```python
-from deckr.services import SharedServiceCommandPool
-
-
-pool = services.get_shared_manager(
-    ("example-command-pool", "presence-home"),
-    lambda: SharedServiceCommandPool(
-        services,
-        name="example-presence-commands",
-        descriptor=lambda timeout: resolve_presence_descriptor(timeout),
-        default_service_use_timeout_seconds=30.0,
-    ),
-)
-
-reply = await pool.command(
-    "presence.report",
-    {"state": "home"},
-    request_timeout_seconds=8.0,
-)
-```
-
-The command pool reuses compatible command service-use sessions, refreshes
-before use, retries with a successor session when service-use authority is lost,
-and returns ordinary service-domain replies to the caller.
-
-When a command is associated with a retained subscribed resource, the domain
-service client should use the compatible active subscription session with a
-required retained resource. Falling back to a command pool for that same
-resource hides a disconnected session from the action, adds first-interaction
-latency, and creates avoidable short-lived Concord churn.
-
 ## Low-Level Lease Loss Helpers
 
 Low-level service infrastructure can still classify service-use loss with the
 shared helpers instead of maintaining terminal-code sets. Those helpers are for
-core subscription managers, command pools, and provider/runtime infrastructure
-that is directly responsible for negotiating successor service-use contracts.
+core subscription managers and provider/runtime infrastructure that is directly
+responsible for negotiating successor service-use contracts.
 
 Ordinary action and display code should consume domain service-client APIs:
 managed subscription sessions expose lifecycle through `session.messages`, and
-command pools return ordinary service-domain replies. Consumers should not
-import lease-loss helpers or treat missing payloads as lifecycle authority.
+commands return ordinary service-domain replies. Consumers should not import
+lease-loss helpers or treat missing payloads as lifecycle authority.
 
 ## Provider Boundary
 

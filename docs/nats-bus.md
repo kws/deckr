@@ -333,14 +333,14 @@ stops maintaining its participant token.
 
 The service API is intentionally layered. `deckr.services` exports service
 profile and message contracts such as `ServiceProtocol`,
-`ServiceAdvertisementPayload`, `ServiceDescriptor`, `ServiceUseTerms`,
+`ServiceAdvertisementPayload`, `ServiceDescriptor`,
 `ServiceViewFamilyDefinition`, `ServiceViewFamily`, `ServiceViewRef`, service
-command schemas, descriptor parsing, terms construction, and service-view key
-helpers. For normal feature clients it also exposes the managed
-`DeckrServices` client. Services advertise descriptors through Beacon,
-negotiate service-use authority through Concord, and, when the host explicitly
-enables the optional `services` lane, carry service command/reply messages as
-ordinary lane traffic. A service keeps its own advertisement fresh, skips
+command schemas, descriptor parsing, and service-view key helpers. For normal
+feature clients it also exposes the managed `DeckrServices` client. Services
+advertise descriptors through Beacon, negotiate termless service-use authority
+through Concord, and, when the host explicitly enables the optional `services`
+lane, carry service command/reply messages as ordinary lane traffic. A service
+keeps its own advertisement fresh, skips
 unchanged refresh writes when possible, best-effort withdraws on clean shutdown,
 and removes stale same-endpoint advertisements left by an earlier crashed
 session or changed configuration.
@@ -352,8 +352,10 @@ service-use negotiation, command authorization pointers, and fenced view
 reads/watches. Consumers must not scan Beacon KV, perform an exact NATS round
 trip for discovery, query Concord, duplicate service-specific Beacon indexing,
 classify Concord terminal statuses, or use Concord as a service catalog.
-`ServiceUseTerms.serviceUseId` remains semantic terms material only; it must not
-be used as a Concord contract id, reusable pointer, or authority lookup key.
+Service-use Concord contracts do not carry service-specific `terms`; `terms`
+and `termsHash` are absent. Authority comes from the service profile, exact
+participants, participant-token/session validity, command contract pointers,
+and any retained resource scope managed by the service protocol.
 
 Direct Beacon directory construction, Concord agreement proposal, and direct
 `ServiceViewStore` use are infrastructure-level tools for core runtime code,
