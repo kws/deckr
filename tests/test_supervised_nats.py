@@ -567,6 +567,41 @@ async def test_supervisor_monitor_raises_on_unexpected_process_exit(
 
 
 @pytest.mark.asyncio
+async def test_supervisor_start_monitor_drains_process_output(
+    tmp_path: Path,
+) -> None:
+    class Stream:
+        def __init__(self, chunks: list[bytes]) -> None:
+            self._chunks = chunks
+
+        async def receive(self) -> bytes:
+            await anyio.sleep(0)
+            if self._chunks:
+                return self._chunks.pop(0)
+            await anyio.sleep_forever()
+
+    class Process:
+        stdout = Stream([b"ready on stdout\n"])
+        stderr = Stream([b"warn on stderr\n"])
+
+        async def wait(self) -> int:
+            await anyio.sleep_forever()
+
+    supervisor = NatsServerSupervisor(runtime_dir=tmp_path)
+    supervisor._process = Process()  # noqa: SLF001
+
+    async with anyio.create_task_group() as tg:
+        supervisor.start_monitor(tg)
+        with anyio.fail_after(1.0):
+            while set(supervisor.recent_logs()) != {
+                "stdout: ready on stdout",
+                "stderr: warn on stderr",
+            }:
+                await anyio.sleep(0.01)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_supervised_connect_failure_stops_supervisor_and_clears_nats(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

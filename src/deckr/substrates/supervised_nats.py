@@ -171,10 +171,6 @@ class NatsServerSupervisor:
         self._logs: deque[str] = deque(maxlen=log_buffer_lines)
         self._temporary_dir: tempfile.TemporaryDirectory[str] | None = None
         self._process = None
-        self._io_task_group_cm: AbstractAsyncContextManager[anyio.abc.TaskGroup] | None = (
-            None
-        )
-        self._io_task_group: anyio.abc.TaskGroup | None = None
         self._handle: NatsServerHandle | None = None
         self._auth_token: str | None = None
         self._ports_dir: Path | None = None
@@ -232,8 +228,12 @@ class NatsServerSupervisor:
                 cwd=str(runtime_dir),
                 start_new_session=True,
             )
-            await self._start_io_drain()
-            url = await self._wait_until_ready()
+            async with anyio.create_task_group() as startup_tg:
+                self._start_output_drains(startup_tg)
+                try:
+                    url = await self._wait_until_ready()
+                finally:
+                    startup_tg.cancel_scope.cancel()
         except BaseException:
             await self.stop()
             raise
@@ -262,6 +262,7 @@ class NatsServerSupervisor:
         return secrets.token_urlsafe(32)
 
     def start_monitor(self, tg: anyio.abc.TaskGroup) -> None:
+        self._start_output_drains(tg)
         tg.start_soon(self._raise_on_unexpected_exit)
 
     async def stop(self) -> None:
@@ -282,16 +283,6 @@ class NatsServerSupervisor:
                 except BaseException as err:
                     cleanup_errors.append(err)
             self._process = None
-
-            if self._io_task_group is not None:
-                self._io_task_group.cancel_scope.cancel()
-            if self._io_task_group_cm is not None:
-                try:
-                    await self._io_task_group_cm.__aexit__(None, None, None)
-                except BaseException as err:
-                    cleanup_errors.append(err)
-            self._io_task_group = None
-            self._io_task_group_cm = None
 
             if self._ports_dir is not None:
                 try:
@@ -338,16 +329,14 @@ class NatsServerSupervisor:
             return
         process.kill()
 
-    async def _start_io_drain(self) -> None:
+    def _start_output_drains(self, tg: anyio.abc.TaskGroup) -> None:
         process = self._process
         if process is None:
             return
-        self._io_task_group_cm = anyio.create_task_group()
-        self._io_task_group = await self._io_task_group_cm.__aenter__()
         if process.stdout is not None:
-            self._io_task_group.start_soon(self._drain_output, process.stdout, "stdout")
+            tg.start_soon(self._drain_output, process.stdout, "stdout")
         if process.stderr is not None:
-            self._io_task_group.start_soon(self._drain_output, process.stderr, "stderr")
+            tg.start_soon(self._drain_output, process.stderr, "stderr")
 
     async def _drain_output(self, stream, source: str) -> None:
         pending = b""
