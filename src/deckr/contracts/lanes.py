@@ -65,11 +65,7 @@ class MessageContractRegistry:
 ACTION_MESSAGE_TYPES = frozenset(
     {
         "actionExtension",
-        "actionAvailabilityChanged",
-        "actionAvailabilityRequest",
-        "actionAvailabilitySnapshot",
         "actionInstanceCreated",
-        "actionInterestUpdate",
         "actionInstanceDestroyed",
         "actionLifecycleRejected",
         "bindingAttached",
@@ -122,12 +118,7 @@ SERVICE_LANE_CONTRACT = MessageContract(
 )
 
 ACTION_NO_CONTRACT_MESSAGE_TYPES = frozenset(
-    {
-        "actionAvailabilityChanged",
-        "actionAvailabilityRequest",
-        "actionAvailabilitySnapshot",
-        "actionInterestUpdate",
-    }
+    {}
 )
 
 ACTION_OPTIONAL_CONTRACT_MESSAGE_TYPES = frozenset(
