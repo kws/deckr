@@ -82,9 +82,11 @@ from deckr.profiles import (
     ActionsBeaconPayload,
 )
 from deckr.services.messages import (
+    SERVICE_MESSAGE,
     SERVICE_MESSAGES_SCHEMA_ID,
-    SERVICE_REQUEST,
-    ServiceRequestBody,
+    ServiceExchangePattern,
+    ServiceMessageBody,
+    ServiceMessageIntent,
     service_message_schema,
 )
 from deckr.substrates.nats import _headers_for, _subject_for
@@ -294,10 +296,10 @@ def _fixtures() -> list[dict[str, Any]]:
         ),
         message_id="fixture-hardware-control-input",
     )
-    service_request = _stable_message(
+    service_message = _stable_message(
         DeckrMessage(
             lane=SERVICES_LANE,
-            messageType=SERVICE_REQUEST,
+            messageType=SERVICE_MESSAGE,
             sender=controller_address("controller-main"),
             senderSessionId="controller-session",
             recipient=endpoint_target(service_address("media-home")),
@@ -307,15 +309,17 @@ def _fixtures() -> list[dict[str, Any]]:
                 "service",
                 serviceId="media-home",
                 namespace="org.example.media.service",
-                operation="play",
+                name="play",
             ),
-            body=ServiceRequestBody(
+            body=ServiceMessageBody(
                 serviceNamespace="org.example.media.service",
-                operation="play",
+                name="play",
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
                 params={"zone": "kitchen"},
             ).to_dict(),
         ),
-        message_id="fixture-service-request",
+        message_id="fixture-service-message",
     )
 
     hardware_advertisement = AdvertisementRecord(
@@ -383,11 +387,11 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=hardware_input,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.services.service_request.valid.v1",
-            path="fixtures/valid/services/service-request.v1.json",
-            title="Valid serviceRequest service message",
+            artifact_id="dev.deckr.fixture.services.service_message.valid.v1",
+            path="fixtures/valid/services/service-message.v1.json",
+            title="Valid serviceMessage service message",
             schema_path="schemas/services/services.v1.schema.json",
-            payload=service_request,
+            payload=service_message,
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.beacon.hardware.valid.v1",
@@ -472,13 +476,18 @@ def _fixtures() -> list[dict[str, Any]]:
             valid=False,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.services.service_request.invalid_missing_namespace.v1",
-            path="fixtures/invalid/services/service-request-missing-namespace.v1.json",
-            title="Invalid serviceRequest missing serviceNamespace",
+            artifact_id="dev.deckr.fixture.services.service_message.invalid_missing_namespace.v1",
+            path="fixtures/invalid/services/service-message-missing-namespace.v1.json",
+            title="Invalid serviceMessage missing serviceNamespace",
             schema_path="schemas/services/services.v1.schema.json",
             payload={
-                **service_request,
-                "body": {"operation": "play", "params": {"zone": "kitchen"}},
+                **service_message,
+                "body": {
+                    "name": "play",
+                    "intent": "command",
+                    "exchangePattern": "request_reply",
+                    "params": {"zone": "kitchen"},
+                },
             },
             valid=False,
         ),

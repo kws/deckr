@@ -229,7 +229,7 @@ state; continued Beacon presence is not live authority after a Concord session
 exists.
 
 Services should use package-owned feature ids, payload/use profiles, and
-explicit service-view buckets. Service request messages are ordinary lane
+explicit service-view buckets. Service messages are ordinary lane
 messages when the optional `services` lane is enabled. Protected service-view
 authority follows Concord service-use contracts, not continued Beacon presence.
 

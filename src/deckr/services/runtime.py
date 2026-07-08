@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,7 +31,14 @@ from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import DeckrMessage, EndpointAddress, service_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
-from deckr.services.messages import ServiceReplyBody
+from deckr.services.messages import (
+    SERVICE_MESSAGE,
+    ServiceExchangePattern,
+    ServiceMessageBody,
+    ServiceMessageDirection,
+    ServiceMessageIntent,
+    service_body,
+)
 
 _TERMINAL_DURING_NEGOTIATION = frozenset(
     {
@@ -64,6 +72,25 @@ _SERVICE_USE_REPLY_ERROR_CODES = frozenset(
         "service_use_contract_invalid",
     }
 )
+_JSON_SCHEMA_CONTRACT_KEYS = frozenset(
+    {
+        "$ref",
+        "allOf",
+        "anyOf",
+        "const",
+        "enum",
+        "items",
+        "oneOf",
+        "properties",
+        "type",
+    }
+)
+_OPERATION_INTENTS = frozenset(
+    {
+        ServiceMessageIntent.COMMAND,
+        ServiceMessageIntent.QUERY,
+    }
+)
 
 
 class ServiceBackendStatus(StrEnum):
@@ -72,9 +99,98 @@ class ServiceBackendStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class ServiceViewWriter(StrEnum):
+    SERVICE = "service"
+    CONSUMER = "consumer"
+
+
+class ServiceOperationDefinition(DeckrModel):
+    description: str | None = None
+
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_text(value, field_name="service operation description")
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+class ServicePayloadSchema(DeckrModel):
+    """A JSON Schema contract for one service-message payload position."""
+
+    schema_id: str = Field(alias="schemaId")
+    json_schema: JsonObject = Field(alias="schema")
+
+    @field_validator("schema_id")
+    @classmethod
+    def _validate_schema_id(cls, value: str) -> str:
+        return _require_text(value, field_name="service payload schema id")
+
+    @field_validator("json_schema", mode="before")
+    @classmethod
+    def _thaw_schema(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("json_schema", mode="after")
+    @classmethod
+    def _freeze_schema(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        if not value:
+            raise ValueError("service payload schema must not be empty")
+        if not any(key in value for key in _JSON_SCHEMA_CONTRACT_KEYS):
+            raise ValueError(
+                "service payload schema must include a JSON Schema contract keyword"
+            )
+        _require_json_wire_safe(value, field_name="service payload schema")
+        return freeze_json(value)
+
+    @field_serializer("json_schema")
+    def _serialize_schema(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw_json(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+class ServiceMessageDefinition(DeckrModel):
+    operation: str | None = None
+    intent: ServiceMessageIntent
+    exchange_pattern: ServiceExchangePattern = Field(alias="exchangePattern")
+    direction: ServiceMessageDirection
+    params_schema: ServicePayloadSchema | None = Field(
+        default=None,
+        alias="paramsSchema",
+    )
+    result_schema: ServicePayloadSchema | None = Field(
+        default=None,
+        alias="resultSchema",
+    )
+    event_schema: ServicePayloadSchema | None = Field(
+        default=None,
+        alias="eventSchema",
+    )
+    error_schema: ServicePayloadSchema | None = Field(
+        default=None,
+        alias="errorSchema",
+    )
+
+    @field_validator("operation")
+    @classmethod
+    def _validate_operation(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_text(value, field_name="service message operation")
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
 class ServiceViewFamily(DeckrModel):
     store_name: str = Field(alias="storeName")
     key_prefix: str = Field(alias="keyPrefix")
+    writer: ServiceViewWriter
 
     @field_validator("store_name", "key_prefix")
     @classmethod
@@ -87,6 +203,7 @@ class ServiceViewFamily(DeckrModel):
 
 class ServiceViewFamilyDefinition(DeckrModel):
     store_name: str = Field(alias="storeName")
+    writer: ServiceViewWriter
 
     @field_validator("store_name")
     @classmethod
@@ -123,7 +240,8 @@ class ServiceProtocol:
     feature_id: str
     advertisement_profile: str
     use_profile: str
-    operations: tuple[str, ...]
+    operations: Mapping[str, ServiceOperationDefinition]
+    messages: Mapping[str, ServiceMessageDefinition]
     view_families: Mapping[str, ServiceViewFamilyDefinition]
 
     def __post_init__(self) -> None:
@@ -150,13 +268,25 @@ class ServiceProtocol:
             "use_profile",
             _require_text(self.use_profile, field_name="service use profile"),
         )
-        operations = tuple(
-            _require_text(item, field_name="service operation")
-            for item in self.operations
-        )
-        if not operations:
-            raise ValueError("service protocol operations must not be empty")
-        object.__setattr__(self, "operations", operations)
+        operations: dict[str, ServiceOperationDefinition] = {}
+        for name, definition in self.operations.items():
+            key = _require_text(name, field_name="service operation")
+            operations[key] = (
+                definition
+                if isinstance(definition, ServiceOperationDefinition)
+                else ServiceOperationDefinition.model_validate(definition)
+            )
+        object.__setattr__(self, "operations", MappingProxyType(operations))
+        messages: dict[str, ServiceMessageDefinition] = {}
+        for name, definition in self.messages.items():
+            key = _require_text(name, field_name="service message")
+            messages[key] = (
+                definition
+                if isinstance(definition, ServiceMessageDefinition)
+                else ServiceMessageDefinition.model_validate(definition)
+            )
+        _validate_service_message_operations(operations, messages)
+        object.__setattr__(self, "messages", MappingProxyType(messages))
         families: dict[str, ServiceViewFamilyDefinition] = {}
         for name, family in self.view_families.items():
             key = _require_text(name, field_name="service view family name")
@@ -183,7 +313,8 @@ class ServiceProtocol:
             sessionId=session_id,
             serviceUseProfile=self.use_profile,
             backendStatus=backend_status,
-            supportedOperations=self.operations,
+            supportedOperations=tuple(self.operations),
+            supportedMessages=self.messages,
             views=_service_protocol_views(self, service_id),
             diagnostics=dict(diagnostics or {}),
         )
@@ -198,6 +329,9 @@ class ServiceAdvertisementPayload(DeckrModel):
     service_use_profile: str = Field(alias="serviceUseProfile")
     backend_status: ServiceBackendStatus = Field(alias="backendStatus")
     supported_operations: tuple[str, ...] = Field(alias="supportedOperations")
+    supported_messages: Mapping[str, ServiceMessageDefinition] = Field(
+        alias="supportedMessages"
+    )
     views: Mapping[str, ServiceViewFamily]
     diagnostics: JsonObject = Field(default_factory=dict)
 
@@ -215,18 +349,24 @@ class ServiceAdvertisementPayload(DeckrModel):
     @field_validator("supported_operations")
     @classmethod
     def _validate_operations(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value:
-            raise ValueError("service advertisement requires operations")
         return tuple(
             _require_text(item, field_name="service operation") for item in value
         )
 
     @field_validator("views", mode="after")
     @classmethod
-    def _freeze_views(
+    def _freeze_views_and_messages(
         cls,
-        value: Mapping[str, ServiceViewFamily],
-    ) -> Mapping[str, ServiceViewFamily]:
+        value: Mapping[str, ServiceViewFamily] | Mapping[str, ServiceMessageDefinition],
+    ) -> Mapping[str, ServiceViewFamily] | Mapping[str, ServiceMessageDefinition]:
+        return freeze_json(value)
+
+    @field_validator("supported_messages", mode="after")
+    @classmethod
+    def _freeze_messages(
+        cls,
+        value: Mapping[str, ServiceMessageDefinition],
+    ) -> Mapping[str, ServiceMessageDefinition]:
         return freeze_json(value)
 
     @field_validator("diagnostics", mode="before")
@@ -243,6 +383,16 @@ class ServiceAdvertisementPayload(DeckrModel):
     def _serialize_views(
         self,
         value: Mapping[str, ServiceViewFamily],
+    ) -> dict[str, dict[str, Any]]:
+        return {
+            key: item.model_dump(by_alias=True, exclude_none=True, mode="json")
+            for key, item in value.items()
+        }
+
+    @field_serializer("supported_messages")
+    def _serialize_supported_messages(
+        self,
+        value: Mapping[str, ServiceMessageDefinition],
     ) -> dict[str, dict[str, Any]]:
         return {
             key: item.model_dump(by_alias=True, exclude_none=True, mode="json")
@@ -275,6 +425,7 @@ class ServiceDescriptor:
     advertisement_profile: str
     use_profile: str
     supported_operations: frozenset[str]
+    supported_messages: Mapping[str, ServiceMessageDefinition]
     views: Mapping[str, ServiceViewFamily]
     backend_status: ServiceBackendStatus
     diagnostics: Mapping[str, Any]
@@ -288,6 +439,11 @@ class ServiceDescriptor:
                 for item in self.supported_operations
             ),
         )
+        object.__setattr__(
+            self,
+            "supported_messages",
+            MappingProxyType(dict(self.supported_messages)),
+        )
         object.__setattr__(self, "views", MappingProxyType(dict(self.views)))
         object.__setattr__(self, "diagnostics", freeze_json(dict(self.diagnostics)))
 
@@ -296,9 +452,15 @@ class ServiceDescriptor:
 class ServiceUseLease:
     agreement: ConcordAgreementLease
     descriptor: ServiceDescriptor
+    consumer_endpoint: EndpointAddress
+    consumer_session_id: str
     _had_valid_authority: bool = False
 
     def __post_init__(self) -> None:
+        self.consumer_session_id = _require_text(
+            self.consumer_session_id,
+            field_name="consumer session id",
+        )
         self._had_valid_authority = _agreement_had_valid_authority(self.agreement)
 
     @property
@@ -362,9 +524,102 @@ def _agreement_had_valid_authority(agreement: ConcordAgreementLease) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class AuthorizedServiceRequest:
+class ServiceViewWriteContext:
+    writer: ServiceViewWriter
+    service_id: str
+    service_namespace: str
+    service_endpoint: EndpointAddress
+    service_session_id: str
+    consumer_endpoint: EndpointAddress
+    consumer_session_id: str
+    contract: ContractPointer
+    views: Mapping[str, ServiceViewFamily]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "service_id",
+            _require_text(self.service_id, field_name="service id"),
+        )
+        object.__setattr__(
+            self,
+            "service_namespace",
+            _require_text(
+                self.service_namespace,
+                field_name="service namespace",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "service_session_id",
+            _require_text(
+                self.service_session_id,
+                field_name="service session id",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "consumer_session_id",
+            _require_text(
+                self.consumer_session_id,
+                field_name="consumer session id",
+            ),
+        )
+        object.__setattr__(self, "views", MappingProxyType(dict(self.views)))
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceViewReadContext:
+    reader: ServiceViewWriter
+    service_id: str
+    service_namespace: str
+    service_endpoint: EndpointAddress
+    service_session_id: str
+    consumer_endpoint: EndpointAddress
+    consumer_session_id: str
+    contract: ContractPointer
+    views: Mapping[str, ServiceViewFamily]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "service_id",
+            _require_text(self.service_id, field_name="service id"),
+        )
+        object.__setattr__(
+            self,
+            "service_namespace",
+            _require_text(
+                self.service_namespace,
+                field_name="service namespace",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "service_session_id",
+            _require_text(
+                self.service_session_id,
+                field_name="service session id",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "consumer_session_id",
+            _require_text(
+                self.consumer_session_id,
+                field_name="consumer session id",
+            ),
+        )
+        object.__setattr__(self, "views", MappingProxyType(dict(self.views)))
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizedServiceMessage:
     contract: ContractHandle
     record: ContractRecord
+    body: ServiceMessageBody
+    view_read_context: ServiceViewReadContext
+    view_write_context: ServiceViewWriteContext
 
 
 class ServiceUnavailable(Exception):
@@ -435,10 +690,10 @@ def service_unavailable_ends_service_use(exc: ServiceUnavailable) -> bool:
     return _service_use_diagnostics_end_service_use(dict(exc.diagnostics))
 
 
-def service_reply_ends_service_use(reply: ServiceReplyBody) -> bool:
-    """Return whether a service reply reports ended service-use authority."""
+def service_message_ends_service_use(message: ServiceMessageBody) -> bool:
+    """Return whether a service response reports ended service-use authority."""
 
-    error = getattr(reply, "error", None)
+    error = getattr(message, "error", None)
     if error is None:
         return False
     if error.code in _SERVICE_USE_LOSS_CODES:
@@ -450,28 +705,100 @@ def service_reply_ends_service_use(reply: ServiceReplyBody) -> bool:
     )
 
 
-async def authorize_service_request(
+async def authorize_service_message(
     participant: ConcordParticipant,
     message: DeckrMessage,
     *,
     service_id: str,
     protocol: ServiceProtocol,
-    operation: str,
-) -> AuthorizedServiceRequest:
-    """Validate that a service request is authorized by its exact Concord pointer."""
+    name: str | None = None,
+) -> AuthorizedServiceMessage:
+    """Validate that a service message is authorized by its exact Concord pointer."""
+
+    try:
+        body = service_body(message)
+    except (TypeError, ValueError) as exc:
+        raise ServiceUseAuthorizationError(
+            "invalid_service_message",
+            "Service message body is invalid",
+        ) from exc
+    if message.message_type != SERVICE_MESSAGE:
+        raise ServiceUseAuthorizationError(
+            "invalid_service_message",
+            "Service authorization requires a serviceMessage",
+            {"messageType": message.message_type},
+        )
+    expected_name = body.name if name is None else name
+    if not _service_subject_matches(
+        message,
+        service_id=service_id,
+        namespace=protocol.namespace,
+        name=expected_name,
+    ):
+        raise ServiceUseAuthorizationError(
+            "scope_mismatch",
+            "Service message subject does not match the authorized service message",
+            {
+                "serviceId": service_id,
+                "namespace": protocol.namespace,
+                "name": expected_name,
+            },
+        )
+    if body.service_namespace != protocol.namespace or body.name != expected_name:
+        raise ServiceUseAuthorizationError(
+            "scope_mismatch",
+            "Service message does not target the authorized protocol message",
+            {
+                "serviceNamespace": body.service_namespace,
+                "expectedNamespace": protocol.namespace,
+                "name": body.name,
+                "expectedName": expected_name,
+            },
+        )
+    definition = protocol.messages.get(expected_name)
+    if definition is None:
+        raise ServiceUseAuthorizationError(
+            "scope_mismatch",
+            "Service protocol does not declare this message",
+            {"name": expected_name},
+        )
+    if (
+        body.intent != definition.intent
+        or body.exchange_pattern != definition.exchange_pattern
+    ):
+        raise ServiceUseAuthorizationError(
+            "scope_mismatch",
+            "Service message metadata does not match the protocol definition",
+            {
+                "name": expected_name,
+                "intent": body.intent.value,
+                "expectedIntent": definition.intent.value,
+                "exchangePattern": body.exchange_pattern.value,
+                "expectedExchangePattern": definition.exchange_pattern.value,
+            },
+        )
+    if definition.direction not in {
+        ServiceMessageDirection.CONSUMER_TO_SERVICE,
+        ServiceMessageDirection.BIDIRECTIONAL,
+    }:
+        raise ServiceUseAuthorizationError(
+            "direction_mismatch",
+            "Service message direction is not authorized from consumer to service",
+            {"name": expected_name, "direction": definition.direction.value},
+        )
 
     pointer = message.contract
     if pointer is None:
         raise ServiceUseAuthorizationError(
             "missing_contract",
-            "Service request requires a Concord contract pointer",
+            "Service message requires a Concord contract pointer",
         )
     managed = _managed_contract_for_pointer(
         participant.managed_contracts,
         pointer,
     )
     if managed is None:
-        await participant.reconcile(reason="service request authorization")
+        await participant.reconcile(reason="service message authorization")
         managed = _managed_contract_for_pointer(
             participant.managed_contracts,
             pointer,
@@ -479,7 +806,7 @@ async def authorize_service_request(
     if managed is None:
         raise ServiceUseAuthorizationError(
             "contract_not_managed",
-            "Service request contract is not managed by this participant",
+            "Service message contract is not managed by this participant",
             {"contractId": pointer.contract_id, "generation": pointer.generation},
         )
 
@@ -492,7 +819,7 @@ async def authorize_service_request(
     if not validity.valid or validity.contract is None:
         raise ServiceUseAuthorizationError(
             f"contract_{validity.status.value}",
-            "Service request contract is not valid",
+            "Service message contract is not valid",
             {
                 "contractId": pointer.contract_id,
                 "generation": pointer.generation,
@@ -501,28 +828,129 @@ async def authorize_service_request(
             },
         )
 
-    if not _service_request_contract_match(
+    if not _service_message_contract_match(
         validity.contract,
         participant=participant,
         sender=message.sender,
         service_id=service_id,
         protocol=protocol,
-        operation=operation,
+        name=expected_name,
     ):
         raise ServiceUseAuthorizationError(
             "scope_mismatch",
-            "Service request contract does not authorize this operation",
+            "Service message contract does not authorize this message",
             {
                 "contractId": pointer.contract_id,
                 "generation": pointer.generation,
                 "serviceId": service_id,
-                "operation": operation,
+                "name": expected_name,
             },
         )
-    return AuthorizedServiceRequest(
+    context = _service_view_context_from_contract(
+        managed,
+        protocol=protocol,
+        service_id=service_id,
+        participant_side=ServiceViewWriter.SERVICE,
+        record=validity.contract,
+        validity=validity,
+    )
+    return AuthorizedServiceMessage(
         contract=managed.contract,
         record=validity.contract,
+        body=body,
+        view_read_context=context.view_read_context(),
+        view_write_context=context.view_write_context(),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceManagedContractContext:
+    protocol: ServiceProtocol
+    service_id: str
+    service_namespace: str
+    service_endpoint: EndpointAddress
+    service_session_id: str
+    consumer_endpoint: EndpointAddress
+    consumer_session_id: str
+    contract: ContractPointer
+    views: Mapping[str, ServiceViewFamily]
+    participant_side: ServiceViewWriter
+
+    def view_read_context(self) -> ServiceViewReadContext:
+        return ServiceViewReadContext(
+            reader=self.participant_side,
+            service_id=self.service_id,
+            service_namespace=self.service_namespace,
+            service_endpoint=self.service_endpoint,
+            service_session_id=self.service_session_id,
+            consumer_endpoint=self.consumer_endpoint,
+            consumer_session_id=self.consumer_session_id,
+            contract=self.contract,
+            views=self.views,
+        )
+
+    def view_write_context(self) -> ServiceViewWriteContext:
+        return ServiceViewWriteContext(
+            writer=self.participant_side,
+            service_id=self.service_id,
+            service_namespace=self.service_namespace,
+            service_endpoint=self.service_endpoint,
+            service_session_id=self.service_session_id,
+            consumer_endpoint=self.consumer_endpoint,
+            consumer_session_id=self.consumer_session_id,
+            contract=self.contract,
+            views=self.views,
+        )
+
+
+def service_managed_contract_context(
+    managed: ConcordManagedContract,
+    *,
+    protocol: ServiceProtocol,
+    service_id: str,
+    record: ContractRecord | None = None,
+    validity: Any | None = None,
+) -> ServiceManagedContractContext:
+    """Derive service-side message and view context from a managed contract."""
+
+    return _service_view_context_from_contract(
+        managed,
+        protocol=protocol,
+        service_id=service_id,
+        participant_side=ServiceViewWriter.SERVICE,
+        record=record,
+        validity=validity,
+    )
+
+
+def service_view_read_context_from_managed_contract(
+    managed: ConcordManagedContract,
+    *,
+    protocol: ServiceProtocol,
+    service_id: str,
+) -> ServiceViewReadContext:
+    """Return the service-side read context for a managed service-use contract."""
+
+    return service_managed_contract_context(
+        managed,
+        protocol=protocol,
+        service_id=service_id,
+    ).view_read_context()
+
+
+def service_view_write_context_from_managed_contract(
+    managed: ConcordManagedContract,
+    *,
+    protocol: ServiceProtocol,
+    service_id: str,
+) -> ServiceViewWriteContext:
+    """Return the service-side write context for a managed service-use contract."""
+
+    return service_managed_contract_context(
+        managed,
+        protocol=protocol,
+        service_id=service_id,
+    ).view_write_context()
 
 
 def service_view_key(service_id: str, family: str, *tokens: str) -> str:
@@ -560,6 +988,12 @@ def parse_service_descriptor(
         return None
     if not set(payload.supported_operations).issubset(set(protocol.operations)):
         return None
+    if not set(payload.supported_messages).issubset(set(protocol.messages)):
+        return None
+    for name, message in payload.supported_messages.items():
+        expected_message = protocol.messages[name]
+        if message.to_dict() != expected_message.to_dict():
+            return None
     expected_views = _service_protocol_views(protocol, payload.service_id)
     if {key: family.to_dict() for key, family in payload.views.items()} != {
         key: family.to_dict() for key, family in expected_views.items()
@@ -574,6 +1008,7 @@ def parse_service_descriptor(
         advertisement_profile=payload.profile,
         use_profile=payload.service_use_profile,
         supported_operations=frozenset(payload.supported_operations),
+        supported_messages=payload.supported_messages,
         views=expected_views,
         backend_status=payload.backend_status,
         diagnostics=payload.diagnostics,
@@ -618,9 +1053,85 @@ def _service_protocol_views(
             family: ServiceViewFamily(
                 storeName=definition.store_name,
                 keyPrefix=service_view_prefix(service_id, family),
+                writer=definition.writer,
             )
             for family, definition in protocol.view_families.items()
         }
+    )
+
+
+def _validate_service_message_operations(
+    operations: Mapping[str, ServiceOperationDefinition],
+    messages: Mapping[str, ServiceMessageDefinition],
+) -> None:
+    for name, definition in messages.items():
+        if definition.operation is not None:
+            if definition.operation not in operations:
+                raise ValueError(
+                    "service message references unknown operation "
+                    f"{definition.operation!r}"
+                )
+            continue
+        if definition.direction in {
+            ServiceMessageDirection.CONSUMER_TO_SERVICE,
+            ServiceMessageDirection.BIDIRECTIONAL,
+        }:
+            raise ValueError(
+                "consumer-to-service and bidirectional service messages require "
+                f"a declared operation: {name}"
+            )
+        if definition.intent in _OPERATION_INTENTS:
+            raise ValueError(
+                "service command and query messages require a declared operation: "
+                f"{name}"
+            )
+
+
+def _service_view_context_from_contract(
+    managed: ConcordManagedContract,
+    *,
+    protocol: ServiceProtocol,
+    service_id: str,
+    participant_side: ServiceViewWriter,
+    record: ContractRecord | None = None,
+    validity: Any | None = None,
+) -> ServiceManagedContractContext:
+    if participant_side != ServiceViewWriter.SERVICE:
+        raise ValueError("managed service contexts are service-side only")
+    service_id = _require_text(service_id, field_name="service id")
+    service_endpoint = service_address(service_id)
+    validity = validity or managed.validity
+    token = getattr(validity, "tokens", {}).get(str(service_endpoint)) or managed.token
+    if token is None:
+        raise ValueError("managed service contract requires a local participant token")
+    if token.participant != service_endpoint:
+        raise ValueError("managed contract local participant is not the service endpoint")
+    record = record or managed.record
+    consumers = [
+        participant
+        for participant in record.participants
+        if participant != service_endpoint
+    ]
+    if len(consumers) != 1:
+        raise ValueError("managed service contract must have exactly one consumer")
+    consumer_endpoint = consumers[0]
+    consumer_token = getattr(validity, "tokens", {}).get(str(consumer_endpoint))
+    if consumer_token is None:
+        raise ValueError("managed service contract requires a consumer participant token")
+    return ServiceManagedContractContext(
+        protocol=protocol,
+        service_id=service_id,
+        service_namespace=protocol.namespace,
+        service_endpoint=service_endpoint,
+        service_session_id=token.session_id,
+        consumer_endpoint=consumer_endpoint,
+        consumer_session_id=consumer_token.session_id,
+        contract=ContractPointer(
+            contractId=managed.contract.contract_id,
+            generation=managed.contract.generation,
+        ),
+        views=_service_protocol_views(protocol, service_id),
+        participant_side=participant_side,
     )
 
 
@@ -638,21 +1149,38 @@ def _managed_contract_for_pointer(
     return None
 
 
-def _service_request_contract_match(
+def _service_subject_matches(
+    message: DeckrMessage,
+    *,
+    service_id: str,
+    namespace: str,
+    name: str,
+) -> bool:
+    subject = message.subject
+    identifiers = subject.identifiers
+    return (
+        subject.kind == "service"
+        and identifiers.get("serviceId") == service_id
+        and identifiers.get("namespace") == namespace
+        and identifiers.get("name") == name
+    )
+
+
+def _service_message_contract_match(
     record: ContractRecord,
     *,
     participant: ConcordParticipant,
     sender: EndpointAddress,
     service_id: str,
     protocol: ServiceProtocol,
-    operation: str,
+    name: str,
 ) -> bool:
     expected_participants = {str(participant.participant), str(sender)}
     return (
         {str(item) for item in record.participants} == expected_participants
         and record.profile == protocol.use_profile
         and participant.participant == service_address(service_id)
-        and operation in protocol.operations
+        and name in protocol.messages
     )
 
 
@@ -671,3 +1199,23 @@ def _require_text(value: str, *, field_name: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} must not be empty")
     return normalized
+
+
+def _require_json_wire_safe(value: Any, *, field_name: str) -> None:
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _require_json_wire_safe(item, field_name=field_name)
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            _require_json_wire_safe(item, field_name=field_name)
+        return
+    if value is None or isinstance(value, str | bool | int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{field_name} must not contain NaN or Infinity")
+        return
+    raise ValueError(
+        f"{field_name} contains unsupported JSON value type: {type(value).__name__}"
+    )

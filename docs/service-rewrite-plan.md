@@ -15,7 +15,7 @@ Completed so far:
 
 - `deckr.services` now exports the shared subscription state enum, generic
   subscription message model, logical resource subscription session, shared
-  resource subscription manager, and shared service request path.
+  resource subscription manager, and shared service-message path.
 - `DeckrServices` now owns a runtime-scoped shared manager cache and closes
   shared managers during service shutdown before closing remaining direct
   service-use leases.
@@ -125,7 +125,7 @@ remain for consumers that have not yet moved behind domain service clients:
 - Each mounted action can open its own Concord service-use contract even when
   many actions need the same service, zones, or items.
 - Actions must know about `service_unavailable_ends_service_use()` and
-  `service_reply_ends_service_use()`, which should be service-client
+  `service_message_ends_service_use()`, which should be service-client
   internals for ordinary feature code.
 
 ## Target Consumer API
@@ -147,7 +147,7 @@ async with sonos.zone_subscription_session(
 ```
 
 For ordinary feature code, this is a hard boundary: no service reads, service
-view watches, or service requests without a service session. A lower-level
+view watches, or service messages without a service session. A lower-level
 service-use lease also counts as a session for infrastructure code, but action
 code should normally see the domain session object, not Concord lease plumbing.
 
@@ -336,7 +336,7 @@ Command execution should prefer:
 
 If a resource-bound action has no active logical session when input arrives, the
 correct user-facing behavior is to show disconnected/unavailable state and avoid
-the service request. Falling back to a short-lived request lease on that input
+the service message. Falling back to a short-lived request lease on that input
 path reintroduces latency and Concord churn, and hides the session health that
 the button should display.
 
@@ -345,7 +345,7 @@ Shared request sessions should still obey Concord semantics:
 - Refresh before use.
 - Treat lease-loss replies and `ServiceUnavailable` codes as authority loss.
 - Cancel/close ended leases and negotiate successors; never reattach.
-- Return ordinary `ServiceReplyBody` statuses to feature code without
+- Return ordinary `ServiceMessageBody` statuses to feature code without
   exposing Concord details.
 
 This should make OpenHAB command behavior match the shared request-session
@@ -537,7 +537,7 @@ first, then update parent submodule pins only after the child commits exist.
 The acceptance bar is that ordinary action/plugin code should not need to:
 
 - import `service_unavailable_ends_service_use`
-- import `service_reply_ends_service_use`
+- import `service_message_ends_service_use`
 - track `lease_usable`
 - manually sleep for successor leases
 - decide whether a release command is safe after lease loss

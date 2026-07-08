@@ -303,8 +303,17 @@
       "title": "ServiceError",
       "type": "object"
     },
-    "ServiceReplyBody": {
+    "ServiceExchangePattern": {
+      "enum": [
+        "one_way",
+        "request_reply"
+      ],
+      "title": "ServiceExchangePattern",
+      "type": "string"
+    },
+    "ServiceMessageBody": {
       "additionalProperties": false,
+      "description": "Base class for typed ``services`` lane bodies.",
       "properties": {
         "error": {
           "anyOf": [
@@ -317,48 +326,29 @@
           ],
           "default": null
         },
-        "operation": {
-          "title": "Operation",
-          "type": "string"
+        "event": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event"
         },
-        "result": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Result",
-          "type": "object"
+        "exchangePattern": {
+          "$ref": "#/$defs/ServiceExchangePattern"
         },
-        "serviceNamespace": {
-          "title": "Servicenamespace",
-          "type": "string"
+        "intent": {
+          "$ref": "#/$defs/ServiceMessageIntent"
         },
-        "status": {
-          "$ref": "#/$defs/ServiceReplyStatus"
-        }
-      },
-      "required": [
-        "serviceNamespace",
-        "operation",
-        "status"
-      ],
-      "title": "ServiceReplyBody",
-      "type": "object"
-    },
-    "ServiceReplyStatus": {
-      "enum": [
-        "ok",
-        "rejected",
-        "unavailable",
-        "error"
-      ],
-      "title": "ServiceReplyStatus",
-      "type": "string"
-    },
-    "ServiceRequestBody": {
-      "additionalProperties": false,
-      "properties": {
-        "operation": {
-          "title": "Operation",
+        "name": {
+          "title": "Name",
           "type": "string"
         },
         "params": {
@@ -368,17 +358,65 @@
           "title": "Params",
           "type": "object"
         },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
         "serviceNamespace": {
           "title": "Servicenamespace",
           "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceMessageStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
         "serviceNamespace",
-        "operation"
+        "name",
+        "intent",
+        "exchangePattern"
       ],
-      "title": "ServiceRequestBody",
+      "title": "ServiceMessageBody",
       "type": "object"
+    },
+    "ServiceMessageIntent": {
+      "enum": [
+        "command",
+        "query",
+        "event",
+        "notification"
+      ],
+      "title": "ServiceMessageIntent",
+      "type": "string"
+    },
+    "ServiceMessageStatus": {
+      "enum": [
+        "ok",
+        "rejected",
+        "unavailable",
+        "error"
+      ],
+      "title": "ServiceMessageStatus",
+      "type": "string"
     },
     "TraceContext": {
       "additionalProperties": false,
@@ -423,7 +461,7 @@
         {
           "properties": {
             "body": {
-              "$ref": "#/$defs/ServiceRequestBody"
+              "$ref": "#/$defs/ServiceMessageBody"
             },
             "contract": {
               "$ref": "#/$defs/ContractPointer"
@@ -432,37 +470,7 @@
               "const": "services"
             },
             "messageType": {
-              "const": "serviceRequest"
-            }
-          },
-          "required": [
-            "lane",
-            "messageType",
-            "contract",
-            "body"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    {
-      "allOf": [
-        {
-          "$ref": "#/$defs/DeckrMessage"
-        },
-        {
-          "properties": {
-            "body": {
-              "$ref": "#/$defs/ServiceReplyBody"
-            },
-            "contract": {
-              "$ref": "#/$defs/ContractPointer"
-            },
-            "lane": {
-              "const": "services"
-            },
-            "messageType": {
-              "const": "serviceReply"
+              "const": "serviceMessage"
             }
           },
           "required": [

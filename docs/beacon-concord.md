@@ -422,11 +422,12 @@ carry the service-use profile but no service-specific `terms`; `terms` and
 proposing a fresh Concord contract. The Concord participants must be exactly the
 service endpoint and the client endpoint.
 
-After a service-use Concord contract is negotiated, service request and view
+After a service-use Concord contract is negotiated, service-message and view
 authority follows that already-held lease and its participant tokens, not
-continued Beacon advertisement presence. Service requests must carry the exact
-contract pointer, name a protocol operation, and be sent by the peer named in
-the contract. Protected service views are authorized within the advertised
+continued Beacon advertisement presence. Consumer-to-service service messages
+must carry the exact contract pointer, name a protocol operation, and be sent
+by the peer named in the contract. Protected service views are authorized within
+the advertised
 view-family prefixes and fenced by the advertised service identity, session,
 and contract pointer. Consumers may refresh an already-held service-use lease
 while it remains valid, but new or lost lease state requires current Beacon discovery

@@ -13,13 +13,18 @@ from deckr.contracts.messages import service_address
 from deckr.services import (
     ServiceBackendStatus,
     ServiceDescriptor,
-    ServiceReplyBody,
-    ServiceReplyStatus,
+    ServiceExchangePattern,
+    ServiceMessageBody,
+    ServiceMessageDefinition,
+    ServiceMessageDirection,
+    ServiceMessageIntent,
+    ServiceMessageStatus,
     ServiceSubscriptionMessage,
     ServiceSubscriptionState,
     ServiceUnavailable,
     ServiceViewFamily,
     ServiceViewRef,
+    ServiceViewWriter,
     SharedResourceSubscriptionManager,
 )
 
@@ -333,7 +338,7 @@ async def test_shared_resource_subscription_active_request_requires_retained_res
         )
 
         assert watched is not None
-        assert watched.status == ServiceReplyStatus.OK
+        assert watched.status == ServiceMessageStatus.OK
         assert unwatched is None
         request.assert_awaited_once()
         assert request.await_args.args[1] == "play"
@@ -667,11 +672,13 @@ def _lease(
     )
 
 
-def _ok_reply(operation: str) -> ServiceReplyBody:
-    return ServiceReplyBody(
+def _ok_reply(operation: str) -> ServiceMessageBody:
+    return ServiceMessageBody(
         serviceNamespace="dev.deckr.demo.service",
-        operation=operation,
-        status=ServiceReplyStatus.OK,
+        name=operation,
+        intent=ServiceMessageIntent.COMMAND,
+        exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+        status=ServiceMessageStatus.OK,
         result={"ok": True},
     )
 
@@ -688,10 +695,25 @@ def _descriptor() -> ServiceDescriptor:
         supported_operations=frozenset(
             {"retainResources", "releaseResources", "setZoneScope", "play"}
         ),
+        supported_messages={
+            name: ServiceMessageDefinition(
+                operation=name,
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+            )
+            for name in {
+                "retainResources",
+                "releaseResources",
+                "setZoneScope",
+                "play",
+            }
+        },
         views={
             "zones": ServiceViewFamily(
                 storeName="demo_views",
                 keyPrefix="service/demo-home/zones/",
+                writer=ServiceViewWriter.SERVICE,
             ),
         },
         backend_status=ServiceBackendStatus.AVAILABLE,

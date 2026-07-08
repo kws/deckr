@@ -11,13 +11,13 @@ from typing import Any, Generic, TypeVar
 
 import anyio
 
-from deckr.services.messages import ServiceError, ServiceReplyBody
+from deckr.services.messages import ServiceError, ServiceMessageBody
 from deckr.services.runtime import (
     ServiceDescriptor,
     ServiceUnavailable,
     ServiceUseLease,
     ServiceViewRef,
-    service_reply_ends_service_use,
+    service_message_ends_service_use,
     service_unavailable_ends_service_use,
 )
 
@@ -98,7 +98,7 @@ class ResourceSubscriptionSession(Generic[ResourceT]):
         *,
         required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
-    ) -> ServiceReplyBody:
+    ) -> ServiceMessageBody:
         return await self._manager.request(
             operation,
             params,
@@ -289,7 +289,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         *,
         required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
-    ) -> ServiceReplyBody:
+    ) -> ServiceMessageBody:
         reply = await self.request_on_active_lease(
             operation,
             params,
@@ -322,7 +322,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         *,
         required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
-    ) -> ServiceReplyBody | None:
+    ) -> ServiceMessageBody | None:
         lease = await self._active_request_lease(required_resource=required_resource)
         if lease is None:
             return None
@@ -338,7 +338,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
                 await self._mark_active_lease_lost(lease, exc)
                 return None
             raise
-        if not service_reply_ends_service_use(reply):
+        if not service_message_ends_service_use(reply):
             return reply
         await self._mark_active_lease_lost(
             lease,
@@ -750,7 +750,7 @@ def _service_error_from_unavailable(exc: ServiceUnavailable) -> ServiceError:
     )
 
 
-def _service_unavailable_from_reply(reply: ServiceReplyBody) -> ServiceUnavailable:
+def _service_unavailable_from_reply(reply: ServiceMessageBody) -> ServiceUnavailable:
     error = reply.error
     if error is None:
         return ServiceUnavailable(

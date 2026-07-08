@@ -15,9 +15,15 @@ from deckr.actions.messages import ActionAvailabilityEntry
 from deckr.contracts.messages import EndpointAddress
 from deckr.contracts.models import DeckrModel
 from deckr.services import (
+    ServiceExchangePattern,
+    ServiceMessageDefinition,
+    ServiceMessageDirection,
+    ServiceMessageIntent,
+    ServiceOperationDefinition,
     ServiceProtocol,
     ServiceViewFamilyDefinition,
     ServiceViewRef,
+    ServiceViewWriter,
     service_view_key,
 )
 
@@ -71,10 +77,21 @@ def action_availability_service_protocol() -> ServiceProtocol:
         feature_id=ACTION_AVAILABILITY_SERVICE_FEATURE_ID,
         advertisement_profile=ACTION_AVAILABILITY_SERVICE_ADVERTISEMENT_PROFILE_ID,
         use_profile=ACTION_AVAILABILITY_SERVICE_USE_PROFILE_ID,
-        operations=(ACTION_AVAILABILITY_READ_OPERATION,),
+        operations={
+            ACTION_AVAILABILITY_READ_OPERATION: ServiceOperationDefinition(),
+        },
+        messages={
+            ACTION_AVAILABILITY_READ_OPERATION: ServiceMessageDefinition(
+                operation=ACTION_AVAILABILITY_READ_OPERATION,
+                intent=ServiceMessageIntent.QUERY,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+            ),
+        },
         view_families={
             ACTION_AVAILABILITY_SERVICE_VIEW_FAMILY: ServiceViewFamilyDefinition(
                 storeName=ACTION_AVAILABILITY_SERVICE_VIEW_STORE_NAME,
+                writer=ServiceViewWriter.SERVICE,
             )
         },
     )

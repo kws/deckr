@@ -11,7 +11,7 @@ from deckr.contracts.messages import (
     service_address,
 )
 from deckr.services.messages import (
-    service_request_message,
+    service_message,
 )
 
 _CONTRACT = ContractPointer(contractId="service-contract-1", generation=1)
@@ -25,16 +25,18 @@ def test_service_endpoint_helpers_round_trip() -> None:
     assert parse_service_address("controller:main") is None
 
 
-def test_service_request_body_rejects_sender_authority_fields() -> None:
+def test_service_message_body_rejects_sender_authority_fields() -> None:
     with pytest.raises(ValueError, match="senderSessionId"):
-        service_request_message(
+        service_message(
             sender=controller_address("controller-main"),
             sender_session_id="controller-session",
             recipient=service_address("sonos-home"),
             subject=entity_subject("service", serviceId="sonos-home"),
             body={
                 "serviceNamespace": "dev.deckr.sonos.service",
-                "operation": "play",
+                "name": "play",
+                "intent": "command",
+                "exchangePattern": "request_reply",
                 "senderSessionId": "not-body-authority",
             },
         )

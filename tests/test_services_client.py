@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -8,25 +9,42 @@ import anyio
 import pytest
 
 from deckr.actions.endpoints import action_provider_address
-from deckr.concord import ConcordConflict, ContractValidity, ContractValidityStatus
-from deckr.contracts.messages import service_address
+from deckr.concord import (
+    ConcordConflict,
+    ConcordManagedContract,
+    ContractHandle,
+    ContractRecord,
+    ContractState,
+    ContractValidity,
+    ContractValidityStatus,
+    ParticipantHandle,
+)
+from deckr.contracts.authority import ContractPointer
+from deckr.contracts.messages import entity_subject, service_address
 from deckr.services import (
     DeckrServices,
+    ManagedServiceContract,
     ServiceBackendStatus,
     ServiceDescriptor,
     ServiceError,
+    ServiceExchangePattern,
+    ServiceMessageBody,
+    ServiceMessageDefinition,
+    ServiceMessageDirection,
+    ServiceMessageIntent,
+    ServiceMessageStatus,
+    ServiceOperationDefinition,
     ServiceProtocol,
-    ServiceReplyBody,
-    ServiceReplyStatus,
     ServiceUnavailable,
     ServiceUseLease,
     ServiceViewFamily,
     ServiceViewFamilyDefinition,
     ServiceViewRef,
-    service_reply_ends_service_use,
+    ServiceViewWriter,
+    service_message_ends_service_use,
     service_unavailable_ends_service_use,
 )
-from deckr.services.messages import service_reply_message
+from deckr.services.messages import service_message, service_response_message
 from deckr.substrates.nats_kv import KvUnavailable
 
 _CLIENT_ADDRESS = action_provider_address("python-dev.deckr.demo")
@@ -38,9 +56,20 @@ def _protocol() -> ServiceProtocol:
         feature_id="dev.deckr.demo.service.v1",
         advertisement_profile="dev.deckr.demo.advertisement.v1",
         use_profile="dev.deckr.demo.use.v1",
-        operations=("play",),
+        operations={"play": ServiceOperationDefinition()},
+        messages={
+            "play": ServiceMessageDefinition(
+                operation="play",
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+            ),
+        },
         view_families={
-            "zones": ServiceViewFamilyDefinition(storeName="demo_views"),
+            "zones": ServiceViewFamilyDefinition(
+                storeName="demo_views",
+                writer=ServiceViewWriter.SERVICE,
+            ),
         },
     )
 
@@ -64,10 +93,19 @@ def _descriptor() -> ServiceDescriptor:
         advertisement_profile="dev.deckr.demo.advertisement.v1",
         use_profile="dev.deckr.demo.use.v1",
         supported_operations=frozenset({"play"}),
+        supported_messages={
+            "play": ServiceMessageDefinition(
+                operation="play",
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+            ),
+        },
         views={
             "zones": ServiceViewFamily(
                 storeName="demo_views",
                 keyPrefix="zones/demo-home/",
+                writer=ServiceViewWriter.SERVICE,
             ),
         },
         backend_status=ServiceBackendStatus.AVAILABLE,
@@ -75,11 +113,179 @@ def _descriptor() -> ServiceDescriptor:
     )
 
 
+def _service_to_consumer_protocol() -> ServiceProtocol:
+    return ServiceProtocol(
+        namespace="dev.deckr.demo.service",
+        feature_id="dev.deckr.demo.service.v1",
+        advertisement_profile="dev.deckr.demo.advertisement.v1",
+        use_profile="dev.deckr.demo.use.v1",
+        operations={"collectDiagnostics": ServiceOperationDefinition()},
+        messages={
+            "stateChanged": ServiceMessageDefinition(
+                intent=ServiceMessageIntent.EVENT,
+                exchangePattern=ServiceExchangePattern.ONE_WAY,
+                direction=ServiceMessageDirection.SERVICE_TO_CONSUMER,
+            ),
+            "collectDiagnostics": ServiceMessageDefinition(
+                operation="collectDiagnostics",
+                intent=ServiceMessageIntent.QUERY,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                direction=ServiceMessageDirection.SERVICE_TO_CONSUMER,
+            ),
+        },
+        view_families={},
+    )
+
+
+def _service_to_consumer_descriptor() -> ServiceDescriptor:
+    protocol = _service_to_consumer_protocol()
+    return ServiceDescriptor(
+        candidate=None,
+        service_id="demo-home",
+        namespace=protocol.namespace,
+        endpoint=service_address("demo-home"),
+        session_id="service-session",
+        advertisement_profile=protocol.advertisement_profile,
+        use_profile=protocol.use_profile,
+        supported_operations=frozenset(protocol.operations),
+        supported_messages=protocol.messages,
+        views={},
+        backend_status=ServiceBackendStatus.AVAILABLE,
+        diagnostics={},
+    )
+
+
+def _managed_service_contract(
+    *,
+    status: ContractValidityStatus = ContractValidityStatus.VALID,
+    service_session_id: str = "service-session",
+    consumer_session_id: str = "client-session",
+) -> ConcordManagedContract:
+    participants = tuple(sorted((service_address("demo-home"), _CLIENT_ADDRESS), key=str))
+    contract = ContractHandle(
+        key="contract-1:1",
+        contract_id="contract-1",
+        generation=1,
+        participants=participants,
+        attached_participants=participants,
+        revision=1,
+        state=ContractState.OPEN,
+        profile="dev.deckr.demo.use.v1",
+    )
+    record = ContractRecord(
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+        participants=participants,
+        attached_participants=participants,
+        state=contract.state,
+        profile=contract.profile,
+    )
+    service_token = ParticipantHandle(
+        key="contract-1:1:service",
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+        participant=service_address("demo-home"),
+        session_id=service_session_id,
+        token_id="service-token",
+        revision=1,
+        refresh_seq=1,
+        ttl_seconds=30,
+    )
+    consumer_token = ParticipantHandle(
+        key="contract-1:1:consumer",
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+        participant=_CLIENT_ADDRESS,
+        session_id=consumer_session_id,
+        token_id="consumer-token",
+        revision=1,
+        refresh_seq=1,
+        ttl_seconds=30,
+    )
+    return ConcordManagedContract(
+        contract=contract,
+        record=record,
+        validity=ContractValidity(
+            status,
+            contract=record if status == ContractValidityStatus.VALID else None,
+            tokens={
+                str(service_token.participant): service_token,
+                str(consumer_token.participant): consumer_token,
+            },
+            reason=None if status == ContractValidityStatus.VALID else status.value,
+        ),
+        token=service_token,
+    )
+
+
+class _FakeManagedServiceParticipant:
+    participant = service_address("demo-home")
+    session_id = "service-session"
+
+    def __init__(
+        self,
+        managed: tuple[ConcordManagedContract, ...],
+        *,
+        after_reconcile: tuple[ConcordManagedContract, ...] | None = None,
+    ) -> None:
+        self._managed = managed
+        self._after_reconcile = after_reconcile
+        self.reconcile_calls = 0
+        self.validate_calls: list[tuple[ContractHandle, dict[str, str]]] = []
+
+    def managed_contract(
+        self,
+        contract: ContractHandle,
+    ) -> ConcordManagedContract | None:
+        for managed in self._managed:
+            if managed.contract.key == contract.key:
+                return managed
+        return None
+
+    async def reconcile(
+        self,
+        *,
+        reason: str = "manual reconcile",
+    ) -> tuple[ConcordManagedContract, ...]:
+        del reason
+        self.reconcile_calls += 1
+        if self._after_reconcile is not None:
+            self._managed = self._after_reconcile
+        return self._managed
+
+    async def validate(
+        self,
+        contract: ContractHandle,
+        *,
+        current_sessions: Mapping[str, str] | None = None,
+    ) -> ContractValidity:
+        self.validate_calls.append((contract, dict(current_sessions or {})))
+        managed = self.managed_contract(contract)
+        if managed is None:
+            return ContractValidity(
+                ContractValidityStatus.MISSING_CONTRACT,
+                reason="missing",
+            )
+        return managed.validity
+
+
 def _contract() -> SimpleNamespace:
     return SimpleNamespace(
         contract_id="contract-1",
         generation=1,
         profile="dev.deckr.demo.use.v1",
+    )
+
+
+def _lease(
+    descriptor: ServiceDescriptor | None = None,
+    *,
+    refresh: AsyncMock | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        descriptor=descriptor or _descriptor(),
+        contract=_contract(),
+        refresh=refresh or AsyncMock(),
     )
 
 
@@ -167,7 +373,7 @@ async def test_read_view_translates_kv_unavailable() -> None:
 
     with pytest.raises(ServiceUnavailable) as exc_info:
         await services.read_view(
-            SimpleNamespace(),
+            _lease(),
             ServiceViewRef("demo_views", "zones/demo-home/Kitchen"),
         )
 
@@ -382,6 +588,8 @@ async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
     lease = ServiceUseLease(
         agreement=agreement,
         descriptor=descriptor,
+        consumer_endpoint=_CLIENT_ADDRESS,
+        consumer_session_id="client-session",
     )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
@@ -405,6 +613,8 @@ async def test_service_use_lease_refresh_preserves_valid_lease_when_unavailable(
     lease = ServiceUseLease(
         agreement=agreement,
         descriptor=descriptor,
+        consumer_endpoint=_CLIENT_ADDRESS,
+        consumer_session_id="client-session",
     )
 
     await lease.refresh()
@@ -424,6 +634,8 @@ async def test_service_use_lease_refresh_raises_unavailable_without_valid_lease(
     lease = ServiceUseLease(
         agreement=agreement,
         descriptor=descriptor,
+        consumer_endpoint=_CLIENT_ADDRESS,
+        consumer_session_id="client-session",
     )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
@@ -434,7 +646,7 @@ async def test_service_use_lease_refresh_raises_unavailable_without_valid_lease(
 
 
 @pytest.mark.asyncio
-async def test_service_request_timeout_is_separate_from_service_use() -> None:
+async def test_service_message_timeout_is_separate_from_service_use() -> None:
     agreement = SimpleNamespace(
         contract=_contract(),
         refresh=AsyncMock(return_value=ContractValidity(ContractValidityStatus.VALID)),
@@ -443,7 +655,7 @@ async def test_service_request_timeout_is_separate_from_service_use() -> None:
     )
 
     async def request(**kwargs):
-        return service_reply_message(
+        return service_response_message(
             sender=service_address("demo-home"),
             sender_session_id="service-session",
             recipient=_CLIENT_ADDRESS,
@@ -451,10 +663,12 @@ async def test_service_request_timeout_is_separate_from_service_use() -> None:
             subject=kwargs["subject"],
             in_reply_to="request-message",
             contract=kwargs["contract"],
-            body=ServiceReplyBody(
+            body=ServiceMessageBody(
                 serviceNamespace="dev.deckr.demo.service",
-                operation=kwargs["body"]["operation"],
-                status=ServiceReplyStatus.OK,
+                name=kwargs["body"]["name"],
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                status=ServiceMessageStatus.OK,
                 result={"ok": True},
             ),
         )
@@ -480,12 +694,330 @@ async def test_service_request_timeout_is_separate_from_service_use() -> None:
             timeout_seconds=12.0,
         )
 
-    assert reply.status == ServiceReplyStatus.OK
+    assert reply.status == ServiceMessageStatus.OK
     assert endpoint.request.await_args.kwargs["timeout"] == 12.0
     assert endpoint.request.await_args.kwargs["contract"] == {
         "contractId": "contract-1",
         "generation": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_managed_service_contract_sends_service_to_consumer_message() -> None:
+    managed = _managed_service_contract()
+    participant = _FakeManagedServiceParticipant((managed,))
+    endpoint = SimpleNamespace(
+        address=service_address("demo-home"),
+        session_id="service-session",
+        send=AsyncMock(return_value="sent"),
+    )
+    channel = ManagedServiceContract(
+        endpoint=endpoint,
+        participant=participant,
+        contract=managed.contract,
+        protocol=_service_to_consumer_protocol(),
+        service_id="demo-home",
+    )
+
+    assert await channel.send("stateChanged", event={"state": "ready"}) == "sent"
+
+    assert endpoint.send.await_args.kwargs["recipient"] == _CLIENT_ADDRESS
+    assert endpoint.send.await_args.kwargs["recipient_session_id"] == "client-session"
+    assert endpoint.send.await_args.kwargs["message_type"] == "serviceMessage"
+    assert endpoint.send.await_args.kwargs["body"] == {
+        "serviceNamespace": "dev.deckr.demo.service",
+        "name": "stateChanged",
+        "intent": "event",
+        "exchangePattern": "one_way",
+        "params": {},
+        "event": {"state": "ready"},
+    }
+    assert participant.reconcile_calls == 0
+    assert participant.validate_calls == [
+        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_managed_service_contract_request_validates_response_metadata() -> None:
+    managed = _managed_service_contract()
+    participant = _FakeManagedServiceParticipant((managed,))
+
+    async def request(**kwargs):
+        return service_response_message(
+            sender=_CLIENT_ADDRESS,
+            sender_session_id="client-session",
+            recipient=service_address("demo-home"),
+            recipient_session_id="service-session",
+            subject=kwargs["subject"],
+            in_reply_to="request-message",
+            contract=kwargs["contract"],
+            body=ServiceMessageBody(
+                serviceNamespace="dev.deckr.demo.service",
+                name="collectDiagnostics",
+                intent=ServiceMessageIntent.QUERY,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                status=ServiceMessageStatus.OK,
+                result={"ok": True},
+            ),
+        )
+
+    endpoint = SimpleNamespace(
+        address=service_address("demo-home"),
+        session_id="service-session",
+        request=AsyncMock(side_effect=request),
+    )
+    channel = ManagedServiceContract(
+        endpoint=endpoint,
+        participant=participant,
+        contract=managed.contract,
+        protocol=_service_to_consumer_protocol(),
+        service_id="demo-home",
+    )
+
+    reply = await channel.request("collectDiagnostics", timeout_seconds=3.0)
+
+    assert reply.status is ServiceMessageStatus.OK
+    assert endpoint.request.await_args.kwargs["timeout"] == 3.0
+    assert participant.validate_calls == [
+        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_managed_service_contract_rejects_response_subject_mismatch() -> None:
+    managed = _managed_service_contract()
+    participant = _FakeManagedServiceParticipant((managed,))
+
+    async def request(**kwargs):
+        return service_response_message(
+            sender=_CLIENT_ADDRESS,
+            sender_session_id="client-session",
+            recipient=service_address("demo-home"),
+            recipient_session_id="service-session",
+            subject=entity_subject(
+                "service",
+                serviceId="demo-home",
+                namespace="dev.deckr.demo.service",
+                name="stateChanged",
+            ),
+            in_reply_to="request-message",
+            contract=kwargs["contract"],
+            body=ServiceMessageBody(
+                serviceNamespace="dev.deckr.demo.service",
+                name="collectDiagnostics",
+                intent=ServiceMessageIntent.QUERY,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                status=ServiceMessageStatus.OK,
+                result={"ok": True},
+            ),
+        )
+
+    endpoint = SimpleNamespace(
+        address=service_address("demo-home"),
+        session_id="service-session",
+        request=AsyncMock(side_effect=request),
+    )
+    channel = ManagedServiceContract(
+        endpoint=endpoint,
+        participant=participant,
+        contract=managed.contract,
+        protocol=_service_to_consumer_protocol(),
+        service_id="demo-home",
+    )
+
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await channel.request("collectDiagnostics")
+
+    assert exc_info.value.code == "invalid_service_response"
+
+
+@pytest.mark.asyncio
+async def test_managed_service_contract_reconciles_once_before_send() -> None:
+    managed = _managed_service_contract()
+    participant = _FakeManagedServiceParticipant((), after_reconcile=(managed,))
+    endpoint = SimpleNamespace(
+        address=service_address("demo-home"),
+        session_id="service-session",
+        send=AsyncMock(return_value="sent"),
+    )
+    channel = ManagedServiceContract(
+        endpoint=endpoint,
+        participant=participant,
+        contract=managed.contract,
+        protocol=_service_to_consumer_protocol(),
+        service_id="demo-home",
+    )
+
+    assert await channel.send("stateChanged") == "sent"
+    assert participant.reconcile_calls == 1
+    assert participant.validate_calls == [
+        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_managed_service_contract_fails_closed_when_contract_missing() -> None:
+    managed = _managed_service_contract()
+    participant = _FakeManagedServiceParticipant(())
+    endpoint = SimpleNamespace(
+        address=service_address("demo-home"),
+        session_id="service-session",
+        send=AsyncMock(),
+    )
+    channel = ManagedServiceContract(
+        endpoint=endpoint,
+        participant=participant,
+        contract=managed.contract,
+        protocol=_service_to_consumer_protocol(),
+        service_id="demo-home",
+    )
+
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await channel.send("stateChanged")
+
+    assert exc_info.value.code == "contract_not_managed"
+    assert participant.reconcile_calls == 1
+    assert endpoint.send.await_count == 0
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        ContractValidityStatus.INVALID_CONTRACT,
+        ContractValidityStatus.CANCELLED,
+        ContractValidityStatus.SESSION_MISMATCH,
+    ],
+)
+@pytest.mark.asyncio
+async def test_managed_service_contract_fails_closed_when_contract_invalid(
+    status: ContractValidityStatus,
+) -> None:
+    managed = _managed_service_contract(status=status)
+    participant = _FakeManagedServiceParticipant((managed,))
+    endpoint = SimpleNamespace(
+        address=service_address("demo-home"),
+        session_id="service-session",
+        send=AsyncMock(),
+    )
+    channel = ManagedServiceContract(
+        endpoint=endpoint,
+        participant=participant,
+        contract=managed.contract,
+        protocol=_service_to_consumer_protocol(),
+        service_id="demo-home",
+    )
+
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await channel.send("stateChanged")
+
+    assert exc_info.value.code == f"contract_{status.value}"
+    assert endpoint.send.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_managed_service_view_access_validates_before_operations() -> None:
+    managed = _managed_service_contract()
+    participant = _FakeManagedServiceParticipant((managed,))
+    endpoint = SimpleNamespace(
+        address=service_address("demo-home"),
+        session_id="service-session",
+    )
+    store = SimpleNamespace(
+        get=AsyncMock(return_value=None),
+        put=AsyncMock(return_value=SimpleNamespace(value={"ok": True})),
+    )
+    channel = ManagedServiceContract(
+        endpoint=endpoint,
+        participant=participant,
+        contract=managed.contract,
+        protocol=_protocol(),
+        service_id="demo-home",
+    )
+    view = ServiceViewRef("demo_views", "views.demo-home.zones.Kitchen")
+    access = channel.view_access(store)
+
+    assert await access.read(view) is None
+    await access.put(view, {"ok": True})
+
+    assert participant.validate_calls == [
+        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"}),
+        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"}),
+    ]
+    assert store.get.await_args.args[0].reader is ServiceViewWriter.SERVICE
+    assert store.put.await_args.kwargs["context"].writer is ServiceViewWriter.SERVICE
+
+
+@pytest.mark.asyncio
+async def test_authorize_inbound_message_validates_service_to_consumer_scope() -> None:
+    descriptor = _service_to_consumer_descriptor()
+    lease = _lease(descriptor)
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(),
+    )
+    message = service_message(
+        sender=descriptor.endpoint,
+        sender_session_id=descriptor.session_id,
+        recipient=_CLIENT_ADDRESS,
+        recipient_session_id="client-session",
+        subject=entity_subject(
+            "service",
+            serviceId=descriptor.service_id,
+            namespace=descriptor.namespace,
+            name="stateChanged",
+        ),
+        body=ServiceMessageBody(
+            serviceNamespace=descriptor.namespace,
+            name="stateChanged",
+            intent=ServiceMessageIntent.EVENT,
+            exchangePattern=ServiceExchangePattern.ONE_WAY,
+            event={"state": "ready"},
+        ),
+        contract=ContractPointer(contractId="contract-1", generation=1),
+    )
+
+    body = await services.authorize_inbound_message(lease, message)
+
+    assert body.name == "stateChanged"
+
+    wrong_subject = message.model_copy(
+        update={
+            "subject": entity_subject(
+                "service",
+                serviceId=descriptor.service_id,
+                namespace=descriptor.namespace,
+                name="collectDiagnostics",
+            )
+        }
+    )
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await services.authorize_inbound_message(lease, wrong_subject)
+    assert exc_info.value.code == "invalid_service_response"
+
+    wrong_session = message.model_copy(update={"sender_session_id": "old-session"})
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await services.authorize_inbound_message(lease, wrong_session)
+    assert exc_info.value.code == "invalid_service_response"
+
+    consumer_to_service = message.model_copy(
+        update={
+            "body": ServiceMessageBody(
+                serviceNamespace="dev.deckr.demo.service",
+                name="play",
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                params={},
+            ).to_dict()
+        }
+    )
+    consumer_to_service_lease = _lease(_descriptor())
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await services.authorize_inbound_message(
+            consumer_to_service_lease,
+            consumer_to_service,
+        )
+    assert exc_info.value.code == "unsupported_service_message_direction"
 
 
 @pytest.mark.asyncio
@@ -501,20 +1033,24 @@ async def test_watch_view_refreshes_lease_before_delivering_changes() -> None:
         "volume": 12,
     }
     changed_payload = {**current_payload, "volume": 13}
-    lease = SimpleNamespace(
+    lease = _lease(
         refresh=AsyncMock(
-            side_effect=ServiceUnavailable(
-                "contract_session_mismatch",
-                "session mismatch",
-            )
-        )
+            side_effect=[
+                None,
+                None,
+                ServiceUnavailable(
+                    "contract_session_mismatch",
+                    "session mismatch",
+                ),
+            ]
+        ),
     )
 
     async def changes():
         yield SimpleNamespace(entry=SimpleNamespace(value=changed_payload))
 
     @asynccontextmanager
-    async def watch(_lease, _view):
+    async def watch(_context, _view):
         yield changes()
 
     store = SimpleNamespace(
@@ -534,7 +1070,7 @@ async def test_watch_view_refreshes_lease_before_delivering_changes() -> None:
     await stream.aclose()
 
     assert exc_info.value.code == "contract_session_mismatch"
-    lease.refresh.assert_awaited_once()
+    assert lease.refresh.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -555,7 +1091,7 @@ async def test_watch_view_does_not_emit_idle_duplicate_payloads() -> None:
         yield None
 
     @asynccontextmanager
-    async def watch(_lease, _view):
+    async def watch(_context, _view):
         yield changes()
 
     store = SimpleNamespace(
@@ -567,7 +1103,7 @@ async def test_watch_view_does_not_emit_idle_duplicate_payloads() -> None:
         concord=SimpleNamespace(),
     )
     services._view_stores["demo_views"] = store  # noqa: SLF001
-    lease = SimpleNamespace(refresh=AsyncMock())
+    lease = _lease()
 
     stream = services.watch_view(lease, view)
     assert await anext(stream) == current_payload
@@ -576,7 +1112,34 @@ async def test_watch_view_does_not_emit_idle_duplicate_payloads() -> None:
     await stream.aclose()
 
     assert scope.cancel_called
-    store.get.assert_awaited_once_with(lease, view)
+    read_context = store.get.await_args.args[0]
+    assert read_context.reader is ServiceViewWriter.CONSUMER
+    assert store.get.await_args.args[1] == view
+    assert lease.refresh.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_view_access_refreshes_lease_before_operations() -> None:
+    view = ServiceViewRef("demo_views", "zones/demo-home/Kitchen")
+    lease = _lease()
+    store = SimpleNamespace(
+        get=AsyncMock(return_value=None),
+        put=AsyncMock(return_value=SimpleNamespace(value={"ok": True})),
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(),
+    )
+    services._view_stores["demo_views"] = store  # noqa: SLF001
+
+    access = services.view_access(lease, "demo_views")
+
+    assert await access.read(view) is None
+    await access.put(view, {"ok": True})
+
+    assert lease.refresh.await_count == 2
+    assert store.get.await_args.args[0].reader is ServiceViewWriter.CONSUMER
+    assert store.put.await_args.kwargs["context"].writer is ServiceViewWriter.CONSUMER
 
 
 def test_service_unavailable_helper_classifies_service_use_loss() -> None:
@@ -591,7 +1154,7 @@ def test_service_unavailable_helper_classifies_service_use_loss() -> None:
     )
     assert service_unavailable_ends_service_use(
         ServiceUnavailable(
-            "service_request_failed",
+            "service_message_failed",
             "failed",
             {"reason": "contract_not_managed"},
         )
@@ -604,22 +1167,26 @@ def test_service_unavailable_helper_classifies_service_use_loss() -> None:
     )
 
 
-def test_service_reply_helper_matches_service_unavailable_helper() -> None:
+def test_service_message_helper_matches_service_unavailable_helper() -> None:
     unavailable = ServiceUnavailable("contract_missing_token", "missing token")
-    reply = ServiceReplyBody(
+    reply = ServiceMessageBody(
         serviceNamespace="dev.deckr.demo.service",
-        operation="play",
-        status=ServiceReplyStatus.UNAVAILABLE,
+        name="play",
+        intent=ServiceMessageIntent.COMMAND,
+        exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+        status=ServiceMessageStatus.UNAVAILABLE,
         error=ServiceError(
             code="service_use_contract_invalid",
             message="missing token",
             diagnostics={"status": "missing_token"},
         ),
     )
-    ordinary = ServiceReplyBody(
+    ordinary = ServiceMessageBody(
         serviceNamespace="dev.deckr.demo.service",
-        operation="play",
-        status=ServiceReplyStatus.UNAVAILABLE,
+        name="play",
+        intent=ServiceMessageIntent.COMMAND,
+        exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+        status=ServiceMessageStatus.UNAVAILABLE,
         error=ServiceError(
             code="service_backend_unavailable",
             message="backend down",
@@ -627,5 +1194,5 @@ def test_service_reply_helper_matches_service_unavailable_helper() -> None:
     )
 
     assert service_unavailable_ends_service_use(unavailable)
-    assert service_reply_ends_service_use(reply)
-    assert not service_reply_ends_service_use(ordinary)
+    assert service_message_ends_service_use(reply)
+    assert not service_message_ends_service_use(ordinary)

@@ -18,6 +18,8 @@ import {
   ContractState,
   ContractValidityStatus,
   type ContractPointer,
+  type ContractValidity,
+  type ParticipantHandle,
 } from "../src/concord.ts";
 import { controllerAddress, serviceAddress } from "../src/endpoint.ts";
 import { ServiceUnavailable, StateConflict, ValidationError } from "../src/errors.ts";
@@ -27,19 +29,30 @@ import {
   AuthorizationDecision,
   DEFAULT_SERVICE_USE_INDEX_STORE_NAME,
   SERVICE_USE_INDEX_SCHEMA_ID,
+  ServiceExchangePattern,
   ServiceAdvertiser,
   ServiceBackendStatus,
+  ServiceMessageDirection,
+  ServiceMessageIntent,
   ServiceUseAuthorizer,
   ServiceUseLeaseManager,
+  ServiceViewReader,
+  ServiceViewStoreWriter,
+  ServiceViewWriter,
+  ManagedServiceViewAccess,
   parseServiceDescriptor,
   serviceUseScopeIndexKey,
   serviceUseTerms,
   serviceViewKey,
+  serviceViewStorageKey,
   type RegisteredEndpointLane,
   type ServiceDescriptor,
   type ServiceUseLease,
   type ServiceUseTerms,
   type ServiceProtocol,
+  type ServiceViewReadContext,
+  type ServiceViewRef,
+  type ServiceViewWriteContext,
 } from "../src/services.ts";
 import { MemoryStateStore } from "../src/state.ts";
 
@@ -48,11 +61,29 @@ const TEST_SERVICE_PROTOCOL: ServiceProtocol = {
   featureId: "dev.deckr.test.service",
   advertisementProfile: "dev.deckr.test.service.advertisement.v1",
   useProfile: "dev.deckr.test.service_use.v1",
-  operations: ["play", "pause"],
+  operations: {
+    play: {},
+    pause: {},
+  },
+  messages: {
+    play: {
+      operation: "play",
+      intent: ServiceMessageIntent.COMMAND,
+      exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
+      direction: ServiceMessageDirection.CONSUMER_TO_SERVICE,
+    },
+    pause: {
+      operation: "pause",
+      intent: ServiceMessageIntent.COMMAND,
+      exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
+      direction: ServiceMessageDirection.CONSUMER_TO_SERVICE,
+    },
+  },
   viewFamilies: {
     status: {
       storeName: "dev_deckr_test_service_view_v1",
       keyPrefix: serviceViewKey("music", "status"),
+      writer: ServiceViewWriter.SERVICE,
     },
   },
 };
@@ -178,6 +209,114 @@ function serviceUseIndexRecord(
     state: "candidate",
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+const VIEW_CONTRACT: ContractPointer = {
+  contractId: "contract:alpha",
+  generation: 7,
+};
+
+function serviceViewRef(family = "status", token = "deck"): ServiceViewRef {
+  return {
+    storeName: "dev_deckr_test_service_view_v1",
+    key: serviceViewKey("music", family, token),
+  };
+}
+
+function serviceViewReadContext(
+  reader: ServiceViewWriter,
+  views = TEST_SERVICE_PROTOCOL.viewFamilies,
+  contract: ContractPointer = VIEW_CONTRACT,
+): ServiceViewReadContext {
+  return {
+    reader,
+    serviceId: "music",
+    serviceNamespace: TEST_SERVICE_PROTOCOL.namespace,
+    serviceEndpoint: serviceAddress("music"),
+    serviceSessionId: "service-session",
+    consumerEndpoint: controllerAddress("main"),
+    consumerSessionId: "controller-session",
+    contract,
+    views,
+  };
+}
+
+function serviceViewWriteContext(
+  writer: ServiceViewWriter,
+  views = TEST_SERVICE_PROTOCOL.viewFamilies,
+  contract: ContractPointer = VIEW_CONTRACT,
+): ServiceViewWriteContext {
+  return {
+    writer,
+    serviceId: "music",
+    serviceNamespace: TEST_SERVICE_PROTOCOL.namespace,
+    serviceEndpoint: serviceAddress("music"),
+    serviceSessionId: "service-session",
+    consumerEndpoint: controllerAddress("main"),
+    consumerSessionId: "controller-session",
+    contract,
+    views,
+  };
+}
+
+function fencedViewPayload(
+  view: ServiceViewRef,
+  overrides: JsonObject = {},
+): JsonObject {
+  return {
+    status: "playing",
+    viewKey: view.key,
+    serviceId: "music",
+    serviceNamespace: TEST_SERVICE_PROTOCOL.namespace,
+    serviceEndpoint: serviceAddress("music"),
+    serviceSessionId: "service-session",
+    consumerEndpoint: controllerAddress("main"),
+    consumerSessionId: "controller-session",
+    writer: ServiceViewWriter.SERVICE,
+    contractId: VIEW_CONTRACT.contractId,
+    generation: VIEW_CONTRACT.generation,
+    ...overrides,
+  };
+}
+
+function token(
+  participant: string,
+  sessionId: string,
+): ParticipantHandle {
+  return {
+    key: `token.${participant}`,
+    contractId: VIEW_CONTRACT.contractId,
+    generation: VIEW_CONTRACT.generation,
+    participant,
+    sessionId,
+    tokenId: `${participant}.token`,
+    revision: 1,
+    refreshSeq: 1,
+    ttlSeconds: 30,
+  };
+}
+
+function validViewLease(descriptor: ServiceDescriptor): ServiceUseLease {
+  const validity: ContractValidity = {
+    status: ContractValidityStatus.VALID,
+    valid: true,
+    tokens: {
+      [controllerAddress("main")]: token(controllerAddress("main"), "controller-session"),
+      [serviceAddress("music")]: token(serviceAddress("music"), "service-session"),
+    },
+  };
+  return {
+    descriptor,
+    terms: serviceUseTerms(descriptor, controllerAddress("main"), {
+      views: ["status"],
+    }),
+    agreement: {
+      contract: VIEW_CONTRACT,
+      validity,
+      localToken: validity.tokens[controllerAddress("main")]!,
+      refresh: async () => validity,
+    } as ServiceUseLease["agreement"],
   };
 }
 
@@ -353,20 +492,8 @@ test("Concord reaper records stale contracts and cancels after grace", async () 
   assert.equal(result.contractsCancelled, 1);
 });
 
-test("service helpers advertise descriptors and authorize Concord-governed requests", async () => {
-  const protocol: ServiceProtocol = {
-    namespace: "dev.deckr.test.service",
-    featureId: "dev.deckr.test.service",
-    advertisementProfile: "dev.deckr.test.service.advertisement.v1",
-    useProfile: "dev.deckr.test.service_use.v1",
-    operations: ["play", "pause"],
-    viewFamilies: {
-      status: {
-        storeName: "dev_deckr_test_service_view_v1",
-        keyPrefix: serviceViewKey("music", "status"),
-      },
-    },
-  };
+test("service helpers advertise descriptors and authorize Concord-governed messages", async () => {
+  const protocol = TEST_SERVICE_PROTOCOL;
   const beaconState = new MemoryStateStore({ policy: BEACON_ADVERTISEMENT_STORE_POLICY });
   const beacon = new BeaconService(new BeaconDiscovery(beaconState));
   const serviceEndpoint = {
@@ -426,19 +553,27 @@ test("service helpers advertise descriptors and authorize Concord-governed reque
       contractId: agreement.contract.contractId,
       generation: agreement.contract.generation,
     },
-    messageType: "serviceRequest",
+    messageType: "serviceMessage",
     subject: entitySubject("service", {
       serviceId: "music",
       namespace: protocol.namespace,
-      operation: "play",
+      name: "play",
     }),
-    body: { serviceNamespace: protocol.namespace, operation: "play", params: {} },
+    body: {
+      serviceNamespace: protocol.namespace,
+      name: "play",
+      intent: ServiceMessageIntent.COMMAND,
+      exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
+      params: {},
+    },
   });
 
   assert.equal(
-    await authorizer.authorizeRequest(message, {
+    await authorizer.authorizeMessage(message, {
       serviceNamespace: protocol.namespace,
-      operation: "play",
+      name: "play",
+      intent: ServiceMessageIntent.COMMAND,
+      exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
       params: {},
     }),
     AuthorizationDecision.AUTHORIZED,
@@ -457,25 +592,29 @@ test("service helpers advertise descriptors and authorize Concord-governed reque
       contractId: agreement.contract.contractId,
       generation: agreement.contract.generation,
     },
-    messageType: "serviceRequest",
+    messageType: "serviceMessage",
     subject: entitySubject("service", {
       serviceId: "music",
       namespace: protocol.namespace,
-      operation: "pause",
+      name: "pause",
     }),
     body: {
       serviceNamespace: protocol.namespace,
-      operation: "pause",
+      name: "pause",
+      intent: ServiceMessageIntent.COMMAND,
+      exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
       params: {},
     },
   });
 
   assert.equal(
-    await authorizer.authorizeRequest(
+    await authorizer.authorizeMessage(
       pauseMessage,
       {
         serviceNamespace: protocol.namespace,
-        operation: "pause",
+        name: "pause",
+        intent: ServiceMessageIntent.COMMAND,
+        exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
         params: {},
       },
     ),
@@ -499,12 +638,179 @@ test("service helpers advertise descriptors and authorize Concord-governed reque
   });
 
   assert.equal(
-    await authorizer.authorizeRequest(pauseMessage, {
+    await authorizer.authorizeMessage(pauseMessage, {
       serviceNamespace: protocol.namespace,
-      operation: "pause",
+      name: "pause",
+      intent: ServiceMessageIntent.COMMAND,
+      exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
       params: {},
     }),
     AuthorizationDecision.DENIED,
+  );
+});
+
+test("service view writer stores contract-fenced entries with fence metadata", async () => {
+  const state = new MemoryStateStore({ name: "dev_deckr_test_service_view_v1" });
+  const view = serviceViewRef();
+  const writer = new ServiceViewStoreWriter({
+    state,
+    context: serviceViewWriteContext(ServiceViewWriter.SERVICE),
+  });
+
+  const entry = await writer.put(view, {
+    status: "playing",
+  });
+  const storageKey = serviceViewStorageKey(view, VIEW_CONTRACT);
+  const stored = await state.get(storageKey);
+
+  assert.equal(storageKey, `${view.key}.contract.b64_Y29udHJhY3Q6YWxwaGE.7`);
+  assert.equal(entry.storageKey, storageKey);
+  assert.notEqual(stored, null);
+  assert.deepEqual(stored!.value, {
+    status: "playing",
+    viewKey: view.key,
+    serviceId: "music",
+    serviceNamespace: TEST_SERVICE_PROTOCOL.namespace,
+    serviceEndpoint: serviceAddress("music"),
+    serviceSessionId: "service-session",
+    consumerEndpoint: controllerAddress("main"),
+    consumerSessionId: "controller-session",
+    writer: ServiceViewWriter.SERVICE,
+    contractId: VIEW_CONTRACT.contractId,
+    generation: VIEW_CONTRACT.generation,
+  });
+  assert.equal(await state.get(view.key), null);
+});
+
+test("service view reads ignore unfenced and mismatched entries", async () => {
+  const view = serviceViewRef();
+  const readContext = serviceViewReadContext(ServiceViewWriter.CONSUMER);
+
+  async function readAfter(entries: Array<{ key: string; value: JsonObject }>) {
+    const state = new MemoryStateStore({ name: "dev_deckr_test_service_view_v1" });
+    for (const entry of entries) {
+      await state.put(entry.key, entry.value);
+    }
+    return new ManagedServiceViewAccess({ state, readContext }).read(view);
+  }
+
+  assert.equal(
+    await readAfter([
+      {
+        key: view.key,
+        value: {
+          serviceId: "music",
+          serviceNamespace: TEST_SERVICE_PROTOCOL.namespace,
+          sessionId: "service-session",
+          status: "legacy",
+        },
+      },
+    ]),
+    null,
+  );
+  assert.equal(
+    await readAfter([
+      {
+        key: serviceViewStorageKey(view, { contractId: "successor", generation: 1 }),
+        value: fencedViewPayload(view, {
+          contractId: "successor",
+          generation: 1,
+        }),
+      },
+    ]),
+    null,
+  );
+  assert.equal(
+    await readAfter([
+      {
+        key: serviceViewStorageKey(view, VIEW_CONTRACT),
+        value: fencedViewPayload(view, { serviceSessionId: "old-service-session" }),
+      },
+    ]),
+    null,
+  );
+  assert.equal(
+    await readAfter([
+      {
+        key: serviceViewStorageKey(view, VIEW_CONTRACT),
+        value: fencedViewPayload(view, { consumerSessionId: "old-controller-session" }),
+      },
+    ]),
+    null,
+  );
+  assert.equal(
+    await readAfter([
+      {
+        key: serviceViewStorageKey(view, VIEW_CONTRACT),
+        value: fencedViewPayload(view, { writer: ServiceViewWriter.CONSUMER }),
+      },
+    ]),
+    null,
+  );
+});
+
+test("service view reader uses the active lease fence", async () => {
+  const state = new MemoryStateStore({ name: "dev_deckr_test_service_view_v1" });
+  const descriptor = await testServiceDescriptor();
+  const view = serviceViewRef();
+  const reader = new ServiceViewReader({ stateFor: () => state });
+  const lease = validViewLease(descriptor);
+
+  await state.put(serviceViewStorageKey(view, VIEW_CONTRACT), fencedViewPayload(view));
+
+  assert.deepEqual(await reader.read(lease, view), fencedViewPayload(view));
+});
+
+test("service view access enforces declared writer direction", async () => {
+  const serviceView = serviceViewRef("status", "deck");
+  const consumerView = serviceViewRef("preferences", "deck");
+  const views = {
+    status: TEST_SERVICE_PROTOCOL.viewFamilies.status!,
+    preferences: {
+      storeName: "dev_deckr_test_service_view_v1",
+      keyPrefix: serviceViewKey("music", "preferences"),
+      writer: ServiceViewWriter.CONSUMER,
+    },
+  };
+  const state = new MemoryStateStore({ name: "dev_deckr_test_service_view_v1" });
+
+  const serviceWriter = new ManagedServiceViewAccess({
+    state,
+    writeContext: serviceViewWriteContext(ServiceViewWriter.SERVICE, views),
+  });
+  const consumerReader = new ManagedServiceViewAccess({
+    state,
+    readContext: serviceViewReadContext(ServiceViewWriter.CONSUMER, views),
+  });
+  const consumerWriter = new ManagedServiceViewAccess({
+    state,
+    writeContext: serviceViewWriteContext(ServiceViewWriter.CONSUMER, views),
+  });
+  const serviceReader = new ManagedServiceViewAccess({
+    state,
+    readContext: serviceViewReadContext(ServiceViewWriter.SERVICE, views),
+  });
+
+  await serviceWriter.put(serviceView, { status: "playing" });
+  assert.equal((await consumerReader.read(serviceView))?.value.status, "playing");
+  await assert.rejects(
+    () => consumerWriter.put(serviceView, { status: "paused" }),
+    ValidationError,
+  );
+  await assert.rejects(
+    () => serviceReader.read(serviceView),
+    ValidationError,
+  );
+
+  await consumerWriter.put(consumerView, { mode: "compact" });
+  assert.equal((await serviceReader.read(consumerView))?.value.mode, "compact");
+  await assert.rejects(
+    () => serviceWriter.put(consumerView, { mode: "full" }),
+    ValidationError,
+  );
+  await assert.rejects(
+    () => consumerReader.read(consumerView),
+    ValidationError,
   );
 });
 

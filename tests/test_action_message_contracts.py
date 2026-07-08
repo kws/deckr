@@ -269,12 +269,15 @@ def test_action_availability_service_contract_shape() -> None:
     view_ref = action_availability_view_ref(service_id)
 
     assert service_id == "action-availability.demo-provider"
-    assert protocol.operations == (ACTION_AVAILABILITY_READ_OPERATION,)
+    assert tuple(protocol.operations) == (ACTION_AVAILABILITY_READ_OPERATION,)
+    assert tuple(protocol.messages) == (ACTION_AVAILABILITY_READ_OPERATION,)
     assert payload.service_id == service_id
+    assert tuple(payload.supported_messages) == (ACTION_AVAILABILITY_READ_OPERATION,)
     assert payload.views["actions"].store_name == (
         ACTION_AVAILABILITY_SERVICE_VIEW_STORE_NAME
     )
     assert payload.views["actions"].key_prefix.endswith(".actions.")
+    assert payload.views["actions"].writer == "service"
     assert action_availability_view_key(service_id).endswith(".actions.current")
     assert view_ref.store_name == ACTION_AVAILABILITY_SERVICE_VIEW_STORE_NAME
 

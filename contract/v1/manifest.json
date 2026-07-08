@@ -64,12 +64,12 @@
       "valid": false
     },
     {
-      "description": "Invalid serviceRequest missing serviceNamespace",
-      "id": "dev.deckr.fixture.services.service_request.invalid_missing_namespace.v1",
+      "description": "Invalid serviceMessage missing serviceNamespace",
+      "id": "dev.deckr.fixture.services.service_message.invalid_missing_namespace.v1",
       "kind": "fixture",
-      "path": "fixtures/invalid/services/service-request-missing-namespace.v1.json",
+      "path": "fixtures/invalid/services/service-message-missing-namespace.v1.json",
       "schemaPath": "schemas/services/services.v1.schema.json",
-      "title": "Invalid serviceRequest missing serviceNamespace",
+      "title": "Invalid serviceMessage missing serviceNamespace",
       "valid": false
     },
     {
@@ -163,12 +163,12 @@
       "valid": true
     },
     {
-      "description": "Valid serviceRequest service message",
-      "id": "dev.deckr.fixture.services.service_request.valid.v1",
+      "description": "Valid serviceMessage service message",
+      "id": "dev.deckr.fixture.services.service_message.valid.v1",
       "kind": "fixture",
-      "path": "fixtures/valid/services/service-request.v1.json",
+      "path": "fixtures/valid/services/service-message.v1.json",
       "schemaPath": "schemas/services/services.v1.schema.json",
-      "title": "Valid serviceRequest service message",
+      "title": "Valid serviceMessage service message",
       "valid": true
     },
     {

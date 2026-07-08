@@ -18,28 +18,39 @@ from deckr.concord import (
     ContractState,
     ContractValidity,
     ContractValidityStatus,
+    ParticipantHandle,
 )
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import entity_subject, service_address
 from deckr.services import (
-    AuthorizedServiceRequest,
+    AuthorizedServiceMessage,
     ServiceBackendStatus,
     ServiceDescriptor,
+    ServiceExchangePattern,
+    ServiceMessageDefinition,
+    ServiceMessageDirection,
+    ServiceMessageIntent,
+    ServiceOperationDefinition,
+    ServicePayloadSchema,
     ServiceProtocol,
     ServiceUseAuthorizationError,
     ServiceViewChange,
     ServiceViewEntry,
+    ServiceViewFamily,
     ServiceViewFamilyDefinition,
+    ServiceViewReadContext,
     ServiceViewRef,
     ServiceViewStore,
+    ServiceViewWriteContext,
+    ServiceViewWriter,
     UnsupportedServiceScope,
-    authorize_service_request,
+    authorize_service_message,
     newest_service_descriptor,
     parse_service_descriptor,
     service_view_key,
 )
-from deckr.services.messages import ServiceRequestBody, service_request_message
+from deckr.services.messages import ServiceMessageBody, service_message
 from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
 
 
@@ -54,10 +65,20 @@ def _protocol(
         feature_id="dev.deckr.openhab.feature",
         advertisement_profile="dev.deckr.openhab.service.advertisement.v1",
         use_profile="dev.deckr.openhab.service_use.v1",
-        operations=operations,
+        operations={name: ServiceOperationDefinition() for name in operations},
+        messages={
+            name: ServiceMessageDefinition(
+                operation=name,
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+            )
+            for name in operations
+        },
         view_families={
             "items": ServiceViewFamilyDefinition(
                 storeName="deckr_openhab_service_view_v1",
+                writer=ServiceViewWriter.SERVICE,
             )
         },
     )
@@ -183,10 +204,54 @@ def _service_view_payload(
         "viewKey": view.key,
         "serviceId": lease.descriptor.service_id,
         "serviceNamespace": lease.descriptor.namespace,
-        "sessionId": lease.descriptor.session_id,
+        "serviceEndpoint": str(lease.descriptor.endpoint),
+        "serviceSessionId": lease.descriptor.session_id,
+        "consumerEndpoint": str(lease.consumer_endpoint),
+        "consumerSessionId": lease.consumer_session_id,
+        "writer": "service",
         "contractId": pointer.contract_id,
         "generation": pointer.generation,
     }
+
+
+def _service_view_write_context(
+    lease: _FakeServiceUseLease,
+) -> ServiceViewWriteContext:
+    return _view_write_context(lease, ServiceViewWriter.SERVICE)
+
+
+def _view_write_context(
+    lease: _FakeServiceUseLease,
+    writer: ServiceViewWriter,
+) -> ServiceViewWriteContext:
+    return ServiceViewWriteContext(
+        writer=writer,
+        service_id=lease.descriptor.service_id,
+        service_namespace=lease.descriptor.namespace,
+        service_endpoint=lease.descriptor.endpoint,
+        service_session_id=lease.descriptor.session_id,
+        consumer_endpoint=lease.consumer_endpoint,
+        consumer_session_id=lease.consumer_session_id,
+        contract=_contract_pointer(lease.contract),
+        views=lease.descriptor.views,
+    )
+
+
+def _view_read_context(
+    lease: _FakeServiceUseLease,
+    reader: ServiceViewWriter = ServiceViewWriter.CONSUMER,
+) -> ServiceViewReadContext:
+    return ServiceViewReadContext(
+        reader=reader,
+        service_id=lease.descriptor.service_id,
+        service_namespace=lease.descriptor.namespace,
+        service_endpoint=lease.descriptor.endpoint,
+        service_session_id=lease.descriptor.session_id,
+        consumer_endpoint=lease.consumer_endpoint,
+        consumer_session_id=lease.consumer_session_id,
+        contract=_contract_pointer(lease.contract),
+        views=lease.descriptor.views,
+    )
 
 
 def _contract_record(
@@ -210,25 +275,52 @@ def _managed_contract(
     status: ContractValidityStatus = ContractValidityStatus.VALID,
 ) -> ConcordManagedContract:
     record = _contract_record(contract)
+    service_token = ParticipantHandle(
+        key=f"{contract.contract_id}:{contract.generation}:service",
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+        participant=service_address("openhab-home"),
+        session_id="service-session",
+        token_id="service-token",
+        revision=1,
+        refresh_seq=1,
+        ttl_seconds=30,
+    )
+    consumer_token = ParticipantHandle(
+        key=f"{contract.contract_id}:{contract.generation}:consumer",
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+        participant=action_provider_address("provider-main"),
+        session_id="provider-session",
+        token_id="consumer-token",
+        revision=1,
+        refresh_seq=1,
+        ttl_seconds=30,
+    )
     return ConcordManagedContract(
         contract=contract,
         record=record,
         validity=ContractValidity(
             status,
             contract=record if status == ContractValidityStatus.VALID else None,
+            tokens={
+                str(service_token.participant): service_token,
+                str(consumer_token.participant): consumer_token,
+            },
         ),
+        token=service_token,
     )
 
 
-def _service_request(
+def _service_message(
     contract: ContractHandle,
     *,
-    operation: str = "setItemScope",
+    name: str = "setItemScope",
     namespace: str = "dev.deckr.openhab.service",
     sender=None,
 ) -> Any:
     sender = sender or action_provider_address("provider-main")
-    return service_request_message(
+    return service_message(
         sender=sender,
         sender_session_id="provider-session",
         recipient=service_address("openhab-home"),
@@ -237,11 +329,13 @@ def _service_request(
             "service",
             serviceId="openhab-home",
             namespace=namespace,
-            operation=operation,
+            name=name,
         ),
-        body=ServiceRequestBody(
+        body=ServiceMessageBody(
             serviceNamespace=namespace,
-            operation=operation,
+            name=name,
+            intent=ServiceMessageIntent.COMMAND,
+            exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
             params={},
         ),
         contract=_contract_pointer(contract),
@@ -472,28 +566,174 @@ async def test_service_directory_tracks_beacon_events_without_stale_descriptors(
         task_group.cancel_scope.cancel()
 
 
+def test_service_protocol_allows_operation_only_declarations() -> None:
+    protocol = ServiceProtocol(
+        namespace="dev.deckr.test.service",
+        feature_id="dev.deckr.test.feature",
+        advertisement_profile="dev.deckr.test.advertisement.v1",
+        use_profile="dev.deckr.test.use.v1",
+        operations={"doThing": ServiceOperationDefinition()},
+        messages={},
+        view_families={
+            "items": ServiceViewFamilyDefinition(
+                storeName="deckr_test_view_v1",
+                writer=ServiceViewWriter.SERVICE,
+            )
+        },
+    )
+
+    assert tuple(protocol.operations) == ("doThing",)
+    assert not protocol.messages
+
+
+def test_service_protocol_validates_message_operation_references() -> None:
+    with pytest.raises(ValueError, match="unknown operation"):
+        ServiceProtocol(
+            namespace="dev.deckr.test.service",
+            feature_id="dev.deckr.test.feature",
+            advertisement_profile="dev.deckr.test.advertisement.v1",
+            use_profile="dev.deckr.test.use.v1",
+            operations={"doThing": ServiceOperationDefinition()},
+            messages={
+                "otherThing": ServiceMessageDefinition(
+                    operation="missingThing",
+                    intent=ServiceMessageIntent.COMMAND,
+                    exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                    direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+                )
+            },
+            view_families={
+                "items": ServiceViewFamilyDefinition(
+                    storeName="deckr_test_view_v1",
+                    writer=ServiceViewWriter.SERVICE,
+                )
+            },
+        )
+
+
+def test_service_protocol_allows_many_messages_per_operation() -> None:
+    protocol = ServiceProtocol(
+        namespace="dev.deckr.test.service",
+        feature_id="dev.deckr.test.feature",
+        advertisement_profile="dev.deckr.test.advertisement.v1",
+        use_profile="dev.deckr.test.use.v1",
+        operations={"volume": ServiceOperationDefinition()},
+        messages={
+            "setVolume": ServiceMessageDefinition(
+                operation="volume",
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+            ),
+            "adjustVolume": ServiceMessageDefinition(
+                operation="volume",
+                intent=ServiceMessageIntent.COMMAND,
+                exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+            ),
+        },
+        view_families={},
+    )
+
+    assert protocol.messages["setVolume"].operation == "volume"
+    assert protocol.messages["adjustVolume"].operation == "volume"
+
+
+def test_service_protocol_requires_directional_operations() -> None:
+    with pytest.raises(ValueError, match="require a declared operation"):
+        ServiceProtocol(
+            namespace="dev.deckr.test.service",
+            feature_id="dev.deckr.test.feature",
+            advertisement_profile="dev.deckr.test.advertisement.v1",
+            use_profile="dev.deckr.test.use.v1",
+            operations={"doThing": ServiceOperationDefinition()},
+            messages={
+                "doThing": ServiceMessageDefinition(
+                    intent=ServiceMessageIntent.COMMAND,
+                    exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+                    direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+                )
+            },
+            view_families={},
+        )
+
+    protocol = ServiceProtocol(
+        namespace="dev.deckr.test.service",
+        feature_id="dev.deckr.test.feature",
+        advertisement_profile="dev.deckr.test.advertisement.v1",
+        use_profile="dev.deckr.test.use.v1",
+        operations={},
+        messages={
+            "stateChanged": ServiceMessageDefinition(
+                intent=ServiceMessageIntent.EVENT,
+                exchangePattern=ServiceExchangePattern.ONE_WAY,
+                direction=ServiceMessageDirection.SERVICE_TO_CONSUMER,
+            )
+        },
+        view_families={},
+    )
+    assert protocol.messages["stateChanged"].operation is None
+
+
+def test_service_payload_schema_requires_wire_safe_json_schema_contract() -> None:
+    schema = ServicePayloadSchema(
+        schemaId="dev.deckr.demo.payload.v1",
+        schema={"type": "object"},
+    )
+    assert schema.to_dict() == {
+        "schemaId": "dev.deckr.demo.payload.v1",
+        "schema": {"type": "object"},
+    }
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        ServicePayloadSchema(
+            schemaId="dev.deckr.demo.payload.v1",
+            schema={},
+        )
+
+    with pytest.raises(ValueError, match="contract keyword"):
+        ServicePayloadSchema(
+            schemaId="dev.deckr.demo.payload.v1",
+            schema={"description": "not a contract"},
+        )
+
+    with pytest.raises(ValueError, match="NaN or Infinity"):
+        ServicePayloadSchema(
+            schemaId="dev.deckr.demo.payload.v1",
+            schema={"type": "number", "maximum": float("nan")},
+        )
+
+
+def test_service_view_family_definition_requires_writer() -> None:
+    with pytest.raises(ValueError, match="writer"):
+        ServiceViewFamilyDefinition(storeName="deckr_test_view_v1")
+
+
 @pytest.mark.asyncio
-async def test_authorize_service_request_matches_exact_contract_pointer() -> None:
+async def test_authorize_service_message_matches_exact_contract_pointer() -> None:
     protocol, lease, _view_ref = await _service_view_context()
     managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
-    request = _service_request(
+    request = _service_message(
         lease.contract,
-        operation="setItemScope",
+        name="setItemScope",
         namespace=protocol.namespace,
     )
 
-    result = await authorize_service_request(
+    result = await authorize_service_message(
         participant,
         request,
         service_id="openhab-home",
         protocol=protocol,
-        operation="setItemScope",
+        name="setItemScope",
     )
 
-    assert isinstance(result, AuthorizedServiceRequest)
+    assert isinstance(result, AuthorizedServiceMessage)
     assert result.contract == lease.contract
     assert result.record == managed.record
+    assert result.body.name == "setItemScope"
+    assert result.view_write_context.writer == ServiceViewWriter.SERVICE
+    assert result.view_write_context.consumer_session_id == "provider-session"
     assert participant.reconcile_calls == 0
     assert participant.validate_calls == [
         (
@@ -504,24 +744,24 @@ async def test_authorize_service_request_matches_exact_contract_pointer() -> Non
 
 
 @pytest.mark.asyncio
-async def test_authorize_service_request_rejects_unmanaged_contract_pointer() -> None:
+async def test_authorize_service_message_rejects_unmanaged_contract_pointer() -> None:
     protocol, lease, _view_ref = await _service_view_context()
     managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
     other_contract = _contract_handle(contract_id="service-contract-2")
-    request = _service_request(
+    request = _service_message(
         other_contract,
-        operation="setItemScope",
+        name="setItemScope",
         namespace=protocol.namespace,
     )
 
     with pytest.raises(ServiceUseAuthorizationError) as exc_info:
-        await authorize_service_request(
+        await authorize_service_message(
             participant,
             request,
             service_id="openhab-home",
             protocol=protocol,
-            operation="setItemScope",
+            name="setItemScope",
         )
 
     assert exc_info.value.code == "contract_not_managed"
@@ -530,23 +770,23 @@ async def test_authorize_service_request_rejects_unmanaged_contract_pointer() ->
 
 
 @pytest.mark.asyncio
-async def test_authorize_service_request_rejects_sender_not_named_by_contract() -> None:
+async def test_authorize_service_message_rejects_sender_not_named_by_contract() -> None:
     protocol, lease, _view_ref = await _service_view_context()
     managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
-    request = _service_request(
+    request = _service_message(
         lease.contract,
         sender=action_provider_address("other-provider"),
         namespace=protocol.namespace,
     )
 
     with pytest.raises(ServiceUseAuthorizationError) as exc_info:
-        await authorize_service_request(
+        await authorize_service_message(
             participant,
             request,
             service_id="openhab-home",
             protocol=protocol,
-            operation="sendCommand",
+            name="setItemScope",
         )
 
     assert exc_info.value.code == "scope_mismatch"
@@ -559,24 +799,57 @@ async def test_authorize_service_request_rejects_sender_not_named_by_contract() 
 
 
 @pytest.mark.asyncio
-async def test_authorize_service_request_rejects_operation_outside_protocol() -> None:
+async def test_authorize_service_message_rejects_subject_scope_mismatch() -> None:
     protocol, lease, _view_ref = await _service_view_context()
-    protocol = _protocol(operations=("setItemScope",))
     managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
-    request = _service_request(
+    request = _service_message(
         lease.contract,
-        operation="sendCommand",
+        name="setItemScope",
         namespace=protocol.namespace,
+    ).model_copy(
+        update={
+            "subject": entity_subject(
+                "service",
+                serviceId="other-service",
+                namespace=protocol.namespace,
+                name="setItemScope",
+            )
+        }
     )
 
     with pytest.raises(ServiceUseAuthorizationError) as exc_info:
-        await authorize_service_request(
+        await authorize_service_message(
             participant,
             request,
             service_id="openhab-home",
             protocol=protocol,
-            operation="sendCommand",
+            name="setItemScope",
+        )
+
+    assert exc_info.value.code == "scope_mismatch"
+    assert participant.validate_calls == []
+
+
+@pytest.mark.asyncio
+async def test_authorize_service_message_rejects_name_outside_protocol() -> None:
+    protocol, lease, _view_ref = await _service_view_context()
+    protocol = _protocol(operations=("setItemScope",))
+    managed = _managed_contract(lease.contract)
+    participant = _FakeServiceParticipant((managed,))
+    request = _service_message(
+        lease.contract,
+        name="sendCommand",
+        namespace=protocol.namespace,
+    )
+
+    with pytest.raises(ServiceUseAuthorizationError) as exc_info:
+        await authorize_service_message(
+            participant,
+            request,
+            service_id="openhab-home",
+            protocol=protocol,
+            name="sendCommand",
         )
 
     assert exc_info.value.code == "scope_mismatch"
@@ -603,25 +876,19 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
         created = await view_store.put(
             view=view_ref,
             payload={"item": "Kitchen Light", "state": "ON"},
-            service_id="openhab-home",
-            service_namespace=protocol.namespace,
-            session_id="service-session",
-            contract=lease.contract,
+            context=_service_view_write_context(lease),
         )
 
-        current = await view_store.get(lease, view_ref)
+        current = await view_store.get(_view_read_context(lease), view_ref)
         assert current is not None
         assert isinstance(current, ServiceViewEntry)
         assert current.value["state"] == "ON"
 
-        async with view_store.watch(lease, view_ref) as changes:
+        async with view_store.watch(_view_read_context(lease), view_ref) as changes:
             updated = await view_store.update(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "OFF"},
-                service_id="openhab-home",
-                service_namespace=protocol.namespace,
-                session_id="service-session",
-                contract=lease.contract,
+                context=_service_view_write_context(lease),
                 revision=created.revision,
             )
             change = await changes.receive()
@@ -632,10 +899,7 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
             await view_store.update(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "STALE"},
-                service_id="openhab-home",
-                service_namespace=protocol.namespace,
-                session_id="service-session",
-                contract=lease.contract,
+                context=_service_view_write_context(lease),
                 revision=created.revision,
             )
 
@@ -644,7 +908,128 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
             "views.openhab-home.items-unrelated.Kitchen",
         )
         with pytest.raises(UnsupportedServiceScope):
-            await view_store.get(lease, unauthorized)
+            await view_store.get(_view_read_context(lease), unauthorized)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_store_enforces_declared_writer() -> None:
+    _protocol, lease, view_ref = await _service_view_context()
+    consumer_descriptor = ServiceDescriptor(
+        candidate=lease.descriptor.candidate,
+        service_id=lease.descriptor.service_id,
+        namespace=lease.descriptor.namespace,
+        endpoint=lease.descriptor.endpoint,
+        session_id=lease.descriptor.session_id,
+        advertisement_profile=lease.descriptor.advertisement_profile,
+        use_profile=lease.descriptor.use_profile,
+        supported_operations=lease.descriptor.supported_operations,
+        supported_messages=lease.descriptor.supported_messages,
+        views={
+            "items": ServiceViewFamily(
+                storeName=view_ref.store_name,
+                keyPrefix=service_view_key("openhab-home", "items") + ".",
+                writer=ServiceViewWriter.CONSUMER,
+            )
+        },
+        backend_status=lease.descriptor.backend_status,
+        diagnostics=lease.descriptor.diagnostics,
+    )
+    consumer_writer_lease = _FakeServiceUseLease(
+        descriptor=consumer_descriptor,
+        contract=lease.contract,
+    )
+    view_store = ServiceViewStore(bucket=MemoryJsonKvBucket(bucket=view_ref.store_name))
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+
+        with pytest.raises(UnsupportedServiceScope):
+            await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "ON"},
+                context=_view_write_context(lease, ServiceViewWriter.CONSUMER),
+            )
+
+        with pytest.raises(UnsupportedServiceScope):
+            await view_store.put(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "ON"},
+                context=_view_write_context(
+                    consumer_writer_lease,
+                    ServiceViewWriter.SERVICE,
+                ),
+            )
+
+        created = await view_store.put(
+            view=view_ref,
+            payload={"item": "Kitchen Light", "state": "ON"},
+            context=_view_write_context(
+                consumer_writer_lease,
+                ServiceViewWriter.CONSUMER,
+            ),
+        )
+        assert created.writer == ServiceViewWriter.CONSUMER
+        assert (
+            await view_store.get(
+                _view_read_context(consumer_writer_lease, ServiceViewWriter.SERVICE),
+                view_ref,
+            )
+            == created
+        )
+
+        async with view_store.watch(
+            _view_read_context(consumer_writer_lease, ServiceViewWriter.SERVICE),
+            view_ref,
+        ) as changes:
+            updated = await view_store.update(
+                view=view_ref,
+                payload={"item": "Kitchen Light", "state": "OFF"},
+                context=_view_write_context(
+                    consumer_writer_lease,
+                    ServiceViewWriter.CONSUMER,
+                ),
+                revision=created.revision,
+            )
+            change = await _receive_service_change(changes)
+            assert change.entry == updated
+
+        with pytest.raises(UnsupportedServiceScope):
+            await view_store.get(_view_read_context(consumer_writer_lease), view_ref)
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_service_view_store_ignores_old_fenced_entries() -> None:
+    _protocol, lease, view_ref = await _service_view_context()
+    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
+    await raw.put(
+        _service_view_storage_key(view_ref, lease.contract),
+        {
+            "viewKey": view_ref.key,
+            "serviceId": lease.descriptor.service_id,
+            "serviceNamespace": lease.descriptor.namespace,
+            "sessionId": lease.descriptor.session_id,
+            "contractId": lease.contract.contract_id,
+            "generation": lease.contract.generation,
+            "item": "Kitchen Light",
+            "state": "STALE",
+        },
+    )
+    view_store = ServiceViewStore(bucket=raw)
+
+    async with anyio.create_task_group() as tg:
+        view_store.start(tg)
+        await view_store.wait_ready()
+        assert await view_store.get(_view_read_context(lease), view_ref) is None
+
+        current = await view_store.put(
+            view=view_ref,
+            payload={"item": "Kitchen Light", "state": "ON"},
+            context=_service_view_write_context(lease),
+        )
+        assert await view_store.get(_view_read_context(lease), view_ref) == current
         tg.cancel_scope.cancel()
 
 
@@ -659,14 +1044,11 @@ async def test_service_view_store_logs_write_apply_and_stale_revision(caplog) ->
         view_store.start(tg)
         await view_store.wait_ready()
 
-        async with view_store.watch(lease, view_ref) as changes:
+        async with view_store.watch(_view_read_context(lease), view_ref) as changes:
             created = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "ON"},
-                service_id="openhab-home",
-                service_namespace=protocol.namespace,
-                session_id="service-session",
-                contract=lease.contract,
+                context=_service_view_write_context(lease),
             )
             await _receive_service_change(changes)
 
@@ -706,20 +1088,17 @@ async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry(
         view_store.start(tg)
         await view_store.wait_ready()
 
-        async with view_store.watch(lease, view_ref) as changes:
+        async with view_store.watch(_view_read_context(lease), view_ref) as changes:
             first_hidden = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "ON"},
-                service_id="openhab-home",
-                service_namespace=protocol.namespace,
-                session_id="service-session",
-                contract=other_lease.contract,
+                context=_service_view_write_context(other_lease),
             )
             await _assert_no_service_change(changes)
 
             await view_store.delete(
                 view=view_ref,
-                contract=other_lease.contract,
+                context=_service_view_write_context(other_lease),
                 revision=first_hidden.revision,
             )
             await _assert_no_service_change(changes)
@@ -727,10 +1106,7 @@ async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry(
             second_hidden = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "OFF"},
-                service_id="openhab-home",
-                service_namespace=protocol.namespace,
-                session_id="service-session",
-                contract=other_lease.contract,
+                context=_service_view_write_context(other_lease),
             )
             await _assert_no_service_change(changes)
 
@@ -743,7 +1119,7 @@ async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry(
                     await anyio.sleep(0)
             await _assert_no_service_change(changes)
 
-        assert await view_store.get(lease, view_ref) is None
+        assert await view_store.get(_view_read_context(lease), view_ref) is None
         tg.cancel_scope.cancel()
 
 
@@ -760,7 +1136,7 @@ async def test_service_view_store_get_waits_while_materialized_view_stale() -> N
     async with anyio.create_task_group() as tg:
         view_store.start(tg)
         await view_store.wait_ready()
-        assert await view_store.get(lease, view_ref) is not None
+        assert await view_store.get(_view_read_context(lease), view_ref) is not None
 
         raw.pause_next_watch()
         raw.close_current_watch()
@@ -768,13 +1144,13 @@ async def test_service_view_store_get_waits_while_materialized_view_stale() -> N
             await raw.wait_next_watch_paused()
 
         with anyio.move_on_after(0.05) as scope:
-            await view_store.get(lease, view_ref)
+            await view_store.get(_view_read_context(lease), view_ref)
         assert scope.cancelled_caught
 
         raw.remove_without_publish(_service_view_storage_key(view_ref, lease.contract))
         raw.resume_next_watch()
         with anyio.fail_after(1):
-            while await view_store.get(lease, view_ref) is not None:
+            while await view_store.get(_view_read_context(lease), view_ref) is not None:
                 await anyio.sleep(0)
         tg.cancel_scope.cancel()
 
@@ -791,12 +1167,9 @@ async def test_service_view_store_get_rebuilds_generation_stale_cache() -> None:
         created = await view_store.put(
             view=view_ref,
             payload={"item": "Kitchen Light", "state": "ON"},
-            service_id="openhab-home",
-            service_namespace=protocol.namespace,
-            session_id="service-session",
-            contract=lease.contract,
+            context=_service_view_write_context(lease),
         )
-        assert await view_store.get(lease, view_ref) == created
+        assert await view_store.get(_view_read_context(lease), view_ref) == created
 
         async with view_store._lock:  # noqa: SLF001
             view_store._entries.clear()  # noqa: SLF001
@@ -804,7 +1177,7 @@ async def test_service_view_store_get_rebuilds_generation_stale_cache() -> None:
             view_store._bucket_generation = 0  # noqa: SLF001
 
         assert not view_store.is_current()
-        assert await view_store.get(lease, view_ref) == created
+        assert await view_store.get(_view_read_context(lease), view_ref) == created
         tg.cancel_scope.cancel()
 
 
@@ -824,18 +1197,12 @@ async def test_service_view_store_generation_gap_rebuilds_from_bucket() -> None:
         created = await view_store.put(
             view=view_ref,
             payload={"item": "Kitchen Light", "state": "ON"},
-            service_id="openhab-home",
-            service_namespace=protocol.namespace,
-            session_id="service-session",
-            contract=lease.contract,
+            context=_service_view_write_context(lease),
         )
         other = await view_store.put(
             view=other_ref,
             payload={"item": "Kitchen Fan", "state": "ON"},
-            service_id="openhab-home",
-            service_namespace=protocol.namespace,
-            session_id="service-session",
-            contract=lease.contract,
+            context=_service_view_write_context(lease),
         )
         await view_store.wait_current()
         bucket_generation = view_store._bucket.generation  # noqa: SLF001
@@ -859,7 +1226,7 @@ async def test_service_view_store_generation_gap_rebuilds_from_bucket() -> None:
         )
 
         assert view_store.is_current()
-        assert await view_store.get(lease, view_ref) == created
+        assert await view_store.get(_view_read_context(lease), view_ref) == created
         tg.cancel_scope.cancel()
 
 
@@ -875,22 +1242,19 @@ async def test_service_view_store_delete_updates_cache_immediately() -> None:
         created = await view_store.put(
             view=view_ref,
             payload={"item": "Kitchen Light", "state": "ON"},
-            service_id="openhab-home",
-            service_namespace=protocol.namespace,
-            session_id="service-session",
-            contract=lease.contract,
+            context=_service_view_write_context(lease),
         )
 
-        async with view_store.watch(lease, view_ref) as changes:
+        async with view_store.watch(_view_read_context(lease), view_ref) as changes:
             await view_store.delete(
                 view=view_ref,
-                contract=lease.contract,
+                context=_service_view_write_context(lease),
                 revision=created.revision,
             )
             change = await _receive_service_change(changes)
 
         assert change.operation == "delete"
-        assert await view_store.get(lease, view_ref) is None
+        assert await view_store.get(_view_read_context(lease), view_ref) is None
         tg.cancel_scope.cancel()
 
 
@@ -903,6 +1267,8 @@ class _FakeServiceUseLease:
     ) -> None:
         self.descriptor = descriptor
         self.contract = contract or _contract_handle()
+        self.consumer_endpoint = action_provider_address("provider-main")
+        self.consumer_session_id = "provider-session"
 
     async def refresh(self) -> None:
         return None

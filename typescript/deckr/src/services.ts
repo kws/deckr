@@ -12,6 +12,7 @@ import {
   canonicalJsonHash,
   type ContractHandle,
   type ContractRecord,
+  type ContractValidity,
   type ConcordAgreementSpec,
 } from "./concord.ts";
 import { validateContractPointer, type ContractPointer } from "./authority.ts";
@@ -54,20 +55,83 @@ export const AuthorizationDecision = Object.freeze({
 export type AuthorizationDecision =
   (typeof AuthorizationDecision)[keyof typeof AuthorizationDecision];
 
-export const ServiceReplyStatus = Object.freeze({
+export const ServiceExchangePattern = Object.freeze({
+  ONE_WAY: "one_way",
+  REQUEST_REPLY: "request_reply",
+});
+export type ServiceExchangePattern =
+  (typeof ServiceExchangePattern)[keyof typeof ServiceExchangePattern];
+
+export const ServiceMessageDirection = Object.freeze({
+  CONSUMER_TO_SERVICE: "consumer_to_service",
+  SERVICE_TO_CONSUMER: "service_to_consumer",
+  BIDIRECTIONAL: "bidirectional",
+});
+export type ServiceMessageDirection =
+  (typeof ServiceMessageDirection)[keyof typeof ServiceMessageDirection];
+
+export const ServiceMessageIntent = Object.freeze({
+  COMMAND: "command",
+  QUERY: "query",
+  EVENT: "event",
+  NOTIFICATION: "notification",
+});
+export type ServiceMessageIntent =
+  (typeof ServiceMessageIntent)[keyof typeof ServiceMessageIntent];
+
+export const ServiceMessageStatus = Object.freeze({
   OK: "ok",
   REJECTED: "rejected",
   UNAVAILABLE: "unavailable",
+  ERROR: "error",
 });
-export type ServiceReplyStatus =
-  (typeof ServiceReplyStatus)[keyof typeof ServiceReplyStatus];
+export type ServiceMessageStatus =
+  (typeof ServiceMessageStatus)[keyof typeof ServiceMessageStatus];
 
-export const SERVICE_REQUEST = "serviceRequest";
-export const SERVICE_REPLY = "serviceReply";
+export const ServiceViewWriter = Object.freeze({
+  SERVICE: "service",
+  CONSUMER: "consumer",
+});
+export type ServiceViewWriter =
+  (typeof ServiceViewWriter)[keyof typeof ServiceViewWriter];
+
+export const SERVICE_MESSAGE = "serviceMessage";
+const SERVICE_JSON_SCHEMA_CONTRACT_KEYS = new Set([
+  "$ref",
+  "allOf",
+  "anyOf",
+  "const",
+  "enum",
+  "items",
+  "oneOf",
+  "properties",
+  "type",
+]);
+
+export interface ServiceOperationDefinition {
+  description?: string;
+}
+
+export interface ServicePayloadSchema {
+  schemaId: string;
+  schema: JsonObject;
+}
+
+export interface ServiceMessageDefinition {
+  operation?: string;
+  intent: ServiceMessageIntent;
+  exchangePattern: ServiceExchangePattern;
+  direction: ServiceMessageDirection;
+  paramsSchema?: ServicePayloadSchema;
+  resultSchema?: ServicePayloadSchema;
+  eventSchema?: ServicePayloadSchema;
+  errorSchema?: ServicePayloadSchema;
+}
 
 export interface ServiceViewFamily {
   storeName: string;
   keyPrefix: string;
+  writer: ServiceViewWriter;
 }
 
 export interface ServiceViewRef {
@@ -80,7 +144,8 @@ export interface ServiceProtocol {
   featureId: string;
   advertisementProfile: string;
   useProfile: string;
-  operations: string[];
+  operations: Record<string, ServiceOperationDefinition>;
+  messages: Record<string, ServiceMessageDefinition>;
   viewFamilies: Record<string, ServiceViewFamily>;
 }
 
@@ -93,6 +158,7 @@ export interface ServiceAdvertisementPayload {
   serviceUseProfile: string;
   backendStatus: ServiceBackendStatus;
   supportedOperations: string[];
+  supportedMessages: Record<string, ServiceMessageDefinition>;
   views: Record<string, ServiceViewFamily>;
   diagnostics: JsonObject;
 }
@@ -133,6 +199,7 @@ export interface ServiceDescriptor {
   advertisementProfile: string;
   useProfile: string;
   supportedOperations: Set<string>;
+  supportedMessages: Record<string, ServiceMessageDefinition>;
   views: Record<string, ServiceViewFamily>;
   backendStatus: ServiceBackendStatus;
   diagnostics: JsonObject;
@@ -144,10 +211,16 @@ export interface ServiceUseLease {
   terms: ServiceUseTerms;
 }
 
-export interface ServiceRequestBody {
+export interface ServiceMessageBody {
   serviceNamespace: string;
-  operation: string;
-  params: JsonObject;
+  name: string;
+  intent: ServiceMessageIntent;
+  exchangePattern: ServiceExchangePattern;
+  params?: JsonObject;
+  event?: JsonValue;
+  status?: ServiceMessageStatus;
+  result?: JsonValue;
+  error?: ServiceError;
 }
 
 export interface ServiceError {
@@ -156,12 +229,53 @@ export interface ServiceError {
   diagnostics: JsonObject;
 }
 
-export interface ServiceReplyBody {
+export interface ServiceViewWriteContext {
+  writer: ServiceViewWriter;
+  serviceId: string;
   serviceNamespace: string;
-  operation: string;
-  status: ServiceReplyStatus;
-  result?: JsonValue;
-  error?: ServiceError;
+  serviceEndpoint: string;
+  serviceSessionId: string;
+  consumerEndpoint: string;
+  consumerSessionId: string;
+  contract: ContractPointer;
+  views: Record<string, ServiceViewFamily>;
+}
+
+export interface ServiceViewReadContext {
+  reader: ServiceViewWriter;
+  serviceId: string;
+  serviceNamespace: string;
+  serviceEndpoint: string;
+  serviceSessionId: string;
+  consumerEndpoint: string;
+  consumerSessionId: string;
+  contract: ContractPointer;
+  views: Record<string, ServiceViewFamily>;
+}
+
+export interface ServiceViewEntry {
+  storeName: string;
+  storageKey: string;
+  key: string;
+  value: JsonObject;
+  revision: number;
+  serviceId: string;
+  serviceNamespace: string;
+  serviceEndpoint: string;
+  serviceSessionId: string;
+  consumerEndpoint: string;
+  consumerSessionId: string;
+  writer: ServiceViewWriter;
+  contract: ContractPointer;
+}
+
+export interface ServiceViewChange {
+  operation: "put" | "delete" | "expire";
+  storeName: string;
+  key: string;
+  storageKey: string;
+  revision: number;
+  entry?: ServiceViewEntry;
 }
 
 export interface RegisteredEndpointLane {
@@ -180,15 +294,15 @@ export interface RegisteredEndpointLane {
 }
 
 export function validateServiceProtocol(input: ServiceProtocol): ServiceProtocol {
-  const operations = input.operations.map((item) => requireText(item, "service operation"));
-  if (operations.length === 0) {
-    throw new ValidationError("service protocol operations must not be empty");
-  }
+  const operations = validateServiceOperations(input.operations);
+  const messages = validateServiceMessages(input.messages);
+  validateServiceMessageOperations(operations, messages);
   const viewFamilies: Record<string, ServiceViewFamily> = {};
   for (const [name, family] of Object.entries(input.viewFamilies)) {
     viewFamilies[requireText(name, "service view family")] = {
       storeName: requireText(family.storeName, "service view storeName"),
       keyPrefix: requireText(family.keyPrefix, "service view keyPrefix"),
+      writer: validateServiceViewWriter(family.writer),
     };
   }
   return {
@@ -200,6 +314,7 @@ export function validateServiceProtocol(input: ServiceProtocol): ServiceProtocol
     ),
     useProfile: requireText(input.useProfile, "service use profile"),
     operations,
+    messages,
     viewFamilies,
   };
 }
@@ -222,7 +337,8 @@ export function serviceAdvertisementPayload(
     sessionId: input.sessionId,
     serviceUseProfile: protocol.useProfile,
     backendStatus: input.backendStatus,
-    supportedOperations: protocol.operations,
+    supportedOperations: Object.keys(protocol.operations),
+    supportedMessages: protocol.messages,
     views: protocol.viewFamilies,
     diagnostics: input.diagnostics ?? {},
   });
@@ -240,9 +356,7 @@ export function validateServiceAdvertisementPayload(value: unknown): ServiceAdve
     throw new ValidationError("serviceEndpoint must equal service:<serviceId>");
   }
   const supportedOperations = validateTextArray(raw.supportedOperations, "supportedOperations");
-  if (supportedOperations.length === 0) {
-    throw new ValidationError("service advertisement requires operations");
-  }
+  const supportedMessages = validateServiceMessages(raw.supportedMessages);
   const viewsRaw = requireJsonObject(raw.views, "views");
   const views: Record<string, ServiceViewFamily> = {};
   for (const [name, item] of Object.entries(viewsRaw)) {
@@ -250,6 +364,7 @@ export function validateServiceAdvertisementPayload(value: unknown): ServiceAdve
     views[requireText(name, "service view family name")] = {
       storeName: requireText(family.storeName, "storeName"),
       keyPrefix: requireText(family.keyPrefix, "keyPrefix"),
+      writer: validateServiceViewWriter(family.writer),
     };
   }
   return {
@@ -261,6 +376,7 @@ export function validateServiceAdvertisementPayload(value: unknown): ServiceAdve
     serviceUseProfile: requireText(raw.serviceUseProfile, "serviceUseProfile"),
     backendStatus,
     supportedOperations,
+    supportedMessages,
     views,
     diagnostics: requireJsonObject(raw.diagnostics ?? {}, "diagnostics"),
   };
@@ -384,7 +500,7 @@ export class ServiceAdvertiser {
         endpoint: this.endpoint.endpoint,
         sessionId: this.endpoint.sessionId,
         payload: payload as unknown as JsonObject,
-        operations: this.protocol.operations,
+        operations: Object.keys(this.protocol.operations),
         refreshIntervalSeconds: this.refreshIntervalSeconds,
       } satisfies BeaconAdvertisementSpec);
     }
@@ -691,18 +807,34 @@ export class ServiceUseAuthorizer {
     return this.matchingTermsRecord(contract, managed.record);
   }
 
-  async authorizeRequest(
+  async authorizeMessage(
     message: DeckrMessage,
-    body: ServiceRequestBody,
+    body: ServiceMessageBody = validateServiceMessageBody(message.body),
   ): Promise<AuthorizationDecision> {
+    if (message.messageType !== SERVICE_MESSAGE) {
+      return AuthorizationDecision.NOT_APPLICABLE;
+    }
     if (
-      !requestAppliesToService(message, body, {
+      !messageAppliesToService(message, body, {
         serviceId: this.serviceId,
         namespace: this.protocol.namespace,
         endpoint: this.endpoint.endpoint,
       })
     ) {
       return AuthorizationDecision.NOT_APPLICABLE;
+    }
+    const definition = this.protocol.messages[body.name];
+    if (
+      definition === undefined ||
+      body.intent !== definition.intent ||
+      body.exchangePattern !== definition.exchangePattern ||
+      (
+        definition.direction !== ServiceMessageDirection.CONSUMER_TO_SERVICE &&
+        definition.direction !== ServiceMessageDirection.BIDIRECTIONAL
+      ) ||
+      definition.operation === undefined
+    ) {
+      return AuthorizationDecision.DENIED;
     }
     if (message.contract === undefined) {
       return AuthorizationDecision.DENIED;
@@ -720,7 +852,7 @@ export class ServiceUseAuthorizer {
     if (terms === null || terms.clientEndpoint !== message.sender) {
       return AuthorizationDecision.DENIED;
     }
-    if (!terms.allowedOperations.includes(body.operation)) {
+    if (!terms.allowedOperations.includes(definition.operation)) {
       return AuthorizationDecision.DENIED;
     }
     const validity = await this.manager.validate(managed.contract, {
@@ -772,7 +904,7 @@ function serviceUseParticipantsMatch(record: ContractRecord, terms: ServiceUseTe
   );
 }
 
-export class ServiceRequestChannel {
+export class ServiceMessageChannel {
   private readonly endpoint: RegisteredEndpointLane;
 
   constructor(options: { endpoint: RegisteredEndpointLane }) {
@@ -781,27 +913,40 @@ export class ServiceRequestChannel {
 
   async request(
     lease: ServiceUseLease,
-    operation: string,
+    name: string,
     params: JsonObject = {},
     options: { timeoutMs?: number } = {},
-  ): Promise<ServiceReplyBody> {
-    operation = requireText(operation, "service operation");
-    if (!lease.terms.allowedOperations.includes(operation)) {
-      return rejectedReply(lease.descriptor.namespace, operation, {
+  ): Promise<ServiceMessageBody> {
+    name = requireText(name, "service message name");
+    const definition = lease.descriptor.supportedMessages[name];
+    if (
+      definition === undefined ||
+      definition.exchangePattern !== ServiceExchangePattern.REQUEST_REPLY
+    ) {
+      return rejectedMessage(lease.descriptor.namespace, name, {
+        code: "message_not_supported",
+        message: `Service does not advertise request/reply message ${JSON.stringify(name)}`,
+      });
+    }
+    if (
+      definition.operation === undefined ||
+      !lease.terms.allowedOperations.includes(definition.operation)
+    ) {
+      return rejectedMessage(lease.descriptor.namespace, name, {
         code: "operation_not_authorized",
-        message: `Service-use lease does not authorize operation ${JSON.stringify(operation)}`,
+        message: `Service-use lease does not authorize message ${JSON.stringify(name)}`,
       });
     }
     try {
       await lease.agreement.refresh();
     } catch (error) {
-      return unavailableReply(lease.descriptor.namespace, operation, {
+      return unavailableMessage(lease.descriptor.namespace, name, {
         code: error instanceof ServiceUnavailable ? error.code : "contract_unavailable",
         message: error instanceof Error ? error.message : String(error),
       });
     }
     if (this.endpoint.request === undefined) {
-      return unavailableReply(lease.descriptor.namespace, operation, {
+      return unavailableMessage(lease.descriptor.namespace, name, {
         code: "client_endpoint_unavailable",
         message: "The services endpoint is unavailable",
       });
@@ -812,12 +957,14 @@ export class ServiceRequestChannel {
       subject: entitySubject("service", {
         serviceId: lease.descriptor.serviceId,
         namespace: lease.descriptor.namespace,
-        operation,
+        name,
       }),
-      messageType: SERVICE_REQUEST,
+      messageType: SERVICE_MESSAGE,
       body: {
         serviceNamespace: lease.descriptor.namespace,
-        operation,
+        name,
+        intent: definition.intent,
+        exchangePattern: definition.exchangePattern,
         params,
       },
       contract: {
@@ -826,7 +973,7 @@ export class ServiceRequestChannel {
       },
       timeout: options.timeoutMs,
     });
-    return validateServiceReplyBody(reply.body);
+    return validateServiceMessageBody(reply.body);
   }
 }
 
@@ -845,62 +992,190 @@ export class ServiceViewReader {
     if (!validity.valid) {
       return null;
     }
-    const entry = await this.stateFor(view.storeName).get(view.key);
-    if (entry === null) {
-      return null;
-    }
-    const value = requireJsonObject(entry.value, "service view value");
-    if (
-      value.serviceId !== lease.descriptor.serviceId ||
-      value.serviceNamespace !== lease.descriptor.namespace ||
-      value.sessionId !== lease.descriptor.sessionId
-    ) {
-      return null;
-    }
-    return value;
+    const access = new ManagedServiceViewAccess({
+      state: this.stateFor(view.storeName),
+      readContext: serviceViewReadContextFromLease(lease, validity),
+    });
+    return (await access.read(view))?.value ?? null;
   }
 }
 
-export class ServiceViewWriter {
-  readonly protocol: ServiceProtocol;
-  readonly serviceId: string;
-  readonly endpoint: RegisteredEndpointLane;
-
+export class ManagedServiceViewAccess {
   private readonly state: StateStore;
-  private readonly revisions = new Map<string, number>();
+  private readonly readContext?: ServiceViewReadContext;
+  private readonly writeContext?: ServiceViewWriteContext;
 
   constructor(options: {
-    protocol: ServiceProtocol;
-    serviceId: string;
-    endpoint: RegisteredEndpointLane;
     state: StateStore;
+    readContext?: ServiceViewReadContext;
+    writeContext?: ServiceViewWriteContext;
   }) {
-    this.protocol = validateServiceProtocol(options.protocol);
-    this.serviceId = requireText(options.serviceId, "service id");
-    this.endpoint = options.endpoint;
     this.state = options.state;
+    this.readContext = options.readContext;
+    this.writeContext = options.writeContext;
   }
 
-  async put(key: string, payload: JsonObject): Promise<void> {
-    const entry = await this.state.put(key, {
-      ...payload,
-      serviceId: this.serviceId,
-      serviceNamespace: this.protocol.namespace,
-      sessionId: this.endpoint.sessionId,
+  async read(view: ServiceViewRef): Promise<ServiceViewEntry | null> {
+    const context = this.requireReadContext();
+    assertReadAuthorized(context, view);
+    const storageKey = serviceViewStorageKey(view, context.contract);
+    const entry = await this.state.get(storageKey);
+    if (entry === null) {
+      return null;
+    }
+    return serviceViewEntryForRead(entry, view, context);
+  }
+
+  async *watch(view: ServiceViewRef): AsyncIterable<ServiceViewChange> {
+    const context = this.requireReadContext();
+    assertReadAuthorized(context, view);
+    if (this.state.watch === undefined) {
+      throw new StateUnavailable("service view store does not support watch");
+    }
+    const storageKey = serviceViewStorageKey(view, context.contract);
+    for await (const change of this.state.watch(storageKey)) {
+      const entry = change.entry === undefined
+        ? undefined
+        : serviceViewEntryForRead(change.entry, view, context) ?? undefined;
+      yield {
+        operation: change.operation,
+        storeName: view.storeName,
+        key: view.key,
+        storageKey: change.key,
+        revision: change.entry?.revision ?? 0,
+        ...(entry === undefined ? {} : { entry }),
+      };
+    }
+  }
+
+  async create(
+    view: ServiceViewRef,
+    payload: JsonObject,
+    options: { ttl?: number | null } = {},
+  ): Promise<ServiceViewEntry> {
+    const context = this.requireWriteContext();
+    assertWriteAuthorized(context, view);
+    const storageKey = serviceViewStorageKey(view, context.contract);
+    return serviceViewEntryFromStateEntry(
+      await this.state.create(storageKey, fencedServiceViewPayload(view, payload, context), options),
+      view.storeName,
+    );
+  }
+
+  async put(
+    view: ServiceViewRef,
+    payload: JsonObject,
+    options: { revision?: number; ttl?: number | null } = {},
+  ): Promise<ServiceViewEntry> {
+    const context = this.requireWriteContext();
+    assertWriteAuthorized(context, view);
+    const storageKey = serviceViewStorageKey(view, context.contract);
+    const value = fencedServiceViewPayload(view, payload, context);
+    const entry = options.revision === undefined
+      ? await this.state.put(storageKey, value, { ttl: options.ttl })
+      : await this.state.update(storageKey, value, {
+        revision: options.revision,
+        ttl: options.ttl,
+      });
+    return serviceViewEntryFromStateEntry(entry, view.storeName);
+  }
+
+  async update(
+    view: ServiceViewRef,
+    payload: JsonObject,
+    options: { revision: number; ttl?: number | null },
+  ): Promise<ServiceViewEntry> {
+    const context = this.requireWriteContext();
+    assertWriteAuthorized(context, view);
+    const storageKey = serviceViewStorageKey(view, context.contract);
+    return serviceViewEntryFromStateEntry(
+      await this.state.update(
+        storageKey,
+        fencedServiceViewPayload(view, payload, context),
+        options,
+      ),
+      view.storeName,
+    );
+  }
+
+  async delete(view: ServiceViewRef, options: { revision?: number | null } = {}): Promise<void> {
+    const context = this.requireWriteContext();
+    assertWriteAuthorized(context, view);
+    await this.state.delete(serviceViewStorageKey(view, context.contract), options);
+  }
+
+  private requireReadContext(): ServiceViewReadContext {
+    if (this.readContext === undefined) {
+      throw new ValidationError("managed service view access is write-only");
+    }
+    return this.readContext;
+  }
+
+  private requireWriteContext(): ServiceViewWriteContext {
+    if (this.writeContext === undefined) {
+      throw new ValidationError("managed service view access is read-only");
+    }
+    return this.writeContext;
+  }
+}
+
+export class ServiceViewStoreWriter {
+  private readonly access: ManagedServiceViewAccess;
+  private readonly context: ServiceViewWriteContext;
+  private readonly revisions = new Map<string, { view: ServiceViewRef; revision: number }>();
+
+  constructor(options: {
+    state: StateStore;
+    context: ServiceViewWriteContext;
+  }) {
+    this.context = options.context;
+    this.access = new ManagedServiceViewAccess({
+      state: options.state,
+      writeContext: options.context,
     });
-    this.revisions.set(key, entry.revision);
+  }
+
+  async create(
+    view: ServiceViewRef,
+    payload: JsonObject,
+    options: { ttl?: number | null } = {},
+  ): Promise<ServiceViewEntry> {
+    const entry = await this.access.create(view, payload, options);
+    this.revisions.set(entry.storageKey, { view, revision: entry.revision });
+    return entry;
+  }
+
+  async put(view: ServiceViewRef, payload: JsonObject): Promise<ServiceViewEntry> {
+    const entry = await this.access.put(view, payload);
+    this.revisions.set(entry.storageKey, { view, revision: entry.revision });
+    return entry;
+  }
+
+  async update(
+    view: ServiceViewRef,
+    payload: JsonObject,
+    options: { revision: number; ttl?: number | null },
+  ): Promise<ServiceViewEntry> {
+    const entry = await this.access.update(view, payload, options);
+    this.revisions.set(entry.storageKey, { view, revision: entry.revision });
+    return entry;
+  }
+
+  async delete(view: ServiceViewRef, options: { revision?: number | null } = {}): Promise<void> {
+    await this.access.delete(view, options);
+    this.revisions.delete(serviceViewStorageKey(view, this.context.contract));
   }
 
   async withdraw(): Promise<void> {
-    for (const [key, revision] of [...this.revisions]) {
+    for (const [storageKey, item] of [...this.revisions]) {
       try {
-        await this.state.delete(key, { revision });
+        await this.access.delete(item.view, { revision: item.revision });
       } catch (error) {
         if (!(error instanceof StateConflict || error instanceof StateUnavailable)) {
           throw error;
         }
       }
-      this.revisions.delete(key);
+      this.revisions.delete(storageKey);
     }
   }
 }
@@ -911,6 +1186,62 @@ export function serviceViewKey(serviceId: string, family: string, ...tokens: str
 
 export function serviceViewPrefix(serviceId: string, family: string): string {
   return `${serviceViewKey(serviceId, family)}.`;
+}
+
+export function serviceViewStorageKey(
+  view: ServiceViewRef | string,
+  contract: ContractPointer,
+): string {
+  const key = typeof view === "string"
+    ? requireText(view, "service view key")
+    : requireText(view.key, "service view key");
+  const pointer = validateContractPointer(contract);
+  return `${key}.contract.${encodeKeyToken(pointer.contractId)}.${pointer.generation}`;
+}
+
+export function serviceViewReadContextFromLease(
+  lease: ServiceUseLease,
+  validity: ContractValidity = lease.agreement.validity,
+): ServiceViewReadContext {
+  if (!validity.valid) {
+    throw new ValidationError("service-use lease is not valid");
+  }
+  const consumerToken = validity.tokens[lease.terms.clientEndpoint] ?? lease.agreement.localToken;
+  if (consumerToken === null || consumerToken === undefined) {
+    throw new ValidationError("service-use lease requires a consumer participant token");
+  }
+  return {
+    reader: ServiceViewWriter.CONSUMER,
+    serviceId: lease.descriptor.serviceId,
+    serviceNamespace: lease.descriptor.namespace,
+    serviceEndpoint: lease.descriptor.endpoint,
+    serviceSessionId: lease.descriptor.sessionId,
+    consumerEndpoint: lease.terms.clientEndpoint,
+    consumerSessionId: consumerToken.sessionId,
+    contract: {
+      contractId: lease.agreement.contract.contractId,
+      generation: lease.agreement.contract.generation,
+    },
+    views: { ...lease.descriptor.views },
+  };
+}
+
+export function serviceViewWriteContextFromLease(
+  lease: ServiceUseLease,
+  validity: ContractValidity = lease.agreement.validity,
+): ServiceViewWriteContext {
+  const readContext = serviceViewReadContextFromLease(lease, validity);
+  return {
+    writer: ServiceViewWriter.CONSUMER,
+    serviceId: readContext.serviceId,
+    serviceNamespace: readContext.serviceNamespace,
+    serviceEndpoint: readContext.serviceEndpoint,
+    serviceSessionId: readContext.serviceSessionId,
+    consumerEndpoint: readContext.consumerEndpoint,
+    consumerSessionId: readContext.consumerSessionId,
+    contract: readContext.contract,
+    views: readContext.views,
+  };
 }
 
 export function serviceUseScopeIndexKey(scopeId: string): string {
@@ -1029,8 +1360,17 @@ export function parseServiceDescriptor(
   ) {
     return null;
   }
-  if (!payload.supportedOperations.every((item) => normalized.operations.includes(item))) {
+  if (!payload.supportedOperations.every((item) => normalized.operations[item] !== undefined)) {
     return null;
+  }
+  for (const [name, definition] of Object.entries(payload.supportedMessages)) {
+    const expected = normalized.messages[name];
+    if (
+      expected === undefined ||
+      !serviceMessageDefinitionsEqual(definition, expected)
+    ) {
+      return null;
+    }
   }
   if (JSON.stringify(payload.views) !== JSON.stringify(normalized.viewFamilies)) {
     return null;
@@ -1044,6 +1384,7 @@ export function parseServiceDescriptor(
     advertisementProfile: payload.profile,
     useProfile: payload.serviceUseProfile,
     supportedOperations: new Set(payload.supportedOperations),
+    supportedMessages: payload.supportedMessages,
     views: payload.views,
     backendStatus: payload.backendStatus,
     diagnostics: payload.diagnostics,
@@ -1096,26 +1437,23 @@ export function newestServiceDescriptor(
   return newest;
 }
 
-export function validateServiceRequestBody(value: unknown): ServiceRequestBody {
-  const raw = requireJsonObject(value, "service request body");
-  return {
+export function validateServiceMessageBody(value: unknown): ServiceMessageBody {
+  const raw = requireJsonObject(value, "service message body");
+  const body: ServiceMessageBody = {
     serviceNamespace: requireText(raw.serviceNamespace, "serviceNamespace"),
-    operation: requireText(raw.operation, "operation"),
-    params: requireJsonObject(raw.params ?? {}, "params"),
+    name: requireText(raw.name, "name"),
+    intent: validateServiceMessageIntent(raw.intent),
+    exchangePattern: validateServiceExchangePattern(raw.exchangePattern),
   };
-}
-
-export function validateServiceReplyBody(value: unknown): ServiceReplyBody {
-  const raw = requireJsonObject(value, "service reply body");
-  const status = requireText(raw.status, "status") as ServiceReplyStatus;
-  if (!Object.values(ServiceReplyStatus).includes(status)) {
-    throw new ValidationError("invalid service reply status");
+  if (raw.params !== undefined) {
+    body.params = requireJsonObject(raw.params, "params");
   }
-  const body: ServiceReplyBody = {
-    serviceNamespace: requireText(raw.serviceNamespace, "serviceNamespace"),
-    operation: requireText(raw.operation, "operation"),
-    status,
-  };
+  if (raw.event !== undefined) {
+    body.event = raw.event as JsonValue;
+  }
+  if (raw.status !== undefined) {
+    body.status = validateServiceMessageStatus(raw.status);
+  }
   if (raw.result !== undefined) {
     body.result = raw.result as JsonValue;
   }
@@ -1128,6 +1466,167 @@ export function validateServiceReplyBody(value: unknown): ServiceReplyBody {
     };
   }
   return body;
+}
+
+function validateServiceOperations(value: unknown): Record<string, ServiceOperationDefinition> {
+  const raw = requireJsonObject(value, "service operations");
+  const operations: Record<string, ServiceOperationDefinition> = {};
+  for (const [name, item] of Object.entries(raw)) {
+    const operationName = requireText(name, "service operation name");
+    const operation = requireJsonObject(item, "service operation");
+    const description = operation.description === undefined
+      ? undefined
+      : requireText(operation.description, "service operation description");
+    operations[operationName] = description === undefined ? {} : { description };
+  }
+  return operations;
+}
+
+function validateServiceMessages(value: unknown): Record<string, ServiceMessageDefinition> {
+  const raw = requireJsonObject(value, "service messages");
+  const messages: Record<string, ServiceMessageDefinition> = {};
+  for (const [name, item] of Object.entries(raw)) {
+    const messageName = requireText(name, "service message name");
+    const message = requireJsonObject(item, "service message");
+    const operation = message.operation === undefined
+      ? undefined
+      : requireText(message.operation, "service message operation");
+    const definition: ServiceMessageDefinition = {
+      ...(operation === undefined ? {} : { operation }),
+      intent: validateServiceMessageIntent(message.intent),
+      exchangePattern: validateServiceExchangePattern(message.exchangePattern),
+      direction: validateServiceMessageDirection(message.direction),
+    };
+    if (message.paramsSchema !== undefined) {
+      definition.paramsSchema = validateServicePayloadSchema(message.paramsSchema, "paramsSchema");
+    }
+    if (message.resultSchema !== undefined) {
+      definition.resultSchema = validateServicePayloadSchema(message.resultSchema, "resultSchema");
+    }
+    if (message.eventSchema !== undefined) {
+      definition.eventSchema = validateServicePayloadSchema(message.eventSchema, "eventSchema");
+    }
+    if (message.errorSchema !== undefined) {
+      definition.errorSchema = validateServicePayloadSchema(message.errorSchema, "errorSchema");
+    }
+    messages[messageName] = definition;
+  }
+  return messages;
+}
+
+function validateServiceMessageOperations(
+  operations: Record<string, ServiceOperationDefinition>,
+  messages: Record<string, ServiceMessageDefinition>,
+): void {
+  for (const [name, definition] of Object.entries(messages)) {
+    if (definition.operation !== undefined) {
+      if (operations[definition.operation] === undefined) {
+        throw new ValidationError(
+          `service message ${JSON.stringify(name)} references unknown operation ${JSON.stringify(definition.operation)}`,
+        );
+      }
+      continue;
+    }
+    if (
+      definition.direction === ServiceMessageDirection.CONSUMER_TO_SERVICE ||
+      definition.direction === ServiceMessageDirection.BIDIRECTIONAL ||
+      definition.intent === ServiceMessageIntent.COMMAND ||
+      definition.intent === ServiceMessageIntent.QUERY
+    ) {
+      throw new ValidationError(
+        `service message ${JSON.stringify(name)} requires a declared operation`,
+      );
+    }
+  }
+}
+
+function validateServicePayloadSchema(
+  value: unknown,
+  fieldName: string,
+): ServicePayloadSchema {
+  const raw = requireJsonObject(value, fieldName);
+  const schemaId = requireText(raw.schemaId, `${fieldName}.schemaId`);
+  const schema = requireJsonObject(raw.schema, `${fieldName}.schema`);
+  if (Object.keys(schema).length === 0) {
+    throw new ValidationError(`${fieldName}.schema must not be empty`);
+  }
+  if (!Object.keys(schema).some((key) => SERVICE_JSON_SCHEMA_CONTRACT_KEYS.has(key))) {
+    throw new ValidationError(`${fieldName}.schema must include a JSON Schema contract keyword`);
+  }
+  requireJsonWireSafe(schema, `${fieldName}.schema`);
+  return { schemaId, schema };
+}
+
+function serviceMessageDefinitionsEqual(
+  left: ServiceMessageDefinition,
+  right: ServiceMessageDefinition,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function requireJsonWireSafe(value: unknown, fieldName: string): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new ValidationError(`${fieldName} must not contain NaN or Infinity`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      requireJsonWireSafe(item, fieldName);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      requireJsonWireSafe(item, fieldName);
+    }
+    return;
+  }
+  throw new ValidationError(`${fieldName} contains unsupported JSON value type`);
+}
+
+function validateServiceExchangePattern(value: unknown): ServiceExchangePattern {
+  const pattern = requireText(value, "exchangePattern") as ServiceExchangePattern;
+  if (!Object.values(ServiceExchangePattern).includes(pattern)) {
+    throw new ValidationError("invalid service exchangePattern");
+  }
+  return pattern;
+}
+
+function validateServiceMessageDirection(value: unknown): ServiceMessageDirection {
+  const direction = requireText(value, "direction") as ServiceMessageDirection;
+  if (!Object.values(ServiceMessageDirection).includes(direction)) {
+    throw new ValidationError("invalid service message direction");
+  }
+  return direction;
+}
+
+function validateServiceMessageIntent(value: unknown): ServiceMessageIntent {
+  const intent = requireText(value, "intent") as ServiceMessageIntent;
+  if (!Object.values(ServiceMessageIntent).includes(intent)) {
+    throw new ValidationError("invalid service message intent");
+  }
+  return intent;
+}
+
+function validateServiceMessageStatus(value: unknown): ServiceMessageStatus {
+  const status = requireText(value, "status") as ServiceMessageStatus;
+  if (!Object.values(ServiceMessageStatus).includes(status)) {
+    throw new ValidationError("invalid service message status");
+  }
+  return status;
+}
+
+function validateServiceViewWriter(value: unknown): ServiceViewWriter {
+  const writer = requireText(value, "writer") as ServiceViewWriter;
+  if (!Object.values(ServiceViewWriter).includes(writer)) {
+    throw new ValidationError("invalid service view writer");
+  }
+  return writer;
 }
 
 function validateTextArray(value: unknown, fieldName: string): string[] {
@@ -1199,6 +1698,122 @@ function viewRefAuthorized(lease: ServiceUseLease, view: ServiceViewRef): boolea
   return false;
 }
 
+function assertReadAuthorized(context: ServiceViewReadContext, view: ServiceViewRef): void {
+  const family = serviceViewFamilyFor(context.views, view);
+  if (family === null) {
+    throw new ValidationError(`Service read context does not authorize view ${JSON.stringify(view.key)}`);
+  }
+  if (family.writer === context.reader) {
+    throw new ValidationError(
+      `Service view ${JSON.stringify(view.key)} is written by ${context.reader}`,
+    );
+  }
+}
+
+function assertWriteAuthorized(context: ServiceViewWriteContext, view: ServiceViewRef): void {
+  const family = serviceViewFamilyFor(context.views, view);
+  if (family === null) {
+    throw new ValidationError(`Service write context does not authorize view ${JSON.stringify(view.key)}`);
+  }
+  if (family.writer !== context.writer) {
+    throw new ValidationError(
+      `Service view ${JSON.stringify(view.key)} writer is ${family.writer}, not ${context.writer}`,
+    );
+  }
+}
+
+function serviceViewFamilyFor(
+  views: Record<string, ServiceViewFamily>,
+  view: ServiceViewRef,
+): ServiceViewFamily | null {
+  for (const family of Object.values(views)) {
+    if (view.storeName === family.storeName && view.key.startsWith(family.keyPrefix)) {
+      return family;
+    }
+  }
+  return null;
+}
+
+function fencedServiceViewPayload(
+  view: ServiceViewRef,
+  payload: JsonObject,
+  context: ServiceViewWriteContext,
+): JsonObject {
+  return {
+    ...(cloneJson(payload as JsonValue) as JsonObject),
+    viewKey: view.key,
+    serviceId: context.serviceId,
+    serviceNamespace: context.serviceNamespace,
+    serviceEndpoint: context.serviceEndpoint,
+    serviceSessionId: context.serviceSessionId,
+    consumerEndpoint: context.consumerEndpoint,
+    consumerSessionId: context.consumerSessionId,
+    writer: context.writer,
+    contractId: context.contract.contractId,
+    generation: context.contract.generation,
+  };
+}
+
+function serviceViewEntryFromStateEntry(
+  entry: StateEntry,
+  storeName: string,
+): ServiceViewEntry {
+  const value = requireJsonObject(entry.value, "service view value");
+  const contract = validateContractPointer({
+    contractId: value.contractId,
+    generation: value.generation,
+  });
+  return {
+    storeName,
+    storageKey: entry.key,
+    key: requireText(value.viewKey, "viewKey"),
+    value,
+    revision: entry.revision,
+    serviceId: requireText(value.serviceId, "serviceId"),
+    serviceNamespace: requireText(value.serviceNamespace, "serviceNamespace"),
+    serviceEndpoint: endpointAddress(requireText(value.serviceEndpoint, "serviceEndpoint")),
+    serviceSessionId: requireText(value.serviceSessionId, "serviceSessionId"),
+    consumerEndpoint: endpointAddress(requireText(value.consumerEndpoint, "consumerEndpoint")),
+    consumerSessionId: requireText(value.consumerSessionId, "consumerSessionId"),
+    writer: validateServiceViewWriter(value.writer),
+    contract,
+  };
+}
+
+function serviceViewEntryForRead(
+  entry: StateEntry,
+  view: ServiceViewRef,
+  context: ServiceViewReadContext,
+): ServiceViewEntry | null {
+  let parsed: ServiceViewEntry;
+  try {
+    parsed = serviceViewEntryFromStateEntry(entry, view.storeName);
+  } catch {
+    return null;
+  }
+  const family = serviceViewFamilyFor(context.views, view);
+  if (family === null) {
+    return null;
+  }
+  if (
+    parsed.key !== view.key ||
+    parsed.storageKey !== serviceViewStorageKey(view, context.contract) ||
+    parsed.serviceId !== context.serviceId ||
+    parsed.serviceNamespace !== context.serviceNamespace ||
+    parsed.serviceEndpoint !== context.serviceEndpoint ||
+    parsed.serviceSessionId !== context.serviceSessionId ||
+    parsed.consumerEndpoint !== context.consumerEndpoint ||
+    parsed.consumerSessionId !== context.consumerSessionId ||
+    parsed.contract.contractId !== context.contract.contractId ||
+    parsed.contract.generation !== context.contract.generation ||
+    parsed.writer !== family.writer ||
+    parsed.writer === context.reader
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
 function leaseCoversScope(
   lease: ServiceUseLease,
   options: { operations: string[]; views: string[] | Record<string, string[]> },
@@ -1240,9 +1855,9 @@ function leaseKey(
   ]);
 }
 
-function requestAppliesToService(
+function messageAppliesToService(
   message: DeckrMessage,
-  body: ServiceRequestBody,
+  body: ServiceMessageBody,
   options: { serviceId: string; namespace: string; endpoint: string },
 ): boolean {
   if (body.serviceNamespace !== options.namespace) {
@@ -1257,21 +1872,26 @@ function requestAppliesToService(
   ) {
     return false;
   }
+  if (message.subject.identifiers.name !== undefined && message.subject.identifiers.name !== body.name) {
+    return false;
+  }
   if (message.recipient.targetType === "endpoint") {
     return message.recipient.endpoint === options.endpoint;
   }
   return JSON.stringify(message.recipient) === JSON.stringify(endpointTarget(options.endpoint));
 }
 
-function rejectedReply(
+function rejectedMessage(
   serviceNamespace: string,
-  operation: string,
+  name: string,
   options: { code: string; message: string; diagnostics?: JsonObject },
-): ServiceReplyBody {
+): ServiceMessageBody {
   return {
     serviceNamespace,
-    operation,
-    status: ServiceReplyStatus.REJECTED,
+    name,
+    intent: ServiceMessageIntent.COMMAND,
+    exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
+    status: ServiceMessageStatus.REJECTED,
     error: {
       code: options.code,
       message: options.message,
@@ -1280,15 +1900,17 @@ function rejectedReply(
   };
 }
 
-function unavailableReply(
+function unavailableMessage(
   serviceNamespace: string,
-  operation: string,
+  name: string,
   options: { code: string; message: string; diagnostics?: JsonObject },
-): ServiceReplyBody {
+): ServiceMessageBody {
   return {
     serviceNamespace,
-    operation,
-    status: ServiceReplyStatus.UNAVAILABLE,
+    name,
+    intent: ServiceMessageIntent.COMMAND,
+    exchangePattern: ServiceExchangePattern.REQUEST_REPLY,
+    status: ServiceMessageStatus.UNAVAILABLE,
     error: {
       code: options.code,
       message: options.message,

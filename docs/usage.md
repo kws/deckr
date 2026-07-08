@@ -120,7 +120,7 @@ async def report_presence() -> None:
 `use_matching(...)` owns discovery and service-use negotiation. The caller
 states matching policy and an optional selector. The returned lease is valid
 only inside the context. If service-use authority is lost, the managed API
-raises `ServiceUnavailable` or a service request reply reports the
+raises `ServiceUnavailable` or a service-message response reports the
 service-domain error.
 
 ## Reading And Watching Views
@@ -195,7 +195,7 @@ async with sonos.zone_subscription_session(
 ```
 
 Ordinary feature code must not read service views, watch service views, or send
-service requests unless it is doing so through an active service session. For a
+service messages unless it is doing so through an active service session. For a
 resource-bound action, open the domain session as early as the action lifecycle
 allows. In the Python action SDK, service-backed root components should normally
 use `warmPolicy: "keep_until_stopped"` and open the session in component start,
@@ -278,7 +278,7 @@ lease-loss helpers or treat missing payloads as lifecycle authority.
 ## Provider Boundary
 
 Service providers still use lower-level runtime infrastructure to advertise,
-accept service-use contracts, authorize incoming service requests, and publish
+accept service-use contracts, authorize incoming service messages, and publish
 fenced views. That code is service infrastructure, not ordinary feature-client
 code.
 

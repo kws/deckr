@@ -14,8 +14,10 @@ from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.models import freeze_json, thaw_json
 from deckr.services.runtime import (
-    ServiceUseLease,
+    ServiceViewReadContext,
     ServiceViewRef,
+    ServiceViewWriteContext,
+    ServiceViewWriter,
     UnsupportedServiceScope,
 )
 from deckr.substrates.nats_kv import (
@@ -38,7 +40,11 @@ class ServiceViewEntry:
     revision: int
     service_id: str
     service_namespace: str
-    session_id: str
+    service_endpoint: str
+    service_session_id: str
+    consumer_endpoint: str
+    consumer_session_id: str
+    writer: ServiceViewWriter
     contract: ContractPointer
 
 
@@ -56,7 +62,10 @@ class ServiceViewChange:
 class _ServiceViewLeaseFence:
     service_id: str
     service_namespace: str
-    session_id: str
+    service_endpoint: str
+    service_session_id: str
+    consumer_endpoint: str
+    consumer_session_id: str
     contract: ContractPointer
 
 
@@ -126,18 +135,17 @@ class ServiceViewStore:
 
     async def get(
         self,
-        lease: ServiceUseLease,
+        context: ServiceViewReadContext,
         view: ServiceViewRef,
     ) -> ServiceViewEntry | None:
-        self._assert_authorized(lease, view)
-        await lease.refresh()
+        self._assert_read_authorized(context, view)
         await self.wait_current()
-        storage_key = _storage_key_for_lease(view, lease)
+        storage_key = _storage_key_for_context(view, context)
         async with self._lock:
             entry = self._entries.get(storage_key)
         if entry is None:
             return None
-        if not _entry_matches_lease(entry, lease):
+        if not _entry_matches_read_context(entry, context):
             return None
         return entry
 
@@ -146,29 +154,19 @@ class ServiceViewStore:
         *,
         view: ServiceViewRef,
         payload: Mapping[str, Any],
-        service_id: str,
-        service_namespace: str,
-        session_id: str,
-        contract: ContractPointer | Mapping[str, Any] | Any,
+        context: ServiceViewWriteContext,
         revision: int | None = None,
         ttl: float | None = None,
     ) -> ServiceViewEntry:
-        if view.store_name != self.bucket:
-            raise ValueError(
-                f"Service view store {view.store_name!r} does not match bucket "
-                f"{self.bucket!r}"
-            )
+        self._assert_write_authorized(context, view)
         if self._started:
             await self.wait_current()
-        pointer = _coerce_contract_pointer(contract)
+        pointer = context.contract
         storage_key = _storage_key(view.key, pointer)
         value = _fenced_payload(
             payload,
             view_key=view.key,
-            service_id=service_id,
-            service_namespace=service_namespace,
-            session_id=session_id,
-            contract=pointer,
+            context=context,
         )
         entry = (
             await self._bucket.put(storage_key, value, ttl=ttl)
@@ -187,9 +185,9 @@ class ServiceViewStore:
             self.bucket,
             storage_key,
             entry.revision,
-            service_id,
-            service_namespace,
-            session_id,
+            context.service_id,
+            context.service_namespace,
+            context.service_session_id,
             "put" if revision is None else "update",
             _payload_hash(payload),
         )
@@ -211,28 +209,18 @@ class ServiceViewStore:
         *,
         view: ServiceViewRef,
         payload: Mapping[str, Any],
-        service_id: str,
-        service_namespace: str,
-        session_id: str,
-        contract: ContractPointer | Mapping[str, Any] | Any,
+        context: ServiceViewWriteContext,
         ttl: float | None = None,
     ) -> ServiceViewEntry:
-        if view.store_name != self.bucket:
-            raise ValueError(
-                f"Service view store {view.store_name!r} does not match bucket "
-                f"{self.bucket!r}"
-            )
+        self._assert_write_authorized(context, view)
         if self._started:
             await self.wait_current()
-        pointer = _coerce_contract_pointer(contract)
+        pointer = context.contract
         storage_key = _storage_key(view.key, pointer)
         value = _fenced_payload(
             payload,
             view_key=view.key,
-            service_id=service_id,
-            service_namespace=service_namespace,
-            session_id=session_id,
-            contract=pointer,
+            context=context,
         )
         entry = await self._bucket.create(storage_key, value, ttl=ttl)
         service_entry = _service_view_entry_from_kv(entry)
@@ -242,9 +230,9 @@ class ServiceViewStore:
             self.bucket,
             storage_key,
             entry.revision,
-            service_id,
-            service_namespace,
-            session_id,
+            context.service_id,
+            context.service_namespace,
+            context.service_session_id,
             _payload_hash(payload),
         )
         await self._apply_service_change(
@@ -265,20 +253,14 @@ class ServiceViewStore:
         *,
         view: ServiceViewRef,
         payload: Mapping[str, Any],
-        service_id: str,
-        service_namespace: str,
-        session_id: str,
-        contract: ContractPointer | Mapping[str, Any] | Any,
+        context: ServiceViewWriteContext,
         revision: int,
         ttl: float | None = None,
     ) -> ServiceViewEntry:
         return await self.put(
             view=view,
             payload=payload,
-            service_id=service_id,
-            service_namespace=service_namespace,
-            session_id=session_id,
-            contract=contract,
+            context=context,
             revision=revision,
             ttl=ttl,
         )
@@ -287,17 +269,13 @@ class ServiceViewStore:
         self,
         *,
         view: ServiceViewRef,
-        contract: ContractPointer | Mapping[str, Any] | Any,
+        context: ServiceViewWriteContext,
         revision: int | None = None,
     ) -> None:
-        if view.store_name != self.bucket:
-            raise ValueError(
-                f"Service view store {view.store_name!r} does not match bucket "
-                f"{self.bucket!r}"
-            )
+        self._assert_write_authorized(context, view)
         if self._started:
             await self.wait_current()
-        pointer = _coerce_contract_pointer(contract)
+        pointer = context.contract
         storage_key = _storage_key(view.key, pointer)
         marker_revision = await self._bucket.delete(storage_key, revision=revision)
         if marker_revision is None:
@@ -322,17 +300,16 @@ class ServiceViewStore:
     @asynccontextmanager
     async def watch(
         self,
-        lease: ServiceUseLease,
+        context: ServiceViewReadContext,
         view: ServiceViewRef,
     ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
-        self._assert_authorized(lease, view)
-        await lease.refresh()
+        self._assert_read_authorized(context, view)
         await self.wait_current()
         send, receive = anyio.create_memory_object_stream[ServiceViewChange](
             max_buffer_size=self._buffer_size
         )
-        fence = _lease_fence(lease)
-        storage_key = _storage_key_for_lease(view, lease)
+        fence = _read_fence(context)
+        storage_key = _storage_key_for_context(view, context)
         async with self._lock:
             current = self._entries.get(storage_key)
             self._subscribers[send] = _ServiceViewSubscriber(
@@ -494,7 +471,7 @@ class ServiceViewStore:
             _change_storage_key(change),
             entry.service_id if entry is not None else None,
             entry.service_namespace if entry is not None else None,
-            entry.session_id if entry is not None else None,
+            entry.service_session_id if entry is not None else None,
             entry.contract.contract_id if entry is not None else None,
             entry.contract.generation if entry is not None else None,
             _payload_hash(entry.value) if entry is not None else None,
@@ -506,39 +483,167 @@ class ServiceViewStore:
             view_generation = _bucket_generation_cached(self._bucket)
         self._bucket_generation = max(self._bucket_generation, view_generation)
 
-    def _assert_authorized(self, lease: ServiceUseLease, view: ServiceViewRef) -> None:
+    def _assert_read_authorized(
+        self,
+        context: ServiceViewReadContext,
+        view: ServiceViewRef,
+    ) -> None:
         if view.store_name != self.bucket:
             raise UnsupportedServiceScope(
                 f"Service view {view.key!r} is not in bucket {self.bucket!r}"
             )
-        for view_family in lease.descriptor.views.values():
+        for view_family in context.views.values():
             if view.store_name != view_family.store_name:
                 continue
             if view.key.startswith(view_family.key_prefix):
+                if view_family.writer == context.reader:
+                    raise UnsupportedServiceScope(
+                        f"Service view {view.key!r} is written by "
+                        f"{context.reader.value}"
+                    )
                 return
         raise UnsupportedServiceScope(
-            f"Service-use lease does not authorize view {view.key!r}"
+            f"Service read context does not authorize view {view.key!r}"
         )
+
+    def _assert_write_authorized(
+        self,
+        context: ServiceViewWriteContext,
+        view: ServiceViewRef,
+    ) -> None:
+        if view.store_name != self.bucket:
+            raise UnsupportedServiceScope(
+                f"Service view {view.key!r} is not in bucket {self.bucket!r}"
+            )
+        for view_family in context.views.values():
+            if view.store_name != view_family.store_name:
+                continue
+            if not view.key.startswith(view_family.key_prefix):
+                continue
+            if view_family.writer != context.writer:
+                raise UnsupportedServiceScope(
+                    f"Service view {view.key!r} writer is "
+                    f"{view_family.writer.value}, not {context.writer.value}"
+                )
+            return
+        raise UnsupportedServiceScope(
+            f"Service write context does not authorize view {view.key!r}"
+        )
+
+
+class ManagedServiceViewAccess:
+    """Lease-bound retained-view access for one service-use contract."""
+
+    def __init__(
+        self,
+        store: ServiceViewStore,
+        *,
+        read_context: ServiceViewReadContext | None = None,
+        write_context: ServiceViewWriteContext | None = None,
+    ) -> None:
+        self._store = store
+        self._read_context = read_context
+        self._write_context = write_context
+
+    async def read(self, view: ServiceViewRef) -> ServiceViewEntry | None:
+        return await self._store.get(self._require_read_context(), view)
+
+    @asynccontextmanager
+    async def watch(
+        self,
+        view: ServiceViewRef,
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
+        async with self._store.watch(self._require_read_context(), view) as changes:
+            yield changes
+
+    async def create(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        return await self._store.create(
+            view=view,
+            payload=payload,
+            context=self._require_write_context(),
+            ttl=ttl,
+        )
+
+    async def put(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int | None = None,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        return await self._store.put(
+            view=view,
+            payload=payload,
+            context=self._require_write_context(),
+            revision=revision,
+            ttl=ttl,
+        )
+
+    async def update(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        return await self._store.update(
+            view=view,
+            payload=payload,
+            context=self._require_write_context(),
+            revision=revision,
+            ttl=ttl,
+        )
+
+    async def delete(
+        self,
+        view: ServiceViewRef,
+        *,
+        revision: int | None = None,
+    ) -> None:
+        await self._store.delete(
+            view=view,
+            context=self._require_write_context(),
+            revision=revision,
+        )
+
+    def _require_read_context(self) -> ServiceViewReadContext:
+        if self._read_context is None:
+            raise UnsupportedServiceScope("managed service view access is write-only")
+        return self._read_context
+
+    def _require_write_context(self) -> ServiceViewWriteContext:
+        if self._write_context is None:
+            raise UnsupportedServiceScope("managed service view access is read-only")
+        return self._write_context
 
 
 def _fenced_payload(
     payload: Mapping[str, Any],
     *,
     view_key: str,
-    service_id: str,
-    service_namespace: str,
-    session_id: str,
-    contract: ContractPointer,
+    context: ServiceViewWriteContext,
 ) -> Mapping[str, Any]:
     return freeze_json(
         {
             **thaw_json(payload),
             "viewKey": view_key,
-            "serviceId": service_id,
-            "serviceNamespace": service_namespace,
-            "sessionId": session_id,
-            "contractId": contract.contract_id,
-            "generation": contract.generation,
+            "serviceId": context.service_id,
+            "serviceNamespace": context.service_namespace,
+            "serviceEndpoint": str(context.service_endpoint),
+            "serviceSessionId": context.service_session_id,
+            "consumerEndpoint": str(context.consumer_endpoint),
+            "consumerSessionId": context.consumer_session_id,
+            "writer": context.writer.value,
+            "contractId": context.contract.contract_id,
+            "generation": context.contract.generation,
         }
     )
 
@@ -558,7 +663,11 @@ def _service_view_entry_from_kv(entry: KvEntry) -> ServiceViewEntry:
     key = _required_value(value, "viewKey")
     service_id = _required_value(value, "serviceId")
     service_namespace = _required_value(value, "serviceNamespace")
-    session_id = _required_value(value, "sessionId")
+    service_endpoint = _required_value(value, "serviceEndpoint")
+    service_session_id = _required_value(value, "serviceSessionId")
+    consumer_endpoint = _required_value(value, "consumerEndpoint")
+    consumer_session_id = _required_value(value, "consumerSessionId")
+    writer = ServiceViewWriter(_required_value(value, "writer"))
     contract_id = _required_value(value, "contractId")
     generation = value.get("generation")
     if not isinstance(generation, int):
@@ -572,7 +681,11 @@ def _service_view_entry_from_kv(entry: KvEntry) -> ServiceViewEntry:
         revision=entry.revision,
         service_id=service_id,
         service_namespace=service_namespace,
-        session_id=session_id,
+        service_endpoint=service_endpoint,
+        service_session_id=service_session_id,
+        consumer_endpoint=consumer_endpoint,
+        consumer_session_id=consumer_session_id,
+        writer=writer,
         contract=contract,
     )
 
@@ -584,17 +697,22 @@ def _required_value(value: Mapping[str, Any], key: str) -> str:
     return item
 
 
-def _entry_matches_lease(entry: ServiceViewEntry, lease: ServiceUseLease) -> bool:
-    return _entry_matches_fence(entry, _lease_fence(lease))
+def _entry_matches_read_context(
+    entry: ServiceViewEntry,
+    context: ServiceViewReadContext,
+) -> bool:
+    return _entry_matches_fence(entry, _read_fence(context))
 
 
-def _lease_fence(lease: ServiceUseLease) -> _ServiceViewLeaseFence:
-    descriptor = lease.descriptor
+def _read_fence(context: ServiceViewReadContext) -> _ServiceViewLeaseFence:
     return _ServiceViewLeaseFence(
-        service_id=descriptor.service_id,
-        service_namespace=descriptor.namespace,
-        session_id=descriptor.session_id,
-        contract=_contract_pointer_from_handle(lease.contract),
+        service_id=context.service_id,
+        service_namespace=context.service_namespace,
+        service_endpoint=str(context.service_endpoint),
+        service_session_id=context.service_session_id,
+        consumer_endpoint=str(context.consumer_endpoint),
+        consumer_session_id=context.consumer_session_id,
+        contract=context.contract,
     )
 
 
@@ -605,7 +723,10 @@ def _entry_matches_fence(
     return (
         entry.service_id == fence.service_id
         and entry.service_namespace == fence.service_namespace
-        and entry.session_id == fence.session_id
+        and entry.service_endpoint == fence.service_endpoint
+        and entry.service_session_id == fence.service_session_id
+        and entry.consumer_endpoint == fence.consumer_endpoint
+        and entry.consumer_session_id == fence.consumer_session_id
         and entry.contract == fence.contract
     )
 
@@ -635,8 +756,11 @@ def _subscriber_delivery(
     return None
 
 
-def _storage_key_for_lease(view: ServiceViewRef, lease: ServiceUseLease) -> str:
-    return _storage_key(view.key, _contract_pointer_from_handle(lease.contract))
+def _storage_key_for_context(
+    view: ServiceViewRef,
+    context: ServiceViewReadContext | ServiceViewWriteContext,
+) -> str:
+    return _storage_key(view.key, context.contract)
 
 
 def _storage_key(logical_key: str, contract: ContractPointer) -> str:
@@ -652,20 +776,6 @@ def _logical_key_from_storage_key(storage_key: str) -> str:
 
 def _change_storage_key(change: ServiceViewChange) -> str:
     return change.storage_key or change.key
-
-
-def _coerce_contract_pointer(
-    value: ContractPointer | Mapping[str, Any] | Any,
-) -> ContractPointer:
-    if isinstance(value, ContractPointer):
-        return value
-    if isinstance(value, Mapping):
-        return ContractPointer.model_validate(value)
-    contract_id = getattr(value, "contract_id", None)
-    generation = getattr(value, "generation", None)
-    if contract_id is not None and generation is not None:
-        return ContractPointer(contractId=contract_id, generation=generation)
-    return ContractPointer.model_validate(value)
 
 
 def _contract_pointer_from_handle(value: Any) -> ContractPointer:
@@ -710,6 +820,7 @@ def _is_materialized_bucket(value: Any) -> bool:
 
 
 __all__ = [
+    "ManagedServiceViewAccess",
     "ServiceViewChange",
     "ServiceViewEntry",
     "ServiceViewStore",

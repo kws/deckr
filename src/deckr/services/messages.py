@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import Field, field_serializer, field_validator
 
@@ -21,8 +21,7 @@ from deckr.contracts.messages import (
 )
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
-SERVICE_REQUEST = "serviceRequest"
-SERVICE_REPLY = "serviceReply"
+SERVICE_MESSAGE = "serviceMessage"
 
 
 def _require_text(value: str, *, field_name: str) -> str:
@@ -35,7 +34,25 @@ def _require_text(value: str, *, field_name: str) -> str:
     return value
 
 
-class ServiceReplyStatus(StrEnum):
+class ServiceExchangePattern(StrEnum):
+    ONE_WAY = "one_way"
+    REQUEST_REPLY = "request_reply"
+
+
+class ServiceMessageDirection(StrEnum):
+    CONSUMER_TO_SERVICE = "consumer_to_service"
+    SERVICE_TO_CONSUMER = "service_to_consumer"
+    BIDIRECTIONAL = "bidirectional"
+
+
+class ServiceMessageIntent(StrEnum):
+    COMMAND = "command"
+    QUERY = "query"
+    EVENT = "event"
+    NOTIFICATION = "notification"
+
+
+class ServiceMessageStatus(StrEnum):
     OK = "ok"
     REJECTED = "rejected"
     UNAVAILABLE = "unavailable"
@@ -66,19 +83,19 @@ class ServiceMessageBody(DeckrModel):
     """Base class for typed ``services`` lane bodies."""
 
     service_namespace: str = Field(alias="serviceNamespace")
-    operation: str
+    name: str
+    intent: ServiceMessageIntent
+    exchange_pattern: ServiceExchangePattern = Field(alias="exchangePattern")
+    params: JsonObject = Field(default_factory=dict)
+    event: JsonObject | None = None
+    status: ServiceMessageStatus | None = None
+    result: JsonObject | None = None
+    error: ServiceError | None = None
 
-    @field_validator("service_namespace", "operation")
+    @field_validator("service_namespace", "name")
     @classmethod
     def _validate_text(cls, value: str) -> str:
         return _require_text(value, field_name="service message field")
-
-    def to_dict(self) -> dict[str, Any]:
-        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
-
-
-class ServiceRequestBody(ServiceMessageBody):
-    params: JsonObject = Field(default_factory=dict)
 
     @field_validator("params", mode="after")
     @classmethod
@@ -89,25 +106,31 @@ class ServiceRequestBody(ServiceMessageBody):
     def _serialize_params(self, value: Mapping[str, Any]) -> dict[str, Any]:
         return thaw_json(value)
 
-
-class ServiceReplyBody(ServiceMessageBody):
-    status: ServiceReplyStatus
-    result: JsonObject = Field(default_factory=dict)
-    error: ServiceError | None = None
-
-    @field_validator("result", mode="after")
+    @field_validator("event", "result", mode="after")
     @classmethod
-    def _freeze_result(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _freeze_optional_json(
+        cls,
+        value: Mapping[str, Any] | None,
+    ) -> Mapping[str, Any] | None:
+        if value is None:
+            return None
         return freeze_json(value)
 
-    @field_serializer("result")
-    def _serialize_result(self, value: Mapping[str, Any]) -> dict[str, Any]:
+    @field_serializer("event", "result")
+    def _serialize_optional_json(
+        self,
+        value: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return None
         return thaw_json(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
 SERVICE_BODY_BY_MESSAGE_TYPE: Mapping[str, type[ServiceMessageBody]] = {
-    SERVICE_REQUEST: ServiceRequestBody,
-    SERVICE_REPLY: ServiceReplyBody,
+    SERVICE_MESSAGE: ServiceMessageBody,
 }
 
 
@@ -146,17 +169,16 @@ def service_message(
     sender_session_id: str,
     recipient: str | EndpointAddress | MessageTarget,
     recipient_session_id: str | None = None,
-    message_type: Literal["serviceRequest", "serviceReply"],
     body: ServiceMessageBody | Mapping[str, Any],
     subject: EntitySubject,
     in_reply_to: str | None = None,
     causation_id: str | None = None,
     contract: ContractPointer | Mapping[str, Any] | None = None,
 ) -> DeckrMessage:
-    parsed_body = service_body_for_type(message_type, body)
+    parsed_body = service_body_for_type(SERVICE_MESSAGE, body)
     return DeckrMessage(
         lane=SERVICES_LANE,
-        messageType=message_type,
+        messageType=SERVICE_MESSAGE,
         sender=sender,
         senderSessionId=sender_session_id,
         recipient=_target(recipient),
@@ -169,37 +191,13 @@ def service_message(
     )
 
 
-def service_request_message(
+def service_response_message(
     *,
     sender: str | EndpointAddress,
     sender_session_id: str,
     recipient: str | EndpointAddress | MessageTarget,
     recipient_session_id: str | None = None,
-    body: ServiceRequestBody | Mapping[str, Any],
-    subject: EntitySubject,
-    causation_id: str | None = None,
-    contract: ContractPointer | Mapping[str, Any] | None = None,
-) -> DeckrMessage:
-    return service_message(
-        sender=sender,
-        sender_session_id=sender_session_id,
-        recipient=recipient,
-        recipient_session_id=recipient_session_id,
-        message_type=SERVICE_REQUEST,
-        body=body,
-        subject=subject,
-        causation_id=causation_id,
-        contract=contract,
-    )
-
-
-def service_reply_message(
-    *,
-    sender: str | EndpointAddress,
-    sender_session_id: str,
-    recipient: str | EndpointAddress | MessageTarget,
-    recipient_session_id: str | None = None,
-    body: ServiceReplyBody | Mapping[str, Any],
+    body: ServiceMessageBody | Mapping[str, Any],
     subject: EntitySubject,
     in_reply_to: str,
     causation_id: str | None = None,
@@ -210,7 +208,6 @@ def service_reply_message(
         sender_session_id=sender_session_id,
         recipient=recipient,
         recipient_session_id=recipient_session_id,
-        message_type=SERVICE_REPLY,
         body=body,
         subject=subject,
         in_reply_to=in_reply_to,

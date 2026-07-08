@@ -16,27 +16,48 @@ from deckr.concord import (
     Concord,
     ConcordAgreementSpec,
     ConcordConflict,
+    ConcordManagedContract,
+    ConcordParticipant,
+    ContractHandle,
     ContractValidityStatus,
 )
-from deckr.contracts.messages import SERVICES_LANE, entity_subject
+from deckr.contracts.authority import ContractPointer
+from deckr.contracts.messages import (
+    SERVICES_LANE,
+    DeckrMessage,
+    EndpointTarget,
+    entity_subject,
+)
 from deckr.lanes import EndpointSession
 from deckr.services.messages import (
-    SERVICE_REQUEST,
-    ServiceReplyBody,
-    ServiceRequestBody,
+    SERVICE_MESSAGE,
+    ServiceExchangePattern,
+    ServiceMessageBody,
+    ServiceMessageDirection,
     service_body,
 )
 from deckr.services.runtime import (
     ServiceDescriptor,
+    ServiceManagedContractContext,
+    ServiceMessageDefinition,
     ServiceProtocol,
     ServiceUnavailable,
     ServiceUseLease,
+    ServiceViewReadContext,
     ServiceViewRef,
+    ServiceViewWriteContext,
+    ServiceViewWriter,
     parse_service_descriptor,
+    service_managed_contract_context,
     service_use_negotiation_terminal_status,
     terminal_concord_conflict_status,
 )
-from deckr.services.views import ServiceViewStore
+from deckr.services.views import (
+    ManagedServiceViewAccess,
+    ServiceViewChange,
+    ServiceViewEntry,
+    ServiceViewStore,
+)
 from deckr.substrates.nats_kv import KvBucketPolicy, KvUnavailable, NatsJsonKvBucket
 
 logger = logging.getLogger(__name__)
@@ -194,16 +215,62 @@ class DeckrServices:
                 reason="service_use_closed",
             )
 
+    async def send(
+        self,
+        lease: ServiceUseLease,
+        name: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        event: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """Send an authorized one-way service message over the services lane."""
+
+        definition = _message_definition(
+            lease,
+            name,
+            exchange_pattern=ServiceExchangePattern.ONE_WAY,
+        )
+        _assert_consumer_to_service(definition, name)
+        await lease.refresh()
+        descriptor = lease.descriptor
+        return await self._endpoint.send(
+            lane=SERVICES_LANE,
+            recipient=descriptor.endpoint,
+            recipient_session_id=descriptor.session_id,
+            subject=entity_subject(
+                "service",
+                serviceId=descriptor.service_id,
+                namespace=descriptor.namespace,
+                name=name,
+            ),
+            message_type=SERVICE_MESSAGE,
+            body=ServiceMessageBody(
+                serviceNamespace=descriptor.namespace,
+                name=name,
+                intent=definition.intent,
+                exchangePattern=definition.exchange_pattern,
+                params=dict(params or {}),
+                event=dict(event) if event is not None else None,
+            ).to_dict(),
+            contract=_contract_pointer(lease),
+        )
+
     async def request(
         self,
         lease: ServiceUseLease,
-        operation: str,
+        name: str,
         params: Mapping[str, Any] | None = None,
         *,
         timeout_seconds: float | None = None,
-    ) -> ServiceReplyBody:
-        """Send an authorized service request over the services lane."""
+    ) -> ServiceMessageBody:
+        """Send an authorized request-reply service message over the services lane."""
 
+        definition = _message_definition(
+            lease,
+            name,
+            exchange_pattern=ServiceExchangePattern.REQUEST_REPLY,
+        )
+        _assert_consumer_to_service(definition, name)
         await lease.refresh()
         descriptor = lease.descriptor
         reply = await self._endpoint.request(
@@ -214,31 +281,115 @@ class DeckrServices:
                 "service",
                 serviceId=descriptor.service_id,
                 namespace=descriptor.namespace,
-                operation=operation,
+                name=name,
             ),
-            message_type=SERVICE_REQUEST,
-            body=ServiceRequestBody(
+            message_type=SERVICE_MESSAGE,
+            body=ServiceMessageBody(
                 serviceNamespace=descriptor.namespace,
-                operation=operation,
+                name=name,
+                intent=definition.intent,
+                exchangePattern=definition.exchange_pattern,
                 params=dict(params or {}),
             ).to_dict(),
             timeout=timeout_seconds,
-            contract={
-                "contractId": lease.contract.contract_id,
-                "generation": lease.contract.generation,
-            },
+            contract=_contract_pointer(lease),
         )
         body = service_body(reply)
-        if isinstance(body, ServiceReplyBody):
+        if _is_valid_response_body(body, descriptor.namespace, name, definition):
+            _assert_response_envelope(
+                reply,
+                sender=descriptor.endpoint,
+                sender_session_id=descriptor.session_id,
+                recipient=self._endpoint.address,
+                recipient_session_id=self._endpoint.session_id,
+                contract=lease.contract,
+                service_id=descriptor.service_id,
+                service_namespace=descriptor.namespace,
+                name=name,
+            )
             return body
         raise ServiceUnavailable(
-            "invalid_service_reply",
-            "Service returned an invalid reply",
+            "invalid_service_response",
+            "Service returned an invalid response",
             {
                 "serviceId": descriptor.service_id,
                 "serviceNamespace": descriptor.namespace,
-                "operation": operation,
+                "name": name,
             },
+        )
+
+    async def create_view(
+        self,
+        lease: ServiceUseLease,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        """Create a consumer-written retained service view under the lease fence."""
+
+        await lease.refresh()
+        return await self._view_store(view.store_name).create(
+            view=view,
+            payload=payload,
+            context=self._consumer_view_write_context(lease),
+            ttl=ttl,
+        )
+
+    async def put_view(
+        self,
+        lease: ServiceUseLease,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int | None = None,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        """Put a consumer-written retained service view under the lease fence."""
+
+        await lease.refresh()
+        return await self._view_store(view.store_name).put(
+            view=view,
+            payload=payload,
+            context=self._consumer_view_write_context(lease),
+            revision=revision,
+            ttl=ttl,
+        )
+
+    async def update_view(
+        self,
+        lease: ServiceUseLease,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        """Update a consumer-written retained service view under the lease fence."""
+
+        await lease.refresh()
+        return await self._view_store(view.store_name).update(
+            view=view,
+            payload=payload,
+            context=self._consumer_view_write_context(lease),
+            revision=revision,
+            ttl=ttl,
+        )
+
+    async def delete_view(
+        self,
+        lease: ServiceUseLease,
+        view: ServiceViewRef,
+        *,
+        revision: int | None = None,
+    ) -> None:
+        """Delete a consumer-written retained service view under the lease fence."""
+
+        await lease.refresh()
+        await self._view_store(view.store_name).delete(
+            view=view,
+            context=self._consumer_view_write_context(lease),
+            revision=revision,
         )
 
     async def read_view(
@@ -253,7 +404,11 @@ class DeckrServices:
         """
 
         try:
-            entry = await self._view_store(view.store_name).get(lease, view)
+            await lease.refresh()
+            entry = await self._view_store(view.store_name).get(
+                self._consumer_view_read_context(lease),
+                view,
+            )
         except KvUnavailable as exc:
             raise _service_view_unavailable(view) from exc
         return dict(entry.value) if entry is not None else None
@@ -274,7 +429,11 @@ class DeckrServices:
         yield await self.read_view(lease, view)
         try:
             store = self._view_store(view.store_name)
-            async with store.watch(lease, view) as changes:
+            await lease.refresh()
+            async with store.watch(
+                self._consumer_view_read_context(lease),
+                view,
+            ) as changes:
                 async for change in changes:
                     await lease.refresh()
                     yield (
@@ -284,6 +443,49 @@ class DeckrServices:
                     )
         except KvUnavailable as exc:
             raise _service_view_unavailable(view) from exc
+
+    async def authorize_inbound_message(
+        self,
+        lease: ServiceUseLease,
+        message: DeckrMessage,
+        *,
+        name: str | None = None,
+    ) -> ServiceMessageBody:
+        """Validate service-to-consumer traffic against the active lease."""
+
+        await lease.refresh()
+        return _authorize_inbound_message(
+            lease,
+            message,
+            local_endpoint=self._endpoint.address,
+            local_session_id=self._endpoint.session_id,
+            name=name,
+        )
+
+    async def validate_inbound_message(
+        self,
+        lease: ServiceUseLease,
+        message: DeckrMessage,
+        *,
+        name: str | None = None,
+    ) -> ServiceMessageBody:
+        """Validate service-to-consumer traffic against the active lease."""
+
+        return await self.authorize_inbound_message(lease, message, name=name)
+
+    def view_access(
+        self,
+        lease: ServiceUseLease,
+        store_name: str,
+    ) -> ManagedServiceViewAccess:
+        """Return consumer-side managed view access for one store under a lease."""
+
+        return _LeaseManagedServiceViewAccess(
+            self._view_store(store_name),
+            lease=lease,
+            read_context=self._consumer_view_read_context(lease),
+            write_context=self._consumer_view_write_context(lease),
+        )
 
     def get_shared_manager(self, key: Hashable, factory: Callable[[], Any]) -> Any:
         """Return a runtime-scoped shared service helper."""
@@ -384,6 +586,8 @@ class DeckrServices:
                     return ServiceUseLease(
                         agreement=agreement,
                         descriptor=descriptor,
+                        consumer_endpoint=self._endpoint.address,
+                        consumer_session_id=self._endpoint.session_id,
                     )
                 if service_use_negotiation_terminal_status(validity.status):
                     await agreement.aclose()
@@ -448,6 +652,431 @@ class DeckrServices:
             self._view_stores[store_name] = store
         return store
 
+    def _consumer_view_write_context(
+        self,
+        lease: ServiceUseLease,
+    ) -> ServiceViewWriteContext:
+        descriptor = lease.descriptor
+        return ServiceViewWriteContext(
+            writer=ServiceViewWriter.CONSUMER,
+            service_id=descriptor.service_id,
+            service_namespace=descriptor.namespace,
+            service_endpoint=descriptor.endpoint,
+            service_session_id=descriptor.session_id,
+            consumer_endpoint=self._endpoint.address,
+            consumer_session_id=self._endpoint.session_id,
+            contract=ContractPointer(
+                contractId=lease.contract.contract_id,
+                generation=lease.contract.generation,
+            ),
+            views=descriptor.views,
+        )
+
+    def _consumer_view_read_context(
+        self,
+        lease: ServiceUseLease,
+    ) -> ServiceViewReadContext:
+        descriptor = lease.descriptor
+        return ServiceViewReadContext(
+            reader=ServiceViewWriter.CONSUMER,
+            service_id=descriptor.service_id,
+            service_namespace=descriptor.namespace,
+            service_endpoint=descriptor.endpoint,
+            service_session_id=descriptor.session_id,
+            consumer_endpoint=self._endpoint.address,
+            consumer_session_id=self._endpoint.session_id,
+            contract=ContractPointer(
+                contractId=lease.contract.contract_id,
+                generation=lease.contract.generation,
+            ),
+            views=descriptor.views,
+        )
+
+
+class ManagedServiceContract:
+    """Service-side helpers bound to one managed service-use contract."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: EndpointSession,
+        participant: ConcordParticipant,
+        contract: ContractHandle,
+        protocol: ServiceProtocol,
+        service_id: str,
+    ) -> None:
+        self._endpoint = endpoint
+        self._participant = participant
+        self._contract = contract
+        self._protocol = protocol
+        self._service_id = service_id
+
+    async def send(
+        self,
+        name: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        event: Mapping[str, Any] | None = None,
+    ) -> DeckrMessage:
+        context = await self._context()
+        definition = _message_definition_from_mapping(
+            context.protocol.messages,
+            name,
+            exchange_pattern=ServiceExchangePattern.ONE_WAY,
+            service_id=context.service_id,
+        )
+        _assert_service_to_consumer(definition, name)
+        return await self._endpoint.send(
+            lane=SERVICES_LANE,
+            recipient=context.consumer_endpoint,
+            recipient_session_id=context.consumer_session_id,
+            subject=_service_message_subject(context, name),
+            message_type=SERVICE_MESSAGE,
+            body=ServiceMessageBody(
+                serviceNamespace=context.service_namespace,
+                name=name,
+                intent=definition.intent,
+                exchangePattern=definition.exchange_pattern,
+                params=dict(params or {}),
+                event=dict(event) if event is not None else None,
+            ).to_dict(),
+            contract=context.contract,
+        )
+
+    async def request(
+        self,
+        name: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ServiceMessageBody:
+        context = await self._context()
+        definition = _message_definition_from_mapping(
+            context.protocol.messages,
+            name,
+            exchange_pattern=ServiceExchangePattern.REQUEST_REPLY,
+            service_id=context.service_id,
+        )
+        _assert_service_to_consumer(definition, name)
+        reply = await self._endpoint.request(
+            lane=SERVICES_LANE,
+            recipient=context.consumer_endpoint,
+            recipient_session_id=context.consumer_session_id,
+            subject=_service_message_subject(context, name),
+            message_type=SERVICE_MESSAGE,
+            body=ServiceMessageBody(
+                serviceNamespace=context.service_namespace,
+                name=name,
+                intent=definition.intent,
+                exchangePattern=definition.exchange_pattern,
+                params=dict(params or {}),
+            ).to_dict(),
+            timeout=timeout_seconds,
+            contract=context.contract,
+        )
+        body = service_body(reply)
+        if _is_valid_response_body(
+            body,
+            context.service_namespace,
+            name,
+            definition,
+        ):
+            _assert_response_envelope(
+                reply,
+                sender=context.consumer_endpoint,
+                sender_session_id=context.consumer_session_id,
+                recipient=self._endpoint.address,
+                recipient_session_id=self._endpoint.session_id,
+                contract=context.contract,
+                service_id=context.service_id,
+                service_namespace=context.service_namespace,
+                name=name,
+            )
+            return body
+        raise ServiceUnavailable(
+            "invalid_service_response",
+            "Consumer returned an invalid service response",
+            {
+                "serviceId": context.service_id,
+                "serviceNamespace": context.service_namespace,
+                "name": name,
+            },
+        )
+
+    def view_access(self, store: ServiceViewStore) -> ManagedServiceViewAccess:
+        return _ServiceManagedServiceViewAccess(
+            store,
+            contract=self,
+        )
+
+    async def _context(self) -> ServiceManagedContractContext:
+        if (
+            self._participant.participant != self._endpoint.address
+            or self._participant.session_id != self._endpoint.session_id
+        ):
+            raise ServiceUnavailable(
+                "contract_session_mismatch",
+                "Managed service contract endpoint does not match the participant session",
+                _contract_diagnostics(
+                    self._contract,
+                    service_id=self._service_id,
+                    service_session_id=self._endpoint.session_id,
+                ),
+            )
+        managed = await self._managed_contract()
+        current_sessions = _managed_consumer_sessions(
+            managed,
+            service_endpoint=self._endpoint.address,
+        )
+        try:
+            validity = await self._participant.validate(
+                managed.contract,
+                current_sessions=current_sessions,
+            )
+        except ConcordConflict as exc:
+            status = (
+                terminal_concord_conflict_status(exc)
+                or ContractValidityStatus.INVALID_TOKEN
+            )
+            raise ServiceUnavailable(
+                f"contract_{status.value}",
+                "Managed service contract could not be validated",
+                {
+                    **_contract_diagnostics(
+                        self._contract,
+                        service_id=self._service_id,
+                        service_session_id=self._endpoint.session_id,
+                    ),
+                    "status": status.value,
+                    "reason": str(exc),
+                },
+            ) from exc
+        if not validity.valid or validity.contract is None:
+            raise ServiceUnavailable(
+                f"contract_{validity.status.value}",
+                "Managed service contract is not valid",
+                {
+                    **_contract_diagnostics(
+                        self._contract,
+                        service_id=self._service_id,
+                        service_session_id=self._endpoint.session_id,
+                    ),
+                    "status": validity.status.value,
+                    "reason": validity.reason,
+                },
+            )
+        try:
+            context = service_managed_contract_context(
+                managed,
+                protocol=self._protocol,
+                service_id=self._service_id,
+                record=validity.contract,
+                validity=validity,
+            )
+        except ValueError as exc:
+            raise ServiceUnavailable(
+                "invalid_service_contract",
+                "Managed service contract does not match the service protocol",
+                _contract_diagnostics(
+                    self._contract,
+                    service_id=self._service_id,
+                    service_session_id=self._endpoint.session_id,
+                ),
+            ) from exc
+        expected_pointer = ContractPointer(
+            contractId=self._contract.contract_id,
+            generation=self._contract.generation,
+        )
+        if (
+            context.service_endpoint != self._endpoint.address
+            or context.service_session_id != self._endpoint.session_id
+            or context.contract != expected_pointer
+        ):
+            raise ServiceUnavailable(
+                "contract_session_mismatch",
+                "Managed service contract context is stale",
+                _contract_diagnostics(
+                    self._contract,
+                    service_id=self._service_id,
+                    service_session_id=self._endpoint.session_id,
+                ),
+            )
+        return context
+
+    async def _managed_contract(self) -> ConcordManagedContract:
+        managed = self._participant.managed_contract(self._contract)
+        if managed is None:
+            await self._participant.reconcile(reason="managed service contract refresh")
+            managed = self._participant.managed_contract(self._contract)
+        if managed is None:
+            raise ServiceUnavailable(
+                "contract_not_managed",
+                "Managed service contract is not managed by this participant",
+                _contract_diagnostics(
+                    self._contract,
+                    service_id=self._service_id,
+                    service_session_id=self._endpoint.session_id,
+                ),
+            )
+        return managed
+
+
+class _ServiceManagedServiceViewAccess(ManagedServiceViewAccess):
+    def __init__(
+        self,
+        store: ServiceViewStore,
+        *,
+        contract: ManagedServiceContract,
+    ) -> None:
+        super().__init__(store)
+        self._contract = contract
+
+    async def read(self, view: ServiceViewRef) -> ServiceViewEntry | None:
+        context = await self._contract._context()
+        return await self._store.get(context.view_read_context(), view)
+
+    @asynccontextmanager
+    async def watch(
+        self,
+        view: ServiceViewRef,
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
+        context = await self._contract._context()
+        async with self._store.watch(context.view_read_context(), view) as changes:
+            yield changes
+
+    async def create(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        context = await self._contract._context()
+        return await self._store.create(
+            view=view,
+            payload=payload,
+            context=context.view_write_context(),
+            ttl=ttl,
+        )
+
+    async def put(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int | None = None,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        context = await self._contract._context()
+        return await self._store.put(
+            view=view,
+            payload=payload,
+            context=context.view_write_context(),
+            revision=revision,
+            ttl=ttl,
+        )
+
+    async def update(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        context = await self._contract._context()
+        return await self._store.update(
+            view=view,
+            payload=payload,
+            context=context.view_write_context(),
+            revision=revision,
+            ttl=ttl,
+        )
+
+    async def delete(
+        self,
+        view: ServiceViewRef,
+        *,
+        revision: int | None = None,
+    ) -> None:
+        context = await self._contract._context()
+        await self._store.delete(
+            view=view,
+            context=context.view_write_context(),
+            revision=revision,
+        )
+
+
+class _LeaseManagedServiceViewAccess(ManagedServiceViewAccess):
+    def __init__(
+        self,
+        store: ServiceViewStore,
+        *,
+        lease: ServiceUseLease,
+        read_context: ServiceViewReadContext | None = None,
+        write_context: ServiceViewWriteContext | None = None,
+    ) -> None:
+        super().__init__(
+            store,
+            read_context=read_context,
+            write_context=write_context,
+        )
+        self._lease = lease
+
+    async def read(self, view: ServiceViewRef) -> ServiceViewEntry | None:
+        await self._lease.refresh()
+        return await super().read(view)
+
+    @asynccontextmanager
+    async def watch(
+        self,
+        view: ServiceViewRef,
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
+        await self._lease.refresh()
+        async with super().watch(view) as changes:
+            yield changes
+
+    async def create(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        await self._lease.refresh()
+        return await super().create(view, payload, ttl=ttl)
+
+    async def put(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int | None = None,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        await self._lease.refresh()
+        return await super().put(view, payload, revision=revision, ttl=ttl)
+
+    async def update(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        await self._lease.refresh()
+        return await super().update(view, payload, revision=revision, ttl=ttl)
+
+    async def delete(
+        self,
+        view: ServiceViewRef,
+        *,
+        revision: int | None = None,
+    ) -> None:
+        await self._lease.refresh()
+        await super().delete(view, revision=revision)
+
 
 def _directory_key(protocol: ServiceProtocol) -> _DirectoryKey:
     return (
@@ -468,6 +1097,265 @@ def _remaining_timeout(deadline: float | None) -> float | None:
     if deadline is None:
         return None
     return max(0.0, deadline - monotonic())
+
+
+def _message_definition(
+    lease: ServiceUseLease,
+    name: str,
+    *,
+    exchange_pattern: ServiceExchangePattern,
+) -> ServiceMessageDefinition:
+    return _message_definition_from_mapping(
+        lease.descriptor.supported_messages,
+        name,
+        exchange_pattern=exchange_pattern,
+        service_id=lease.descriptor.service_id,
+    )
+
+
+def _message_definition_from_mapping(
+    messages: Mapping[str, ServiceMessageDefinition],
+    name: str,
+    *,
+    exchange_pattern: ServiceExchangePattern,
+    service_id: str,
+) -> ServiceMessageDefinition:
+    definition = messages.get(name)
+    if definition is None:
+        raise ServiceUnavailable(
+            "unsupported_service_message",
+            "Service descriptor does not support this message",
+            {"name": name, "serviceId": service_id},
+        )
+    if definition.exchange_pattern != exchange_pattern:
+        raise ServiceUnavailable(
+            "unsupported_service_exchange_pattern",
+            "Service message uses a different exchange pattern",
+            {
+                "name": name,
+                "exchangePattern": definition.exchange_pattern.value,
+                "expectedExchangePattern": exchange_pattern.value,
+            },
+        )
+    return definition
+
+
+def _assert_consumer_to_service(
+    definition: ServiceMessageDefinition,
+    name: str,
+) -> None:
+    if definition.direction in {
+        ServiceMessageDirection.CONSUMER_TO_SERVICE,
+        ServiceMessageDirection.BIDIRECTIONAL,
+    }:
+        return
+    raise ServiceUnavailable(
+        "unsupported_service_message_direction",
+        "Service message direction does not allow consumer-to-service sends",
+        {"name": name, "direction": definition.direction.value},
+    )
+
+
+def _assert_service_to_consumer(
+    definition: ServiceMessageDefinition,
+    name: str,
+) -> None:
+    if definition.direction in {
+        ServiceMessageDirection.SERVICE_TO_CONSUMER,
+        ServiceMessageDirection.BIDIRECTIONAL,
+    }:
+        return
+    raise ServiceUnavailable(
+        "unsupported_service_message_direction",
+        "Service message direction does not allow service-to-consumer sends",
+        {"name": name, "direction": definition.direction.value},
+    )
+
+
+def _authorize_inbound_message(
+    lease: ServiceUseLease,
+    message: DeckrMessage,
+    *,
+    local_endpoint: Any,
+    local_session_id: str,
+    name: str | None,
+) -> ServiceMessageBody:
+    if message.message_type != SERVICE_MESSAGE:
+        raise ServiceUnavailable(
+            "invalid_service_message",
+            "Inbound service traffic must use serviceMessage",
+            {"messageType": message.message_type},
+        )
+    try:
+        body = service_body(message)
+    except (TypeError, ValueError) as exc:
+        raise ServiceUnavailable(
+            "invalid_service_message",
+            "Inbound service message body is invalid",
+        ) from exc
+    descriptor = lease.descriptor
+    expected_name = body.name if name is None else name
+    definition = _message_definition_from_mapping(
+        descriptor.supported_messages,
+        expected_name,
+        exchange_pattern=body.exchange_pattern,
+        service_id=descriptor.service_id,
+    )
+    _assert_service_to_consumer(definition, expected_name)
+    if (
+        body.service_namespace != descriptor.namespace
+        or body.name != expected_name
+        or body.intent != definition.intent
+    ):
+        raise ServiceUnavailable(
+            "scope_mismatch",
+            "Inbound service message does not match the active lease",
+            {
+                "serviceId": descriptor.service_id,
+                "serviceNamespace": body.service_namespace,
+                "expectedNamespace": descriptor.namespace,
+                "name": body.name,
+                "expectedName": expected_name,
+            },
+        )
+    _assert_response_envelope(
+        message,
+        sender=descriptor.endpoint,
+        sender_session_id=descriptor.session_id,
+        recipient=local_endpoint,
+        recipient_session_id=local_session_id,
+        contract=lease.contract,
+        service_id=descriptor.service_id,
+        service_namespace=descriptor.namespace,
+        name=expected_name,
+    )
+    return body
+
+
+def _is_valid_response_body(
+    body: ServiceMessageBody,
+    service_namespace: str,
+    name: str,
+    definition: ServiceMessageDefinition,
+) -> bool:
+    return (
+        body.service_namespace == service_namespace
+        and body.name == name
+        and body.intent == definition.intent
+        and body.exchange_pattern == definition.exchange_pattern
+        and body.status is not None
+    )
+
+
+def _assert_response_envelope(
+    message: DeckrMessage,
+    *,
+    sender: Any,
+    sender_session_id: str,
+    recipient: Any,
+    recipient_session_id: str,
+    contract: Any,
+    service_id: str,
+    service_namespace: str,
+    name: str,
+) -> None:
+    pointer = ContractPointer(
+        contractId=contract.contract_id,
+        generation=contract.generation,
+    ) if hasattr(contract, "contract_id") else ContractPointer.model_validate(contract)
+    if (
+        message.sender != sender
+        or message.sender_session_id != sender_session_id
+        or not isinstance(message.recipient, EndpointTarget)
+        or message.recipient.endpoint != recipient
+        or message.recipient_session_id != recipient_session_id
+        or message.contract != pointer
+        or not _service_subject_matches(
+            message,
+            service_id=service_id,
+            namespace=service_namespace,
+            name=name,
+        )
+    ):
+        raise ServiceUnavailable(
+            "invalid_service_response",
+            "Service response envelope does not match the active service-use lease",
+            {
+                "serviceId": service_id,
+                "serviceNamespace": service_namespace,
+                "name": name,
+            },
+        )
+
+
+def _service_message_subject(
+    context: ServiceManagedContractContext,
+    name: str,
+) -> Any:
+    return entity_subject(
+        "service",
+        serviceId=context.service_id,
+        namespace=context.service_namespace,
+        name=name,
+    )
+
+
+def _managed_consumer_sessions(
+    managed: ConcordManagedContract,
+    *,
+    service_endpoint: Any,
+) -> dict[str, str]:
+    consumers = [
+        participant
+        for participant in managed.record.participants
+        if participant != service_endpoint
+    ]
+    if len(consumers) != 1:
+        return {}
+    consumer_endpoint = consumers[0]
+    consumer_token = managed.validity.tokens.get(str(consumer_endpoint))
+    if consumer_token is None:
+        return {}
+    return {str(consumer_endpoint): consumer_token.session_id}
+
+
+def _contract_diagnostics(
+    contract: ContractHandle,
+    *,
+    service_id: str,
+    service_session_id: str,
+) -> dict[str, Any]:
+    return {
+        "contractId": contract.contract_id,
+        "generation": contract.generation,
+        "profile": contract.profile,
+        "serviceId": service_id,
+        "serviceSessionId": service_session_id,
+    }
+
+
+def _service_subject_matches(
+    message: DeckrMessage,
+    *,
+    service_id: str,
+    namespace: str,
+    name: str,
+) -> bool:
+    subject = message.subject
+    identifiers = subject.identifiers
+    return (
+        subject.kind == "service"
+        and identifiers.get("serviceId") == service_id
+        and identifiers.get("namespace") == namespace
+        and identifiers.get("name") == name
+    )
+
+
+def _contract_pointer(lease: ServiceUseLease) -> dict[str, int | str]:
+    return {
+        "contractId": lease.contract.contract_id,
+        "generation": lease.contract.generation,
+    }
 
 
 def _service_view_unavailable(view: ServiceViewRef) -> ServiceUnavailable:
