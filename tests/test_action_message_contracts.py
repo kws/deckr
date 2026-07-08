@@ -180,6 +180,7 @@ def test_action_descriptor_carries_capability_requirements_and_settings_schema()
     descriptor = ActionDescriptor(
         actionId="demo.pager",
         name="Pager",
+        warmPolicy="keep_until_stopped",
         requirements=[
             CapabilityRequirement(
                 name="press",
@@ -214,6 +215,14 @@ def test_action_descriptor_carries_capability_requirements_and_settings_schema()
     assert descriptor.to_dict()["providerSettingsSchema"]["properties"]["token"]["type"] == (
         "string"
     )
+    assert descriptor.to_dict()["warmPolicy"] == "keep_until_stopped"
+
+
+def test_action_descriptor_defaults_to_stop_on_unmount_warm_policy() -> None:
+    descriptor = ActionDescriptor(actionId="demo.action")
+
+    assert descriptor.warm_policy == "stop_on_unmount"
+    assert descriptor.to_dict()["warmPolicy"] == "stop_on_unmount"
 
 
 def test_action_availability_entries_validate_descriptor_identity() -> None:

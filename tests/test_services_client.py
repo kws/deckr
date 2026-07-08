@@ -496,6 +496,48 @@ async def test_watch_view_refreshes_lease_before_delivering_changes() -> None:
     lease.refresh.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_watch_view_does_not_emit_idle_duplicate_payloads() -> None:
+    view = ServiceViewRef("demo_views", "zones/demo-home/Kitchen")
+    current_payload = {
+        "viewKey": view.key,
+        "serviceId": "demo-home",
+        "serviceNamespace": "dev.deckr.demo.service",
+        "sessionId": "service-session",
+        "contractId": "contract-1",
+        "generation": 1,
+        "volume": 12,
+    }
+
+    async def changes():
+        await anyio.sleep_forever()
+        yield None
+
+    @asynccontextmanager
+    async def watch(_lease, _view):
+        yield changes()
+
+    store = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(value=current_payload)),
+        watch=watch,
+    )
+    services = _services(
+        endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
+        concord=SimpleNamespace(),
+    )
+    services._view_stores["demo_views"] = store  # noqa: SLF001
+    lease = SimpleNamespace(refresh=AsyncMock())
+
+    stream = services.watch_view(lease, view)
+    assert await anext(stream) == current_payload
+    with anyio.move_on_after(0.05) as scope:
+        await anext(stream)
+    await stream.aclose()
+
+    assert scope.cancel_called
+    store.get.assert_awaited_once_with(lease, view)
+
+
 def test_service_unavailable_helper_classifies_service_use_loss() -> None:
     assert service_unavailable_ends_service_use(
         ServiceUnavailable("contract_not_managed", "not managed")

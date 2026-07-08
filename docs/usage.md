@@ -195,15 +195,17 @@ async with sonos.zone_subscription_session(
 Ordinary feature code must not read service views, watch service views, or send
 service commands unless it is doing so through an active service session. For a
 resource-bound action, open the domain session as early as the action lifecycle
-allows, usually when the binding is mounted or when a dynamic page opens. Keep
-the session while the binding/page is active so input handlers can respond
-without first negotiating Concord authority.
+allows. In the Python action SDK, service-backed root components should normally
+use `warmPolicy: "keep_until_stopped"` and open the session in component start,
+so temporary unmount/remount cycles do not churn Concord service-use authority.
+Binding-scoped or page-scoped work can still open the session on mount/page open
+and close it when that binding/page ends.
 
 Commands for a retained resource should use that same session:
 
 ```python
 class SonosPlayButton(DeckrAction):
-    async def mounted(self) -> None:
+    async def started(self) -> None:
         self._session = None
         self.tasks.start_soon(self._run_sonos_session)
 
@@ -219,9 +221,9 @@ class SonosPlayButton(DeckrAction):
         finally:
             self._session = None
 
-    async def input(self, event) -> None:
+    async def input(self, binding, event) -> None:
         if self._session is None:
-            await self.binding.overlay("unavailable", title="UNAVAILABLE")
+            await binding.overlay("unavailable", title="UNAVAILABLE")
             return
         await self._session.command("play", {"zone": self.zone_name})
 ```

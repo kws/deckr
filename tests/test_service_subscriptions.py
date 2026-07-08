@@ -219,6 +219,68 @@ async def test_shared_resource_subscription_replacement_reapplies_after_reconnec
 
 
 @pytest.mark.asyncio
+async def test_shared_resource_subscription_lease_monitor_reconnects_without_view_change() -> None:
+    async with anyio.create_task_group() as tg:
+        leases: list[Any] = []
+        descriptor = AsyncMock(return_value=_descriptor())
+        first_refresh = AsyncMock(
+            side_effect=ServiceUnavailable("contract_cancelled", "cancelled")
+        )
+
+        @asynccontextmanager
+        async def use(
+            service_descriptor: ServiceDescriptor,
+            *,
+            operations=(),
+            views=(),
+            timeout_seconds=None,
+        ):
+            del operations, views, timeout_seconds
+            lease = _lease(service_descriptor, generation=len(leases) + 1)
+            if not leases:
+                lease.refresh = first_refresh
+            leases.append(lease)
+            try:
+                yield lease
+            finally:
+                lease.closed = True
+
+        async def watch_view(lease, _view):
+            yield {"volume": 12 if lease.contract.generation == 1 else 13}
+            await anyio.sleep_forever()
+
+        services = SimpleNamespace(
+            _task_group=tg,
+            descriptor=descriptor,
+            use=use,
+            watch_view=watch_view,
+            command=AsyncMock(return_value=_ok_reply("play")),
+            set_resources=AsyncMock(),
+        )
+        manager = _manager(
+            services,
+            replacement=True,
+            reconnect_delay_seconds=0,
+            lease_monitor_interval_seconds=0.01,
+        )
+
+        session = await manager.open_session({"Kitchen"})
+        first_ready = await _next_state(session, ServiceSubscriptionState.READY)
+        reconnecting = await _next_state(session, ServiceSubscriptionState.RECONNECTING)
+        second_ready = await _next_state(session, ServiceSubscriptionState.READY)
+
+        assert first_ready.payload == {"volume": 12}
+        assert reconnecting.error is not None
+        assert reconnecting.error.code == "contract_cancelled"
+        assert second_ready.payload == {"volume": 13}
+        assert [lease.contract.generation for lease in leases] == [1, 2]
+
+        await session.aclose()
+        await manager.aclose()
+        tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_shared_resource_subscription_active_command_requires_retained_resource() -> None:
     async with anyio.create_task_group() as tg:
         leases: list[Any] = []
@@ -357,6 +419,11 @@ def test_shared_resource_subscription_constructor_validation() -> None:
 
     with pytest.raises(ValueError, match="reconnect_delay_seconds"):
         SharedResourceSubscriptionManager(**kwargs, reconnect_delay_seconds=-0.01)
+    with pytest.raises(ValueError, match="lease_monitor_interval_seconds"):
+        SharedResourceSubscriptionManager(
+            **kwargs,
+            lease_monitor_interval_seconds=0,
+        )
     with pytest.raises(ValueError, match="subscriber_buffer_size"):
         SharedResourceSubscriptionManager(**kwargs, subscriber_buffer_size=0)
     with pytest.raises(ValueError, match="ensure_resources or set_resources"):
@@ -546,6 +613,7 @@ def _manager(
     *,
     replacement: bool = False,
     reconnect_delay_seconds: float = 0.01,
+    lease_monitor_interval_seconds: float = 1.0,
     subscriber_buffer_size: int = 100,
 ) -> SharedResourceSubscriptionManager[str]:
     return SharedResourceSubscriptionManager(
@@ -562,6 +630,7 @@ def _manager(
         set_resources=services.set_resources if replacement else None,
         service_use_timeout_seconds=1.0,
         reconnect_delay_seconds=reconnect_delay_seconds,
+        lease_monitor_interval_seconds=lease_monitor_interval_seconds,
         subscriber_buffer_size=subscriber_buffer_size,
     )
 

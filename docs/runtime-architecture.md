@@ -751,6 +751,23 @@ pointers, and fenced view reads/watches. Consumers do not scan Beacon KV,
 duplicate descriptor parsing loops, classify Concord terminal statuses, or use
 Concord as a service catalog.
 
+Python action provider runtimes are component-scoped at the configured action
+instance boundary. `actionInstanceCreated` constructs the configured component
+with action settings and provider services, but does not start component work.
+The first root `bindingAttached` starts and mounts the component. A root
+component has one active root binding at a time; `bindingDetached` revokes that
+binding's output and page authority immediately, then schedules SDK cleanup.
+
+Action descriptors may declare `warmPolicy`. `stop_on_unmount` is the default
+and stops component tasks after detach. `keep_until_stopped` keeps component
+tasks, service sessions, caches, and page-owner state alive across temporary
+unmount/remount until a hard stop such as action destroy, provider stop,
+settings reload, config removal, terminal lifecycle loss, or cleanup timeout.
+Controller settings patch/replace for an action instance is a hard reload:
+affected bindings are revoked, any owned dynamic page is closed, the old action
+instance is destroyed, and the current page plan is rebuilt against a fresh
+context and binding.
+
 ### Runtime-Local Component Status
 
 Component lifecycle status is runtime-host local. `ComponentManager` exposes

@@ -9,7 +9,8 @@
         "priority": 100
       },
       "name": "Clock",
-      "providerId": "dev.deckr.clock"
+      "providerId": "dev.deckr.clock",
+      "warmPolicy": "stop_on_unmount"
     }
   },
   "annotations": {

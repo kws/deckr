@@ -78,6 +78,8 @@ _CONTRACT_NAME_RE = re.compile(_CONTRACT_NAME_PATTERN)
 _GLOBALLY_QUALIFIED_NAME_RE = re.compile(_GLOBALLY_QUALIFIED_NAME_PATTERN)
 _EXTENSION_CAPABILITY_FAMILY_RE = re.compile(_EXTENSION_CAPABILITY_FAMILY_PATTERN)
 
+ActionWarmPolicy = Literal["stop_on_unmount", "keep_until_stopped"]
+
 
 def _reserved_extension_data_paths(
     value: Any,
@@ -1206,6 +1208,10 @@ class ActionDescriptor(DeckrModel):
     provider_id: str | None = Field(default=None, alias="providerId")
     requirements: tuple[CapabilityRequirement, ...] | None = None
     controllers: tuple[str, ...] | None = None
+    warm_policy: ActionWarmPolicy = Field(
+        default="stop_on_unmount",
+        alias="warmPolicy",
+    )
     property_inspector_path: str | None = None
     manifest_defaults: JsonObject | None = None
     settings_schema: JsonObject | None = Field(default=None, alias="settingsSchema")

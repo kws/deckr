@@ -142,10 +142,13 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         | None = None,
         service_use_timeout_seconds: float | None = None,
         reconnect_delay_seconds: float = 0.05,
+        lease_monitor_interval_seconds: float = 1.0,
         subscriber_buffer_size: int = 100,
     ) -> None:
         if reconnect_delay_seconds < 0:
             raise ValueError("reconnect_delay_seconds must not be negative")
+        if lease_monitor_interval_seconds <= 0:
+            raise ValueError("lease_monitor_interval_seconds must be greater than zero")
         if subscriber_buffer_size <= 0:
             raise ValueError("subscriber_buffer_size must be greater than zero")
         if set_resources is None and ensure_resources is None:
@@ -167,6 +170,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         self._message_from_view = message_from_view
         self._service_use_timeout_seconds = service_use_timeout_seconds
         self._reconnect_delay_seconds = reconnect_delay_seconds
+        self._lease_monitor_interval_seconds = lease_monitor_interval_seconds
         self._subscriber_buffer_size = subscriber_buffer_size
         self._lock = anyio.Lock()
         self._subscribers: dict[str, _LogicalSubscriber[ResourceT]] = {}
@@ -534,10 +538,28 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         generation: int,
     ) -> None:
         async with anyio.create_task_group() as tg:
+            tg.start_soon(self._monitor_active_lease, lease)
             for resource in sorted(resources, key=repr):
                 tg.start_soon(self._watch_resource, lease, resource)
             await self._wait_for_change_after(generation)
             tg.cancel_scope.cancel()
+
+    async def _monitor_active_lease(self, lease: ServiceUseLease) -> None:
+        while True:
+            await anyio.sleep(self._lease_monitor_interval_seconds)
+            try:
+                await lease.refresh()
+            except ServiceUnavailable as exc:
+                if service_unavailable_ends_service_use(exc):
+                    await self._mark_active_lease_lost(lease, exc)
+                    return
+                logger.debug(
+                    "Service subscription lease monitor ignored nonterminal "
+                    "refresh failure manager=%s code=%s message=%s",
+                    self._name,
+                    exc.code,
+                    exc.message,
+                )
 
     async def _watch_resource(
         self,
