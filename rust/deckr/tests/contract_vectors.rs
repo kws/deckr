@@ -13,7 +13,8 @@ use deckr::concord::{
     ConcordContractNotification, ConcordCoordinator, ConcordNotificationSource,
     ConcordParticipantLease, ConcordParticipantManager, ContractHandle, ContractRecord,
     ContractState, ContractValidityStatus, CreateContractSpec, ParticipantTokenRecord,
-    DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS, DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
+    CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON, DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
+    DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
 };
 use deckr::endpoint::EndpointAddress;
 use deckr::keys::{decode_key_token, encode_key_token};
@@ -691,6 +692,62 @@ async fn concord_token_attach_and_refresh_use_bucket_ttl() {
 }
 
 #[tokio::test]
+async fn concord_attach_requires_exact_token_id_to_return_existing_token() {
+    let contracts = MemoryStateStore::new();
+    let tokens = token_store();
+    let concord = ConcordCoordinator::new(contracts, tokens);
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let manager = EndpointAddress::parse("hardware_manager:mirabox-main").unwrap();
+    let contract = concord
+        .create_contract(CreateContractSpec {
+            participants: vec![controller.clone(), manager.clone()],
+            contract_id: Some("contract-1".to_string()),
+            generation: 1,
+            profile: None,
+            terms: None,
+            created_by: Some(controller.clone()),
+            supersedes: None,
+        })
+        .await
+        .unwrap();
+
+    let first = concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some("controller-token".into()),
+        )
+        .await
+        .unwrap();
+    let repeated = concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some("controller-token".into()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(repeated.key, first.key);
+    assert_eq!(repeated.revision, first.revision);
+    assert!(concord
+        .attach(&contract, &controller, "controller-session", None)
+        .await
+        .is_err());
+    assert!(concord
+        .attach(
+            &contract,
+            &controller,
+            "controller-session",
+            Some("controller-token-2".into()),
+        )
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn concord_does_not_write_participant_profile_index_records() {
     let contracts = MemoryStateStore::new();
     let tokens = token_store();
@@ -1104,6 +1161,35 @@ async fn concord_participant_manager_does_not_resurrect_lost_authority() {
 }
 
 #[tokio::test]
+async fn concord_participant_manager_cancels_same_session_token_without_local_handle() {
+    let (concord, _tokens, contract, manager, mut lifecycle) =
+        managed_claim_context("contract-1").await;
+
+    let managed = lifecycle.reconcile(|_, _| Ok(true), None).await.unwrap();
+    assert_eq!(managed.len(), 1);
+    let manager_token = managed[0].token.clone().unwrap();
+    let mut restarted =
+        ConcordParticipantManager::new(concord.clone(), manager.clone(), "manager-session".into())
+            .unwrap();
+
+    let managed = restarted.reconcile(|_, _| Ok(true), None).await.unwrap();
+
+    assert!(managed.is_empty());
+    let record = concord.contract_record(&contract).await.unwrap().unwrap();
+    assert_eq!(record.state, ContractState::Cancelled);
+    assert_eq!(
+        record.cancel_reason.as_deref(),
+        Some(CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON)
+    );
+    let current_token = concord
+        .participant_token(&contract, &manager)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(current_token.token_id, manager_token.token_id);
+}
+
+#[tokio::test]
 async fn concord_participant_manager_session_mismatch_cancels_before_accept() {
     let (concord, _tokens, contract, manager, mut lifecycle) =
         managed_claim_context("contract-1").await;
@@ -1340,7 +1426,7 @@ async fn concord_participant_lease_public_refresh_path_is_rate_limited() {
 }
 
 #[tokio::test]
-async fn concord_participant_lease_adopted_token_is_not_immediately_refreshed() {
+async fn concord_participant_lease_rejects_adoption_without_local_handle() {
     let (concord, _tokens, contract, manager, _lifecycle) =
         managed_claim_context("contract-1").await;
     let manager_token = concord
@@ -1357,17 +1443,11 @@ async fn concord_participant_lease_adopted_token_is_not_immediately_refreshed() 
             .unwrap()
             .with_token_refresh_interval(Duration::from_millis(10));
 
-    lease.adopt(manager_token.clone()).unwrap();
-    let adopted_token = lease.attach_or_refresh(&concord).await.unwrap();
+    let error = lease.adopt(manager_token).unwrap_err();
 
-    assert_eq!(adopted_token.refresh_seq, manager_token.refresh_seq);
-    assert_eq!(adopted_token.revision, manager_token.revision);
-
-    tokio::time::sleep(Duration::from_millis(850)).await;
-    let refreshed_token = lease.attach_or_refresh(&concord).await.unwrap();
-
-    assert_eq!(refreshed_token.refresh_seq, manager_token.refresh_seq + 1);
-    assert_ne!(refreshed_token.revision, manager_token.revision);
+    assert!(error
+        .to_string()
+        .contains("without an existing local handle"));
 }
 
 #[tokio::test]

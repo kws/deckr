@@ -29,6 +29,8 @@ pub const DEFAULT_CONCORD_CONTRACT_STORE_NAME: &str = "deckr_concord_contract_v1
 pub const DEFAULT_CONCORD_TOKEN_STORE_NAME: &str = "deckr_concord_token_v1";
 pub const DEFAULT_CONCORD_MAINTENANCE_STORE_NAME: &str = "deckr_concord_maintenance_v1";
 pub const DEFAULT_CONCORD_TOKEN_TTL_SECONDS: u64 = 120;
+pub const CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON: &str =
+    "concord_managed_lost_participant_token";
 
 pub fn concord_contract_store_policy() -> StateStorePolicy {
     StateStorePolicy::persistent("Concord contract state")
@@ -490,6 +492,11 @@ impl ConcordParticipantLease {
     }
 
     pub fn adopt(&mut self, token: ParticipantHandle) -> Result<()> {
+        let Some(current) = self.token.as_ref() else {
+            return Err(Error::Invalid(
+                "participant token cannot be adopted without an existing local handle".to_string(),
+            ));
+        };
         if token.contract_id != self.contract.contract_id {
             return Err(Error::Invalid(
                 "participant token belongs to a different contract".to_string(),
@@ -508,6 +515,11 @@ impl ConcordParticipantLease {
         if token.session_id != self.session_id {
             return Err(Error::Invalid(
                 "participant token belongs to a different session".to_string(),
+            ));
+        }
+        if !participant_handle_matches(current, &token) {
+            return Err(Error::Invalid(
+                "participant token does not match local handle".to_string(),
             ));
         }
         if self.token.as_ref() == Some(&token) {
@@ -775,13 +787,27 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
                 "participant is not named by the Concord contract".to_string(),
             ));
         }
+        let token_key =
+            make_concord_participant_token_key(&record.contract_id, record.generation, participant);
+        let requested_token_id = token_id.clone();
         if record.attached_participants.contains(participant) {
+            if let Some(entry) = self.token_state.get(&token_key).await? {
+                let existing = ParticipantTokenRecord::from_value(entry.value.clone())?;
+                if token_matches_attach_request(
+                    &existing,
+                    &record,
+                    participant,
+                    session_id,
+                    requested_token_id.as_deref(),
+                ) {
+                    return Ok(participant_handle(token_key, &existing, entry.revision));
+                }
+            }
             return Err(Error::StateConflict(
                 "Concord participant is already attached".to_string(),
             ));
         }
         let ttl_seconds = self.token_ttl_seconds().await?;
-        let requested_token_id = token_id.clone();
         let token = ParticipantTokenRecord {
             schema_id: CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID.to_string(),
             contract_id: record.contract_id.clone(),
@@ -795,8 +821,6 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
             contract_hash: None,
             observed: BTreeMap::new(),
         };
-        let token_key =
-            make_concord_participant_token_key(&record.contract_id, record.generation, participant);
         let (token, token_entry) = match self
             .token_state
             .create(&token_key, token.to_value()?, Some(token.ttl_seconds))
@@ -1662,13 +1686,28 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
             .with_token_refresh_interval(self.token_refresh_interval),
         };
 
-        if lease.token().is_none() {
-            if let Some(existing) = self
+        if validity.tokens.contains_key(self.participant.as_str()) {
+            if lease.token().is_none() {
+                self.cancel_lost_participant_token(&contract).await?;
+                lease.close();
+                return Ok(None);
+            }
+            let Some(existing) = self
                 .concord
                 .participant_token(&contract, &self.participant)
                 .await?
-            {
-                lease.adopt(existing)?;
+            else {
+                self.cancel_lost_participant_token(&contract).await?;
+                lease.close();
+                return Ok(None);
+            };
+            if let Err(error) = lease.adopt(existing.clone()) {
+                if !matches!(error, Error::Invalid(_)) {
+                    return Err(error);
+                }
+                self.cancel_lost_participant_token(&contract).await?;
+                lease.close();
+                return Ok(None);
             }
         }
 
@@ -1749,6 +1788,22 @@ impl<C: StateStore, T: StateStore> ConcordParticipantManager<C, T> {
                     "concord_managed_{}",
                     contract_validity_status_value(status)
                 )),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(Error::StateConflict(_))
+            | Err(Error::StateUnavailable(_))
+            | Err(Error::Invalid(_)) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn cancel_lost_participant_token(&self, contract: &ContractHandle) -> Result<()> {
+        match self
+            .cancel(
+                contract,
+                Some(CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON.to_string()),
             )
             .await
         {
@@ -1972,12 +2027,27 @@ impl<C: StateStore, T: StateStore>
             .with_token_refresh_interval(self.token_refresh_interval),
         };
 
-        if lease.token().is_none() {
-            if let Some(existing) = self
+        if validity.tokens.contains_key(self.participant.as_str()) {
+            if lease.token().is_none() {
+                self.cancel_lost_participant_token(&contract).await?;
+                lease.close();
+                return Ok(None);
+            }
+            let Some(existing) = self
                 .concord
                 .participant_token_cached(&contract, &self.participant)?
-            {
-                lease.adopt(existing)?;
+            else {
+                self.cancel_lost_participant_token(&contract).await?;
+                lease.close();
+                return Ok(None);
+            };
+            if let Err(error) = lease.adopt(existing.clone()) {
+                if !matches!(error, Error::Invalid(_)) {
+                    return Err(error);
+                }
+                self.cancel_lost_participant_token(&contract).await?;
+                lease.close();
+                return Ok(None);
             }
         }
 
@@ -2190,6 +2260,15 @@ fn token_matches_handle(token: &ParticipantTokenRecord, handle: &ParticipantHand
         && token.terms_hash == handle.terms_hash
 }
 
+fn participant_handle_matches(current: &ParticipantHandle, updated: &ParticipantHandle) -> bool {
+    updated.contract_id == current.contract_id
+        && updated.generation == current.generation
+        && updated.participant == current.participant
+        && updated.session_id == current.session_id
+        && updated.token_id == current.token_id
+        && updated.terms_hash == current.terms_hash
+}
+
 fn is_state_revision_conflict(error: &Error) -> bool {
     matches!(error, Error::StateConflict(message) if message.contains("revision changed"))
 }
@@ -2274,7 +2353,7 @@ fn token_matches_attach_request(
         && token.generation == contract.generation
         && &token.participant == participant
         && token.session_id == session_id
-        && token_id.is_none_or(|token_id| token.token_id == token_id)
+        && token_id.is_some_and(|token_id| token.token_id == token_id)
         && token.terms_hash == contract.terms_hash
 }
 

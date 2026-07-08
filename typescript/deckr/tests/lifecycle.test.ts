@@ -10,6 +10,7 @@ import {
 import {
   canonicalJsonHash,
   CONCORD_CONTRACT_STORE_POLICY,
+  CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
   CONCORD_TOKEN_STORE_POLICY,
   ConcordCoordinator,
   ConcordReaperService,
@@ -19,7 +20,7 @@ import {
   type ContractPointer,
 } from "../src/concord.ts";
 import { controllerAddress, serviceAddress } from "../src/endpoint.ts";
-import { ServiceUnavailable, StateConflict } from "../src/errors.ts";
+import { ServiceUnavailable, StateConflict, ValidationError } from "../src/errors.ts";
 import type { JsonObject, JsonValue } from "../src/json.ts";
 import { buildMessage, entitySubject } from "../src/lanes.ts";
 import {
@@ -238,6 +239,93 @@ test("Concord validates lifecycle and does not recreate a lost attached token", 
   await assert.rejects(() => controllerLease.attachOrRefresh());
 });
 
+test("Concord attach requires exact token id to return an existing token", async () => {
+  const contracts = new MemoryStateStore({ policy: CONCORD_CONTRACT_STORE_POLICY });
+  const tokens = new MemoryStateStore({ policy: CONCORD_TOKEN_STORE_POLICY });
+  const concord = new ConcordService(new ConcordCoordinator(contracts, tokens));
+  const coordinator = concord.coordinatorForTesting();
+  const contract = await concord.createContract(["controller:main", "service:music"]);
+
+  const first = await coordinator.attach(contract, "controller:main", "controller-session", {
+    tokenId: "controller-token",
+  });
+  const repeated = await coordinator.attach(contract, "controller:main", "controller-session", {
+    tokenId: "controller-token",
+  });
+
+  assert.equal(repeated.key, first.key);
+  assert.equal(repeated.revision, first.revision);
+  await assert.rejects(
+    () => coordinator.attach(contract, "controller:main", "controller-session"),
+    StateConflict,
+  );
+  await assert.rejects(
+    () => coordinator.attach(contract, "controller:main", "controller-session", {
+      tokenId: "controller-token-2",
+    }),
+    StateConflict,
+  );
+});
+
+test("Concord participant lease cannot adopt without a local token handle", async () => {
+  const contracts = new MemoryStateStore({ policy: CONCORD_CONTRACT_STORE_POLICY });
+  const tokens = new MemoryStateStore({ policy: CONCORD_TOKEN_STORE_POLICY });
+  const concord = new ConcordService(new ConcordCoordinator(contracts, tokens));
+  const contract = await concord.createContract(["controller:main", "service:music"]);
+  const controllerLease = concord.participantLease({
+    contract,
+    participant: "controller:main",
+    sessionId: "controller-session",
+  });
+  await controllerLease.attachOrRefresh();
+  const serviceLease = concord.participantLease({
+    contract,
+    participant: "service:music",
+    sessionId: "service-session",
+  });
+  await serviceLease.attachOrRefresh();
+  const validity = await concord.validate(contract);
+  const blankLease = concord.participantLease({
+    contract,
+    participant: "service:music",
+    sessionId: "service-session",
+  });
+
+  assert.equal(validity.status, ContractValidityStatus.VALID);
+  await assert.rejects(
+    async () => blankLease.adopt(validity.tokens["service:music"]!),
+    ValidationError,
+  );
+});
+
+test("Concord participant manager cancels when same-session token handle is lost", async () => {
+  const contracts = new MemoryStateStore({ policy: CONCORD_CONTRACT_STORE_POLICY });
+  const tokens = new MemoryStateStore({ policy: CONCORD_TOKEN_STORE_POLICY });
+  const concord = new ConcordService(new ConcordCoordinator(contracts, tokens));
+  const contract = await concord.createContract(["controller:main", "service:music"]);
+  await concord.attach(contract, "controller:main", "controller-session");
+  const manager = concord.participantManager({
+    participant: "service:music",
+    sessionId: "service-session",
+    acceptContract: () => true,
+  });
+  const managed = await manager.reconcile();
+  assert.equal(managed.length, 1);
+  assert.notEqual(managed[0]!.token, null);
+  const token = managed[0]!.token!;
+  const restarted = concord.participantManager({
+    participant: "service:music",
+    sessionId: "service-session",
+    acceptContract: () => true,
+  });
+
+  assert.deepEqual(await restarted.reconcile(), []);
+  const record = await concord.contractRecord(contract);
+  assert.equal(record?.state, ContractState.CANCELLED);
+  assert.equal(record?.cancelReason, CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON);
+  assert.notEqual(await tokens.get(token.key), null);
+});
+
 test("Concord reaper records stale contracts and cancels after grace", async () => {
   const contracts = new MemoryStateStore({ policy: CONCORD_CONTRACT_STORE_POLICY });
   const tokens = new MemoryStateStore({ policy: CONCORD_TOKEN_STORE_POLICY });
@@ -420,7 +508,7 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
   );
 });
 
-test("service-use scope index reuses a valid exact Concord pointer", async () => {
+test("service-use scope index replaces a valid same-session pointer without local token", async () => {
   const runtime = serviceUseTestRuntime();
   const descriptor = await testServiceDescriptor();
   const first = await acquireServiceUseLeaseWithServiceToken({
@@ -434,17 +522,20 @@ test("service-use scope index reuses a valid exact Concord pointer", async () =>
     serviceUseIndex: runtime.serviceUseIndex,
   });
 
-  const reused = await secondManager.ensure(descriptor, {
-    operations: ["play"],
-    timeoutMs: 0,
+  const reused = await acquireServiceUseLeaseWithServiceToken({
+    concord: runtime.concord,
+    manager: secondManager,
+    descriptor,
   });
 
-  assert.equal(reused.agreement.contract.contractId, first.agreement.contract.contractId);
+  assert.notEqual(reused.agreement.contract.contractId, first.agreement.contract.contractId);
   assert.equal(
     reused.terms.serviceUseScopeId,
     first.terms.serviceUseScopeId,
   );
-  assert.equal((await runtime.concord.contracts(descriptor.useProfile)).length, 1);
+  const oldRecord = await runtime.concord.contractRecord(first.agreement.contract);
+  assert.equal(oldRecord?.state, ContractState.CANCELLED);
+  assert.equal((await runtime.concord.contracts(descriptor.useProfile)).length, 2);
 });
 
 test("service-use scope index replaces a stale pointer", async () => {

@@ -40,6 +40,10 @@ export const DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS = 3600;
 export const DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS = 60;
 export const CONCORD_MAINTENANCE_ACTOR = "concord:maintenance";
 export const CONCORD_REAPER_STALE_CONTRACT_REASON = "concord_reaper_stale_contract";
+export const CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON =
+  "concord_managed_lost_participant_token";
+export const CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON =
+  "concord_agreement_lost_participant_token";
 export const ACTION_PROVIDER_SESSION_PROFILE_ID =
   "dev.deckr.profile.action_provider_session.v1";
 
@@ -547,7 +551,19 @@ export class ConcordCoordinator {
     if (!record.participants.includes(parsedParticipant)) {
       throw new ValidationError("participant is not named by the Concord contract");
     }
+    const key = concordParticipantTokenKey({
+      contractId: record.contractId,
+      generation: record.generation,
+      participant: parsedParticipant,
+    });
     if (record.attachedParticipants.includes(parsedParticipant)) {
+      const tokenEntry = await this.tokenState.get(key);
+      if (tokenEntry !== null) {
+        const existing = validateParticipantTokenRecord(tokenEntry.value);
+        if (tokenMatchesAttachRequest(existing, record, parsedParticipant, sessionId, options.tokenId)) {
+          return participantHandle(key, existing, tokenEntry.revision);
+        }
+      }
       throw new StateConflict("Concord participant is already attached");
     }
     const ttlSeconds = options.ttlSeconds ?? this.tokenTtlSeconds;
@@ -563,12 +579,8 @@ export class ConcordCoordinator {
       termsHash: record.termsHash,
       observed: {},
     });
-    const key = concordParticipantTokenKey({
-      contractId: record.contractId,
-      generation: record.generation,
-      participant: parsedParticipant,
-    });
     let entry: StateEntry;
+    let attachedToken = token;
     try {
       entry = await this.tokenState.create(key, recordToJson(token), {
         ttl: token.ttlSeconds,
@@ -585,10 +597,11 @@ export class ConcordCoordinator {
       if (!tokenMatchesAttachRequest(existing, record, parsedParticipant, sessionId, options.tokenId)) {
         throw new StateConflict("Concord participant token already exists");
       }
+      attachedToken = existing;
       entry = tokenEntry;
     }
     await this.markParticipantAttached(contract.key, parsedParticipant);
-    return participantHandle(key, token, entry.revision);
+    return participantHandle(key, attachedToken, entry.revision);
   }
 
   async refresh(handle: ParticipantHandle): Promise<ParticipantHandle> {
@@ -850,6 +863,10 @@ export class ConcordParticipantLease {
   }
 
   adopt(token: ParticipantHandle): void {
+    const current = this.tokenValue;
+    if (current === null) {
+      throw new ValidationError("participant token cannot be adopted without an existing local handle");
+    }
     if (
       token.contractId !== this.contract.contractId ||
       token.generation !== this.contract.generation ||
@@ -857,6 +874,9 @@ export class ConcordParticipantLease {
       token.sessionId !== this.sessionId
     ) {
       throw new ValidationError("participant token does not match lease");
+    }
+    if (!participantHandleMatches(current, token)) {
+      throw new ValidationError("participant token does not match local handle");
     }
     this.tokenValue = token;
   }
@@ -973,10 +993,6 @@ export class ConcordService {
         participant: normalized.localParticipant,
         sessionId: normalized.localSessionId,
       });
-      const existing = initialValidity.tokens[normalized.localParticipant];
-      if (existing !== undefined && existing.sessionId === normalized.localSessionId) {
-        lease.adopt(existing);
-      }
       const agreement = new ConcordAgreement(this, {
         spec: normalized,
         contract,
@@ -985,7 +1001,9 @@ export class ConcordService {
       });
       const refreshed = await agreement.refresh();
       if (agreementSuccessorStatus(refreshed.status)) {
-        await agreement.cancel(`concord_agreement_${refreshed.status}`);
+        if (!agreement.closed) {
+          await agreement.cancel(`concord_agreement_${refreshed.status}`);
+        }
         continue;
       }
       return agreement;
@@ -1095,8 +1113,20 @@ export class ConcordService {
         reason: agreement.spec.localParticipant,
       });
     }
-    if (existing !== undefined && agreement.localToken === null) {
-      agreement["lease"].adopt(existing);
+    if (existing !== undefined) {
+      if (agreement.localToken === null) {
+        await agreement.cancel(CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON);
+        return this.validate(agreement.contract, { currentSessions: sessions });
+      }
+      try {
+        agreement["lease"].adopt(existing);
+      } catch (error) {
+        if (!(error instanceof ValidationError)) {
+          throw error;
+        }
+        await agreement.cancel(CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON);
+        return this.validate(agreement.contract, { currentSessions: sessions });
+      }
     }
     if (agreement.localToken === null) {
       await agreement["lease"].attachOrRefresh();
@@ -1387,7 +1417,19 @@ export class ConcordParticipantManager {
         await this.releaseInternal(contract.key);
         return null;
       }
-      lease.adopt(existing);
+      if (lease.token === null) {
+        await this.cancelAndReleaseLostParticipantToken(contract);
+        return null;
+      }
+      try {
+        lease.adopt(existing);
+      } catch (error) {
+        if (!(error instanceof ValidationError)) {
+          throw error;
+        }
+        await this.cancelAndReleaseLostParticipantToken(contract);
+        return null;
+      }
     }
     let token = lease.token;
     if (token === null) {
@@ -1415,6 +1457,17 @@ export class ConcordParticipantManager {
       await lease.close();
       this.leases.delete(key);
     }
+  }
+
+  private async cancelAndReleaseLostParticipantToken(contract: ContractHandle): Promise<void> {
+    try {
+      await this.cancel(contract, { reason: CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON });
+    } catch (error) {
+      if (!(error instanceof StateConflict || error instanceof StateUnavailable || error instanceof ValidationError)) {
+        throw error;
+      }
+    }
+    await this.releaseInternal(contract.key);
   }
 
   private reportError(error: unknown): void {
@@ -1751,7 +1804,8 @@ function tokenMatchesAttachRequest(
     token.generation === record.generation &&
     token.participant === participant &&
     token.sessionId === sessionId &&
-    (tokenId === undefined || token.tokenId === tokenId) &&
+    tokenId !== undefined &&
+    token.tokenId === tokenId &&
     token.termsHash === record.termsHash
   );
 }
@@ -1764,6 +1818,17 @@ function tokenMatchesHandle(token: ParticipantTokenRecord, handle: ParticipantHa
     token.sessionId === handle.sessionId &&
     token.tokenId === handle.tokenId &&
     token.termsHash === handle.termsHash
+  );
+}
+
+function participantHandleMatches(current: ParticipantHandle, updated: ParticipantHandle): boolean {
+  return (
+    updated.contractId === current.contractId &&
+    updated.generation === current.generation &&
+    updated.participant === current.participant &&
+    updated.sessionId === current.sessionId &&
+    updated.tokenId === current.tokenId &&
+    updated.termsHash === current.termsHash
   );
 }
 

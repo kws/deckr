@@ -1059,6 +1059,12 @@ async def test_concord_create_attach_refresh_validate_cancel_and_token_loss() ->
             contract,
             manager,
             "manager-session",
+        )
+    with pytest.raises(ConcordConflict, match="already attached"):
+        await concord._attach(
+            contract,
+            manager,
+            "manager-session",
             token_id="manager-token-2",
         )
 
@@ -1561,6 +1567,49 @@ async def test_concord_participant_manager_not_selected_withdraws_owned_token() 
 
 
 @pytest.mark.asyncio
+async def test_concord_participant_manager_restart_cancels_lost_local_token() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    contract = await service._create_contract(
+        (manager, controller),
+        contract_id="hardware-contract-1",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        terms=_hardware_claim_terms(),
+        created_by=controller,
+    )
+    await service._attach(contract, controller, "controller-session")
+    lifecycle = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+    managed = (await lifecycle.reconcile(reason="test live"))[0]
+    manager_token = managed.token
+    assert manager_token is not None
+
+    restarted = service.participant(
+        participant=manager,
+        session_id="manager-session",
+        profile=HARDWARE_CLAIM_PROFILE_ID,
+        accept_contract=lambda _contract, _record: True,
+    )
+
+    assert await restarted.reconcile(reason="restart") == ()
+    assert restarted.managed_contracts == ()
+    record = await service.contract_record(contract)
+    assert record is not None
+    assert record.state == ContractState.CANCELLED
+    assert record.cancel_reason == (
+        concord_module.CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON
+    )
+    assert await token_state.get(manager_token.key) is not None
+
+
+@pytest.mark.asyncio
 async def test_concord_participant_manager_empty_cancel_statuses_preserves_open() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
@@ -1968,6 +2017,93 @@ async def test_concord_ensure_agreement_uses_opaque_successor_after_token_loss()
 
 
 @pytest.mark.asyncio
+async def test_concord_agreement_refresh_cancels_lost_local_token_handle() -> None:
+    contract_state = MemoryJsonKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    service_endpoint = service_address("openhab-home")
+    client = action_provider_address("python-dev.deckr.openhab")
+    agreement = await service.propose(
+        ConcordAgreementSpec(
+            profile="dev.deckr.openhab.service_use.v1",
+            participants=(service_endpoint, client),
+            local_participant=client,
+            local_session_id="client-session",
+            current_sessions={
+                str(service_endpoint): "service-session",
+                str(client): "client-session",
+            },
+            log_label="TestConcord",
+        )
+    )
+    await service._attach(agreement.contract, service_endpoint, "service-session")
+    assert (await agreement.refresh()).status == ContractValidityStatus.VALID
+    token = agreement.local_token
+    assert token is not None
+
+    agreement._lease._token = None  # noqa: SLF001
+    agreement._lease._last_refresh_at = None  # noqa: SLF001
+
+    refreshed = await agreement.refresh()
+
+    assert refreshed.status == ContractValidityStatus.CANCELLED
+    assert not refreshed.valid
+    assert agreement.closed
+    record = await service.contract_record(agreement.contract)
+    assert record is not None
+    assert record.state == ContractState.CANCELLED
+    assert record.cancel_reason == (
+        concord_module.CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON
+    )
+    assert await token_state.get(token.key) is not None
+
+
+@pytest.mark.asyncio
+async def test_concord_agreement_refresh_closes_lost_token_when_cancel_unavailable() -> None:
+    contract_state = FailingUpdateKvBucket(bucket="contracts")
+    token_state = MemoryJsonKvBucket(bucket="tokens")
+    service = _concord(contract_state, token_state)
+    service_endpoint = service_address("openhab-home")
+    client = action_provider_address("python-dev.deckr.openhab")
+    agreement = await service.propose(
+        ConcordAgreementSpec(
+            profile="dev.deckr.openhab.service_use.v1",
+            participants=(service_endpoint, client),
+            local_participant=client,
+            local_session_id="client-session",
+            current_sessions={
+                str(service_endpoint): "service-session",
+                str(client): "client-session",
+            },
+            log_label="TestConcord",
+        )
+    )
+    await service._attach(agreement.contract, service_endpoint, "service-session")
+    assert (await agreement.refresh()).status == ContractValidityStatus.VALID
+    token = agreement.local_token
+    assert token is not None
+
+    contract_state.fail_updates = True
+    agreement._lease._token = None  # noqa: SLF001
+    agreement._lease._last_refresh_at = None  # noqa: SLF001
+
+    refreshed = await agreement.refresh()
+
+    assert refreshed.status == ContractValidityStatus.INVALID_TOKEN
+    assert refreshed.reason == (
+        concord_module.CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON
+    )
+    assert not refreshed.valid
+    assert agreement.closed
+    with pytest.raises(ConcordConflict, match="closed"):
+        await agreement.refresh()
+    record = await service.contract_record(agreement.contract)
+    assert record is not None
+    assert record.state == ContractState.OPEN
+    assert await token_state.get(token.key) is not None
+
+
+@pytest.mark.asyncio
 async def test_concord_agreement_refresh_confirms_terminal_cache_status_exactly() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
@@ -2104,8 +2240,8 @@ async def test_concord_service_lease_events_and_logs(caplog, monkeypatch) -> Non
             session_id="manager-session",
             log_label="TestConcord",
         )
-        adopted_manager_lease.adopt(valid.validity.tokens[str(manager)])
-        assert (await adopted_manager_lease.attach_or_refresh()).refresh_seq == 1
+        with pytest.raises(ValueError, match="without an existing local handle"):
+            adopted_manager_lease.adopt(valid.validity.tokens[str(manager)])
 
         await _delete_token_from_view(
             service,
@@ -2292,5 +2428,3 @@ def test_concord_contract_attached_participants_must_be_named() -> None:
             participants=(controller_address("controller-main"),),
             attachedParticipants=(hardware_manager_address("manager-main"),),
         )
-
-

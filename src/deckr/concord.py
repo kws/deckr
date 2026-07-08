@@ -43,6 +43,12 @@ DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS = 60
 CONCORD_MAINTENANCE_ACTOR = "concord:maintenance"
 CONCORD_REAPER_STALE_CONTRACT_REASON = "concord_reaper_stale_contract"
 CONCORD_REFRESH_UNAVAILABLE_CANCEL_REASON = "participant_token_refresh_unavailable"
+CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON = (
+    "concord_managed_lost_participant_token"
+)
+CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON = (
+    "concord_agreement_lost_participant_token"
+)
 ACTION_PROVIDER_SESSION_PROFILE_ID = "dev.deckr.profile.action_provider_session.v1"
 CONCORD_CONTRACT_BUCKET_POLICY = KvBucketPolicy(
     bucket=DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
@@ -1328,6 +1334,11 @@ class ConcordParticipantLease:
         await self._service._forget_participant_lease(self)  # noqa: SLF001
 
     def adopt(self, token: ParticipantHandle) -> None:
+        current = self._token
+        if current is None:
+            raise ValueError(
+                "participant token cannot be adopted without an existing local handle"
+            )
         if token.contract_id != self.contract.contract_id:
             raise ValueError("participant token belongs to a different contract")
         if token.generation != self.contract.generation:
@@ -1336,6 +1347,8 @@ class ConcordParticipantLease:
             raise ValueError("participant token belongs to a different participant")
         if token.session_id != self.session_id:
             raise ValueError("participant token belongs to a different session")
+        if not _participant_handle_matches(current, token):
+            raise ValueError("participant token does not match local handle")
         if self._token == token:
             return
         self._refresh_interval = _concord_token_refresh_delay(
@@ -1656,10 +1669,11 @@ class Concord:
                 agreement._lease.start_soon(start_soon)  # noqa: SLF001
             validity = await agreement.refresh()
             if _agreement_successor_status(validity.status):
-                await self._cancel_agreement(
-                    agreement,
-                    reason=f"concord_agreement_{validity.status.value}",
-                )
+                if not agreement.closed:
+                    await self._cancel_agreement(
+                        agreement,
+                        reason=f"concord_agreement_{validity.status.value}",
+                    )
                 continue
             return agreement
 
@@ -2613,9 +2627,6 @@ class Concord:
             refresh_interval=spec.refresh_interval,
             log_label=spec.log_label,
         )
-        existing = validity.tokens.get(str(spec.local_participant))
-        if existing is not None and existing.session_id == spec.local_session_id:
-            lease.adopt(existing)
         return ConcordAgreementLease(
             self,
             spec=spec,
@@ -2676,7 +2687,14 @@ class Concord:
                 agreement._validity = validity  # noqa: SLF001
                 await agreement._lease.aclose()  # noqa: SLF001
                 return validity
-            agreement._lease.adopt(existing)  # noqa: SLF001
+            if agreement.local_token is None:
+                await self._cancel_lost_agreement_authority(agreement)
+                return agreement.validity
+            try:
+                agreement._lease.adopt(existing)  # noqa: SLF001
+            except ValueError:
+                await self._cancel_lost_agreement_authority(agreement)
+                return agreement.validity
         try:
             await agreement._lease.attach_or_refresh()  # noqa: SLF001
         except ConcordConflict as exc:
@@ -2742,6 +2760,42 @@ class Concord:
         )
         agreement._validity = validity  # noqa: SLF001
         return cancelled
+
+    async def _cancel_lost_agreement_authority(
+        self,
+        agreement: ConcordAgreementLease,
+    ) -> ContractValidity:
+        await agreement.aclose()
+        try:
+            await self._cancel(
+                agreement.contract,
+                agreement.spec.local_participant,
+                reason=CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON,
+                log_label=agreement.spec.log_label,
+            )
+            validity = await self._validate(
+                agreement.contract,
+                current_sessions=await _agreement_current_sessions(agreement.spec),
+                log_label=agreement.spec.log_label,
+                log_invalid=False,
+            )
+        except (ConcordConflict, ConcordUnavailable, ValueError):
+            logger.debug(
+                "%s could not cancel Concord agreement after local participant "
+                "token authority was lost contract=%s generation=%s participant=%s "
+                "session=%s",
+                agreement.spec.log_label,
+                agreement.contract.contract_id,
+                agreement.contract.generation,
+                agreement.spec.local_participant,
+                agreement.spec.local_session_id,
+                exc_info=True,
+            )
+            validity = _lost_agreement_authority_validity(agreement)
+        if validity.status == ContractValidityStatus.UNAVAILABLE:
+            validity = _lost_agreement_authority_validity(agreement)
+        agreement._validity = validity  # noqa: SLF001
+        return validity
 
     async def _create_contract(
         self,
@@ -4509,7 +4563,14 @@ class ConcordParticipant:
                     reason=reason,
                 )
                 return None
-            lease.adopt(existing)
+            if lease.token is None:
+                await self._cancel_and_release_lost_participant_token_locked(contract)
+                return None
+            try:
+                lease.adopt(existing)
+            except ValueError:
+                await self._cancel_and_release_lost_participant_token_locked(contract)
+                return None
 
         try:
             token = await lease.attach_or_refresh()
@@ -4597,6 +4658,33 @@ class ConcordParticipant:
                 token=managed.token,
                 reason=reason,
             )
+        )
+
+    async def _cancel_and_release_lost_participant_token_locked(
+        self,
+        contract: ContractHandle,
+    ) -> None:
+        try:
+            await self.cancel(
+                contract,
+                reason=CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
+            )
+        except (ConcordConflict, ConcordUnavailable, ValueError):
+            logger.debug(
+                "%s could not cancel Concord contract after local participant "
+                "token authority was lost contract=%s generation=%s participant=%s "
+                "session=%s",
+                self._log_label,
+                contract.contract_id,
+                contract.generation,
+                self.participant,
+                self.session_id,
+                exc_info=True,
+            )
+        await self._release_locked(
+            contract.key,
+            reason=CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
+            withdraw=False,
         )
 
     async def _publish_terminal_locked(
@@ -4888,6 +4976,17 @@ def _agreement_successor_status(status: ContractValidityStatus) -> bool:
     }
 
 
+def _lost_agreement_authority_validity(
+    agreement: ConcordAgreementLease,
+) -> ContractValidity:
+    return ContractValidity(
+        ContractValidityStatus.INVALID_TOKEN,
+        contract=agreement.validity.contract,
+        tokens=agreement.validity.tokens,
+        reason=CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON,
+    )
+
+
 DEFAULT_CONCORD_MANAGED_CANCEL_TERMINAL_STATUSES = frozenset(
     {
         ContractValidityStatus.INVALID_TOKEN,
@@ -4979,7 +5078,8 @@ def _token_matches_attach_request(
         and token.generation == record.generation
         and token.participant == participant
         and token.session_id == session_id
-        and (token_id is None or token.token_id == token_id)
+        and token_id is not None
+        and token.token_id == token_id
         and token.terms_hash == record.terms_hash
     )
 
@@ -4995,6 +5095,20 @@ def _token_matches_handle(
         and token.session_id == handle.session_id
         and token.token_id == handle.token_id
         and token.terms_hash == handle.terms_hash
+    )
+
+
+def _participant_handle_matches(
+    current: ParticipantHandle,
+    updated: ParticipantHandle,
+) -> bool:
+    return (
+        updated.contract_id == current.contract_id
+        and updated.generation == current.generation
+        and updated.participant == current.participant
+        and updated.session_id == current.session_id
+        and updated.token_id == current.token_id
+        and updated.terms_hash == current.terms_hash
     )
 
 

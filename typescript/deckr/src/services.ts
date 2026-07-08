@@ -584,27 +584,7 @@ export class ServiceUseLeaseManager {
     if (validity.status !== ContractValidityStatus.VALID) {
       return null;
     }
-    const spec = {
-      profile: descriptor.useProfile,
-      participants: [descriptor.endpoint, this.endpoint.endpoint],
-      localParticipant: this.endpoint.endpoint,
-      localSessionId: this.endpoint.sessionId,
-      terms: terms as unknown as JsonObject,
-      currentSessions,
-      refreshIntervalSeconds: this.refreshIntervalSeconds,
-    } satisfies ConcordAgreementSpec;
-    const lease = this.concord.participantLease({
-      contract,
-      participant: this.endpoint.endpoint,
-      sessionId: this.endpoint.sessionId,
-    });
-    lease.adopt(localToken);
-    return new ConcordAgreement(this.concord, {
-      spec,
-      contract,
-      lease,
-      validity,
-    });
+    return null;
   }
 
   private async cancelPointerQuietly(pointer: ContractPointer): Promise<void> {

@@ -205,11 +205,13 @@ TTL is 120 seconds. Lease implementations treat configured refresh intervals as
 requested cadence, not guaranteed write cadence.
 Participant-token refresh writes are scheduled from the token TTL with jitter
 between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`; with the default 120-second
-bucket TTL this produces 60-90 second refreshes. Leases may
-validate/adopt the current token more often, but they should not write a token
-refresh until a token must be attached or the effective refresh interval is due.
-If reconciliation observes fresher same-session token details, the local lease
-adopts them without immediately writing again.
+bucket TTL this produces 60-90 second refreshes. Leases may validate an
+already-held token handle more often, but they should not write a token refresh
+until a token must be attached or the effective refresh interval is due. If
+validation observes fresher details for the same contract, participant, session,
+token id, and terms hash, the local lease may update that already-held handle
+without immediately writing again. A blank local lease must not adopt a token
+from KV using participant/session identity alone.
 
 If the contract is cancelled, the token is missing, or the token has changed
 owner/session/token id/terms hash, the participant no longer maintains authority
@@ -229,6 +231,9 @@ loss of that token means loss of authority for that generation. The participant
 must not silently recreate a token for the same contract generation. It should
 cancel when possible or negotiate a successor contract using a new generation or
 new contract id.
+If local lease state is lost while a same-session token still exists in KV, the
+participant must treat the old contract as stale local authority: best-effort
+cancel it when possible and negotiate a successor rather than adopting the token.
 
 A missing token for a participant that is not yet in `attachedParticipants`
 means the contract is not yet fulfilled. A missing token for a participant that

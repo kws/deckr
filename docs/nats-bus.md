@@ -53,9 +53,12 @@ Concord participant-token writes derive `ttlSeconds` from the token KV bucket
 TTL and schedule refreshes with jitter between `ttlSeconds * 0.5` and
 `ttlSeconds * 0.75`; with the default 120-second token bucket TTL this produces
 60-90 second token refreshes. Runtime participants may call refresh
-methods more often, but no-op heartbeats are coalesced. If reconciliation
-observes fresher same-session token details, the local lease adopts them without
-immediately writing again.
+methods more often, but no-op heartbeats are coalesced. Only an already-held
+local token handle may be validated and refreshed; if validation observes
+fresher details for the same contract, participant, session, token id, and terms
+hash, the local lease may update that handle without immediately writing again.
+A blank local lease must not adopt a token from KV using participant/session
+identity alone.
 
 Renewal loops must not be used as discovery loops. Runtime code must not run
 full Beacon or Concord discovery, participant/profile prefix scans, or full
@@ -285,7 +288,9 @@ participant, session, and terms hash. Any participant may cancel the contract.
 Explicit participant-lease and agreement close perform best-effort owned-token
 withdrawal after exact ownership validation. Reconciliation may still release a
 locally managed lease without deleting its token when it is only changing local
-selection state.
+selection state. If local lease state is lost while a same-session token remains
+in KV, the participant must best-effort cancel the stale contract and negotiate a
+successor rather than adopting that token.
 The full Concord semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#concord).
 
