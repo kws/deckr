@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import tempfile
 from collections import deque
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = -1
 _DEFAULT_MINIMUM_VERSION = "2.14.0"
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 _VERSION_RE = re.compile(r"\bv(?P<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b")
 
 
@@ -263,36 +265,78 @@ class NatsServerSupervisor:
         tg.start_soon(self._raise_on_unexpected_exit)
 
     async def stop(self) -> None:
-        self._stopping = True
-        process = self._process
-        if process is not None:
-            if process.returncode is None:
-                process.terminate()
-                with anyio.move_on_after(self.shutdown_timeout) as scope:
-                    await process.wait()
-                if scope.cancel_called and process.returncode is None:
-                    process.kill()
-                    await process.wait()
-            with anyio.move_on_after(1.0, shield=True):
-                await process.aclose()
-        self._process = None
+        cleanup_errors: list[BaseException] = []
 
-        if self._io_task_group is not None:
-            self._io_task_group.cancel_scope.cancel()
-        if self._io_task_group_cm is not None:
-            await self._io_task_group_cm.__aexit__(None, None, None)
-        self._io_task_group = None
-        self._io_task_group_cm = None
+        with anyio.CancelScope(shield=True):
+            self._stopping = True
+            process = self._process
+            if process is not None:
+                logger.info("Stopping supervised nats-server")
+                try:
+                    await self._stop_process(process)
+                except BaseException as err:
+                    cleanup_errors.append(err)
+                try:
+                    with anyio.move_on_after(1.0, shield=True):
+                        await process.aclose()
+                except BaseException as err:
+                    cleanup_errors.append(err)
+            self._process = None
 
-        if self._ports_dir is not None:
-            _remove_stale_ports_files(self._ports_dir)
-        self._ports_dir = None
-        self._handle = None
-        self._auth_token = None
+            if self._io_task_group is not None:
+                self._io_task_group.cancel_scope.cancel()
+            if self._io_task_group_cm is not None:
+                try:
+                    await self._io_task_group_cm.__aexit__(None, None, None)
+                except BaseException as err:
+                    cleanup_errors.append(err)
+            self._io_task_group = None
+            self._io_task_group_cm = None
 
-        if self._temporary_dir is not None:
-            self._temporary_dir.cleanup()
-            self._temporary_dir = None
+            if self._ports_dir is not None:
+                try:
+                    _remove_stale_ports_files(self._ports_dir)
+                except BaseException as err:
+                    cleanup_errors.append(err)
+            self._ports_dir = None
+            self._handle = None
+            self._auth_token = None
+
+            if self._temporary_dir is not None:
+                try:
+                    self._temporary_dir.cleanup()
+                except BaseException as err:
+                    cleanup_errors.append(err)
+                self._temporary_dir = None
+
+        if len(cleanup_errors) == 1:
+            raise cleanup_errors[0]
+        if cleanup_errors:
+            raise BaseExceptionGroup(
+                "supervised nats-server cleanup failed",
+                cleanup_errors,
+            )
+
+    async def _stop_process(self, process: Any) -> None:
+        if process.returncode is not None:
+            return
+        self._signal_process(process, signal.SIGTERM)
+        with anyio.move_on_after(self.shutdown_timeout) as scope:
+            await process.wait()
+        if scope.cancel_called and process.returncode is None:
+            logger.warning("Supervised nats-server did not stop gracefully; killing it")
+            self._signal_process(process, _SIGKILL)
+            await process.wait()
+            return
+        logger.info("Stopped supervised nats-server gracefully")
+
+    def _signal_process(self, process: Any, sig: int) -> None:
+        if _signal_process_group(process, sig):
+            return
+        if sig == signal.SIGTERM:
+            process.terminate()
+            return
+        process.kill()
 
     async def _start_io_drain(self) -> None:
         process = self._process
@@ -460,12 +504,13 @@ class SupervisedNatsSubstrate:
         self.supervisor.start_monitor(tg)
 
     async def aclose(self) -> None:
-        try:
-            if self._nats is not None:
-                await self._nats.aclose()
-        finally:
-            self._nats = None
-            await self.supervisor.stop()
+        with anyio.CancelScope(shield=True):
+            try:
+                if self._nats is not None:
+                    await self._nats.aclose()
+            finally:
+                self._nats = None
+                await self.supervisor.stop()
 
     def contract_for(self, lane: str) -> MessageContract:
         return self._lane_contracts.contract_for(lane)
@@ -587,6 +632,20 @@ def _remove_stale_ports_files(path: Path) -> None:
             ports_file.unlink()
         except FileNotFoundError:
             pass
+
+
+def _signal_process_group(process: Any, sig: int) -> bool:
+    killpg = getattr(os, "killpg", None)
+    pid = getattr(process, "pid", None)
+    if killpg is None or pid is None:
+        return False
+    try:
+        killpg(pid, sig)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _config_text(

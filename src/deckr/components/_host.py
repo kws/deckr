@@ -533,8 +533,9 @@ async def start_components(
         try:
             yield host
         finally:
-            await host.stop()
-            tg.cancel_scope.cancel()
+            with anyio.CancelScope(shield=True):
+                await host.stop()
+                tg.cancel_scope.cancel()
 
 
 GENERIC_INSTANCE_FIELDS = frozenset(

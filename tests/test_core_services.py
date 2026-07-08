@@ -394,6 +394,34 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_components_stops_host_in_cancelled_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deckr.components._host import ComponentHost
+
+    stops: list[str] = []
+    original_stop = ComponentHost.stop
+
+    async def recording_stop(self: ComponentHost) -> None:
+        await anyio.sleep(0)
+        stops.append("stop")
+        await original_stop(self)
+
+    monkeypatch.setattr(ComponentHost, "stop", recording_stop)
+    plan = resolve_component_host_plan(_document({"deckr": {}}), definitions={})
+
+    async with mock_deckr(
+        lane_contracts=plan.lane_contracts,
+        lanes=plan.lane_names,
+    ) as deckr:
+        with anyio.CancelScope() as scope:
+            async with start_components(deckr, plan):
+                scope.cancel()
+
+    assert stops == ["stop"]
+
+
+@pytest.mark.asyncio
 async def test_start_components_passes_kv_bucket_and_endpoints() -> None:
     seen: dict[str, object] = {}
     policy = KvBucketPolicy(bucket="test_component_context_v1", ttl_seconds=None)

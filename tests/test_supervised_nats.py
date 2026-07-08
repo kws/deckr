@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import signal
 from pathlib import Path
 
 import anyio
 import pytest
 
+import deckr.substrates.supervised_nats as supervised_nats_mod
 from deckr.contracts.lanes import DEFAULT_MESSAGE_CONTRACT_REGISTRY
 from deckr.contracts.messages import service_address
 from deckr.core.config import ConfigDocument
@@ -396,6 +398,136 @@ async def test_supervised_substrate_starts_supervisor_before_nats(
         "lane_contracts": DEFAULT_MESSAGE_CONTRACT_REGISTRY,
         "buffer_size": 100,
     }
+
+
+@pytest.mark.asyncio
+async def test_supervised_substrate_aclose_stops_inside_cancelled_scope() -> None:
+    events: list[str] = []
+
+    class FakeSupervisor:
+        url = None
+
+        async def stop(self) -> None:
+            await anyio.sleep(0)
+            events.append("supervisor.stop")
+
+    class FakeNatsSubstrate:
+        async def aclose(self) -> None:
+            await anyio.sleep(0)
+            events.append("nats.aclose")
+
+    substrate = SupervisedNatsSubstrate(
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+        supervisor=FakeSupervisor(),
+    )
+    substrate._nats = FakeNatsSubstrate()  # noqa: SLF001
+
+    with anyio.CancelScope() as scope:
+        scope.cancel()
+        await substrate.aclose()
+
+    assert events == ["nats.aclose", "supervisor.stop"]
+    assert substrate._nats is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_supervisor_stop_terminates_process_group_inside_cancelled_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    signals: list[tuple[int, int]] = []
+
+    def killpg(pid: int, sig: int) -> None:
+        signals.append((pid, sig))
+
+    class FakeProcess:
+        pid = 12345
+        returncode = None
+        closed = False
+
+        async def wait(self) -> int:
+            await anyio.sleep(0)
+            self.returncode = -signal.SIGTERM
+            return self.returncode
+
+        async def aclose(self) -> None:
+            await anyio.sleep(0)
+            self.closed = True
+
+        def terminate(self) -> None:
+            raise AssertionError("process fallback terminate should not be used")
+
+        def kill(self) -> None:
+            raise AssertionError("process fallback kill should not be used")
+
+    ports_dir = tmp_path / "ports"
+    ports_dir.mkdir()
+    ports_file = ports_dir / "nats-server_123.ports"
+    ports_file.write_text(json.dumps({"nats": ["nats://127.0.0.1:4222"]}))
+    process = FakeProcess()
+    supervisor = NatsServerSupervisor(runtime_dir=tmp_path)
+    supervisor._process = process  # noqa: SLF001
+    supervisor._ports_dir = ports_dir  # noqa: SLF001
+    monkeypatch.setattr(supervised_nats_mod.os, "killpg", killpg, raising=False)
+
+    with anyio.CancelScope() as scope:
+        scope.cancel()
+        await supervisor.stop()
+
+    assert signals == [(process.pid, signal.SIGTERM)]
+    assert process.closed is True
+    assert not ports_file.exists()
+    assert supervisor._process is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_supervisor_stop_kills_process_group_after_graceful_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    signals: list[tuple[int, int]] = []
+
+    def killpg(pid: int, sig: int) -> None:
+        signals.append((pid, sig))
+
+    class SlowProcess:
+        pid = 12346
+        returncode = None
+        closed = False
+        wait_calls = 0
+
+        async def wait(self) -> int:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                await anyio.sleep_forever()
+            await anyio.sleep(0)
+            self.returncode = -supervised_nats_mod._SIGKILL  # noqa: SLF001
+            return self.returncode
+
+        async def aclose(self) -> None:
+            await anyio.sleep(0)
+            self.closed = True
+
+        def terminate(self) -> None:
+            raise AssertionError("process fallback terminate should not be used")
+
+        def kill(self) -> None:
+            raise AssertionError("process fallback kill should not be used")
+
+    process = SlowProcess()
+    supervisor = NatsServerSupervisor(runtime_dir=tmp_path, shutdown_timeout=0.01)
+    supervisor._process = process  # noqa: SLF001
+    monkeypatch.setattr(supervised_nats_mod.os, "killpg", killpg, raising=False)
+
+    await supervisor.stop()
+
+    assert signals == [
+        (process.pid, signal.SIGTERM),
+        (process.pid, supervised_nats_mod._SIGKILL),  # noqa: SLF001
+    ]
+    assert process.closed is True
+    assert process.wait_calls == 2
+    assert supervisor._process is None  # noqa: SLF001
 
 
 @pytest.mark.asyncio

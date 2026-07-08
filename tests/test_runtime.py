@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import anyio
 import pytest
 from message_bus_mocks import mock_deckr
 
@@ -15,6 +16,15 @@ from deckr.runtime import Deckr
 from deckr.services import DeckrServices
 from deckr.substrates.nats import NatsSubstrate
 from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
+
+
+class _ClosableMessageBus:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def aclose(self) -> None:
+        await anyio.sleep(0)
+        self.closed = True
 
 
 @pytest.mark.asyncio
@@ -58,6 +68,20 @@ async def test_deckr_rejects_duplicate_start() -> None:
     assert deckr.is_running is False
 
 
+@pytest.mark.asyncio
+async def test_deckr_exit_closes_message_bus_in_cancelled_scope() -> None:
+    bus = _ClosableMessageBus()
+    deckr = Deckr(message_bus=bus)
+
+    with anyio.CancelScope() as scope:
+        await deckr.__aenter__()
+        scope.cancel()
+        await deckr.__aexit__(None, None, None)
+
+    assert bus.closed is True
+    assert deckr.is_running is False
+
+
 def test_extension_lanes_require_matching_explicit_contracts() -> None:
     lane = "acme.metrics.events"
     contract = MessageContract(
@@ -97,5 +121,4 @@ def test_nats_substrates_expose_message_bus_contract_lookup() -> None:
 
     assert nats.contract_for(ACTIONS_LANE) == expected
     assert supervised.contract_for(ACTIONS_LANE) == expected
-
 

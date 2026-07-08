@@ -168,22 +168,62 @@ class Deckr:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        if self._beacon is not None:
-            await self._beacon.aclose()
-        if self._concord is not None:
-            await self._concord.aclose()
-        if self._task_group is not None:
-            self._task_group.cancel_scope.cancel()
         result = None
-        if self._task_group_cm is not None:
-            result = await self._task_group_cm.__aexit__(exc_type, exc, traceback)
-        aclose = getattr(self._message_bus, "aclose", None)
-        if aclose is not None:
-            await aclose()
-        self._beacon = None
-        self._concord = None
-        self._task_group = None
-        self._task_group_cm = None
+        cleanup_errors: list[BaseException] = []
+
+        if self._task_group is not None:
+            self._task_group.cancel_scope.shield = True
+            if self._beacon is not None:
+                try:
+                    await self._beacon.aclose()
+                except BaseException as err:
+                    cleanup_errors.append(err)
+            if self._concord is not None:
+                try:
+                    await self._concord.aclose()
+                except BaseException as err:
+                    cleanup_errors.append(err)
+            self._task_group.cancel_scope.cancel()
+            if self._task_group_cm is not None:
+                try:
+                    result = await self._task_group_cm.__aexit__(
+                        exc_type,
+                        exc,
+                        traceback,
+                    )
+                except BaseException as err:
+                    cleanup_errors.append(err)
+        else:
+            with anyio.CancelScope(shield=True):
+                if self._beacon is not None:
+                    try:
+                        await self._beacon.aclose()
+                    except BaseException as err:
+                        cleanup_errors.append(err)
+                if self._concord is not None:
+                    try:
+                        await self._concord.aclose()
+                    except BaseException as err:
+                        cleanup_errors.append(err)
+
+        with anyio.CancelScope(shield=True):
+            try:
+                aclose = getattr(self._message_bus, "aclose", None)
+                if aclose is not None:
+                    try:
+                        await aclose()
+                    except BaseException as err:
+                        cleanup_errors.append(err)
+            finally:
+                self._beacon = None
+                self._concord = None
+                self._task_group = None
+                self._task_group_cm = None
+
+        if len(cleanup_errors) == 1:
+            raise cleanup_errors[0]
+        if cleanup_errors:
+            raise BaseExceptionGroup("Deckr runtime cleanup failed", cleanup_errors)
         return result
 
     @staticmethod
