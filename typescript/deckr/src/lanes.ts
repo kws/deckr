@@ -30,8 +30,6 @@ const REQUIRED_CONTRACT_ACTION_MESSAGES = new Set([
   "pageSessionClosed",
   "pageSessionOpened",
   "replacePage",
-  "settingsPatch",
-  "settingsReplace",
   "settingsRequest",
   "settingsSnapshot",
 ]);

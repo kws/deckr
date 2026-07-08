@@ -1280,46 +1280,6 @@
       "title": "ReplacePageBody",
       "type": "object"
     },
-    "SettingsPatchBody": {
-      "additionalProperties": false,
-      "properties": {
-        "settings": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Settings",
-          "type": "object"
-        },
-        "target": {
-          "$ref": "#/$defs/SettingsTargetRef"
-        }
-      },
-      "required": [
-        "target"
-      ],
-      "title": "SettingsPatchBody",
-      "type": "object"
-    },
-    "SettingsReplaceBody": {
-      "additionalProperties": false,
-      "properties": {
-        "settings": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Settings",
-          "type": "object"
-        },
-        "target": {
-          "$ref": "#/$defs/SettingsTargetRef"
-        }
-      },
-      "required": [
-        "target"
-      ],
-      "title": "SettingsReplaceBody",
-      "type": "object"
-    },
     "SettingsRequestBody": {
       "additionalProperties": false,
       "properties": {
@@ -1869,66 +1829,6 @@
             },
             "messageType": {
               "const": "settingsRequest"
-            }
-          },
-          "required": [
-            "lane",
-            "messageType",
-            "body",
-            "contract"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    {
-      "allOf": [
-        {
-          "$ref": "#/$defs/DeckrMessage"
-        },
-        {
-          "properties": {
-            "body": {
-              "$ref": "#/$defs/SettingsPatchBody"
-            },
-            "contract": {
-              "$ref": "#/$defs/ContractPointer"
-            },
-            "lane": {
-              "const": "actions"
-            },
-            "messageType": {
-              "const": "settingsPatch"
-            }
-          },
-          "required": [
-            "lane",
-            "messageType",
-            "body",
-            "contract"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    {
-      "allOf": [
-        {
-          "$ref": "#/$defs/DeckrMessage"
-        },
-        {
-          "properties": {
-            "body": {
-              "$ref": "#/$defs/SettingsReplaceBody"
-            },
-            "contract": {
-              "$ref": "#/$defs/ContractPointer"
-            },
-            "lane": {
-              "const": "actions"
-            },
-            "messageType": {
-              "const": "settingsReplace"
             }
           },
           "required": [

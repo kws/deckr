@@ -761,12 +761,11 @@ binding's output and page authority immediately, then schedules SDK cleanup.
 Action descriptors may declare `warmPolicy`. `stop_on_unmount` is the default
 and stops component tasks after detach. `keep_until_stopped` keeps component
 tasks, service sessions, caches, and page-owner state alive across temporary
-unmount/remount until a hard stop such as action destroy, provider stop,
-settings reload, config removal, terminal lifecycle loss, or cleanup timeout.
-Controller settings patch/replace for an action instance is a hard reload:
-affected bindings are revoked, any owned dynamic page is closed, the old action
-instance is destroyed, and the current page plan is rebuilt against a fresh
-context and binding.
+unmount/remount until a hard stop such as action destroy, provider stop, config
+removal, terminal lifecycle loss, or cleanup timeout. Action-lane settings are
+read-only snapshots of controller-owned configuration. Providers may request a
+snapshot with `settingsRequest`; they do not patch or replace controller
+settings through the runtime lane.
 
 ### Runtime-Local Component Status
 

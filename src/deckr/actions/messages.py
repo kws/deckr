@@ -1018,29 +1018,6 @@ class SettingsRequestBody(ActionMessageBody):
     target: SettingsTargetRef
 
 
-class SettingsPatchBody(ActionMessageBody):
-    target: SettingsTargetRef
-    settings: JsonObject = Field(default_factory=dict)
-
-    @field_validator("settings", mode="before")
-    @classmethod
-    def _thaw_settings(cls, value: Any) -> Any:
-        return thaw_json(value)
-
-    @field_validator("settings", mode="after")
-    @classmethod
-    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return freeze_json(value)
-
-    @field_serializer("settings")
-    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return thaw_json(value)
-
-
-class SettingsReplaceBody(SettingsPatchBody):
-    pass
-
-
 def _target(
     recipient: str | EndpointAddress | MessageTarget,
 ) -> MessageTarget:
@@ -1494,8 +1471,6 @@ BINDING_OUTPUT = "bindingOutput"
 BINDING_OVERLAY = "bindingOverlay"
 BINDING_OVERLAY_CLEAR = "bindingOverlayClear"
 SETTINGS_REQUEST = "settingsRequest"
-SETTINGS_PATCH = "settingsPatch"
-SETTINGS_REPLACE = "settingsReplace"
 SETTINGS_SNAPSHOT = "settingsSnapshot"
 OPEN_PAGE = "openPage"
 REPLACE_PAGE = "replacePage"
@@ -1509,8 +1484,6 @@ ACTION_PROVIDER_COMMAND_MESSAGE_TYPES = frozenset(
         BINDING_OVERLAY,
         BINDING_OVERLAY_CLEAR,
         SETTINGS_REQUEST,
-        SETTINGS_PATCH,
-        SETTINGS_REPLACE,
     }
 )
 
@@ -1542,8 +1515,6 @@ ACTION_BODY_BY_MESSAGE_TYPE: dict[str, type[ActionMessageBody]] = {
     BINDING_OVERLAY: BindingOverlayBody,
     BINDING_OVERLAY_CLEAR: BindingOverlayClearBody,
     SETTINGS_REQUEST: SettingsRequestBody,
-    SETTINGS_PATCH: SettingsPatchBody,
-    SETTINGS_REPLACE: SettingsReplaceBody,
     SETTINGS_SNAPSHOT: SettingsSnapshot,
     OPEN_PAGE: OpenPageBody,
     REPLACE_PAGE: ReplacePageBody,

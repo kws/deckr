@@ -22,7 +22,8 @@ from deckr.actions.messages import (
     BINDING_OVERLAY,
     BINDING_OVERLAY_CLEAR,
     CAPABILITY_INPUT,
-    SETTINGS_PATCH,
+    SETTINGS_REQUEST,
+    SETTINGS_SNAPSHOT,
     ActionAvailabilityEntry,
     ActionDescriptor,
     ActionExtensionBody,
@@ -37,7 +38,6 @@ from deckr.actions.messages import (
     MatchedCapability,
     PageChildBindingDescriptor,
     PageChildBindingTarget,
-    SettingsPatchBody,
     SettingsSnapshot,
     SettingsTargetDescription,
     SettingsTargetRef,
@@ -135,10 +135,9 @@ def _page_session_metadata() -> dict:
 def test_core_action_bodies_forbid_stale_routing_identity_fields() -> None:
     with pytest.raises(ValidationError):
         action_body_for_type(
-            SETTINGS_PATCH,
+            SETTINGS_REQUEST,
             {
                 "target": _settings_target().to_dict(),
-                "settings": {},
                 "actionUuid": "other",
             },
         )
@@ -835,9 +834,9 @@ def test_context_subject_carries_explicit_lifecycle_ids() -> None:
 
 
 def test_action_body_for_type_rejects_mismatched_body_instances() -> None:
-    with pytest.raises(TypeError, match="requires body type SettingsPatchBody"):
+    with pytest.raises(TypeError, match="requires body type SettingsSnapshot"):
         action_body_for_type(
-            SETTINGS_PATCH,
+            SETTINGS_SNAPSHOT,
             ActionExtensionBody(
                 extension_type="com.example.demo",
                 extension_schema_id="com.example.demo.v1",
@@ -848,8 +847,20 @@ def test_action_body_for_type_rejects_mismatched_body_instances() -> None:
     with pytest.raises(TypeError, match="requires body type ActionExtensionBody"):
         action_body_for_type(
             ACTION_EXTENSION,
-            SettingsPatchBody(
+            SettingsSnapshot(
                 target=_settings_target(),
                 settings={"title": "wrong model"},
             ),
+        )
+
+
+@pytest.mark.parametrize("message_type", ["settingsPatch", "settingsReplace"])
+def test_action_body_for_type_rejects_settings_mutations(message_type: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported action message type"):
+        action_body_for_type(
+            message_type,
+            {
+                "target": _settings_target().to_dict(),
+                "settings": {"title": "removed"},
+            },
         )
