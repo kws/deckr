@@ -867,7 +867,7 @@ class SettingsTargetRef(DeckrModel):
         return ".".join(parts)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize for settings command payloads."""
+        """Serialize for settings request payloads."""
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
