@@ -246,7 +246,11 @@ class DeckrServices:
         lease: ServiceUseLease,
         view: ServiceViewRef,
     ) -> Mapping[str, Any] | None:
-        """Read a fenced service view entry authorized by the supplied lease."""
+        """Read a fenced service view entry authorized by the supplied lease.
+
+        ``None`` is an ordinary absent-view value under the active lease; it
+        does not imply service-use loss.
+        """
 
         try:
             entry = await self._view_store(view.store_name).get(lease, view)
@@ -259,7 +263,13 @@ class DeckrServices:
         lease: ServiceUseLease,
         view: ServiceViewRef,
     ) -> AsyncIterator[Mapping[str, Any] | None]:
-        """Yield the current fenced service view payload and subsequent changes."""
+        """Yield the current fenced service view payload and subsequent changes.
+
+        A yielded ``None`` reports absent view state under the same service-use
+        lease. Consumers should treat service-use lifecycle changes as
+        ``ServiceUnavailable`` failures from the lease, command, or view
+        infrastructure instead.
+        """
 
         yield await self.read_view(lease, view)
         try:

@@ -393,6 +393,47 @@ async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
 
 
 @pytest.mark.asyncio
+async def test_service_use_lease_refresh_preserves_valid_lease_when_unavailable() -> None:
+    descriptor = _descriptor()
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        valid=True,
+        refresh=AsyncMock(
+            return_value=ContractValidity(ContractValidityStatus.UNAVAILABLE)
+        ),
+    )
+    lease = ServiceUseLease(
+        agreement=agreement,
+        descriptor=descriptor,
+    )
+
+    await lease.refresh()
+
+    agreement.refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_service_use_lease_refresh_raises_unavailable_without_valid_lease() -> None:
+    descriptor = _descriptor()
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        refresh=AsyncMock(
+            return_value=ContractValidity(ContractValidityStatus.UNAVAILABLE)
+        ),
+    )
+    lease = ServiceUseLease(
+        agreement=agreement,
+        descriptor=descriptor,
+    )
+
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await lease.refresh()
+
+    assert exc_info.value.code == "contract_unavailable"
+    assert exc_info.value.diagnostics["status"] == ContractValidityStatus.UNAVAILABLE.value
+
+
+@pytest.mark.asyncio
 async def test_command_request_timeout_is_separate_from_service_use() -> None:
     agreement = SimpleNamespace(
         contract=_contract(),
@@ -554,6 +595,9 @@ def test_service_unavailable_helper_classifies_service_use_loss() -> None:
             "failed",
             {"reason": "contract_not_managed"},
         )
+    )
+    assert not service_unavailable_ends_service_use(
+        ServiceUnavailable("contract_unavailable", "contract view unavailable")
     )
     assert not service_unavailable_ends_service_use(
         ServiceUnavailable("service_backend_unavailable", "backend down")

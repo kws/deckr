@@ -47,7 +47,6 @@ _TERMINAL_DURING_NEGOTIATION = frozenset(
 
 _SERVICE_USE_LOSS_STATUSES = frozenset(
     {
-        ContractValidityStatus.UNAVAILABLE.value,
         *{status.value for status in _TERMINAL_DURING_NEGOTIATION},
     }
 )
@@ -297,12 +296,20 @@ class ServiceDescriptor:
 class ServiceUseLease:
     agreement: ConcordAgreementLease
     descriptor: ServiceDescriptor
+    _had_valid_authority: bool = False
+
+    def __post_init__(self) -> None:
+        self._had_valid_authority = _agreement_had_valid_authority(self.agreement)
 
     @property
     def contract(self) -> ContractHandle:
         return self.agreement.contract
 
     async def refresh(self) -> None:
+        had_valid_authority = (
+            self._had_valid_authority
+            or _agreement_had_valid_authority(self.agreement)
+        )
         try:
             validity = await self.agreement.refresh()
         except ConcordConflict as exc:
@@ -324,6 +331,12 @@ class ServiceUseLease:
                 },
             ) from exc
         if validity.valid:
+            self._had_valid_authority = True
+            return
+        if (
+            validity.status == ContractValidityStatus.UNAVAILABLE
+            and had_valid_authority
+        ):
             return
         raise ServiceUnavailable(
             f"contract_{validity.status.value}",
@@ -338,6 +351,14 @@ class ServiceUseLease:
                 "serviceSessionId": self.descriptor.session_id,
             },
         )
+
+
+def _agreement_had_valid_authority(agreement: ConcordAgreementLease) -> bool:
+    valid = getattr(agreement, "valid", None)
+    if valid is not None:
+        return bool(valid)
+    validity = getattr(agreement, "validity", None)
+    return bool(getattr(validity, "valid", False))
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,8 +21,8 @@ Completed so far:
   service-use leases.
 - Core tests cover overlapping logical sessions, retained resource union
   behavior, replacement-set updates, last-subscriber cleanup, missing view to
-  `UNAVAILABLE`, lease-loss reconnect and retained-scope reapply, command-pool
-  lease reuse, and command-pool service-use-loss retry.
+  `UNAVAILABLE` without lease churn, lease-loss reconnect and retained-scope
+  reapply, command-pool lease reuse, and command-pool service-use-loss retry.
 - `SonosServiceClient.zone_subscription_session()` now returns a logical
   message session backed by a shared Sonos zone manager, accepts initial
   `zones`, and uses a provider-level Sonos zone subscriber id for
@@ -437,9 +437,9 @@ The manager should provide consistent behavior for these cases:
   diagnostics.
 - Retained-scope mutation reports ordinary unavailable/rejected: affected
   resources emit `UNAVAILABLE` or `ERROR`, depending on service error code.
-- Retained-scope mutation or view watch reports service-use loss: all retained
-  resources on that lease emit `RECONNECTING`; the manager negotiates a
-  successor and reapplies the retained union.
+- Retained-scope mutation or view watch reports terminal service-use loss: all
+  retained resources on that lease emit `RECONNECTING`; the manager negotiates
+  a successor and reapplies the retained union.
 - Fenced view missing or deleted under a valid lease: affected resource emits
   `UNAVAILABLE`.
 - Logical session closes while a reconnect is in flight: its resources are
@@ -478,7 +478,8 @@ Core tests:
   retained resource union.
 - Dropping one logical session does not release a resource still retained by
   another session.
-- Lease loss triggers successor negotiation and reapplies the retained union.
+- Terminal lease loss triggers successor negotiation and reapplies the retained
+  union.
 - View absence under a valid lease emits `UNAVAILABLE`, not `RECONNECTING`.
 - Command retry uses successor leases for service-use loss and does not retry
   ordinary service errors.

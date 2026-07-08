@@ -156,9 +156,11 @@ async def watch_presence_status(person_id: str) -> None:
                         await render_status(payload)
 ```
 
-`read_view(...)` returns one fenced payload or `None`. `watch_view(...)` yields
-the current payload first and then subsequent changes. The managed client
-refreshes the lease before delivering watched changes.
+`read_view(...)` returns one fenced payload or `None`. `None` is an ordinary
+absent-view value under the active service-use lease, not a signal that the
+lease should close. `watch_view(...)` yields the current payload first and then
+subsequent changes. The managed client refreshes the lease before delivering
+watched changes.
 
 ## Managed Subscriptions
 
@@ -237,7 +239,8 @@ fresh `READY` message before accepting ordinary resource commands.
 
 - `PENDING`: requested, but no fresh authoritative payload is available yet.
 - `READY`: payload is current under the active service-use contract.
-- `UNAVAILABLE`: the service or fenced view reports the resource unavailable.
+- `UNAVAILABLE`: the service or fenced view reports the resource unavailable,
+  including an absent fenced view under an otherwise usable lease.
 - `RECONNECTING`: the previous service-use contract ended and a successor is
   being negotiated.
 - `ERROR`: an unclassified failure was surfaced to the subscription manager.
@@ -245,11 +248,11 @@ fresh `READY` message before accepting ordinary resource commands.
 Feature code should use `message.state`; it should not infer lifecycle from
 `message.payload is None`.
 
-Managers reconnect by default after service-use loss because a logical session
-may share one provider-scoped lease with other sessions. Feature code that does
-not want to wait for a successor lease should exit the context manager when it
-receives a state message it treats as terminal, such as `RECONNECTING` or
-`ERROR`.
+Managers reconnect by default after terminal service-use loss because a logical
+session may share one provider-scoped lease with other sessions. Feature code
+that does not want to wait for a successor lease should exit the context
+manager when it receives a state message it treats as terminal, such as
+`RECONNECTING` or `ERROR`.
 
 Service clients build these sessions with `SharedResourceSubscriptionManager`.
 The manager owns descriptor resolution, service-use negotiation, retained
@@ -262,10 +265,10 @@ can still use `ensure_resources(...)` and `release_resources(...)`.
 
 ## Low-Level Lease Loss Helpers
 
-Low-level service infrastructure can still classify service-use loss with the
-shared helpers instead of maintaining terminal-code sets. Those helpers are for
-core subscription managers and provider/runtime infrastructure that is directly
-responsible for negotiating successor service-use contracts.
+Low-level service infrastructure can still classify terminal service-use loss
+with the shared helpers instead of maintaining terminal-code sets. Those helpers
+are for core subscription managers and provider/runtime infrastructure that is
+directly responsible for negotiating successor service-use contracts.
 
 Ordinary action and display code should consume domain service-client APIs:
 managed subscription sessions expose lifecycle through `session.messages`, and
