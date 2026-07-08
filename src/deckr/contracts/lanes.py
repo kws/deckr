@@ -101,8 +101,8 @@ HARDWARE_MESSAGE_TYPES = frozenset(
 
 SERVICE_MESSAGE_TYPES = frozenset(
     {
-        "serviceCommand",
-        "serviceCommandReply",
+        "serviceRequest",
+        "serviceReply",
     }
 )
 

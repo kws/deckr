@@ -12,9 +12,9 @@ import pytest
 from deckr.contracts.messages import service_address
 from deckr.services import (
     ServiceBackendStatus,
-    ServiceCommandReplyBody,
-    ServiceCommandStatus,
     ServiceDescriptor,
+    ServiceReplyBody,
+    ServiceReplyStatus,
     ServiceSubscriptionMessage,
     ServiceSubscriptionState,
     ServiceUnavailable,
@@ -32,7 +32,7 @@ async def test_shared_resource_subscription_does_not_replay_stale_latest_after_d
         descriptor = AsyncMock(return_value=_descriptor())
         ensure_resources = AsyncMock()
         release_resources = AsyncMock()
-        command = AsyncMock(return_value=_ok_reply("play"))
+        request = AsyncMock(return_value=_ok_reply("play"))
 
         @asynccontextmanager
         async def use(
@@ -60,7 +60,7 @@ async def test_shared_resource_subscription_does_not_replay_stale_latest_after_d
             descriptor=descriptor,
             use=use,
             watch_view=watch_view,
-            command=command,
+            request=request,
             ensure_resources=ensure_resources,
             release_resources=release_resources,
         )
@@ -122,7 +122,7 @@ async def test_shared_resource_subscription_replacement_sets_retained_union() ->
             descriptor=descriptor,
             use=use,
             watch_view=watch_view,
-            command=AsyncMock(return_value=_ok_reply("play")),
+            request=AsyncMock(return_value=_ok_reply("play")),
             set_resources=AsyncMock(side_effect=record_set_resources),
         )
         manager = _manager(services, replacement=True)
@@ -198,7 +198,7 @@ async def test_shared_resource_subscription_replacement_reapplies_after_reconnec
             descriptor=descriptor,
             use=use,
             watch_view=watch_view,
-            command=AsyncMock(return_value=_ok_reply("play")),
+            request=AsyncMock(return_value=_ok_reply("play")),
             set_resources=AsyncMock(side_effect=record_set_resources),
         )
         manager = _manager(services, replacement=True, reconnect_delay_seconds=0)
@@ -254,7 +254,7 @@ async def test_shared_resource_subscription_lease_monitor_reconnects_without_vie
             descriptor=descriptor,
             use=use,
             watch_view=watch_view,
-            command=AsyncMock(return_value=_ok_reply("play")),
+            request=AsyncMock(return_value=_ok_reply("play")),
             set_resources=AsyncMock(),
         )
         manager = _manager(
@@ -281,11 +281,11 @@ async def test_shared_resource_subscription_lease_monitor_reconnects_without_vie
 
 
 @pytest.mark.asyncio
-async def test_shared_resource_subscription_active_command_requires_retained_resource() -> None:
+async def test_shared_resource_subscription_active_request_requires_retained_resource() -> None:
     async with anyio.create_task_group() as tg:
         leases: list[Any] = []
         descriptor = AsyncMock(return_value=_descriptor())
-        command = AsyncMock(return_value=_ok_reply("play"))
+        request = AsyncMock(return_value=_ok_reply("play"))
 
         @asynccontextmanager
         async def use(
@@ -312,7 +312,7 @@ async def test_shared_resource_subscription_active_command_requires_retained_res
             descriptor=descriptor,
             use=use,
             watch_view=watch_view,
-            command=command,
+            request=request,
             ensure_resources=AsyncMock(),
             release_resources=AsyncMock(),
         )
@@ -321,22 +321,22 @@ async def test_shared_resource_subscription_active_command_requires_retained_res
         session = await manager.open_session({"Kitchen"})
         await _next_state(session, ServiceSubscriptionState.READY)
 
-        watched = await manager.command_on_active_lease(
+        watched = await manager.request_on_active_lease(
             "play",
             {"zone": "Kitchen"},
             required_resource="Kitchen",
         )
-        unwatched = await manager.command_on_active_lease(
+        unwatched = await manager.request_on_active_lease(
             "play",
             {"zone": "Bedroom"},
             required_resource="Bedroom",
         )
 
         assert watched is not None
-        assert watched.status == ServiceCommandStatus.OK
+        assert watched.status == ServiceReplyStatus.OK
         assert unwatched is None
-        command.assert_awaited_once()
-        assert command.await_args.args[1] == "play"
+        request.assert_awaited_once()
+        assert request.await_args.args[1] == "play"
 
         await session.aclose()
         await manager.aclose()
@@ -349,7 +349,7 @@ async def test_shared_resource_subscription_required_resource_must_be_retained()
         use_calls: list[dict[str, Any]] = []
         leases: list[Any] = []
         descriptor = AsyncMock(return_value=_descriptor())
-        command = AsyncMock(return_value=_ok_reply("play"))
+        request = AsyncMock(return_value=_ok_reply("play"))
 
         @asynccontextmanager
         async def use(
@@ -377,7 +377,7 @@ async def test_shared_resource_subscription_required_resource_must_be_retained()
             descriptor=descriptor,
             use=use,
             watch_view=watch_view,
-            command=command,
+            request=request,
             ensure_resources=AsyncMock(),
             release_resources=AsyncMock(),
         )
@@ -387,14 +387,14 @@ async def test_shared_resource_subscription_required_resource_must_be_retained()
         await _next_state(session, ServiceSubscriptionState.READY)
 
         with pytest.raises(ServiceUnavailable) as exc_info:
-            await manager.command(
+            await manager.request(
                 "play",
                 {"zone": "Bedroom"},
                 required_resource="Bedroom",
             )
 
-        assert exc_info.value.code == "service_subscription_command_unavailable"
-        command.assert_not_awaited()
+        assert exc_info.value.code == "service_subscription_request_unavailable"
+        request.assert_not_awaited()
         assert len(use_calls) == 1
 
         await session.aclose()
@@ -473,7 +473,7 @@ async def test_shared_resource_subscription_unknown_and_closed_session_noops() -
             release_resources=AsyncMock(),
             watch_view=watch_view,
             use=use,
-            command=AsyncMock(return_value=_ok_reply("play")),
+            request=AsyncMock(return_value=_ok_reply("play")),
         )
         manager = _manager(services)
 
@@ -531,7 +531,7 @@ async def test_shared_resource_subscription_nonterminal_unavailable_does_not_rec
             descriptor=descriptor,
             use=use,
             watch_view=watch_view,
-            command=AsyncMock(return_value=_ok_reply("play")),
+            request=AsyncMock(return_value=_ok_reply("play")),
             ensure_resources=AsyncMock(),
             release_resources=AsyncMock(),
         )
@@ -667,11 +667,11 @@ def _lease(
     )
 
 
-def _ok_reply(operation: str) -> ServiceCommandReplyBody:
-    return ServiceCommandReplyBody(
+def _ok_reply(operation: str) -> ServiceReplyBody:
+    return ServiceReplyBody(
         serviceNamespace="dev.deckr.demo.service",
         operation=operation,
-        status=ServiceCommandStatus.OK,
+        status=ServiceReplyStatus.OK,
         result={"ok": True},
     )
 

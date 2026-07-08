@@ -54,16 +54,16 @@ export const AuthorizationDecision = Object.freeze({
 export type AuthorizationDecision =
   (typeof AuthorizationDecision)[keyof typeof AuthorizationDecision];
 
-export const ServiceCommandStatus = Object.freeze({
+export const ServiceReplyStatus = Object.freeze({
   OK: "ok",
   REJECTED: "rejected",
   UNAVAILABLE: "unavailable",
 });
-export type ServiceCommandStatus =
-  (typeof ServiceCommandStatus)[keyof typeof ServiceCommandStatus];
+export type ServiceReplyStatus =
+  (typeof ServiceReplyStatus)[keyof typeof ServiceReplyStatus];
 
-export const SERVICE_COMMAND = "serviceCommand";
-export const SERVICE_COMMAND_REPLY = "serviceCommandReply";
+export const SERVICE_REQUEST = "serviceRequest";
+export const SERVICE_REPLY = "serviceReply";
 
 export interface ServiceViewFamily {
   storeName: string;
@@ -144,7 +144,7 @@ export interface ServiceUseLease {
   terms: ServiceUseTerms;
 }
 
-export interface ServiceCommandBody {
+export interface ServiceRequestBody {
   serviceNamespace: string;
   operation: string;
   params: JsonObject;
@@ -156,10 +156,10 @@ export interface ServiceError {
   diagnostics: JsonObject;
 }
 
-export interface ServiceCommandReplyBody {
+export interface ServiceReplyBody {
   serviceNamespace: string;
   operation: string;
-  status: ServiceCommandStatus;
+  status: ServiceReplyStatus;
   result?: JsonValue;
   error?: ServiceError;
 }
@@ -691,12 +691,12 @@ export class ServiceUseAuthorizer {
     return this.matchingTermsRecord(contract, managed.record);
   }
 
-  async authorizeCommand(
+  async authorizeRequest(
     message: DeckrMessage,
-    body: ServiceCommandBody,
+    body: ServiceRequestBody,
   ): Promise<AuthorizationDecision> {
     if (
-      !commandAppliesToService(message, body, {
+      !requestAppliesToService(message, body, {
         serviceId: this.serviceId,
         namespace: this.protocol.namespace,
         endpoint: this.endpoint.endpoint,
@@ -772,19 +772,19 @@ function serviceUseParticipantsMatch(record: ContractRecord, terms: ServiceUseTe
   );
 }
 
-export class ServiceCommandChannel {
+export class ServiceRequestChannel {
   private readonly endpoint: RegisteredEndpointLane;
 
   constructor(options: { endpoint: RegisteredEndpointLane }) {
     this.endpoint = options.endpoint;
   }
 
-  async command(
+  async request(
     lease: ServiceUseLease,
     operation: string,
     params: JsonObject = {},
     options: { timeoutMs?: number } = {},
-  ): Promise<ServiceCommandReplyBody> {
+  ): Promise<ServiceReplyBody> {
     operation = requireText(operation, "service operation");
     if (!lease.terms.allowedOperations.includes(operation)) {
       return rejectedReply(lease.descriptor.namespace, operation, {
@@ -814,7 +814,7 @@ export class ServiceCommandChannel {
         namespace: lease.descriptor.namespace,
         operation,
       }),
-      messageType: SERVICE_COMMAND,
+      messageType: SERVICE_REQUEST,
       body: {
         serviceNamespace: lease.descriptor.namespace,
         operation,
@@ -826,7 +826,7 @@ export class ServiceCommandChannel {
       },
       timeout: options.timeoutMs,
     });
-    return validateServiceCommandReplyBody(reply.body);
+    return validateServiceReplyBody(reply.body);
   }
 }
 
@@ -1096,8 +1096,8 @@ export function newestServiceDescriptor(
   return newest;
 }
 
-export function validateServiceCommandBody(value: unknown): ServiceCommandBody {
-  const raw = requireJsonObject(value, "service command body");
+export function validateServiceRequestBody(value: unknown): ServiceRequestBody {
+  const raw = requireJsonObject(value, "service request body");
   return {
     serviceNamespace: requireText(raw.serviceNamespace, "serviceNamespace"),
     operation: requireText(raw.operation, "operation"),
@@ -1105,13 +1105,13 @@ export function validateServiceCommandBody(value: unknown): ServiceCommandBody {
   };
 }
 
-export function validateServiceCommandReplyBody(value: unknown): ServiceCommandReplyBody {
-  const raw = requireJsonObject(value, "service command reply body");
-  const status = requireText(raw.status, "status") as ServiceCommandStatus;
-  if (!Object.values(ServiceCommandStatus).includes(status)) {
-    throw new ValidationError("invalid service command reply status");
+export function validateServiceReplyBody(value: unknown): ServiceReplyBody {
+  const raw = requireJsonObject(value, "service reply body");
+  const status = requireText(raw.status, "status") as ServiceReplyStatus;
+  if (!Object.values(ServiceReplyStatus).includes(status)) {
+    throw new ValidationError("invalid service reply status");
   }
-  const body: ServiceCommandReplyBody = {
+  const body: ServiceReplyBody = {
     serviceNamespace: requireText(raw.serviceNamespace, "serviceNamespace"),
     operation: requireText(raw.operation, "operation"),
     status,
@@ -1240,9 +1240,9 @@ function leaseKey(
   ]);
 }
 
-function commandAppliesToService(
+function requestAppliesToService(
   message: DeckrMessage,
-  body: ServiceCommandBody,
+  body: ServiceRequestBody,
   options: { serviceId: string; namespace: string; endpoint: string },
 ): boolean {
   if (body.serviceNamespace !== options.namespace) {
@@ -1267,11 +1267,11 @@ function rejectedReply(
   serviceNamespace: string,
   operation: string,
   options: { code: string; message: string; diagnostics?: JsonObject },
-): ServiceCommandReplyBody {
+): ServiceReplyBody {
   return {
     serviceNamespace,
     operation,
-    status: ServiceCommandStatus.REJECTED,
+    status: ServiceReplyStatus.REJECTED,
     error: {
       code: options.code,
       message: options.message,
@@ -1284,11 +1284,11 @@ function unavailableReply(
   serviceNamespace: string,
   operation: string,
   options: { code: string; message: string; diagnostics?: JsonObject },
-): ServiceCommandReplyBody {
+): ServiceReplyBody {
   return {
     serviceNamespace,
     operation,
-    status: ServiceCommandStatus.UNAVAILABLE,
+    status: ServiceReplyStatus.UNAVAILABLE,
     error: {
       code: options.code,
       message: options.message,

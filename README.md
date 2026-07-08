@@ -168,7 +168,7 @@ managed Beacon discovery, `Deckr.concord` for managed agreement state, and
 `Deckr.kv_bucket(...)` for explicit NATS KV buckets. Service consumers use the
 managed `Deckr.services(endpoint)` context and `DeckrServices.use_matching(...)`
 from `deckr.services`; that managed client owns service discovery, service-use
-negotiation, command authority, and protected view reads/watches. Consumers must
+negotiation, request authority, and protected view reads/watches. Consumers must
 not scan Beacon KV, duplicate descriptor parsing loops, classify Concord
 terminal statuses, or query Concord as a catalog. Direct Beacon/Concord
 primitives and direct `ServiceViewStore` construction are for core runtime,

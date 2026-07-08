@@ -21,8 +21,8 @@ from deckr.contracts.messages import (
 )
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
-SERVICE_COMMAND = "serviceCommand"
-SERVICE_COMMAND_REPLY = "serviceCommandReply"
+SERVICE_REQUEST = "serviceRequest"
+SERVICE_REPLY = "serviceReply"
 
 
 def _require_text(value: str, *, field_name: str) -> str:
@@ -35,7 +35,7 @@ def _require_text(value: str, *, field_name: str) -> str:
     return value
 
 
-class ServiceCommandStatus(StrEnum):
+class ServiceReplyStatus(StrEnum):
     OK = "ok"
     REJECTED = "rejected"
     UNAVAILABLE = "unavailable"
@@ -77,7 +77,7 @@ class ServiceMessageBody(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
-class ServiceCommandBody(ServiceMessageBody):
+class ServiceRequestBody(ServiceMessageBody):
     params: JsonObject = Field(default_factory=dict)
 
     @field_validator("params", mode="after")
@@ -90,8 +90,8 @@ class ServiceCommandBody(ServiceMessageBody):
         return thaw_json(value)
 
 
-class ServiceCommandReplyBody(ServiceMessageBody):
-    status: ServiceCommandStatus
+class ServiceReplyBody(ServiceMessageBody):
+    status: ServiceReplyStatus
     result: JsonObject = Field(default_factory=dict)
     error: ServiceError | None = None
 
@@ -106,8 +106,8 @@ class ServiceCommandReplyBody(ServiceMessageBody):
 
 
 SERVICE_BODY_BY_MESSAGE_TYPE: Mapping[str, type[ServiceMessageBody]] = {
-    SERVICE_COMMAND: ServiceCommandBody,
-    SERVICE_COMMAND_REPLY: ServiceCommandReplyBody,
+    SERVICE_REQUEST: ServiceRequestBody,
+    SERVICE_REPLY: ServiceReplyBody,
 }
 
 
@@ -146,7 +146,7 @@ def service_message(
     sender_session_id: str,
     recipient: str | EndpointAddress | MessageTarget,
     recipient_session_id: str | None = None,
-    message_type: Literal["serviceCommand", "serviceCommandReply"],
+    message_type: Literal["serviceRequest", "serviceReply"],
     body: ServiceMessageBody | Mapping[str, Any],
     subject: EntitySubject,
     in_reply_to: str | None = None,
@@ -169,13 +169,13 @@ def service_message(
     )
 
 
-def service_command_message(
+def service_request_message(
     *,
     sender: str | EndpointAddress,
     sender_session_id: str,
     recipient: str | EndpointAddress | MessageTarget,
     recipient_session_id: str | None = None,
-    body: ServiceCommandBody | Mapping[str, Any],
+    body: ServiceRequestBody | Mapping[str, Any],
     subject: EntitySubject,
     causation_id: str | None = None,
     contract: ContractPointer | Mapping[str, Any] | None = None,
@@ -185,7 +185,7 @@ def service_command_message(
         sender_session_id=sender_session_id,
         recipient=recipient,
         recipient_session_id=recipient_session_id,
-        message_type=SERVICE_COMMAND,
+        message_type=SERVICE_REQUEST,
         body=body,
         subject=subject,
         causation_id=causation_id,
@@ -193,13 +193,13 @@ def service_command_message(
     )
 
 
-def service_command_reply_message(
+def service_reply_message(
     *,
     sender: str | EndpointAddress,
     sender_session_id: str,
     recipient: str | EndpointAddress | MessageTarget,
     recipient_session_id: str | None = None,
-    body: ServiceCommandReplyBody | Mapping[str, Any],
+    body: ServiceReplyBody | Mapping[str, Any],
     subject: EntitySubject,
     in_reply_to: str,
     causation_id: str | None = None,
@@ -210,7 +210,7 @@ def service_command_reply_message(
         sender_session_id=sender_session_id,
         recipient=recipient,
         recipient_session_id=recipient_session_id,
-        message_type=SERVICE_COMMAND_REPLY,
+        message_type=SERVICE_REPLY,
         body=body,
         subject=subject,
         in_reply_to=in_reply_to,

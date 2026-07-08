@@ -15,7 +15,7 @@ Completed so far:
 
 - `deckr.services` now exports the shared subscription state enum, generic
   subscription message model, logical resource subscription session, shared
-  resource subscription manager, and shared service command pool.
+  resource subscription manager, and shared service request path.
 - `DeckrServices` now owns a runtime-scoped shared manager cache and closes
   shared managers during service shutdown before closing remaining direct
   service-use leases.
@@ -37,7 +37,7 @@ Completed so far:
   classification boilerplate.
 - Sonos media, group, shortcut, and non-volume command actions now open zone
   sessions during mount or page-open lifecycle and route reads and writes
-  through `session.command(...)`.
+  through `session.request(...)`.
 - Sonos no longer exposes a public one-shot client command API. Zone-bound
   actions keep a zone session open and do not hide a missing session behind
   command-pool fallback.
@@ -125,7 +125,7 @@ remain for consumers that have not yet moved behind domain service clients:
 - Each mounted action can open its own Concord service-use contract even when
   many actions need the same service, zones, or items.
 - Actions must know about `service_unavailable_ends_service_use()` and
-  `service_command_reply_ends_service_use()`, which should be service-client
+  `service_reply_ends_service_use()`, which should be service-client
   internals for ordinary feature code.
 
 ## Target Consumer API
@@ -147,7 +147,7 @@ async with sonos.zone_subscription_session(
 ```
 
 For ordinary feature code, this is a hard boundary: no service reads, service
-view watches, or service commands without a service session. A lower-level
+view watches, or service requests without a service session. A lower-level
 service-use lease also counts as a session for infrastructure code, but action
 code should normally see the domain session object, not Concord lease plumbing.
 
@@ -160,7 +160,7 @@ identifies the resource set:
 - page children: use the owning page/action session instead of opening a fresh
   session per child.
 
-Input handlers should then call `session.command(...)` on the already-open
+Input handlers should then call `session.request(...)` on the already-open
 session. If no session is currently active, the action should render a connected
 / disconnected / unavailable state from the latest session message and return;
 it should not hide the missing session by opening a short-lived command lease on
@@ -269,8 +269,8 @@ Dynamic resource methods should have explicit local semantics:
   clears that logical scope and removes item-command authority.
 - Context exit drops all resources owned by the logical session.
 
-The Sonos service command name is `setZoneScope`. The OpenHAB service command
-name is `setItemScope`.
+The Sonos service operation name is `setZoneScope`. The OpenHAB service
+operation name is `setItemScope`.
 
 ## Core Reusable Library
 
@@ -336,19 +336,19 @@ Command execution should prefer:
 
 If a resource-bound action has no active logical session when input arrives, the
 correct user-facing behavior is to show disconnected/unavailable state and avoid
-the service command. Falling back to a short-lived command lease on that input
+the service request. Falling back to a short-lived request lease on that input
 path reintroduces latency and Concord churn, and hides the session health that
 the button should display.
 
-Shared command sessions should still obey Concord semantics:
+Shared request sessions should still obey Concord semantics:
 
 - Refresh before use.
 - Treat lease-loss replies and `ServiceUnavailable` codes as authority loss.
 - Cancel/close ended leases and negotiate successors; never reattach.
-- Return ordinary `ServiceCommandReplyBody` statuses to feature code without
+- Return ordinary `ServiceReplyBody` statuses to feature code without
   exposing Concord details.
 
-This should make OpenHAB command behavior match the shared command-session
+This should make OpenHAB command behavior match the shared request-session
 behavior and reduce per-click Concord churn for common actions.
 
 ## Plugin-Specific Changes
@@ -376,7 +376,7 @@ Expected consumer simplifications:
   instead of owning its own subscription loop.
 - Sonos media shortcut, media shortcuts, play favourite, group, and command
   actions open `zone_subscription_session(...)` as soon as they mount or open a
-  page, retain the configured zone, and call `session.command(...)` from render
+  page, retain the configured zone, and call `session.request(...)` from render
   and input paths.
 - Sonos action buttons can render connected, disconnected, unavailable, and
   error states from session messages before interaction, and input handlers do
@@ -497,7 +497,7 @@ Sonos tests:
 - Volume rotary uses the active shared lease for `adjustVolume`.
 - Zone-bound Sonos actions open `zone_subscription_session(...)` during
   mount/page-open lifecycle, include their needed command operations, and use
-  `session.command(...)` for render and input commands.
+  `session.request(...)` for render and input commands.
 - Zone-bound Sonos input handlers with no active session render unavailable or
   disconnected state and do not call the service through a command-pool fallback.
 - Production Sonos action code does not import service-use-loss helper
@@ -537,7 +537,7 @@ first, then update parent submodule pins only after the child commits exist.
 The acceptance bar is that ordinary action/plugin code should not need to:
 
 - import `service_unavailable_ends_service_use`
-- import `service_command_reply_ends_service_use`
+- import `service_reply_ends_service_use`
 - track `lease_usable`
 - manually sleep for successor leases
 - decide whether a release command is safe after lease loss

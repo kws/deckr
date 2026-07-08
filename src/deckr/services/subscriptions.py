@@ -11,13 +11,13 @@ from typing import Any, Generic, TypeVar
 
 import anyio
 
-from deckr.services.messages import ServiceCommandReplyBody, ServiceError
+from deckr.services.messages import ServiceError, ServiceReplyBody
 from deckr.services.runtime import (
     ServiceDescriptor,
     ServiceUnavailable,
     ServiceUseLease,
     ServiceViewRef,
-    service_command_reply_ends_service_use,
+    service_reply_ends_service_use,
     service_unavailable_ends_service_use,
 )
 
@@ -91,15 +91,15 @@ class ResourceSubscriptionSession(Generic[ResourceT]):
     async def drop(self, resources: Collection[ResourceT]) -> None:
         await self._manager.drop(self._session_id, resources)
 
-    async def command(
+    async def request(
         self,
         operation: str,
         params: Mapping[str, Any] | None = None,
         *,
         required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
-    ) -> ServiceCommandReplyBody:
-        return await self._manager.command(
+    ) -> ServiceReplyBody:
+        return await self._manager.request(
             operation,
             params,
             required_resource=required_resource,
@@ -282,15 +282,15 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         if subscriber is not None:
             await subscriber.send.aclose()
 
-    async def command(
+    async def request(
         self,
         operation: str,
         params: Mapping[str, Any] | None = None,
         *,
         required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
-    ) -> ServiceCommandReplyBody:
-        reply = await self.command_on_active_lease(
+    ) -> ServiceReplyBody:
+        reply = await self.request_on_active_lease(
             operation,
             params,
             required_resource=required_resource,
@@ -301,7 +301,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
 
         if required_resource is not None:
             raise ServiceUnavailable(
-                "service_subscription_command_unavailable",
+                "service_subscription_request_unavailable",
                 "No compatible active subscription lease is available",
                 {
                     "operation": operation,
@@ -310,24 +310,24 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
                 },
             )
         raise ServiceUnavailable(
-            "service_subscription_command_unavailable",
+            "service_subscription_request_unavailable",
             "No compatible active subscription lease is available",
             {"operation": operation, "manager": self._name},
         )
 
-    async def command_on_active_lease(
+    async def request_on_active_lease(
         self,
         operation: str,
         params: Mapping[str, Any] | None = None,
         *,
         required_resource: ResourceT | None = None,
         timeout_seconds: float | None = None,
-    ) -> ServiceCommandReplyBody | None:
-        lease = await self._active_command_lease(required_resource=required_resource)
+    ) -> ServiceReplyBody | None:
+        lease = await self._active_request_lease(required_resource=required_resource)
         if lease is None:
             return None
         try:
-            reply = await self._services.command(
+            reply = await self._services.request(
                 lease,
                 operation,
                 params,
@@ -338,7 +338,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
                 await self._mark_active_lease_lost(lease, exc)
                 return None
             raise
-        if not service_command_reply_ends_service_use(reply):
+        if not service_reply_ends_service_use(reply):
             return reply
         await self._mark_active_lease_lost(
             lease,
@@ -360,7 +360,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         if done is not None:
             await done.wait()
 
-    async def _active_command_lease(
+    async def _active_request_lease(
         self,
         *,
         required_resource: ResourceT | None = None,
@@ -750,7 +750,7 @@ def _service_error_from_unavailable(exc: ServiceUnavailable) -> ServiceError:
     )
 
 
-def _service_unavailable_from_reply(reply: ServiceCommandReplyBody) -> ServiceUnavailable:
+def _service_unavailable_from_reply(reply: ServiceReplyBody) -> ServiceUnavailable:
     error = reply.error
     if error is None:
         return ServiceUnavailable(

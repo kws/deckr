@@ -14,7 +14,7 @@ Plugins express domain intent only.
 Ordinary feature clients, such as OpenHAB, Sonos, Kaj, and future service
 consumers, should not classify Concord validity statuses, inspect terminal
 contract codes, or build service-use contracts directly. Treat discovery,
-negotiation, command authority, and view fencing as one managed service context.
+negotiation, request authority, and view fencing as one managed service context.
 
 Direct Beacon and Concord primitives are implementation-level APIs for core
 runtime code, service or hardware infrastructure, and conformance tests. Their
@@ -103,7 +103,7 @@ async def report_presence() -> None:
                     predicate=usable_presence_service,
                     timeout_seconds=30.0,
                 ) as lease:
-                    reply = await services.command(
+                    reply = await services.request(
                         lease,
                         "presence.report",
                         {"state": "home"},
@@ -120,7 +120,7 @@ async def report_presence() -> None:
 `use_matching(...)` owns discovery and service-use negotiation. The caller
 states matching policy and an optional selector. The returned lease is valid
 only inside the context. If service-use authority is lost, the managed API
-raises `ServiceUnavailable` or a service command reply reports the
+raises `ServiceUnavailable` or a service request reply reports the
 service-domain error.
 
 ## Reading And Watching Views
@@ -170,8 +170,8 @@ resource-state messages instead of Concord lifecycle mechanics.
 
 A resource session owns a retained set of service resources under a live
 Concord service-use contract. That retained set is both the authoritative state
-set and the command authority boundary for the session: views are authoritative
-only for retained resources, and resource-scoped commands must go through the
+set and the operation authority boundary for the session: views are authoritative
+only for retained resources, and resource-scoped requests must go through the
 active session and target a retained resource.
 
 ```python
@@ -195,7 +195,7 @@ async with sonos.zone_subscription_session(
 ```
 
 Ordinary feature code must not read service views, watch service views, or send
-service commands unless it is doing so through an active service session. For a
+service requests unless it is doing so through an active service session. For a
 resource-bound action, open the domain session as early as the action lifecycle
 allows. In the Python action SDK, service-backed root components should normally
 use `warmPolicy: "keep_until_stopped"` and open the session in component start,
@@ -203,7 +203,7 @@ so temporary unmount/remount cycles do not churn Concord service-use authority.
 Binding-scoped or page-scoped work can still open the session on mount/page open
 and close it when that binding/page ends.
 
-Commands for a retained resource should use that same session:
+Operation requests for a retained resource should use that same session:
 
 ```python
 class SonosPlayButton(DeckrAction):
@@ -227,13 +227,13 @@ class SonosPlayButton(DeckrAction):
         if self._session is None:
             await binding.overlay("unavailable", title="UNAVAILABLE")
             return
-        await self._session.command("play", {"zone": self.zone_name})
+        await self._session.request("play", {"zone": self.zone_name})
 ```
 
-Normal feature input should not send resource commands while the corresponding
+Normal feature input should not send resource requests while the corresponding
 resource state is `PENDING`, `UNAVAILABLE`, `RECONNECTING`, or `ERROR`. Render
 the pending, unavailable, reconnecting, or error state instead and wait for a
-fresh `READY` message before accepting ordinary resource commands.
+fresh `READY` message before accepting ordinary resource requests.
 
 `ServiceSubscriptionState` is the shared state vocabulary:
 
@@ -272,13 +272,13 @@ directly responsible for negotiating successor service-use contracts.
 
 Ordinary action and display code should consume domain service-client APIs:
 managed subscription sessions expose lifecycle through `session.messages`, and
-commands return ordinary service-domain replies. Consumers should not import
+requests return ordinary service-domain replies. Consumers should not import
 lease-loss helpers or treat missing payloads as lifecycle authority.
 
 ## Provider Boundary
 
 Service providers still use lower-level runtime infrastructure to advertise,
-accept service-use contracts, authorize incoming service commands, and publish
+accept service-use contracts, authorize incoming service requests, and publish
 fenced views. That code is service infrastructure, not ordinary feature-client
 code.
 

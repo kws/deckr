@@ -741,12 +741,12 @@ For that first-party source, omitted `block` defaults to an empty list,
 Each Python action-provider runtime instance registers
 `action_provider:<provider-instance-id>` on `actions`. When a host enables the
 optional `services` lane, the provider runtime may also register on `services`
-so hosted action instances can use service command/reply lane messages and
+so hosted action instances can use service request/reply lane messages and
 Concord-authorized service views without becoming service components themselves.
 Service discovery and service-use negotiation for those hosted actions and
 other feature consumers go through the managed `deckr.services.DeckrServices`
 client. The managed client owns the relevant service protocol feature watch,
-descriptor parsing, candidate selection, Concord negotiation, command contract
+descriptor parsing, candidate selection, Concord negotiation, request contract
 pointers, and fenced view reads/watches. Consumers do not scan Beacon KV,
 duplicate descriptor parsing loops, classify Concord terminal statuses, or use
 Concord as a service catalog.

@@ -3,8 +3,7 @@
     "operation": "play",
     "params": {
       "zone": "kitchen"
-    },
-    "serviceNamespace": "org.example.media.service"
+    }
   },
   "contract": {
     "contractId": "service-use-contract-1",
@@ -12,8 +11,8 @@
   },
   "createdAt": "2026-04-29T10:00:00Z",
   "lane": "services",
-  "messageId": "fixture-service-command",
-  "messageType": "serviceCommand",
+  "messageId": "fixture-service-request",
+  "messageType": "serviceRequest",
   "protocolVersion": "1",
   "recipient": {
     "endpoint": "service:media-home",

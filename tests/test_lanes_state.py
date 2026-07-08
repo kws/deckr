@@ -32,7 +32,7 @@ from deckr.contracts.messages import (
 )
 from deckr.lanes import message_is_deliverable, reply_is_accepted
 from deckr.runtime import Deckr
-from deckr.services.messages import SERVICE_COMMAND
+from deckr.services.messages import SERVICE_REQUEST
 from deckr.substrates.nats import (
     NatsSubstrate,
     _headers_for,
@@ -88,7 +88,7 @@ async def test_endpoint_session_id_is_reused_across_lanes() -> None:
                 namespace="org.example.media",
                 operation="play",
             ),
-            message_type=SERVICE_COMMAND,
+            message_type=SERVICE_REQUEST,
             body={
                 "serviceNamespace": "org.example.media",
                 "operation": "play",

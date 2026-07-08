@@ -30,7 +30,7 @@ from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import DeckrMessage, EndpointAddress, service_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
-from deckr.services.messages import ServiceCommandReplyBody
+from deckr.services.messages import ServiceReplyBody
 
 _TERMINAL_DURING_NEGOTIATION = frozenset(
     {
@@ -362,7 +362,7 @@ def _agreement_had_valid_authority(agreement: ConcordAgreementLease) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class AuthorizedServiceCommand:
+class AuthorizedServiceRequest:
     contract: ContractHandle
     record: ContractRecord
 
@@ -435,8 +435,8 @@ def service_unavailable_ends_service_use(exc: ServiceUnavailable) -> bool:
     return _service_use_diagnostics_end_service_use(dict(exc.diagnostics))
 
 
-def service_command_reply_ends_service_use(reply: ServiceCommandReplyBody) -> bool:
-    """Return whether a service command reply reports ended service-use authority."""
+def service_reply_ends_service_use(reply: ServiceReplyBody) -> bool:
+    """Return whether a service reply reports ended service-use authority."""
 
     error = getattr(reply, "error", None)
     if error is None:
@@ -450,28 +450,28 @@ def service_command_reply_ends_service_use(reply: ServiceCommandReplyBody) -> bo
     )
 
 
-async def authorize_service_command(
+async def authorize_service_request(
     participant: ConcordParticipant,
     message: DeckrMessage,
     *,
     service_id: str,
     protocol: ServiceProtocol,
     operation: str,
-) -> AuthorizedServiceCommand:
-    """Validate that a service command is authorized by its exact Concord pointer."""
+) -> AuthorizedServiceRequest:
+    """Validate that a service request is authorized by its exact Concord pointer."""
 
     pointer = message.contract
     if pointer is None:
         raise ServiceUseAuthorizationError(
             "missing_contract",
-            "Service command requires a Concord contract pointer",
+            "Service request requires a Concord contract pointer",
         )
     managed = _managed_contract_for_pointer(
         participant.managed_contracts,
         pointer,
     )
     if managed is None:
-        await participant.reconcile(reason="service command authorization")
+        await participant.reconcile(reason="service request authorization")
         managed = _managed_contract_for_pointer(
             participant.managed_contracts,
             pointer,
@@ -479,7 +479,7 @@ async def authorize_service_command(
     if managed is None:
         raise ServiceUseAuthorizationError(
             "contract_not_managed",
-            "Service command contract is not managed by this participant",
+            "Service request contract is not managed by this participant",
             {"contractId": pointer.contract_id, "generation": pointer.generation},
         )
 
@@ -492,7 +492,7 @@ async def authorize_service_command(
     if not validity.valid or validity.contract is None:
         raise ServiceUseAuthorizationError(
             f"contract_{validity.status.value}",
-            "Service command contract is not valid",
+            "Service request contract is not valid",
             {
                 "contractId": pointer.contract_id,
                 "generation": pointer.generation,
@@ -501,7 +501,7 @@ async def authorize_service_command(
             },
         )
 
-    if not _service_command_contract_match(
+    if not _service_request_contract_match(
         validity.contract,
         participant=participant,
         sender=message.sender,
@@ -511,7 +511,7 @@ async def authorize_service_command(
     ):
         raise ServiceUseAuthorizationError(
             "scope_mismatch",
-            "Service command contract does not authorize this command",
+            "Service request contract does not authorize this operation",
             {
                 "contractId": pointer.contract_id,
                 "generation": pointer.generation,
@@ -519,7 +519,7 @@ async def authorize_service_command(
                 "operation": operation,
             },
         )
-    return AuthorizedServiceCommand(
+    return AuthorizedServiceRequest(
         contract=managed.contract,
         record=validity.contract,
     )
@@ -638,7 +638,7 @@ def _managed_contract_for_pointer(
     return None
 
 
-def _service_command_contract_match(
+def _service_request_contract_match(
     record: ContractRecord,
     *,
     participant: ConcordParticipant,

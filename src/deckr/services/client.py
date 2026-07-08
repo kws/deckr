@@ -21,9 +21,9 @@ from deckr.concord import (
 from deckr.contracts.messages import SERVICES_LANE, entity_subject
 from deckr.lanes import EndpointSession
 from deckr.services.messages import (
-    SERVICE_COMMAND,
-    ServiceCommandBody,
-    ServiceCommandReplyBody,
+    SERVICE_REQUEST,
+    ServiceReplyBody,
+    ServiceRequestBody,
     service_body,
 )
 from deckr.services.runtime import (
@@ -45,7 +45,7 @@ _DirectoryKey = tuple[str, str, str, str]
 
 
 class DeckrServices:
-    """Managed surface for service discovery, authority, commands, and views."""
+    """Managed surface for service discovery, authority, requests, and views."""
 
     def __init__(
         self,
@@ -194,15 +194,15 @@ class DeckrServices:
                 reason="service_use_closed",
             )
 
-    async def command(
+    async def request(
         self,
         lease: ServiceUseLease,
         operation: str,
         params: Mapping[str, Any] | None = None,
         *,
         timeout_seconds: float | None = None,
-    ) -> ServiceCommandReplyBody:
-        """Send an authorized service command over the services lane."""
+    ) -> ServiceReplyBody:
+        """Send an authorized service request over the services lane."""
 
         await lease.refresh()
         descriptor = lease.descriptor
@@ -216,8 +216,8 @@ class DeckrServices:
                 namespace=descriptor.namespace,
                 operation=operation,
             ),
-            message_type=SERVICE_COMMAND,
-            body=ServiceCommandBody(
+            message_type=SERVICE_REQUEST,
+            body=ServiceRequestBody(
                 serviceNamespace=descriptor.namespace,
                 operation=operation,
                 params=dict(params or {}),
@@ -229,11 +229,11 @@ class DeckrServices:
             },
         )
         body = service_body(reply)
-        if isinstance(body, ServiceCommandReplyBody):
+        if isinstance(body, ServiceReplyBody):
             return body
         raise ServiceUnavailable(
             "invalid_service_reply",
-            "Service returned an invalid command reply",
+            "Service returned an invalid reply",
             {
                 "serviceId": descriptor.service_id,
                 "serviceNamespace": descriptor.namespace,

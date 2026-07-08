@@ -82,9 +82,9 @@ from deckr.profiles import (
     ActionsBeaconPayload,
 )
 from deckr.services.messages import (
-    SERVICE_COMMAND,
     SERVICE_MESSAGES_SCHEMA_ID,
-    ServiceCommandBody,
+    SERVICE_REQUEST,
+    ServiceRequestBody,
     service_message_schema,
 )
 from deckr.substrates.nats import _headers_for, _subject_for
@@ -294,10 +294,10 @@ def _fixtures() -> list[dict[str, Any]]:
         ),
         message_id="fixture-hardware-control-input",
     )
-    service_command = _stable_message(
+    service_request = _stable_message(
         DeckrMessage(
             lane=SERVICES_LANE,
-            messageType=SERVICE_COMMAND,
+            messageType=SERVICE_REQUEST,
             sender=controller_address("controller-main"),
             senderSessionId="controller-session",
             recipient=endpoint_target(service_address("media-home")),
@@ -309,13 +309,13 @@ def _fixtures() -> list[dict[str, Any]]:
                 namespace="org.example.media.service",
                 operation="play",
             ),
-            body=ServiceCommandBody(
+            body=ServiceRequestBody(
                 serviceNamespace="org.example.media.service",
                 operation="play",
                 params={"zone": "kitchen"},
             ).to_dict(),
         ),
-        message_id="fixture-service-command",
+        message_id="fixture-service-request",
     )
 
     hardware_advertisement = AdvertisementRecord(
@@ -383,11 +383,11 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=hardware_input,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.services.service_command.valid.v1",
-            path="fixtures/valid/services/service-command.v1.json",
-            title="Valid serviceCommand service message",
+            artifact_id="dev.deckr.fixture.services.service_request.valid.v1",
+            path="fixtures/valid/services/service-request.v1.json",
+            title="Valid serviceRequest service message",
             schema_path="schemas/services/services.v1.schema.json",
-            payload=service_command,
+            payload=service_request,
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.beacon.hardware.valid.v1",
@@ -472,12 +472,12 @@ def _fixtures() -> list[dict[str, Any]]:
             valid=False,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.services.service_command.invalid_missing_namespace.v1",
-            path="fixtures/invalid/services/service-command-missing-namespace.v1.json",
-            title="Invalid serviceCommand missing serviceNamespace",
+            artifact_id="dev.deckr.fixture.services.service_request.invalid_missing_namespace.v1",
+            path="fixtures/invalid/services/service-request-missing-namespace.v1.json",
+            title="Invalid serviceRequest missing serviceNamespace",
             schema_path="schemas/services/services.v1.schema.json",
             payload={
-                **service_command,
+                **service_request,
                 "body": {"operation": "play", "params": {"zone": "kitchen"}},
             },
             valid=False,

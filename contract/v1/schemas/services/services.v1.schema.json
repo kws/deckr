@@ -277,33 +277,33 @@
       "type": "object"
     },
     "JsonValue": {},
-    "ServiceCommandBody": {
+    "ServiceError": {
       "additionalProperties": false,
       "properties": {
-        "operation": {
-          "title": "Operation",
+        "code": {
+          "title": "Code",
           "type": "string"
         },
-        "params": {
+        "diagnostics": {
           "additionalProperties": {
             "$ref": "#/$defs/JsonValue"
           },
-          "title": "Params",
+          "title": "Diagnostics",
           "type": "object"
         },
-        "serviceNamespace": {
-          "title": "Servicenamespace",
+        "message": {
+          "title": "Message",
           "type": "string"
         }
       },
       "required": [
-        "serviceNamespace",
-        "operation"
+        "code",
+        "message"
       ],
-      "title": "ServiceCommandBody",
+      "title": "ServiceError",
       "type": "object"
     },
-    "ServiceCommandReplyBody": {
+    "ServiceReplyBody": {
       "additionalProperties": false,
       "properties": {
         "error": {
@@ -333,7 +333,7 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/ServiceCommandStatus"
+          "$ref": "#/$defs/ServiceReplyStatus"
         }
       },
       "required": [
@@ -341,43 +341,43 @@
         "operation",
         "status"
       ],
-      "title": "ServiceCommandReplyBody",
+      "title": "ServiceReplyBody",
       "type": "object"
     },
-    "ServiceCommandStatus": {
+    "ServiceReplyStatus": {
       "enum": [
         "ok",
         "rejected",
         "unavailable",
         "error"
       ],
-      "title": "ServiceCommandStatus",
+      "title": "ServiceReplyStatus",
       "type": "string"
     },
-    "ServiceError": {
+    "ServiceRequestBody": {
       "additionalProperties": false,
       "properties": {
-        "code": {
-          "title": "Code",
+        "operation": {
+          "title": "Operation",
           "type": "string"
         },
-        "diagnostics": {
+        "params": {
           "additionalProperties": {
             "$ref": "#/$defs/JsonValue"
           },
-          "title": "Diagnostics",
+          "title": "Params",
           "type": "object"
         },
-        "message": {
-          "title": "Message",
+        "serviceNamespace": {
+          "title": "Servicenamespace",
           "type": "string"
         }
       },
       "required": [
-        "code",
-        "message"
+        "serviceNamespace",
+        "operation"
       ],
-      "title": "ServiceError",
+      "title": "ServiceRequestBody",
       "type": "object"
     },
     "TraceContext": {
@@ -423,7 +423,7 @@
         {
           "properties": {
             "body": {
-              "$ref": "#/$defs/ServiceCommandBody"
+              "$ref": "#/$defs/ServiceRequestBody"
             },
             "contract": {
               "$ref": "#/$defs/ContractPointer"
@@ -432,7 +432,7 @@
               "const": "services"
             },
             "messageType": {
-              "const": "serviceCommand"
+              "const": "serviceRequest"
             }
           },
           "required": [
@@ -453,7 +453,7 @@
         {
           "properties": {
             "body": {
-              "$ref": "#/$defs/ServiceCommandReplyBody"
+              "$ref": "#/$defs/ServiceReplyBody"
             },
             "contract": {
               "$ref": "#/$defs/ContractPointer"
@@ -462,7 +462,7 @@
               "const": "services"
             },
             "messageType": {
-              "const": "serviceCommandReply"
+              "const": "serviceReply"
             }
           },
           "required": [

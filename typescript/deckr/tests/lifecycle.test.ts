@@ -353,7 +353,7 @@ test("Concord reaper records stale contracts and cancels after grace", async () 
   assert.equal(result.contractsCancelled, 1);
 });
 
-test("service helpers advertise descriptors and authorize Concord-governed commands", async () => {
+test("service helpers advertise descriptors and authorize Concord-governed requests", async () => {
   const protocol: ServiceProtocol = {
     namespace: "dev.deckr.test.service",
     featureId: "dev.deckr.test.service",
@@ -426,7 +426,7 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
       contractId: agreement.contract.contractId,
       generation: agreement.contract.generation,
     },
-    messageType: "serviceCommand",
+    messageType: "serviceRequest",
     subject: entitySubject("service", {
       serviceId: "music",
       namespace: protocol.namespace,
@@ -436,7 +436,7 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
   });
 
   assert.equal(
-    await authorizer.authorizeCommand(message, {
+    await authorizer.authorizeRequest(message, {
       serviceNamespace: protocol.namespace,
       operation: "play",
       params: {},
@@ -457,7 +457,7 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
       contractId: agreement.contract.contractId,
       generation: agreement.contract.generation,
     },
-    messageType: "serviceCommand",
+    messageType: "serviceRequest",
     subject: entitySubject("service", {
       serviceId: "music",
       namespace: protocol.namespace,
@@ -471,7 +471,7 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
   });
 
   assert.equal(
-    await authorizer.authorizeCommand(
+    await authorizer.authorizeRequest(
       pauseMessage,
       {
         serviceNamespace: protocol.namespace,
@@ -499,7 +499,7 @@ test("service helpers advertise descriptors and authorize Concord-governed comma
   });
 
   assert.equal(
-    await authorizer.authorizeCommand(pauseMessage, {
+    await authorizer.authorizeRequest(pauseMessage, {
       serviceNamespace: protocol.namespace,
       operation: "pause",
       params: {},

@@ -23,7 +23,7 @@ from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import entity_subject, service_address
 from deckr.services import (
-    AuthorizedServiceCommand,
+    AuthorizedServiceRequest,
     ServiceBackendStatus,
     ServiceDescriptor,
     ServiceProtocol,
@@ -34,12 +34,12 @@ from deckr.services import (
     ServiceViewRef,
     ServiceViewStore,
     UnsupportedServiceScope,
-    authorize_service_command,
+    authorize_service_request,
     newest_service_descriptor,
     parse_service_descriptor,
     service_view_key,
 )
-from deckr.services.messages import ServiceCommandBody, service_command_message
+from deckr.services.messages import ServiceRequestBody, service_request_message
 from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
 
 
@@ -220,7 +220,7 @@ def _managed_contract(
     )
 
 
-def _service_command(
+def _service_request(
     contract: ContractHandle,
     *,
     operation: str = "setItemScope",
@@ -228,7 +228,7 @@ def _service_command(
     sender=None,
 ) -> Any:
     sender = sender or action_provider_address("provider-main")
-    return service_command_message(
+    return service_request_message(
         sender=sender,
         sender_session_id="provider-session",
         recipient=service_address("openhab-home"),
@@ -239,7 +239,7 @@ def _service_command(
             namespace=namespace,
             operation=operation,
         ),
-        body=ServiceCommandBody(
+        body=ServiceRequestBody(
             serviceNamespace=namespace,
             operation=operation,
             params={},
@@ -473,25 +473,25 @@ async def test_service_directory_tracks_beacon_events_without_stale_descriptors(
 
 
 @pytest.mark.asyncio
-async def test_authorize_service_command_matches_exact_contract_pointer() -> None:
+async def test_authorize_service_request_matches_exact_contract_pointer() -> None:
     protocol, lease, _view_ref = await _service_view_context()
     managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
-    command = _service_command(
+    request = _service_request(
         lease.contract,
         operation="setItemScope",
         namespace=protocol.namespace,
     )
 
-    result = await authorize_service_command(
+    result = await authorize_service_request(
         participant,
-        command,
+        request,
         service_id="openhab-home",
         protocol=protocol,
         operation="setItemScope",
     )
 
-    assert isinstance(result, AuthorizedServiceCommand)
+    assert isinstance(result, AuthorizedServiceRequest)
     assert result.contract == lease.contract
     assert result.record == managed.record
     assert participant.reconcile_calls == 0
@@ -504,21 +504,21 @@ async def test_authorize_service_command_matches_exact_contract_pointer() -> Non
 
 
 @pytest.mark.asyncio
-async def test_authorize_service_command_rejects_unmanaged_contract_pointer() -> None:
+async def test_authorize_service_request_rejects_unmanaged_contract_pointer() -> None:
     protocol, lease, _view_ref = await _service_view_context()
     managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
     other_contract = _contract_handle(contract_id="service-contract-2")
-    command = _service_command(
+    request = _service_request(
         other_contract,
         operation="setItemScope",
         namespace=protocol.namespace,
     )
 
     with pytest.raises(ServiceUseAuthorizationError) as exc_info:
-        await authorize_service_command(
+        await authorize_service_request(
             participant,
-            command,
+            request,
             service_id="openhab-home",
             protocol=protocol,
             operation="setItemScope",
@@ -530,20 +530,20 @@ async def test_authorize_service_command_rejects_unmanaged_contract_pointer() ->
 
 
 @pytest.mark.asyncio
-async def test_authorize_service_command_rejects_sender_not_named_by_contract() -> None:
+async def test_authorize_service_request_rejects_sender_not_named_by_contract() -> None:
     protocol, lease, _view_ref = await _service_view_context()
     managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
-    command = _service_command(
+    request = _service_request(
         lease.contract,
         sender=action_provider_address("other-provider"),
         namespace=protocol.namespace,
     )
 
     with pytest.raises(ServiceUseAuthorizationError) as exc_info:
-        await authorize_service_command(
+        await authorize_service_request(
             participant,
-            command,
+            request,
             service_id="openhab-home",
             protocol=protocol,
             operation="sendCommand",
@@ -559,21 +559,21 @@ async def test_authorize_service_command_rejects_sender_not_named_by_contract() 
 
 
 @pytest.mark.asyncio
-async def test_authorize_service_command_rejects_operation_outside_protocol() -> None:
+async def test_authorize_service_request_rejects_operation_outside_protocol() -> None:
     protocol, lease, _view_ref = await _service_view_context()
     protocol = _protocol(operations=("setItemScope",))
     managed = _managed_contract(lease.contract)
     participant = _FakeServiceParticipant((managed,))
-    command = _service_command(
+    request = _service_request(
         lease.contract,
         operation="sendCommand",
         namespace=protocol.namespace,
     )
 
     with pytest.raises(ServiceUseAuthorizationError) as exc_info:
-        await authorize_service_command(
+        await authorize_service_request(
             participant,
-            command,
+            request,
             service_id="openhab-home",
             protocol=protocol,
             operation="sendCommand",

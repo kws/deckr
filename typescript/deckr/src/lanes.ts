@@ -339,7 +339,7 @@ function validateContractRequirement(message: DeckrMessage): void {
     return;
   }
   if (message.lane === "services") {
-    if (["serviceCommand", "serviceCommandReply"].includes(message.messageType)) {
+    if (["serviceRequest", "serviceReply"].includes(message.messageType)) {
       if (message.contract === undefined) {
         throw new ValidationError("services messages require a Concord contract pointer");
       }

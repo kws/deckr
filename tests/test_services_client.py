@@ -13,20 +13,20 @@ from deckr.contracts.messages import service_address
 from deckr.services import (
     DeckrServices,
     ServiceBackendStatus,
-    ServiceCommandReplyBody,
-    ServiceCommandStatus,
     ServiceDescriptor,
     ServiceError,
     ServiceProtocol,
+    ServiceReplyBody,
+    ServiceReplyStatus,
     ServiceUnavailable,
     ServiceUseLease,
     ServiceViewFamily,
     ServiceViewFamilyDefinition,
     ServiceViewRef,
-    service_command_reply_ends_service_use,
+    service_reply_ends_service_use,
     service_unavailable_ends_service_use,
 )
-from deckr.services.messages import service_command_reply_message
+from deckr.services.messages import service_reply_message
 from deckr.substrates.nats_kv import KvUnavailable
 
 _CLIENT_ADDRESS = action_provider_address("python-dev.deckr.demo")
@@ -434,7 +434,7 @@ async def test_service_use_lease_refresh_raises_unavailable_without_valid_lease(
 
 
 @pytest.mark.asyncio
-async def test_command_request_timeout_is_separate_from_service_use() -> None:
+async def test_service_request_timeout_is_separate_from_service_use() -> None:
     agreement = SimpleNamespace(
         contract=_contract(),
         refresh=AsyncMock(return_value=ContractValidity(ContractValidityStatus.VALID)),
@@ -443,7 +443,7 @@ async def test_command_request_timeout_is_separate_from_service_use() -> None:
     )
 
     async def request(**kwargs):
-        return service_command_reply_message(
+        return service_reply_message(
             sender=service_address("demo-home"),
             sender_session_id="service-session",
             recipient=_CLIENT_ADDRESS,
@@ -451,10 +451,10 @@ async def test_command_request_timeout_is_separate_from_service_use() -> None:
             subject=kwargs["subject"],
             in_reply_to="request-message",
             contract=kwargs["contract"],
-            body=ServiceCommandReplyBody(
+            body=ServiceReplyBody(
                 serviceNamespace="dev.deckr.demo.service",
                 operation=kwargs["body"]["operation"],
-                status=ServiceCommandStatus.OK,
+                status=ServiceReplyStatus.OK,
                 result={"ok": True},
             ),
         )
@@ -473,14 +473,14 @@ async def test_command_request_timeout_is_separate_from_service_use() -> None:
         _descriptor(),
         timeout_seconds=30.0,
     ) as lease:
-        reply = await services.command(
+        reply = await services.request(
             lease,
             "play",
             {"zone": "Kitchen"},
             timeout_seconds=12.0,
         )
 
-    assert reply.status == ServiceCommandStatus.OK
+    assert reply.status == ServiceReplyStatus.OK
     assert endpoint.request.await_args.kwargs["timeout"] == 12.0
     assert endpoint.request.await_args.kwargs["contract"] == {
         "contractId": "contract-1",
@@ -591,7 +591,7 @@ def test_service_unavailable_helper_classifies_service_use_loss() -> None:
     )
     assert service_unavailable_ends_service_use(
         ServiceUnavailable(
-            "service_command_failed",
+            "service_request_failed",
             "failed",
             {"reason": "contract_not_managed"},
         )
@@ -604,22 +604,22 @@ def test_service_unavailable_helper_classifies_service_use_loss() -> None:
     )
 
 
-def test_command_reply_helper_matches_service_unavailable_helper() -> None:
+def test_service_reply_helper_matches_service_unavailable_helper() -> None:
     unavailable = ServiceUnavailable("contract_missing_token", "missing token")
-    reply = ServiceCommandReplyBody(
+    reply = ServiceReplyBody(
         serviceNamespace="dev.deckr.demo.service",
         operation="play",
-        status=ServiceCommandStatus.UNAVAILABLE,
+        status=ServiceReplyStatus.UNAVAILABLE,
         error=ServiceError(
             code="service_use_contract_invalid",
             message="missing token",
             diagnostics={"status": "missing_token"},
         ),
     )
-    ordinary = ServiceCommandReplyBody(
+    ordinary = ServiceReplyBody(
         serviceNamespace="dev.deckr.demo.service",
         operation="play",
-        status=ServiceCommandStatus.UNAVAILABLE,
+        status=ServiceReplyStatus.UNAVAILABLE,
         error=ServiceError(
             code="service_backend_unavailable",
             message="backend down",
@@ -627,5 +627,5 @@ def test_command_reply_helper_matches_service_unavailable_helper() -> None:
     )
 
     assert service_unavailable_ends_service_use(unavailable)
-    assert service_command_reply_ends_service_use(reply)
-    assert not service_command_reply_ends_service_use(ordinary)
+    assert service_reply_ends_service_use(reply)
+    assert not service_reply_ends_service_use(ordinary)
