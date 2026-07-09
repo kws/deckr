@@ -10,7 +10,6 @@ from deckr.action_runtime import (
     ACTION_RUNTIME_SERVICE_PROTOCOL,
     ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME,
     BINDING_ATTACHED_MESSAGE,
-    PROVIDER_SETTINGS_VIEW_FAMILY,
     ActionRuntimeAvailabilityViewPayload,
     action_availability_view_key,
     action_availability_view_ref,
@@ -24,13 +23,12 @@ from deckr.actions.messages import (
     BINDING_OVERLAY,
     BINDING_OVERLAY_CLEAR,
     CAPABILITY_INPUT,
-    SETTINGS_REQUEST,
-    SETTINGS_SNAPSHOT,
     ActionAvailabilityEntry,
     ActionDescriptor,
-    ActionExtensionBody,
+    ActionInstanceLifecycleBody,
     ActionInstanceMetadata,
     ActionLifecycleRejectedBody,
+    BindingAttachedBody,
     BindingMetadata,
     CapabilityInputBody,
     CapabilityInputEvent,
@@ -40,7 +38,6 @@ from deckr.actions.messages import (
     MatchedCapability,
     PageChildBindingDescriptor,
     PageChildBindingTarget,
-    SettingsSnapshot,
     SettingsTargetDescription,
     SettingsTargetRef,
     action_body,
@@ -135,9 +132,9 @@ def _page_session_metadata() -> dict:
 
 
 def test_core_action_bodies_forbid_stale_routing_identity_fields() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError, match="Unsupported action message type"):
         action_body_for_type(
-            SETTINGS_REQUEST,
+            "settingsRequest",
             {
                 "target": _settings_target().to_dict(),
                 "actionUuid": "other",
@@ -161,7 +158,6 @@ def test_action_descriptor_carries_capability_requirements_and_settings_schema()
     descriptor = ActionDescriptor(
         actionId="demo.pager",
         name="Pager",
-        warmPolicy="keep_until_stopped",
         requirements=[
             CapabilityRequirement(
                 name="press",
@@ -196,14 +192,6 @@ def test_action_descriptor_carries_capability_requirements_and_settings_schema()
     assert descriptor.to_dict()["providerSettingsSchema"]["properties"]["token"]["type"] == (
         "string"
     )
-    assert descriptor.to_dict()["warmPolicy"] == "keep_until_stopped"
-
-
-def test_action_descriptor_defaults_to_stop_on_unmount_warm_policy() -> None:
-    descriptor = ActionDescriptor(actionId="demo.action")
-
-    assert descriptor.warm_policy == "stop_on_unmount"
-    assert descriptor.to_dict()["warmPolicy"] == "stop_on_unmount"
 
 
 def test_action_availability_entries_validate_descriptor_identity() -> None:
@@ -262,11 +250,26 @@ def test_action_runtime_service_contract_shape() -> None:
         ".action_availability."
     )
     assert payload.views["action_availability"].writer == "service"
-    assert payload.views[PROVIDER_SETTINGS_VIEW_FAMILY].writer == "consumer"
     assert action_availability_view_key(service_id).endswith(
         ".action_availability.current"
     )
     assert view_ref.store_name == ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME
+
+
+def test_lifecycle_configuration_boundary_is_binding_attached() -> None:
+    created = ActionInstanceLifecycleBody(
+        metadata=_action_instance_metadata()
+    ).to_dict()
+    attached = BindingAttachedBody(
+        binding=_binding_metadata(),
+        settings={"title": "Weather"},
+        internal={"pageChildId": "child-1"},
+    ).to_dict()
+
+    assert "settings" not in created
+    assert "internal" not in created
+    assert attached["settings"] == {"title": "Weather"}
+    assert attached["internal"] == {"pageChildId": "child-1"}
 
 
 def test_action_runtime_availability_view_payload_round_trips() -> None:
@@ -327,39 +330,18 @@ def test_action_runtime_availability_view_payload_ignores_fence_metadata() -> No
     }
 
 
-def test_settings_target_and_snapshot_are_target_based() -> None:
+def test_settings_target_key_is_action_instance_based_not_binding_based() -> None:
     target = _settings_target()
-    body = SettingsSnapshot(
-        target=target,
-        settings={"title": "Weather"},
-        provenance=("user_override",),
-        schemaMetadata={
-            "schemaId": "demo.settings.v1",
-            "schema": {"type": "object"},
-            "stale": False,
-        },
-    )
 
-    wire = body.to_dict()
-
-    assert wire == {
-        "target": {
-            "scope": "action_instance",
-            "controllerId": "controller-main",
-            "configId": "device-config-1",
-            "providerInstanceId": "demo-provider",
-            "providerId": "demo.provider",
-            "actionId": "demo.action",
-            "actionInstanceId": "instance-1",
-            "stableId": "weather",
-        },
-        "settings": {"title": "Weather"},
-        "provenance": ["user_override"],
-        "schemaMetadata": {
-            "schemaId": "demo.settings.v1",
-            "schema": {"type": "object"},
-            "stale": False,
-        },
+    assert target.to_dict() == {
+        "scope": "action_instance",
+        "controllerId": "controller-main",
+        "configId": "device-config-1",
+        "providerInstanceId": "demo-provider",
+        "providerId": "demo.provider",
+        "actionId": "demo.action",
+        "actionInstanceId": "instance-1",
+        "stableId": "weather",
     }
     assert "contextId" not in target.key()
     assert "bindingId" not in target.key()
@@ -448,7 +430,7 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
                 target=PageChildBindingTarget(kind="self"),
                 itemKey="kind-of-blue",
                 handler="album",
-                settings={"albumIndex": 0},
+                internal={"context": {"albumIndex": 0}},
             ),
             PageChildBindingDescriptor(
                 controlId="0,1",
@@ -477,7 +459,8 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
                 "target": {"kind": "self"},
                 "itemKey": "kind-of-blue",
                 "handler": "album",
-                "settings": {"albumIndex": 0},
+                "settings": {},
+                "internal": {"context": {"albumIndex": 0}},
             },
             {
                 "controlId": "0,1",
@@ -485,6 +468,7 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
                 "itemKey": "close",
                 "handler": "close",
                 "settings": {},
+                "internal": {},
             },
             {
                 "controlId": "3,0",
@@ -495,6 +479,7 @@ def test_dynamic_page_command_uses_child_binding_semantics() -> None:
                     "instanceKey": "bedroom-volume",
                 },
                 "settings": {"zoneName": "Bedroom"},
+                "internal": {},
             },
         ],
     }
@@ -829,28 +814,32 @@ def test_context_subject_carries_explicit_lifecycle_ids() -> None:
 
 
 def test_action_body_for_type_rejects_mismatched_body_instances() -> None:
-    with pytest.raises(TypeError, match="requires body type SettingsSnapshot"):
-        action_body_for_type(
-            SETTINGS_SNAPSHOT,
-            ActionExtensionBody(
-                extension_type="com.example.demo",
-                extension_schema_id="com.example.demo.v1",
-                data={},
-            ),
-        )
-
     with pytest.raises(TypeError, match="requires body type ActionExtensionBody"):
         action_body_for_type(
             ACTION_EXTENSION,
-            SettingsSnapshot(
-                target=_settings_target(),
-                settings={"title": "wrong model"},
+            CapabilityInputBody(
+                binding=_binding_metadata(),
+                event=CapabilityInputEvent(
+                    capability={
+                        "deviceRef": {
+                            "managerId": "manager-1",
+                            "deviceId": "device-1",
+                        },
+                        "controlId": "0,0",
+                        "capabilityId": "button.press",
+                    },
+                    eventType="press",
+                    occurredAt=datetime(2026, 4, 30, 10, 0, tzinfo=UTC),
+                ),
             ),
         )
 
 
-@pytest.mark.parametrize("message_type", ["settingsPatch", "settingsReplace"])
-def test_action_body_for_type_rejects_settings_mutations(message_type: str) -> None:
+@pytest.mark.parametrize(
+    "message_type",
+    ["settingsRequest", "settingsSnapshot", "settingsPatch", "settingsReplace"],
+)
+def test_action_body_for_type_rejects_settings_messages(message_type: str) -> None:
     with pytest.raises(ValueError, match="Unsupported action message type"):
         action_body_for_type(
             message_type,

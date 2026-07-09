@@ -125,16 +125,6 @@
         "keyPrefix": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.",
         "storeName": "deckr_action_runtime_service_view_v1",
         "writer": "service"
-      },
-      "action_instance_settings": {
-        "keyPrefix": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_instance_settings.",
-        "storeName": "deckr_action_runtime_service_view_v1",
-        "writer": "consumer"
-      },
-      "provider_settings": {
-        "keyPrefix": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.provider_settings.",
-        "storeName": "deckr_action_runtime_service_view_v1",
-        "writer": "consumer"
       }
     }
   },

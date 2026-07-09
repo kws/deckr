@@ -8,8 +8,7 @@
       "descriptor": {
         "actionId": "dev.deckr.clock.time",
         "name": "Clock",
-        "providerId": "dev.deckr.clock",
-        "warmPolicy": "stop_on_unmount"
+        "providerId": "dev.deckr.clock"
       },
       "status": "available"
     }

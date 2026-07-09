@@ -37,8 +37,6 @@ from deckr.actions.messages import (
     OpenPageBody,
     PageSessionLifecycleBody,
     ReplacePageBody,
-    SettingsSnapshot,
-    SettingsTargetRef,
 )
 from deckr.contracts.messages import EndpointAddress, service_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
@@ -70,8 +68,6 @@ ACTION_RUNTIME_AVAILABILITY_VIEW_SCHEMA_ID = (
 )
 
 ACTION_AVAILABILITY_VIEW_FAMILY = "action_availability"
-PROVIDER_SETTINGS_VIEW_FAMILY = "provider_settings"
-ACTION_INSTANCE_SETTINGS_VIEW_FAMILY = "action_instance_settings"
 CURRENT_VIEW_TOKEN = "current"
 
 ACTION_INSTANCE_CREATED_MESSAGE = "action_instance_created"
@@ -216,14 +212,6 @@ def action_runtime_service_protocol() -> ServiceProtocol:
                 storeName=ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME,
                 writer=ServiceViewWriter.SERVICE,
             ),
-            PROVIDER_SETTINGS_VIEW_FAMILY: ServiceViewFamilyDefinition(
-                storeName=ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME,
-                writer=ServiceViewWriter.CONSUMER,
-            ),
-            ACTION_INSTANCE_SETTINGS_VIEW_FAMILY: ServiceViewFamilyDefinition(
-                storeName=ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME,
-                writer=ServiceViewWriter.CONSUMER,
-            ),
         },
     )
 
@@ -243,30 +231,6 @@ def action_availability_view_ref(service_id: str) -> ServiceViewRef:
     return ServiceViewRef(
         store_name=ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME,
         key=action_availability_view_key(service_id),
-    )
-
-
-def provider_settings_view_ref(
-    service_id: str,
-    target: SettingsTargetRef,
-) -> ServiceViewRef:
-    return ServiceViewRef(
-        store_name=ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME,
-        key=service_view_key(service_id, PROVIDER_SETTINGS_VIEW_FAMILY, target.key()),
-    )
-
-
-def action_instance_settings_view_ref(
-    service_id: str,
-    target: SettingsTargetRef,
-) -> ServiceViewRef:
-    return ServiceViewRef(
-        store_name=ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME,
-        key=service_view_key(
-            service_id,
-            ACTION_INSTANCE_SETTINGS_VIEW_FAMILY,
-            target.key(),
-        ),
     )
 
 
@@ -377,14 +341,6 @@ def action_runtime_body_from_service_message(
 ) -> ActionMessageBody:
     payload = body.event if body.name in EVENT_MESSAGES else body.params
     return _action_runtime_body_for_name(body.name, payload or {})
-
-
-def settings_view_payload(snapshot: SettingsSnapshot) -> dict[str, Any]:
-    return snapshot.to_dict()
-
-
-def settings_snapshot_from_view_payload(payload: Mapping[str, Any]) -> SettingsSnapshot:
-    return SettingsSnapshot.model_validate(payload)
 
 
 def _action_runtime_body_for_name(

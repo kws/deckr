@@ -751,20 +751,18 @@ duplicate descriptor parsing loops, classify Concord terminal statuses, or use
 Concord as a service catalog.
 
 Python action provider runtimes are component-scoped at the configured action
-instance boundary. `actionInstanceCreated` constructs the configured component
-with action settings and provider services, but does not start component work.
-The first root `bindingAttached` starts and mounts the component. A root
-component has one active root binding at a time; `bindingDetached` revokes that
-binding's output and page authority immediately, then schedules SDK cleanup.
+instance boundary. `actionInstanceCreated` constructs and starts the configured
+component with component metadata and provider services. It does not carry
+action configuration. Each root `bindingAttached` mounts a concrete control with
+read-only settings for that mount; `bindingDetached` revokes that binding's
+output and page authority immediately, then schedules SDK cleanup.
 
-Action descriptors may declare `warmPolicy`. `stop_on_unmount` is the default
-and stops component tasks after detach. `keep_until_stopped` keeps component
-tasks, service sessions, caches, and page-owner state alive across temporary
-unmount/remount until a hard stop such as action destroy, provider stop, config
-removal, terminal lifecycle loss, or cleanup timeout. Action-lane settings are
-read-only snapshots of controller-owned configuration. Providers may request a
-snapshot with `settingsRequest`; they do not patch or replace controller
-settings through the runtime lane.
+Action-lane settings are not a runtime request/reply protocol. The controller is
+the configuration authority and delivers action configuration only as part of
+binding attachment. A configuration change reloads bindings or action instances
+rather than patching live settings in place. Dynamic page replacement unmounts
+the previous child bindings and mounts replacement child bindings; SDK child
+routing metadata travels in child `internal` metadata, not in settings.
 
 ### Runtime-Local Component Status
 

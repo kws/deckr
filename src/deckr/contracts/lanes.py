@@ -78,8 +78,6 @@ ACTION_MESSAGE_TYPES = frozenset(
         "pageSessionClosed",
         "pageSessionOpened",
         "replacePage",
-        "settingsRequest",
-        "settingsSnapshot",
     }
 )
 

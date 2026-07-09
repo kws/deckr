@@ -78,9 +78,6 @@ _CONTRACT_NAME_RE = re.compile(_CONTRACT_NAME_PATTERN)
 _GLOBALLY_QUALIFIED_NAME_RE = re.compile(_GLOBALLY_QUALIFIED_NAME_PATTERN)
 _EXTENSION_CAPABILITY_FAMILY_RE = re.compile(_EXTENSION_CAPABILITY_FAMILY_PATTERN)
 
-ActionWarmPolicy = Literal["stop_on_unmount", "keep_until_stopped"]
-
-
 def _reserved_extension_data_paths(
     value: Any,
     *,
@@ -561,40 +558,26 @@ class CapabilityInputEvent(DeckrModel):
 
 class ActionInstanceLifecycleBody(ActionMessageBody):
     metadata: ActionInstanceMetadata
-    settings: JsonObject = Field(default_factory=dict)
     reason: str | None = None
-
-    @field_validator("settings", mode="before")
-    @classmethod
-    def _thaw_settings(cls, value: Any) -> Any:
-        return thaw_json(value)
-
-    @field_validator("settings", mode="after")
-    @classmethod
-    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return freeze_json(value)
-
-    @field_serializer("settings")
-    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return thaw_json(value)
 
 
 class BindingAttachedBody(ActionMessageBody):
     binding: BindingMetadata
     settings: JsonObject = Field(default_factory=dict)
+    internal: JsonObject = Field(default_factory=dict)
 
-    @field_validator("settings", mode="before")
+    @field_validator("settings", "internal", mode="before")
     @classmethod
-    def _thaw_settings(cls, value: Any) -> Any:
+    def _thaw_json_object(cls, value: Any) -> Any:
         return thaw_json(value)
 
-    @field_validator("settings", mode="after")
+    @field_validator("settings", "internal", mode="after")
     @classmethod
-    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _freeze_json_object(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
         return freeze_json(value)
 
-    @field_serializer("settings")
-    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
+    @field_serializer("settings", "internal")
+    def _serialize_json_object(self, value: Mapping[str, Any]) -> dict[str, Any]:
         return thaw_json(value)
 
 
@@ -979,45 +962,6 @@ class SettingsTargetDescription(DeckrModel):
         return thaw_json(value)
 
 
-class SettingsSnapshot(ActionMessageBody):
-    """Current settings value and metadata for a target."""
-
-    target: SettingsTargetRef
-    settings: JsonObject = Field(default_factory=dict)
-    provenance: tuple[SettingsProvenance, ...] = Field(default_factory=tuple)
-    schema_metadata: SettingsSchemaMetadata = Field(
-        default_factory=SettingsSchemaMetadata,
-        alias="schemaMetadata",
-    )
-
-    @field_validator("settings", mode="before")
-    @classmethod
-    def _thaw_settings(cls, value: Any) -> Any:
-        return thaw_json(value)
-
-    @field_validator("settings", mode="after")
-    @classmethod
-    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
-        return freeze_json(value)
-
-    @field_serializer("settings")
-    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        return thaw_json(value)
-
-    @classmethod
-    def from_snapshot(cls, snapshot: SettingsSnapshot) -> SettingsSnapshot:
-        return cls(
-            target=snapshot.target,
-            settings=snapshot.settings,
-            provenance=snapshot.provenance,
-            schemaMetadata=snapshot.schema_metadata,
-        )
-
-
-class SettingsRequestBody(ActionMessageBody):
-    target: SettingsTargetRef
-
-
 def _target(
     recipient: str | EndpointAddress | MessageTarget,
 ) -> MessageTarget:
@@ -1185,10 +1129,6 @@ class ActionDescriptor(DeckrModel):
     provider_id: str | None = Field(default=None, alias="providerId")
     requirements: tuple[CapabilityRequirement, ...] | None = None
     controllers: tuple[str, ...] | None = None
-    warm_policy: ActionWarmPolicy = Field(
-        default="stop_on_unmount",
-        alias="warmPolicy",
-    )
     property_inspector_path: str | None = None
     manifest_defaults: JsonObject | None = None
     settings_schema: JsonObject | None = Field(default=None, alias="settingsSchema")
@@ -1383,6 +1323,7 @@ class PageChildBindingDescriptor(DeckrModel):
     item_key: str | None = Field(default=None, alias="itemKey")
     handler: str | None = None
     settings: JsonObject = Field(default_factory=dict)
+    internal: JsonObject = Field(default_factory=dict)
 
     @field_validator("control_id")
     @classmethod
@@ -1396,18 +1337,18 @@ class PageChildBindingDescriptor(DeckrModel):
             return None
         return _require_text(value, field_name="page child metadata")
 
-    @field_validator("settings", mode="before")
+    @field_validator("settings", "internal", mode="before")
     @classmethod
-    def _thaw_settings(cls, value: Any) -> Any:
+    def _thaw_json_object(cls, value: Any) -> Any:
         return thaw_json(value)
 
-    @field_validator("settings", mode="after")
+    @field_validator("settings", "internal", mode="after")
     @classmethod
-    def _freeze_settings(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _freeze_json_object(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
         return freeze_json(value)
 
-    @field_serializer("settings")
-    def _serialize_settings(self, value: Mapping[str, Any]) -> dict[str, Any]:
+    @field_serializer("settings", "internal")
+    def _serialize_json_object(self, value: Mapping[str, Any]) -> dict[str, Any]:
         return thaw_json(value)
 
 
@@ -1470,8 +1411,6 @@ CAPABILITY_INPUT = "capabilityInput"
 BINDING_OUTPUT = "bindingOutput"
 BINDING_OVERLAY = "bindingOverlay"
 BINDING_OVERLAY_CLEAR = "bindingOverlayClear"
-SETTINGS_REQUEST = "settingsRequest"
-SETTINGS_SNAPSHOT = "settingsSnapshot"
 OPEN_PAGE = "openPage"
 REPLACE_PAGE = "replacePage"
 CLOSE_PAGE = "closePage"
@@ -1483,7 +1422,6 @@ ACTION_PROVIDER_COMMAND_MESSAGE_TYPES = frozenset(
         BINDING_OUTPUT,
         BINDING_OVERLAY,
         BINDING_OVERLAY_CLEAR,
-        SETTINGS_REQUEST,
     }
 )
 
@@ -1514,8 +1452,6 @@ ACTION_BODY_BY_MESSAGE_TYPE: dict[str, type[ActionMessageBody]] = {
     BINDING_OUTPUT: BindingOutputBody,
     BINDING_OVERLAY: BindingOverlayBody,
     BINDING_OVERLAY_CLEAR: BindingOverlayClearBody,
-    SETTINGS_REQUEST: SettingsRequestBody,
-    SETTINGS_SNAPSHOT: SettingsSnapshot,
     OPEN_PAGE: OpenPageBody,
     REPLACE_PAGE: ReplacePageBody,
     CLOSE_PAGE: EmptyActionBody,

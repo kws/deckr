@@ -252,7 +252,6 @@ def _fixtures() -> list[dict[str, Any]]:
             configId="clock-config-1",
             contextId="clock-context-1",
         ),
-        settings={"timezone": "UTC"},
     )
     action_runtime_params, action_runtime_event = action_runtime_payload(
         ACTION_INSTANCE_CREATED_MESSAGE,

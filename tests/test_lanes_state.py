@@ -43,18 +43,6 @@ from deckr.substrates.nats_kv import KvBucketPolicy
 _CONTRACT = {"contractId": "contract-1", "generation": 1}
 
 
-def _settings_target() -> dict[str, str]:
-    return {
-        "scope": "action_instance",
-        "controllerId": "main",
-        "configId": "device-config",
-        "providerInstanceId": "demo-provider",
-        "providerId": "demo.provider",
-        "actionId": "demo.action",
-        "actionInstanceId": "instance-a",
-    }
-
-
 async def _receive(stream):
     with anyio.fail_after(1):
         return await stream.receive()
@@ -254,9 +242,13 @@ async def test_closed_endpoint_session_is_local_terminal_state() -> None:
             await provider.send(
                 lane=ACTIONS_LANE,
                 recipient=controller_address("main"),
-                subject=entity_subject("settings", contextId="ctx"),
-                message_type="settingsRequest",
-                body={"target": _settings_target()},
+                subject=entity_subject("extension", contextId="ctx"),
+                message_type="actionExtension",
+                body={
+                    "extensionType": "com.example.closed",
+                    "extensionSchemaId": "com.example.closed.v1",
+                    "data": {},
+                },
             )
 
 
@@ -412,7 +404,7 @@ class _FakeNc:
                 await subscription.callback(message)
 
 
-def _settings_request_message() -> DeckrMessage:
+def _service_request_message() -> DeckrMessage:
     return DeckrMessage(
         lane=SERVICES_LANE,
         messageType=SERVICE_MESSAGE,
@@ -436,7 +428,7 @@ def _settings_request_message() -> DeckrMessage:
     )
 
 
-def _settings_reply_message(
+def _service_reply_message(
     request: DeckrMessage,
     *,
     theme: str = "dark",
@@ -467,7 +459,7 @@ def _settings_reply_message(
 @pytest.mark.asyncio
 async def test_nats_disconnected_operations_raise_clear_runtime_error() -> None:
     substrate = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
-    message = _settings_request_message()
+    message = _service_request_message()
 
     with pytest.raises(RuntimeError, match="not connected"):
         await substrate.publish(message)
@@ -491,8 +483,8 @@ async def test_nats_publish_reply_falls_back_without_stored_reply_subject() -> N
     substrate = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
-    request = _settings_request_message()
-    reply = _settings_reply_message(request)
+    request = _service_request_message()
+    reply = _service_reply_message(request)
 
     await substrate.publish_reply(reply, request=request)
 
@@ -540,7 +532,7 @@ async def test_nats_subject_payload_mismatch_is_dropped_and_logged(caplog) -> No
     )
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
-    message = _settings_request_message()
+    message = _service_request_message()
 
     async with substrate.subscribe(
         SERVICES_LANE,
@@ -563,10 +555,10 @@ async def test_nats_request_waits_for_first_accepted_reply() -> None:
     substrate = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
-    request = _settings_request_message()
+    request = _service_request_message()
     fake_nc.reply_deliveries = [
-        _settings_reply_message(request, theme="light"),
-        _settings_reply_message(request, theme="dark"),
+        _service_reply_message(request, theme="light"),
+        _service_reply_message(request, theme="dark"),
     ]
 
     reply = await substrate.request(
@@ -585,14 +577,14 @@ async def test_nats_request_ignores_wrong_recipient_session_reply() -> None:
     substrate = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
-    request = _settings_request_message()
+    request = _service_request_message()
     fake_nc.reply_deliveries = [
-        _settings_reply_message(
+        _service_reply_message(
             request,
             theme="wrong-session",
             recipient_session_id="other-session",
         ),
-        _settings_reply_message(request, theme="accepted"),
+        _service_reply_message(request, theme="accepted"),
     ]
 
     reply = await substrate.request(request, timeout=1)
@@ -606,9 +598,9 @@ async def test_nats_request_drops_invalid_replies_until_timeout(caplog) -> None:
     substrate = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
-    request = _settings_request_message()
+    request = _service_request_message()
     invalid = _FakeLaneMsg(
-        _settings_reply_message(request),
+        _service_reply_message(request),
         headers={"Deckr-Message-Id": "wrong"},
     )
     fake_nc.reply_deliveries = [invalid]
@@ -629,8 +621,8 @@ async def test_nats_lane_subscriber_buffer_full_unsubscribes(caplog) -> None:
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
     service = service_address("media")
-    first = _settings_request_message()
-    second = _settings_request_message()
+    first = _service_request_message()
+    second = _service_request_message()
 
     async with substrate.subscribe(
         SERVICES_LANE,

@@ -166,15 +166,6 @@
           ],
           "default": null,
           "title": "Settingsschema"
-        },
-        "warmPolicy": {
-          "default": "stop_on_unmount",
-          "enum": [
-            "stop_on_unmount",
-            "keep_until_stopped"
-          ],
-          "title": "Warmpolicy",
-          "type": "string"
         }
       },
       "required": [

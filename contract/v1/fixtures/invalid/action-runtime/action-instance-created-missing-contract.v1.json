@@ -8,9 +8,6 @@
         "contextId": "clock-context-1",
         "providerId": "dev.deckr.clock",
         "providerInstanceId": "clock-main"
-      },
-      "settings": {
-        "timezone": "UTC"
       }
     },
     "exchangePattern": "one_way",

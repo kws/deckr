@@ -98,9 +98,13 @@ Keep lane usage explicit and contract-based:
 await endpoint.send(
     lane="actions",
     recipient="controller:main",
-    subject=entity_subject("settings", contextId="ctx"),
-    message_type="settingsRequest",
-    body={"target": target},
+    subject=entity_subject("extension", contextId="ctx"),
+    message_type="actionExtension",
+    body={
+        "extensionType": "dev.deckr.example.ping",
+        "extensionSchemaId": "dev.deckr.example.ping.v1",
+        "data": {},
+    },
 )
 ```
 
