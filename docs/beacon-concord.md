@@ -23,7 +23,7 @@ Use these references together:
 - [`../contract/v1`](../contract/v1): language-neutral schemas, fixtures, and
   acceptance vectors
 - Python models in `deckr.beacon`, `deckr.concord`,
-  `deckr.hardware.profiles`, and `deckr.profiles`: current reference
+  `deckr.hardware.profiles`, and `deckr.action_runtime`: current reference
   implementation and source for generated artifacts
 
 The JSON Schemas are structural wire contracts. They intentionally do not carry
@@ -359,17 +359,17 @@ Deckr core owns these profiles:
 | Profile | Protocol | Purpose |
 | --- | --- | --- |
 | `dev.deckr.profile.hardware.v1` | Beacon | hardware devices, controls, capabilities |
-| `dev.deckr.profile.actions.v1` | Beacon | action provider actions and requirements |
 | `dev.deckr.profile.hardware_claim.v1` | Concord | controller ownership of hardware devices |
-| `dev.deckr.profile.action_provider_session.v1` | Concord | live controller/provider runtime sessions |
+| `dev.deckr.action_runtime.provider` | Services/Concord | action runtime service advertisement, views, and service-use leases |
 
 For `dev.deckr.profile.hardware.v1`, the Beacon payload `sessionId` must match
 the advertisement `sessionId`, `managerEndpoint` must match the advertisement
 `endpoint`, and `managerId` must be the hardware-manager endpoint id.
 
-For `dev.deckr.profile.actions.v1`, the Beacon payload `sessionId` must match
-the advertisement `sessionId`, `providerEndpoint` must match the advertisement
-`endpoint`, and `providerInstanceId` must be the action-provider endpoint id.
+For `dev.deckr.action_runtime.provider`, the service id must be
+`action-runtime.<providerInstanceId>`, the service endpoint must be
+`service:<serviceId>`, and action availability is published through the
+contract-fenced `action_availability` view.
 
 For `dev.deckr.profile.hardware_claim.v1`, the claim terms bind a controller
 endpoint, hardware-manager endpoint, and one or more claimed devices. Device
@@ -391,14 +391,13 @@ Claimed device descriptors are expected to remain stable for v1. Material
 descriptor changes are represented by claim cancellation or token loss plus a
 new Beacon candidate, not by hardware lane lifecycle messages.
 
-For `dev.deckr.profile.action_provider_session.v1`, the terms bind a
-controller endpoint to one action-provider runtime endpoint and the provider
-runtime session advertised through Beacon. Individual control bindings are
-controller-owned routing state. Once the controller and provider have negotiated
-the provider-session Concord contract, Beacon is no longer part of that
-contract's lifecycle or validity. Existing bindings remain usable while the
-provider-session contract is valid; Beacon may only discover candidates for new
-or successor negotiations.
+Action provider runtimes use the `dev.deckr.action_runtime.provider` service
+protocol. A controller obtains authority through that service's Concord
+service-use contract, then reads the fenced `action_availability` view and sends
+runtime lifecycle messages on the `services` lane. Individual control bindings
+are controller-owned routing state. Once the controller and provider have
+negotiated the service-use contract, Beacon is no longer part of that
+contract's lifecycle or validity.
 
 Service packages may use generic Beacon and Concord with package-owned feature
 ids, advertisement payload/use profiles, and direct KV-backed service views.

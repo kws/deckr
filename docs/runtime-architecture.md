@@ -664,8 +664,8 @@ lifecycle management. That runtime identity must be:
 - separate from protocol-level addresses carried on event lanes
 
 Protocol addresses such as `controller:<controller_id>`,
-`action_provider:<provider_instance_id>`, `hardware_manager:<manager_id>`, and
-`service:<service_id>` are derived from endpoint family plus the configured
+`service:<service_id>`, and `hardware_manager:<manager_id>` are derived from
+endpoint family plus the configured
 endpoint id in the instance `endpoints` map. They are not the generic lifecycle
 identity of a component instance.
 
@@ -736,16 +736,15 @@ allow = ["dev.deckr.clock", "dev.deckr.sonos", "dev.deckr.openhab", "com.k-si.de
 
 For that first-party source, omitted `block` defaults to an empty list,
 `instance_id_template` defaults to `{provider_id}-main`, and
-`endpoint_id_templates.action_provider` defaults to `python-{provider_id}`.
+`provider_instance_id_template` defaults to `python-{provider_id}`.
 
 Each Python action-provider runtime instance registers
-`action_provider:<provider-instance-id>` on `actions`. When a host enables the
-optional `services` lane, the provider runtime may also register on `services`
-so hosted action instances can use request-reply service messages and
-Concord-authorized service views without becoming service components themselves.
-Service discovery and service-use negotiation for those hosted actions and
-other feature consumers go through the managed `deckr.services.DeckrServices`
-client. The managed client owns the relevant service protocol feature watch,
+`service:action-runtime.<provider-instance-id>` on `services`, advertises the
+Action Runtime service protocol, and publishes contract-fenced availability and
+settings views. Service discovery and service-use negotiation for those hosted
+actions and other feature consumers go through the managed
+`deckr.services.DeckrServices` client. The managed client owns the relevant
+service protocol feature watch,
 descriptor parsing, candidate selection, Concord negotiation, request contract
 pointers, and fenced view reads/watches. Consumers do not scan Beacon KV,
 duplicate descriptor parsing loops, classify Concord terminal statuses, or use

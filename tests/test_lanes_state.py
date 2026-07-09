@@ -11,20 +11,20 @@ from message_bus_mocks import mock_deckr, mock_message_bus
 
 from deckr.actions.endpoints import (
     action_provider_address,
-    action_providers_broadcast,
 )
 from deckr.concord import (
     ConcordAgreementSpec,
 )
 from deckr.contracts.lanes import (
     DEFAULT_MESSAGE_CONTRACT_REGISTRY,
-    SERVICE_LANE_CONTRACT,
 )
 from deckr.contracts.messages import (
     ACTIONS_LANE,
+    HARDWARE_MESSAGES_LANE,
     SERVICES_LANE,
     DeckrMessage,
     controller_address,
+    controllers_broadcast,
     endpoint_target,
     entity_subject,
     hardware_manager_address,
@@ -63,20 +63,23 @@ async def _receive(stream):
 @pytest.mark.asyncio
 async def test_endpoint_session_id_is_reused_across_lanes() -> None:
     async with (
-        mock_deckr(
-            lane_contracts=(SERVICE_LANE_CONTRACT,),
-            lanes=(SERVICES_LANE,),
-        ) as deckr,
+        mock_deckr() as deckr,
         deckr.endpoint(controller_address("main"), session_id="controller-fixed") as controller,
-        deckr.endpoint(action_provider_address("python")) as provider,
+        deckr.endpoint(hardware_manager_address("hardware")) as hardware,
         deckr.endpoint(service_address("media")) as service,
     ):
-        action_message = await controller.send(
-            lane=ACTIONS_LANE,
-            recipient=provider.address,
-            subject=entity_subject("settings", contextId="ctx"),
-            message_type="settingsRequest",
-            body={"target": _settings_target()},
+        hardware_message = await controller.send(
+            lane=HARDWARE_MESSAGES_LANE,
+            recipient=hardware.address,
+            subject=entity_subject("hardware", deviceId="device-1"),
+            message_type="controlCommand",
+            body={
+                "deviceRef": {"managerId": "hardware", "deviceId": "device-1"},
+                "controlId": "key-1",
+                "capabilityId": "raster",
+                "commandType": "clear",
+                "params": {},
+            },
             contract=_CONTRACT,
         )
         service_message = await controller.send(
@@ -99,7 +102,7 @@ async def test_endpoint_session_id_is_reused_across_lanes() -> None:
             contract={"contractId": "service-contract-1", "generation": 1},
         )
 
-    assert action_message.sender_session_id == "controller-fixed"
+    assert hardware_message.sender_session_id == "controller-fixed"
     assert service_message.sender_session_id == "controller-fixed"
 
 
@@ -107,41 +110,41 @@ async def test_endpoint_session_id_is_reused_across_lanes() -> None:
 async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
     async with (
         mock_deckr() as deckr,
-        deckr.endpoint(controller_address("main")) as controller,
-        deckr.endpoint(action_provider_address("a")) as provider_a,
-        deckr.endpoint(action_provider_address("b")) as provider_b,
-        deckr.endpoint(controller_address("other")) as controller_listener,
+        deckr.endpoint(hardware_manager_address("main")) as hardware,
+        deckr.endpoint(controller_address("a")) as controller_a,
+        deckr.endpoint(controller_address("b")) as controller_b,
+        deckr.endpoint(hardware_manager_address("other")) as hardware_listener,
     ):
-        sent = await controller.send(
-            lane=ACTIONS_LANE,
-            recipient=action_providers_broadcast(),
-            subject=entity_subject("page", contextId="ctx"),
-            message_type="actionExtension",
+        sent = await hardware.send(
+            lane=HARDWARE_MESSAGES_LANE,
+            recipient=controllers_broadcast(),
+            subject=entity_subject("hardware", deviceId="device-1"),
+            message_type="capabilityStateChanged",
             body={
-                "extensionType": "test.broadcast",
-                "extensionSchemaId": "test.broadcast.v1",
-                "data": {"title": "Ready"},
+                "deviceRef": {"managerId": "main", "deviceId": "device-1"},
+                "capabilityId": "raster",
+                "value": "ready",
             },
             contract=_CONTRACT,
         )
 
-    contract = deckr.lane_contracts.contract_for(ACTIONS_LANE)
+    contract = deckr.lane_contracts.contract_for(HARDWARE_MESSAGES_LANE)
     assert message_is_deliverable(
         sent,
-        endpoint=provider_a.address,
-        endpoint_session_id=provider_a.session_id,
+        endpoint=controller_a.address,
+        endpoint_session_id=controller_a.session_id,
         contract=contract,
     )
     assert message_is_deliverable(
         sent,
-        endpoint=provider_b.address,
-        endpoint_session_id=provider_b.session_id,
+        endpoint=controller_b.address,
+        endpoint_session_id=controller_b.session_id,
         contract=contract,
     )
     assert not message_is_deliverable(
         sent,
-        endpoint=controller_listener.address,
-        endpoint_session_id=controller_listener.session_id,
+        endpoint=hardware_listener.address,
+        endpoint_session_id=hardware_listener.session_id,
         contract=contract,
     )
 
@@ -150,15 +153,21 @@ async def test_broadcast_delivery_is_filtered_by_target_family() -> None:
 async def test_lane_validation_rejects_wrong_sender_family() -> None:
     async with (
         mock_deckr() as deckr,
-        deckr.endpoint(hardware_manager_address("x")) as worker,
+        deckr.endpoint(service_address("x")) as worker,
     ):
         with pytest.raises(ValueError, match="Sender family"):
             await worker.send(
-                lane=ACTIONS_LANE,
+                lane=HARDWARE_MESSAGES_LANE,
                 recipient=controller_address("main"),
-                subject=entity_subject("settings", contextId="ctx"),
-                message_type="settingsRequest",
-                body={"target": _settings_target()},
+                subject=entity_subject("hardware", deviceId="device-1"),
+                message_type="controlCommand",
+                body={
+                    "deviceRef": {"managerId": "x", "deviceId": "device-1"},
+                    "controlId": "key-1",
+                    "capabilityId": "raster",
+                    "commandType": "clear",
+                    "params": {},
+                },
                 contract=_CONTRACT,
             )
 
@@ -167,7 +176,7 @@ async def test_lane_validation_rejects_wrong_sender_family() -> None:
 async def test_endpoint_request_uses_deckr_correlation() -> None:
     async with (
         mock_deckr() as deckr,
-        deckr.endpoint(action_provider_address("python")) as provider,
+        deckr.endpoint(service_address("media")) as service,
         deckr.endpoint(controller_address("main")) as controller,
     ):
 
@@ -175,32 +184,50 @@ async def test_endpoint_request_uses_deckr_correlation() -> None:
             del timeout
             reply = DeckrMessage(
                 lane=message.lane,
-                messageType="settingsSnapshot",
-                sender=controller.address,
-                senderSessionId=controller.session_id,
+                messageType=SERVICE_MESSAGE,
+                sender=service.address,
+                senderSessionId=service.session_id,
                 recipient=endpoint_target(message.sender),
                 recipientSessionId=message.sender_session_id,
                 subject=message.subject,
                 inReplyTo=message.message_id,
                 contract=message.contract,
-                body={"target": _settings_target(), "settings": {"theme": "dark"}},
+                body={
+                    "serviceNamespace": "org.example.media",
+                    "name": "play",
+                    "intent": "command",
+                    "exchangePattern": "request_reply",
+                    "status": "ok",
+                    "result": {"state": "playing"},
+                },
             )
             assert await reply_is_accepted(reply, request=message, accept=accept)
             return reply
 
         deckr._message_bus.request.side_effect = request_side_effect
-        reply = await provider.request(
-            lane=ACTIONS_LANE,
-            recipient=controller_address("main"),
-            subject=entity_subject("settings", contextId="ctx"),
-            message_type="settingsRequest",
-            body={"target": _settings_target()},
+        reply = await controller.request(
+            lane=SERVICES_LANE,
+            recipient=service.address,
+            subject=entity_subject(
+                "service",
+                serviceId="media",
+                namespace="org.example.media",
+                operation="play",
+            ),
+            message_type=SERVICE_MESSAGE,
+            body={
+                "serviceNamespace": "org.example.media",
+                "name": "play",
+                "intent": "command",
+                "exchangePattern": "request_reply",
+                "params": {},
+            },
             contract=_CONTRACT,
         )
 
-    assert reply.message_type == "settingsSnapshot"
+    assert reply.message_type == SERVICE_MESSAGE
     assert reply.in_reply_to is not None
-    assert reply.recipient_session_id == provider.session_id
+    assert reply.recipient_session_id == controller.session_id
 
 
 @pytest.mark.asyncio
@@ -238,34 +265,45 @@ async def test_endpoint_context_exit_closes_active_subscriptions() -> None:
     async with mock_deckr() as deckr:
         endpoint_cm = deckr.endpoint(controller_address("main"))
         controller = await endpoint_cm.__aenter__()
-        subscription_cm = controller.subscribe(ACTIONS_LANE)
+        subscription_cm = controller.subscribe(SERVICES_LANE)
         await subscription_cm.__aenter__()
 
         await endpoint_cm.__aexit__(None, None, None)
 
         assert deckr._message_bus.subscriptions[-1].exited
         with pytest.raises(RuntimeError, match="is closed"):
-            controller.subscribe(ACTIONS_LANE)
+            controller.subscribe(SERVICES_LANE)
 
 
 def test_recipient_session_mismatch_is_not_deliverable() -> None:
     message = DeckrMessage(
-        lane=ACTIONS_LANE,
-        messageType="settingsRequest",
-        sender=action_provider_address("python"),
-        senderSessionId="provider-session",
-        recipient=endpoint_target(controller_address("main")),
+        lane=SERVICES_LANE,
+        messageType=SERVICE_MESSAGE,
+        sender=controller_address("main"),
+        senderSessionId="controller-session",
+        recipient=endpoint_target(service_address("media")),
         recipientSessionId="wrong-session",
-        subject=entity_subject("settings", contextId="ctx"),
+        subject=entity_subject(
+            "service",
+            serviceId="media",
+            namespace="org.example.media",
+            name="play",
+        ),
         contract=_CONTRACT,
-        body={"target": _settings_target()},
+        body={
+            "serviceNamespace": "org.example.media",
+            "name": "play",
+            "intent": "command",
+            "exchangePattern": "one_way",
+            "params": {},
+        },
     )
 
     assert not message_is_deliverable(
         message,
-        endpoint=controller_address("main"),
-        endpoint_session_id="controller-session",
-        contract=DEFAULT_MESSAGE_CONTRACT_REGISTRY.contract_for(ACTIONS_LANE),
+        endpoint=service_address("media"),
+        endpoint_session_id="service-session",
+        contract=DEFAULT_MESSAGE_CONTRACT_REGISTRY.contract_for(SERVICES_LANE),
     )
 
 
@@ -274,7 +312,7 @@ async def test_concord_cancellation_does_not_close_lane_subscription() -> None:
     async with (
         mock_deckr() as deckr,
         deckr.endpoint(controller_address("main")) as controller,
-        controller.subscribe(ACTIONS_LANE),
+        controller.subscribe(SERVICES_LANE),
     ):
         subscription = deckr._message_bus.subscriptions[-1]
         agreement = await deckr.concord.propose(
@@ -376,14 +414,25 @@ class _FakeNc:
 
 def _settings_request_message() -> DeckrMessage:
     return DeckrMessage(
-        lane=ACTIONS_LANE,
-        messageType="settingsRequest",
-        sender=action_provider_address("python"),
-        senderSessionId="provider-session",
-        recipient=endpoint_target(controller_address("main")),
-        subject=entity_subject("settings", contextId="ctx"),
+        lane=SERVICES_LANE,
+        messageType=SERVICE_MESSAGE,
+        sender=controller_address("main"),
+        senderSessionId="controller-session",
+        recipient=endpoint_target(service_address("media")),
+        subject=entity_subject(
+            "service",
+            serviceId="media",
+            namespace="org.example.media",
+            name="play",
+        ),
         contract=_CONTRACT,
-        body={"target": _settings_target()},
+        body={
+            "serviceNamespace": "org.example.media",
+            "name": "play",
+            "intent": "command",
+            "exchangePattern": "request_reply",
+            "params": {},
+        },
     )
 
 
@@ -395,16 +444,23 @@ def _settings_reply_message(
     recipient_session_id: str | None = None,
 ) -> DeckrMessage:
     return DeckrMessage(
-        lane=ACTIONS_LANE,
-        messageType="settingsSnapshot",
-        sender=controller_address("main"),
-        senderSessionId="controller-session",
+        lane=SERVICES_LANE,
+        messageType=SERVICE_MESSAGE,
+        sender=service_address("media"),
+        senderSessionId="service-session",
         recipient=endpoint_target(request.sender),
         recipientSessionId=recipient_session_id or request.sender_session_id,
         subject=request.subject,
         inReplyTo=in_reply_to or request.message_id,
         contract=request.contract,
-        body={"target": _settings_target(), "settings": {"theme": theme}},
+        body={
+            "serviceNamespace": "org.example.media",
+            "name": "play",
+            "intent": "command",
+            "exchangePattern": "request_reply",
+            "status": "ok",
+            "result": {"theme": theme},
+        },
     )
 
 
@@ -421,7 +477,7 @@ async def test_nats_disconnected_operations_raise_clear_runtime_error() -> None:
         await substrate.request(message, timeout=0.01)
     with pytest.raises(RuntimeError, match="not connected"):
         async with substrate.subscribe(
-            ACTIONS_LANE,
+            SERVICES_LANE,
             controller_address("main"),
             endpoint_session_id="controller-session",
         ):
@@ -484,26 +540,16 @@ async def test_nats_subject_payload_mismatch_is_dropped_and_logged(caplog) -> No
     )
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
-    message = DeckrMessage(
-        lane=ACTIONS_LANE,
-        messageType="settingsRequest",
-        sender=action_provider_address("python"),
-        senderSessionId="provider-session",
-        recipient=endpoint_target(controller_address("main")),
-        recipientSessionId="controller-session",
-        subject=entity_subject("settings", contextId="ctx"),
-        contract=_CONTRACT,
-        body={"target": _settings_target()},
-    )
+    message = _settings_request_message()
 
     async with substrate.subscribe(
-        ACTIONS_LANE,
-        controller_address("main"),
-        endpoint_session_id="controller-session",
+        SERVICES_LANE,
+        service_address("media"),
+        endpoint_session_id="service-session",
     ) as stream:
         await fake_nc.subscriptions[0].deliver(
             message,
-            subject="deckr.msg.actions.to.controller.other",
+            subject="deckr.msg.services.to.service.other",
         )
         with anyio.move_on_after(0.05) as scope:
             await stream.receive()
@@ -526,11 +572,11 @@ async def test_nats_request_waits_for_first_accepted_reply() -> None:
     reply = await substrate.request(
         request,
         timeout=1,
-        accept=lambda message: message.body["settings"]["theme"] == "dark",
+        accept=lambda message: message.body["result"]["theme"] == "dark",
     )
 
-    assert reply.body["settings"]["theme"] == "dark"
-    assert fake_nc.published[0]["subject"] == "deckr.msg.actions.to.controller.main"
+    assert reply.body["result"]["theme"] == "dark"
+    assert fake_nc.published[0]["subject"] == "deckr.msg.services.to.service.media"
     assert fake_nc.published[0]["reply"] == "_INBOX.1"
 
 
@@ -551,7 +597,7 @@ async def test_nats_request_ignores_wrong_recipient_session_reply() -> None:
 
     reply = await substrate.request(request, timeout=1)
 
-    assert reply.body["settings"]["theme"] == "accepted"
+    assert reply.body["result"]["theme"] == "accepted"
 
 
 @pytest.mark.asyncio
@@ -582,35 +628,14 @@ async def test_nats_lane_subscriber_buffer_full_unsubscribes(caplog) -> None:
     )
     fake_nc = _FakeNc()
     substrate._nc = fake_nc
-    controller = controller_address("main")
-    provider = action_provider_address("python")
-    first = DeckrMessage(
-        lane=ACTIONS_LANE,
-        messageType="settingsRequest",
-        sender=provider,
-        senderSessionId="provider-session",
-        recipient=endpoint_target(controller),
-        recipientSessionId="controller-session",
-        subject=entity_subject("settings", contextId="ctx-1"),
-        contract=_CONTRACT,
-        body={"target": _settings_target()},
-    )
-    second = DeckrMessage(
-        lane=ACTIONS_LANE,
-        messageType="settingsRequest",
-        sender=provider,
-        senderSessionId="provider-session",
-        recipient=endpoint_target(controller),
-        recipientSessionId="controller-session",
-        subject=entity_subject("settings", contextId="ctx-2"),
-        contract=_CONTRACT,
-        body={"target": _settings_target()},
-    )
+    service = service_address("media")
+    first = _settings_request_message()
+    second = _settings_request_message()
 
     async with substrate.subscribe(
-        ACTIONS_LANE,
-        controller,
-        endpoint_session_id="controller-session",
+        SERVICES_LANE,
+        service,
+        endpoint_session_id="service-session",
     ) as stream:
         subscription = fake_nc.subscriptions[0]
         all_subscriptions = tuple(fake_nc.subscriptions)
@@ -623,4 +648,4 @@ async def test_nats_lane_subscriber_buffer_full_unsubscribes(caplog) -> None:
             await stream.receive()
 
     assert "subscriber buffer full" in caplog.text
-    assert "lane=actions endpoint=controller:main session=controller-session" in caplog.text
+    assert "lane=services endpoint=service:media session=service-session" in caplog.text

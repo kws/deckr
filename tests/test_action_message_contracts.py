@@ -5,14 +5,16 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from deckr.actions.availability import (
-    ACTION_AVAILABILITY_READ_OPERATION,
-    ACTION_AVAILABILITY_SERVICE_PROTOCOL,
-    ACTION_AVAILABILITY_SERVICE_VIEW_STORE_NAME,
-    ActionAvailabilityViewPayload,
-    action_availability_service_id,
+from deckr.action_runtime import (
+    ACTION_INSTANCE_CREATED_MESSAGE,
+    ACTION_RUNTIME_SERVICE_PROTOCOL,
+    ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME,
+    BINDING_ATTACHED_MESSAGE,
+    PROVIDER_SETTINGS_VIEW_FAMILY,
+    ActionRuntimeAvailabilityViewPayload,
     action_availability_view_key,
     action_availability_view_ref,
+    action_runtime_service_id,
 )
 from deckr.actions.endpoints import action_provider_address
 from deckr.actions.messages import (
@@ -51,7 +53,7 @@ from deckr.actions.messages import (
     subject_config_id,
     subject_page_session_id,
 )
-from deckr.profiles import ActionsBeaconPayload
+from deckr.contracts.messages import service_address
 
 
 def _settings_target() -> SettingsTargetRef:
@@ -155,26 +157,6 @@ def test_core_action_bodies_forbid_stale_routing_identity_fields() -> None:
         )
 
 
-def test_actions_beacon_payload_validates_provider_and_action_identity() -> None:
-    with pytest.raises(ValidationError, match="providerEndpoint"):
-        ActionsBeaconPayload(
-            providerInstanceId="clock-office",
-            providerEndpoint=action_provider_address("other"),
-            providerId="demo.provider",
-            sessionId="session-1",
-            actions={},
-        )
-
-    with pytest.raises(ValidationError, match="map keys"):
-        ActionsBeaconPayload(
-            providerInstanceId="clock-office",
-            providerEndpoint=action_provider_address("clock-office"),
-            providerId="demo.provider",
-            sessionId="session-1",
-            actions={"demo.other": {"actionId": "demo.action", "name": "Demo"}},
-        )
-
-
 def test_action_descriptor_carries_capability_requirements_and_settings_schema() -> None:
     descriptor = ActionDescriptor(
         actionId="demo.pager",
@@ -258,9 +240,9 @@ def test_action_availability_entries_validate_descriptor_identity() -> None:
         )
 
 
-def test_action_availability_service_contract_shape() -> None:
-    service_id = action_availability_service_id("demo-provider")
-    protocol = ACTION_AVAILABILITY_SERVICE_PROTOCOL
+def test_action_runtime_service_contract_shape() -> None:
+    service_id = action_runtime_service_id("demo-provider")
+    protocol = ACTION_RUNTIME_SERVICE_PROTOCOL
     payload = protocol.advertisement_payload(
         service_id=service_id,
         session_id="service-session",
@@ -268,31 +250,38 @@ def test_action_availability_service_contract_shape() -> None:
     )
     view_ref = action_availability_view_ref(service_id)
 
-    assert service_id == "action-availability.demo-provider"
-    assert tuple(protocol.operations) == (ACTION_AVAILABILITY_READ_OPERATION,)
-    assert tuple(protocol.messages) == (ACTION_AVAILABILITY_READ_OPERATION,)
+    assert service_id == "action-runtime.demo-provider"
+    assert ACTION_INSTANCE_CREATED_MESSAGE in protocol.operations
+    assert BINDING_ATTACHED_MESSAGE in protocol.messages
     assert payload.service_id == service_id
-    assert tuple(payload.supported_messages) == (ACTION_AVAILABILITY_READ_OPERATION,)
-    assert payload.views["actions"].store_name == (
-        ACTION_AVAILABILITY_SERVICE_VIEW_STORE_NAME
+    assert ACTION_INSTANCE_CREATED_MESSAGE in payload.supported_messages
+    assert payload.views["action_availability"].store_name == (
+        ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME
     )
-    assert payload.views["actions"].key_prefix.endswith(".actions.")
-    assert payload.views["actions"].writer == "service"
-    assert action_availability_view_key(service_id).endswith(".actions.current")
-    assert view_ref.store_name == ACTION_AVAILABILITY_SERVICE_VIEW_STORE_NAME
+    assert payload.views["action_availability"].key_prefix.endswith(
+        ".action_availability."
+    )
+    assert payload.views["action_availability"].writer == "service"
+    assert payload.views[PROVIDER_SETTINGS_VIEW_FAMILY].writer == "consumer"
+    assert action_availability_view_key(service_id).endswith(
+        ".action_availability.current"
+    )
+    assert view_ref.store_name == ACTION_RUNTIME_SERVICE_VIEW_STORE_NAME
 
 
-def test_action_availability_service_view_payload_round_trips() -> None:
+def test_action_runtime_availability_view_payload_round_trips() -> None:
     descriptor = ActionDescriptor(
         actionId="demo.provider.action.weather",
         name="Weather",
         providerId="demo.provider",
     )
-    payload = ActionAvailabilityViewPayload(
+    service_id = action_runtime_service_id("demo-provider")
+    payload = ActionRuntimeAvailabilityViewPayload(
         providerInstanceId="demo-provider",
-        providerEndpoint=action_provider_address("demo-provider"),
+        serviceId=service_id,
+        serviceEndpoint=service_address(service_id),
         providerId="demo.provider",
-        providerSessionId="provider-session",
+        serviceSessionId="service-session",
         entries=[
             ActionAvailabilityEntry(
                 actionId="demo.provider.action.weather",
@@ -302,24 +291,24 @@ def test_action_availability_service_view_payload_round_trips() -> None:
         ],
     )
 
-    assert payload.to_dict()["providerSessionId"] == "provider-session"
+    assert payload.to_dict()["serviceSessionId"] == "service-session"
     assert payload.to_dict()["entries"][0]["descriptor"]["actionId"] == (
         "demo.provider.action.weather"
     )
 
 
-def test_action_availability_service_view_payload_ignores_fence_metadata() -> None:
-    payload = ActionAvailabilityViewPayload.model_validate(
+def test_action_runtime_availability_view_payload_ignores_fence_metadata() -> None:
+    service_id = action_runtime_service_id("demo-provider")
+    payload = ActionRuntimeAvailabilityViewPayload.model_validate(
         {
             "providerInstanceId": "demo-provider",
-            "providerEndpoint": action_provider_address("demo-provider"),
+            "serviceId": service_id,
+            "serviceEndpoint": service_address(service_id),
             "providerId": "demo.provider",
-            "providerSessionId": "provider-session",
+            "serviceSessionId": "service-session",
             "entries": [],
-            "viewKey": "action-availability.demo-provider.actions.current",
-            "serviceId": "action-availability.demo-provider",
-            "serviceNamespace": "dev.deckr.action_availability.service",
-            "sessionId": "service-session",
+            "viewKey": "action-runtime.demo-provider.action_availability.current",
+            "serviceNamespace": ACTION_RUNTIME_SERVICE_PROTOCOL.namespace,
             "contractId": "service-use-contract",
             "generation": 1,
         }
@@ -328,9 +317,12 @@ def test_action_availability_service_view_payload_ignores_fence_metadata() -> No
     assert payload.provider_instance_id == "demo-provider"
     assert payload.to_dict() == {
         "providerInstanceId": "demo-provider",
-        "providerEndpoint": "action_provider:demo-provider",
+        "serviceId": "action-runtime.demo-provider",
+        "serviceEndpoint": "service:action-runtime.demo-provider",
         "providerId": "demo.provider",
-        "providerSessionId": "provider-session",
+        "serviceSessionId": "service-session",
+        "labels": {},
+        "annotations": {},
         "entries": [],
     }
 

@@ -1,22 +1,60 @@
 {
   "$defs": {
-    "ActionBeaconDescriptor": {
+    "ActionAvailabilityEntry": {
       "additionalProperties": false,
+      "description": "Provider-direct availability for one action descriptor.",
       "properties": {
         "actionId": {
           "title": "Actionid",
           "type": "string"
         },
-        "capacity": {
+        "descriptor": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ProfileCapacity"
+              "$ref": "#/$defs/ActionDescriptor"
             },
             {
               "type": "null"
             }
           ],
           "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "unavailable",
+            "probing"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "status"
+      ],
+      "title": "ActionAvailabilityEntry",
+      "type": "object"
+    },
+    "ActionDescriptor": {
+      "additionalProperties": false,
+      "description": "Action identity advertised by an action provider.",
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
         },
         "controllers": {
           "anyOf": [
@@ -32,13 +70,6 @@
           ],
           "default": null,
           "title": "Controllers"
-        },
-        "hints": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Hints",
-          "type": "object"
         },
         "manifestDefaults": {
           "anyOf": [
@@ -149,7 +180,7 @@
       "required": [
         "actionId"
       ],
-      "title": "ActionBeaconDescriptor",
+      "title": "ActionDescriptor",
       "type": "object"
     },
     "CapabilityRequirement": {
@@ -289,55 +320,12 @@
       "title": "EndpointAddress",
       "type": "string"
     },
-    "JsonValue": {},
-    "ProfileCapacity": {
-      "additionalProperties": false,
-      "properties": {
-        "availableInstances": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Availableinstances"
-        },
-        "claimedInstances": {
-          "default": 0,
-          "title": "Claimedinstances",
-          "type": "integer"
-        },
-        "totalInstances": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Totalinstances"
-        }
-      },
-      "title": "ProfileCapacity",
-      "type": "object"
-    }
+    "JsonValue": {}
   },
-  "$id": "dev.deckr.profile.actions.v1",
+  "$id": "dev.deckr.action_runtime.availability-view.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
+  "description": "Provider-scoped current action availability for one runtime service lease.",
   "properties": {
-    "actions": {
-      "additionalProperties": {
-        "$ref": "#/$defs/ActionBeaconDescriptor"
-      },
-      "title": "Actions",
-      "type": "object"
-    },
     "annotations": {
       "additionalProperties": {
         "$ref": "#/$defs/JsonValue"
@@ -345,21 +333,19 @@
       "title": "Annotations",
       "type": "object"
     },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/ActionAvailabilityEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    },
     "labels": {
       "additionalProperties": {
         "type": "string"
       },
       "title": "Labels",
       "type": "object"
-    },
-    "profile": {
-      "const": "dev.deckr.profile.actions.v1",
-      "default": "dev.deckr.profile.actions.v1",
-      "title": "Profile",
-      "type": "string"
-    },
-    "providerEndpoint": {
-      "$ref": "#/$defs/EndpointAddress"
     },
     "providerId": {
       "title": "Providerid",
@@ -369,18 +355,26 @@
       "title": "Providerinstanceid",
       "type": "string"
     },
-    "sessionId": {
-      "title": "Sessionid",
+    "serviceEndpoint": {
+      "$ref": "#/$defs/EndpointAddress"
+    },
+    "serviceId": {
+      "title": "Serviceid",
+      "type": "string"
+    },
+    "serviceSessionId": {
+      "title": "Servicesessionid",
       "type": "string"
     }
   },
   "required": [
     "providerInstanceId",
-    "providerEndpoint",
+    "serviceId",
+    "serviceEndpoint",
     "providerId",
-    "sessionId"
+    "serviceSessionId"
   ],
-  "title": "Deckr Beacon actions profile payload",
+  "title": "Deckr Action Runtime availability view payload",
   "type": "object",
   "x-deckr-schema-version": "1"
 }

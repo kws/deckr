@@ -219,14 +219,12 @@ token.
 
 ## Actions And Services
 
-Action providers and services follow the same component and endpoint-session
-rules.
-
-Action providers should advertise action descriptors through the actions Beacon
-profile and use Concord action-provider session contracts for live
-controller/provider sessions. Existing bindings are controller-owned routing
-state; continued Beacon presence is not live authority after a Concord session
-exists.
+Action providers are exposed as Action Runtime services. Provider runtimes
+advertise `dev.deckr.action_runtime.provider`, publish the
+`action_availability` service view, and exchange lifecycle, binding, page, and
+output messages over the `services` lane under service-use Concord contracts.
+Existing bindings are controller-owned routing state; continued Beacon presence
+is not live authority after a service-use contract exists.
 
 Services should use package-owned feature ids, payload/use profiles, and
 explicit service-view buckets. Service messages are ordinary lane

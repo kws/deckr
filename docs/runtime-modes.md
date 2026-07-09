@@ -77,9 +77,10 @@ component = "dev.deckr.action_provider_runtime.python"
 instance_id = "clock-main"
 
 [deckr.components.instances.clock_actions.endpoints]
-action_provider = "python-dev.deckr.clock"
+service = "action-runtime.python-dev.deckr.clock"
 
 [deckr.components.instances.clock_actions.config]
+provider_instance_id = "python-dev.deckr.clock"
 provider_id = "dev.deckr.clock"
 entrypoint = "deckr.plugins.clock"
 ```

@@ -215,10 +215,10 @@ managers. They are separate from transport protocols such as MQTT and WebSocket,
 and separate from adapter-private third-party protocols.
 
 The supported message bus and protocol-store model is defined in
-[docs/nats-bus.md](docs/nats-bus.md). `deckr.actions.messages`,
-`deckr.actions.endpoints`, and `deckr.profiles` contain the shared
-`actions` lane contracts used by controllers, action provider runtimes, lane
-bus adapters, and non-Python implementations. The v1 action contract is
+[docs/nats-bus.md](docs/nats-bus.md). `deckr.action_runtime`,
+`deckr.actions.messages`, and `deckr.actions.endpoints` contain the shared
+Action Runtime service contracts used by controllers, action provider runtimes,
+service bus adapters, and non-Python implementations. The v1 action contract is
 capability-native: action descriptors may declare capability requirements,
 lifecycle messages carry structured action-instance, binding, and page-session
 metadata, input is represented as capability input, and output requests target
@@ -232,12 +232,11 @@ instance and page-scoped child action instance. Providers do not send
 controller-owned.
 
 In particular, endpoint addresses such as `controller:<controller_id>`,
-`action_provider:<provider_instance_id>`, and
-`hardware_manager:<manager_id>` are protocol addressing identities. They are not
-launcher runtime names, action provider runtime ids, WebSocket connection ids,
-MQTT topics, or concrete hardware ids. Device, control, capability, action,
-context, profile, and page references are subjects carried by lane messages, not
-transport locators.
+`service:<service_id>`, and `hardware_manager:<manager_id>` are protocol
+addressing identities. They are not launcher runtime names, action provider
+runtime ids, WebSocket connection ids, MQTT topics, or concrete hardware ids.
+Device, control, capability, action, context, profile, and page references are
+subjects carried by lane messages, not transport locators.
 
 The key output rule is:
 

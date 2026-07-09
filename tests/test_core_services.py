@@ -339,15 +339,18 @@ def test_duplicate_instance_source_declaration_id_is_plan_error() -> None:
 @pytest.mark.asyncio
 async def test_start_components_passes_lane_registry_to_component() -> None:
     seen: dict[str, object] = {}
+    lane_name = "com.example.action_events"
+    lane_contract = MessageContract(lane=lane_name)
 
     definition = ComponentDefinition(
         manifest=ComponentManifest(
             component_id="com.example.action_runtime",
-            consumes=("actions",),
-            publishes=("actions",),
+            consumes=(lane_name,),
+            publishes=(lane_name,),
+            lane_contracts=(lane_contract,),
         ),
         factory=lambda context: (
-            seen.setdefault("lane", context.require_lane("actions"))
+            seen.setdefault("lane", context.require_lane(lane_name))
             and _DummyComponent(name=context.runtime_name)
         ),
     )
@@ -379,8 +382,8 @@ async def test_start_components_passes_lane_registry_to_component() -> None:
         )
         async with deckr.endpoint("controller:main") as controller:
             await controller.send(
-                lane="actions",
-                recipient="action_provider:main",
+                lane=lane_name,
+                recipient="controller:main",
                 subject=entity_subject("test"),
                 message_type="actionExtension",
                 body={

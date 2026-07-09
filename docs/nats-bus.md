@@ -311,21 +311,21 @@ Deckr core ships these profile contracts:
 | Profile | Protocol | Purpose |
 | --- | --- | --- |
 | `dev.deckr.profile.hardware.v1` | Beacon | hardware devices, controls, capabilities |
-| `dev.deckr.profile.actions.v1` | Beacon | action provider actions and requirements |
+| `dev.deckr.action_runtime.provider` | Services | action provider runtime service, actions, settings views |
 | `dev.deckr.profile.hardware_claim.v1` | Concord | controller ownership of hardware devices |
-| `dev.deckr.profile.action_provider_session.v1` | Concord | live controller/provider runtime sessions |
+| `*.service_use.v1` | Concord | service-use contracts, including Action Runtime leases |
 
 The generic Beacon layer validates only the advertisement envelope. The generic
-Concord layer validates only contract and token mechanics. Action profile
-validation lives in `deckr.profiles`; hardware profile validation lives in
-`deckr.hardware.profiles` and is exported from `deckr.hardware`.
+Concord layer validates only contract and token mechanics. Action Runtime
+service validation lives in `deckr.action_runtime`; hardware profile validation
+lives in `deckr.hardware.profiles` and is exported from `deckr.hardware`.
 The language-neutral profile rules are summarized in
 [`beacon-concord.md`](beacon-concord.md#profiles).
 
 Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
-whether a claim or provider session is live. A missing Beacon advertisement is
-not a withdrawal of an existing claim or provider session. Python hardware
+whether a claim or service-use lease is live. A missing Beacon advertisement is
+not a withdrawal of an existing claim or service-use contract. Python hardware
 managers use the shared `deckr.hardware.runtime.HardwareManagerRuntime`
 implementation to advertise hardware through managed
 `Beacon.advertise` leases, maintain claim tokens through
@@ -528,8 +528,9 @@ If a runtime cannot find hardware, actions, or services:
    service lane contract and lane name.
 5. If a live agreement is expected, validate the Concord contract and every
    participant token; do not treat Beacon disappearance as withdrawal.
-6. For profile-specific behavior, validate the Beacon payload or Concord terms
-   with `deckr.hardware.profiles` or `deckr.profiles`, depending on the profile.
+6. For profile-specific behavior, validate hardware profiles with
+   `deckr.hardware.profiles` and service protocols with `deckr.action_runtime`
+   or the package-owned service protocol module.
 
 If lane messages are not delivered:
 

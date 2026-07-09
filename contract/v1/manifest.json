@@ -1,21 +1,21 @@
 {
   "artifacts": [
     {
-      "description": "Invalid settingsRequest missing contract",
-      "id": "dev.deckr.fixture.actions.settings_request.invalid_missing_contract.v1",
+      "description": "Invalid Action Runtime service message missing contract",
+      "id": "dev.deckr.fixture.action_runtime.action_instance_created.invalid_missing_contract.v1",
       "kind": "fixture",
-      "path": "fixtures/invalid/actions/settings-request-missing-contract.v1.json",
-      "schemaPath": "schemas/actions/actions.v1.schema.json",
-      "title": "Invalid settingsRequest missing contract",
+      "path": "fixtures/invalid/action-runtime/action-instance-created-missing-contract.v1.json",
+      "schemaPath": "schemas/services/services.v1.schema.json",
+      "title": "Invalid Action Runtime service message missing contract",
       "valid": false
     },
     {
-      "description": "Invalid settingsRequest missing target",
-      "id": "dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1",
+      "description": "Invalid Action Runtime service message missing serviceNamespace",
+      "id": "dev.deckr.fixture.action_runtime.action_instance_created.invalid_missing_namespace.v1",
       "kind": "fixture",
-      "path": "fixtures/invalid/actions/settings-request-missing-target.v1.json",
-      "schemaPath": "schemas/actions/actions.v1.schema.json",
-      "title": "Invalid settingsRequest missing target",
+      "path": "fixtures/invalid/action-runtime/action-instance-created-missing-namespace.v1.json",
+      "schemaPath": "schemas/services/services.v1.schema.json",
+      "title": "Invalid Action Runtime service message missing serviceNamespace",
       "valid": false
     },
     {
@@ -46,15 +46,6 @@
       "valid": false
     },
     {
-      "description": "Invalid action provider session terms missing sessionId",
-      "id": "dev.deckr.fixture.profile.action_provider_session.invalid_missing_session.v1",
-      "kind": "fixture",
-      "path": "fixtures/invalid/profiles/action-provider-session-missing-session.v1.json",
-      "schemaPath": "schemas/profiles/action-provider-session.v1.schema.json",
-      "title": "Invalid action provider session terms missing sessionId",
-      "valid": false
-    },
-    {
       "description": "Invalid hardware profile payload missing managerId",
       "id": "dev.deckr.fixture.profile.hardware.invalid_missing_manager.v1",
       "kind": "fixture",
@@ -73,21 +64,30 @@
       "valid": false
     },
     {
-      "description": "Valid settingsRequest action message",
-      "id": "dev.deckr.fixture.actions.settings_request.valid.v1",
+      "description": "Valid Deckr Action Runtime availability view payload",
+      "id": "dev.deckr.fixture.action_runtime.availability_view.valid.v1",
       "kind": "fixture",
-      "path": "fixtures/valid/actions/settings-request.v1.json",
-      "schemaPath": "schemas/actions/actions.v1.schema.json",
-      "title": "Valid settingsRequest action message",
+      "path": "fixtures/valid/action-runtime/action-availability-view.v1.json",
+      "schemaPath": "schemas/action-runtime/action-availability-view.v1.schema.json",
+      "title": "Valid Deckr Action Runtime availability view payload",
       "valid": true
     },
     {
-      "description": "Valid Beacon actions advertisement",
-      "id": "dev.deckr.fixture.beacon.actions.valid.v1",
+      "description": "Valid Action Runtime action_instance_created service message",
+      "id": "dev.deckr.fixture.action_runtime.action_instance_created.valid.v1",
       "kind": "fixture",
-      "path": "fixtures/valid/beacon/actions-advertisement.v1.json",
+      "path": "fixtures/valid/action-runtime/action-instance-created.v1.json",
+      "schemaPath": "schemas/services/services.v1.schema.json",
+      "title": "Valid Action Runtime action_instance_created service message",
+      "valid": true
+    },
+    {
+      "description": "Valid Beacon Action Runtime service advertisement",
+      "id": "dev.deckr.fixture.beacon.action_runtime.valid.v1",
+      "kind": "fixture",
+      "path": "fixtures/valid/beacon/action-runtime-advertisement.v1.json",
       "schemaPath": "schemas/beacon/advertisement.v1.schema.json",
-      "title": "Valid Beacon actions advertisement",
+      "title": "Valid Beacon Action Runtime service advertisement",
       "valid": true
     },
     {
@@ -127,24 +127,6 @@
       "valid": true
     },
     {
-      "description": "Valid Deckr action provider session Concord terms",
-      "id": "dev.deckr.fixture.profile.action_provider_session.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/profiles/action-provider-session.v1.json",
-      "schemaPath": "schemas/profiles/action-provider-session.v1.schema.json",
-      "title": "Valid Deckr action provider session Concord terms",
-      "valid": true
-    },
-    {
-      "description": "Valid Deckr actions Beacon profile payload",
-      "id": "dev.deckr.fixture.profile.actions.valid.v1",
-      "kind": "fixture",
-      "path": "fixtures/valid/profiles/actions.v1.json",
-      "schemaPath": "schemas/profiles/actions.v1.schema.json",
-      "title": "Valid Deckr actions Beacon profile payload",
-      "valid": true
-    },
-    {
       "description": "Valid Deckr hardware claim Concord terms",
       "id": "dev.deckr.fixture.profile.hardware_claim.valid.v1",
       "kind": "fixture",
@@ -172,12 +154,12 @@
       "valid": true
     },
     {
-      "description": "Canonical JSON Schema for Deckr actions lane envelopes and bodies.",
-      "id": "dev.deckr.message.actions.v1",
+      "description": "Canonical JSON Schema for Deckr Action Runtime availability view payload.",
+      "id": "dev.deckr.action_runtime.availability-view.v1",
       "kind": "schema",
-      "path": "schemas/actions/actions.v1.schema.json",
-      "schemaId": "dev.deckr.message.actions.v1",
-      "title": "Actions lane messages"
+      "path": "schemas/action-runtime/action-availability-view.v1.schema.json",
+      "schemaId": "dev.deckr.action_runtime.availability-view.v1",
+      "title": "Deckr Action Runtime availability view payload"
     },
     {
       "description": "Canonical JSON Schema for Beacon advertisement.",
@@ -242,22 +224,6 @@
       "path": "schemas/hardware/hardware-messages.v1.schema.json",
       "schemaId": "dev.deckr.message.hardware_messages.v1",
       "title": "Hardware messages lane messages"
-    },
-    {
-      "description": "Canonical JSON Schema for Deckr Concord action provider session terms.",
-      "id": "dev.deckr.profile.action_provider_session.v1",
-      "kind": "schema",
-      "path": "schemas/profiles/action-provider-session.v1.schema.json",
-      "schemaId": "dev.deckr.profile.action_provider_session.v1",
-      "title": "Deckr Concord action provider session terms"
-    },
-    {
-      "description": "Canonical JSON Schema for Deckr Beacon actions profile payload.",
-      "id": "dev.deckr.profile.actions.v1",
-      "kind": "schema",
-      "path": "schemas/profiles/actions.v1.schema.json",
-      "schemaId": "dev.deckr.profile.actions.v1",
-      "title": "Deckr Beacon actions profile payload"
     },
     {
       "description": "Canonical JSON Schema for Deckr Concord hardware claim terms.",

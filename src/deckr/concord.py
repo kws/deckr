@@ -49,7 +49,6 @@ CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON = (
 CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON = (
     "concord_agreement_lost_participant_token"
 )
-ACTION_PROVIDER_SESSION_PROFILE_ID = "dev.deckr.profile.action_provider_session.v1"
 CONCORD_CONTRACT_BUCKET_POLICY = KvBucketPolicy(
     bucket=DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
     ttl_seconds=None,
@@ -112,9 +111,7 @@ def _contract_invalid_log_level(
 
 
 def _is_chattery_contract_profile(profile: str | None) -> bool:
-    return profile == ACTION_PROVIDER_SESSION_PROFILE_ID or (
-        profile is not None and profile.endswith(".service_use.v1")
-    )
+    return profile is not None and profile.endswith(".service_use.v1")
 
 
 class ContractState(StrEnum):

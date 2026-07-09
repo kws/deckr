@@ -11,12 +11,20 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from deckr.actions.endpoints import action_provider_address
+from deckr.action_runtime import (
+    ACTION_INSTANCE_CREATED_MESSAGE,
+    ACTION_RUNTIME_AVAILABILITY_VIEW_SCHEMA_ID,
+    ACTION_RUNTIME_SERVICE_NAMESPACE,
+    ACTION_RUNTIME_SERVICE_PROTOCOL,
+    ActionRuntimeAvailabilityViewPayload,
+    action_runtime_payload,
+    action_runtime_service_id,
+)
 from deckr.actions.messages import (
-    ACTION_MESSAGES_SCHEMA_ID,
-    SETTINGS_REQUEST,
-    SettingsTargetRef,
-    action_message_schema,
+    ActionAvailabilityEntry,
+    ActionDescriptor,
+    ActionInstanceLifecycleBody,
+    ActionInstanceMetadata,
 )
 from deckr.beacon import (
     BEACON_ADVERTISEMENT_SCHEMA_ID,
@@ -37,7 +45,6 @@ from deckr.concord import (
 )
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import (
-    ACTIONS_LANE,
     SERVICES_LANE,
     DeckrMessage,
     controller_address,
@@ -72,14 +79,6 @@ from deckr.hardware.profiles import (
     HardwareClaimDevice,
     HardwareClaimTerms,
     ProfileCapacity,
-)
-from deckr.profiles import (
-    ACTION_PROVIDER_SESSION_PROFILE_ID,
-    ACTIONS_FEATURE_ID,
-    ACTIONS_PROFILE_ID,
-    ActionBeaconDescriptor,
-    ActionProviderSessionTerms,
-    ActionsBeaconPayload,
 )
 from deckr.services.messages import (
     SERVICE_MESSAGE,
@@ -156,15 +155,6 @@ def generate_contract_artifacts(output_root: Path | None = None) -> None:
 def _add_schemas(add_artifact) -> None:
     add_artifact(
         kind="schema",
-        artifact_id=ACTION_MESSAGES_SCHEMA_ID,
-        path="schemas/actions/actions.v1.schema.json",
-        title="Actions lane messages",
-        description="Canonical JSON Schema for Deckr actions lane envelopes and bodies.",
-        schemaId=ACTION_MESSAGES_SCHEMA_ID,
-        payload=action_message_schema(),
-    )
-    add_artifact(
-        kind="schema",
         artifact_id=HARDWARE_MESSAGES_SCHEMA_ID,
         path="schemas/hardware/hardware-messages.v1.schema.json",
         title="Hardware messages lane messages",
@@ -224,22 +214,16 @@ def _add_schemas(add_artifact) -> None:
             "Deckr Beacon hardware profile payload",
         ),
         (
-            ACTIONS_PROFILE_ID,
-            "schemas/profiles/actions.v1.schema.json",
-            ActionsBeaconPayload,
-            "Deckr Beacon actions profile payload",
-        ),
-        (
             HARDWARE_CLAIM_PROFILE_ID,
             "schemas/profiles/hardware-claim.v1.schema.json",
             HardwareClaimTerms,
             "Deckr Concord hardware claim terms",
         ),
         (
-            ACTION_PROVIDER_SESSION_PROFILE_ID,
-            "schemas/profiles/action-provider-session.v1.schema.json",
-            ActionProviderSessionTerms,
-            "Deckr Concord action provider session terms",
+            ACTION_RUNTIME_AVAILABILITY_VIEW_SCHEMA_ID,
+            "schemas/action-runtime/action-availability-view.v1.schema.json",
+            ActionRuntimeAvailabilityViewPayload,
+            "Deckr Action Runtime availability view payload",
         ),
     )
     for schema_id, path, model, title in schema_models:
@@ -257,28 +241,76 @@ def _add_schemas(add_artifact) -> None:
 def _fixtures() -> list[dict[str, Any]]:
     descriptor = _device_descriptor()
     hardware_payload = _hardware_payload(descriptor)
-    actions_payload = _actions_payload()
     hardware_claim_terms = _hardware_claim_terms()
-    action_provider_session_terms = _action_provider_session_terms()
-
-    settings_request = _stable_message(
-        DeckrMessage(
-            lane=ACTIONS_LANE,
-            messageType=SETTINGS_REQUEST,
-            sender=action_provider_address("clock-main"),
-            senderSessionId="provider-session",
-            recipient=endpoint_target(controller_address("controller-main")),
-            recipientSessionId="controller-session",
-            contract={"contractId": "action-session-contract-1", "generation": 1},
-            subject=entity_subject(
-                "settings",
-                controllerId="controller-main",
-                providerInstanceId="clock-main",
-                actionInstanceId="clock-instance-1",
-            ),
-            body={"target": _settings_target().to_dict()},
+    action_runtime_service_id_value = action_runtime_service_id("clock-main")
+    action_instance_body = ActionInstanceLifecycleBody(
+        metadata=ActionInstanceMetadata(
+            providerInstanceId="clock-main",
+            providerId="dev.deckr.clock",
+            actionId="dev.deckr.clock.time",
+            actionInstanceId="clock-instance-1",
+            configId="clock-config-1",
+            contextId="clock-context-1",
         ),
-        message_id="fixture-action-settings-request",
+        settings={"timezone": "UTC"},
+    )
+    action_runtime_params, action_runtime_event = action_runtime_payload(
+        ACTION_INSTANCE_CREATED_MESSAGE,
+        action_instance_body,
+    )
+    action_runtime_message = _stable_message(
+        DeckrMessage(
+            lane=SERVICES_LANE,
+            messageType=SERVICE_MESSAGE,
+            sender=controller_address("controller-main"),
+            senderSessionId="controller-session",
+            recipient=endpoint_target(service_address(action_runtime_service_id_value)),
+            recipientSessionId="service-session",
+            contract={"contractId": "action-runtime-contract-1", "generation": 1},
+            subject=entity_subject(
+                "service",
+                serviceId=action_runtime_service_id_value,
+                namespace=ACTION_RUNTIME_SERVICE_NAMESPACE,
+                name=ACTION_INSTANCE_CREATED_MESSAGE,
+            ),
+            body=ServiceMessageBody(
+                serviceNamespace=ACTION_RUNTIME_SERVICE_NAMESPACE,
+                name=ACTION_INSTANCE_CREATED_MESSAGE,
+                intent=ServiceMessageIntent.EVENT,
+                exchangePattern=ServiceExchangePattern.ONE_WAY,
+                params=action_runtime_params,
+                event=action_runtime_event,
+            ).to_dict(),
+        ),
+        message_id="fixture-action-runtime-action-instance-created",
+    )
+    action_runtime_advertisement_payload = (
+        ACTION_RUNTIME_SERVICE_PROTOCOL.advertisement_payload(
+            service_id=action_runtime_service_id_value,
+            session_id="service-session",
+            backend_status="available",
+            diagnostics={"providerId": "dev.deckr.clock"},
+        )
+    )
+    action_runtime_availability_view = ActionRuntimeAvailabilityViewPayload(
+        providerInstanceId="clock-main",
+        serviceId=action_runtime_service_id_value,
+        serviceEndpoint=service_address(action_runtime_service_id_value),
+        providerId="dev.deckr.clock",
+        serviceSessionId="service-session",
+        labels={"room": "office"},
+        annotations={"runtime": "python"},
+        entries=[
+            ActionAvailabilityEntry(
+                actionId="dev.deckr.clock.time",
+                status="available",
+                descriptor=ActionDescriptor(
+                    actionId="dev.deckr.clock.time",
+                    providerId="dev.deckr.clock",
+                    name="Clock",
+                ),
+            )
+        ],
     )
     hardware_input = _stable_wire_message(
         control_input_message(
@@ -334,15 +366,15 @@ def _fixtures() -> list[dict[str, Any]]:
         createdAt=FIXED_NOW,
         updatedAt=FIXED_NOW,
     ).to_dict()
-    actions_advertisement = AdvertisementRecord(
-        advertisementId="actions-advertisement-1",
-        featureId=ACTIONS_FEATURE_ID,
-        advertiser=action_provider_address("clock-main"),
-        endpoint=action_provider_address("clock-main"),
-        sessionId="provider-session",
+    action_runtime_advertisement = AdvertisementRecord(
+        advertisementId="action-runtime-advertisement-1",
+        featureId=ACTION_RUNTIME_SERVICE_PROTOCOL.feature_id,
+        advertiser=service_address(action_runtime_service_id_value),
+        endpoint=service_address(action_runtime_service_id_value),
+        sessionId="service-session",
         refreshSeq=1,
         ttlSeconds=300,
-        payload=actions_payload.to_dict(),
+        payload=action_runtime_advertisement_payload.to_dict(),
         createdAt=FIXED_NOW,
         updatedAt=FIXED_NOW,
     ).to_dict()
@@ -373,11 +405,11 @@ def _fixtures() -> list[dict[str, Any]]:
 
     return [
         _fixture(
-            artifact_id="dev.deckr.fixture.actions.settings_request.valid.v1",
-            path="fixtures/valid/actions/settings-request.v1.json",
-            title="Valid settingsRequest action message",
-            schema_path="schemas/actions/actions.v1.schema.json",
-            payload=settings_request,
+            artifact_id="dev.deckr.fixture.action_runtime.action_instance_created.valid.v1",
+            path="fixtures/valid/action-runtime/action-instance-created.v1.json",
+            title="Valid Action Runtime action_instance_created service message",
+            schema_path="schemas/services/services.v1.schema.json",
+            payload=action_runtime_message,
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.hardware.control_input.valid.v1",
@@ -401,11 +433,11 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=hardware_advertisement,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.beacon.actions.valid.v1",
-            path="fixtures/valid/beacon/actions-advertisement.v1.json",
-            title="Valid Beacon actions advertisement",
+            artifact_id="dev.deckr.fixture.beacon.action_runtime.valid.v1",
+            path="fixtures/valid/beacon/action-runtime-advertisement.v1.json",
+            title="Valid Beacon Action Runtime service advertisement",
             schema_path="schemas/beacon/advertisement.v1.schema.json",
-            payload=actions_advertisement,
+            payload=action_runtime_advertisement,
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.concord.hardware_claim_contract.valid.v1",
@@ -429,11 +461,13 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=hardware_payload.to_dict(),
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.profile.actions.valid.v1",
-            path="fixtures/valid/profiles/actions.v1.json",
-            title="Valid Deckr actions Beacon profile payload",
-            schema_path="schemas/profiles/actions.v1.schema.json",
-            payload=actions_payload.to_dict(),
+            artifact_id="dev.deckr.fixture.action_runtime.availability_view.valid.v1",
+            path="fixtures/valid/action-runtime/action-availability-view.v1.json",
+            title="Valid Deckr Action Runtime availability view payload",
+            schema_path=(
+                "schemas/action-runtime/action-availability-view.v1.schema.json"
+            ),
+            payload=action_runtime_availability_view.to_dict(),
         ),
         _fixture(
             artifact_id="dev.deckr.fixture.profile.hardware_claim.valid.v1",
@@ -443,27 +477,29 @@ def _fixtures() -> list[dict[str, Any]]:
             payload=hardware_claim_terms.to_dict(),
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.profile.action_provider_session.valid.v1",
-            path="fixtures/valid/profiles/action-provider-session.v1.json",
-            title="Valid Deckr action provider session Concord terms",
-            schema_path="schemas/profiles/action-provider-session.v1.schema.json",
-            payload=action_provider_session_terms.to_dict(),
-        ),
-        _fixture(
-            artifact_id="dev.deckr.fixture.actions.settings_request.invalid_missing_target.v1",
-            path="fixtures/invalid/actions/settings-request-missing-target.v1.json",
-            title="Invalid settingsRequest missing target",
-            schema_path="schemas/actions/actions.v1.schema.json",
-            payload={**settings_request, "body": {}},
+            artifact_id="dev.deckr.fixture.action_runtime.action_instance_created.invalid_missing_namespace.v1",
+            path="fixtures/invalid/action-runtime/action-instance-created-missing-namespace.v1.json",
+            title="Invalid Action Runtime service message missing serviceNamespace",
+            schema_path="schemas/services/services.v1.schema.json",
+            payload={
+                **action_runtime_message,
+                "body": {
+                    key: value
+                    for key, value in action_runtime_message["body"].items()
+                    if key != "serviceNamespace"
+                },
+            },
             valid=False,
         ),
         _fixture(
-            artifact_id="dev.deckr.fixture.actions.settings_request.invalid_missing_contract.v1",
-            path="fixtures/invalid/actions/settings-request-missing-contract.v1.json",
-            title="Invalid settingsRequest missing contract",
-            schema_path="schemas/actions/actions.v1.schema.json",
+            artifact_id="dev.deckr.fixture.action_runtime.action_instance_created.invalid_missing_contract.v1",
+            path="fixtures/invalid/action-runtime/action-instance-created-missing-contract.v1.json",
+            title="Invalid Action Runtime service message missing contract",
+            schema_path="schemas/services/services.v1.schema.json",
             payload={
-                key: value for key, value in settings_request.items() if key != "contract"
+                key: value
+                for key, value in action_runtime_message.items()
+                if key != "contract"
             },
             valid=False,
         ),
@@ -527,18 +563,6 @@ def _fixtures() -> list[dict[str, Any]]:
             },
             valid=False,
         ),
-        _fixture(
-            artifact_id="dev.deckr.fixture.profile.action_provider_session.invalid_missing_session.v1",
-            path="fixtures/invalid/profiles/action-provider-session-missing-session.v1.json",
-            title="Invalid action provider session terms missing sessionId",
-            schema_path="schemas/profiles/action-provider-session.v1.schema.json",
-            payload={
-                key: value
-                for key, value in action_provider_session_terms.to_dict().items()
-                if key != "sessionId"
-            },
-            valid=False,
-        ),
     ]
 
 
@@ -548,10 +572,13 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
         for fixture in fixtures
         if fixture["kind"] == "fixture" and fixture["valid"]
     }
-    action_fixture_path = "fixtures/valid/actions/settings-request.v1.json"
-    action_message = DeckrMessage.from_dict(valid_fixture_by_path[action_fixture_path])
+    action_runtime_fixture_path = (
+        "fixtures/valid/action-runtime/action-instance-created.v1.json"
+    )
+    action_runtime_message = DeckrMessage.from_dict(
+        valid_fixture_by_path[action_runtime_fixture_path]
+    )
     hardware_claim_terms = _hardware_claim_terms()
-    action_provider_session_terms = _action_provider_session_terms()
 
     add_artifact(
         kind="vector",
@@ -627,9 +654,6 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
             "schema": "dev.deckr.vector.concord_terms_hash.v1",
             "cases": [
                 _terms_hash_case("hardware_claim", hardware_claim_terms),
-                _terms_hash_case(
-                    "action_provider_session", action_provider_session_terms
-                ),
             ],
         },
     )
@@ -643,10 +667,10 @@ def _add_vectors(add_artifact, *, fixtures: list[dict[str, Any]]) -> None:
             "schema": "dev.deckr.vector.nats_lane.v1",
             "cases": [
                 {
-                    "id": "actions.settings_request",
-                    "fixture": action_fixture_path,
-                    "subject": _subject_for(action_message),
-                    "headers": dict(_headers_for(action_message)),
+                    "id": "action_runtime.action_instance_created",
+                    "fixture": action_runtime_fixture_path,
+                    "subject": _subject_for(action_runtime_message),
+                    "headers": dict(_headers_for(action_runtime_message)),
                 }
             ],
         },
@@ -706,18 +730,6 @@ def _device_descriptor() -> DeviceDescriptor:
     )
 
 
-def _settings_target() -> SettingsTargetRef:
-    return SettingsTargetRef(
-        scope="action_instance",
-        controllerId="controller-main",
-        configId="clock-config-1",
-        providerInstanceId="clock-main",
-        providerId="dev.deckr.clock",
-        actionId="dev.deckr.clock.time",
-        actionInstanceId="clock-instance-1",
-    )
-
-
 def _hardware_payload(descriptor: DeviceDescriptor) -> HardwareBeaconPayload:
     return HardwareBeaconPayload(
         managerId="mirabox-main",
@@ -741,28 +753,6 @@ def _hardware_payload(descriptor: DeviceDescriptor) -> HardwareBeaconPayload:
         },
     )
 
-
-def _actions_payload() -> ActionsBeaconPayload:
-    return ActionsBeaconPayload(
-        providerInstanceId="clock-main",
-        providerEndpoint=action_provider_address("clock-main"),
-        providerId="dev.deckr.clock",
-        sessionId="provider-session",
-        labels={"room": "office"},
-        annotations={"runtime": "python"},
-        actions={
-            "dev.deckr.clock.time": ActionBeaconDescriptor(
-                actionId="dev.deckr.clock.time",
-                providerId="dev.deckr.clock",
-                name="Clock",
-                requirements=None,
-                capacity=ProfileCapacity(claimedInstances=0),
-                hints={"priority": 100},
-            )
-        },
-    )
-
-
 def _hardware_claim_terms() -> HardwareClaimTerms:
     return HardwareClaimTerms(
         claimId="claim-1",
@@ -779,17 +769,6 @@ def _hardware_claim_terms() -> HardwareClaimTerms:
             ),
         ),
     )
-
-
-def _action_provider_session_terms() -> ActionProviderSessionTerms:
-    return ActionProviderSessionTerms(
-        sessionId="provider-session",
-        controllerEndpoint=controller_address("controller-main"),
-        providerEndpoint=action_provider_address("clock-main"),
-        providerInstanceId="clock-main",
-        providerId="dev.deckr.clock",
-    )
-
 
 def _stable_message(message: DeckrMessage, *, message_id: str) -> dict[str, Any]:
     data = message.to_dict()
@@ -829,7 +808,7 @@ def _key_token_case(raw: str) -> dict[str, str]:
 
 def _terms_hash_case(
     case_id: str,
-    terms: HardwareClaimTerms | ActionProviderSessionTerms,
+    terms: HardwareClaimTerms,
 ) -> dict[str, str]:
     canonical = canonical_json_bytes(terms).decode("utf-8")
     return {

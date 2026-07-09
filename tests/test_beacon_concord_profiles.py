@@ -34,7 +34,6 @@ from deckr.concord import (
     ContractState,
     ContractValidityStatus,
     ParticipantTokenRecord,
-    canonical_json_hash,
     concord_contract_key,
 )
 from deckr.contracts.keys import encode_key_token
@@ -54,14 +53,6 @@ from deckr.hardware.profiles import (
     ProfileCapacity,
     hardware_claim_conflicts,
     hardware_payload_from_advertisement,
-)
-from deckr.profiles import (
-    ACTION_PROVIDER_SESSION_PROFILE_ID,
-    ACTIONS_FEATURE_ID,
-    ActionProviderSessionTerms,
-    ActionsBeaconPayload,
-    actions_payload_from_advertisement,
-    profile_terms_hash,
 )
 from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, KvUnavailable
 
@@ -1887,65 +1878,6 @@ async def test_concord_generation_gap_rebuild_notifies_watchers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concord_participant_attaches_existing_action_provider_session_after_replay() -> None:
-    contract_state = MemoryJsonKvBucket(bucket="contracts", buffer_size=20)
-    token_state = MemoryJsonKvBucket(bucket="tokens", buffer_size=20)
-    creator = _concord(contract_state, token_state)
-    controller = controller_address("controller-main")
-    provider = action_provider_address("provider-main")
-    provider_session_id = "provider-session"
-    terms = ActionProviderSessionTerms(
-        sessionId=provider_session_id,
-        controllerEndpoint=controller,
-        providerEndpoint=provider,
-        providerInstanceId="provider-main",
-        providerId="test.provider",
-    )
-    contract = await creator._create_contract(  # noqa: SLF001
-        (controller, provider),
-        contract_id="legacy-action-provider-session",
-        profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
-        terms=terms,
-        created_by=controller,
-    )
-    await creator._attach(  # noqa: SLF001
-        contract,
-        controller,
-        "controller-session",
-        token_id="controller-token",
-    )
-
-    service = _concord(contract_state, token_state)
-    lifecycle = service.participant(
-        participant=provider,
-        session_id=provider_session_id,
-        profile=ACTION_PROVIDER_SESSION_PROFILE_ID,
-        refresh_interval=30.0,
-        reconcile_interval=0.05,
-        accept_contract=lambda _contract, _record: True,
-        current_sessions=lambda _contract: {
-            str(controller): "controller-session",
-            str(provider): provider_session_id,
-        },
-    )
-
-    async with anyio.create_task_group() as tg:
-        service.start(tg)
-        lifecycle.start(tg)
-        with anyio.fail_after(1):
-            while True:
-                managed = lifecycle.managed_contract(contract)
-                if (
-                    managed is not None
-                    and managed.token is not None
-                    and managed.validity.status == ContractValidityStatus.VALID
-                ):
-                    break
-                await anyio.sleep(0.01)
-        tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
 async def test_concord_service_watch_preserves_caller_state_unavailable() -> None:
     contract_state = MemoryJsonKvBucket(bucket="contracts")
     token_state = MemoryJsonKvBucket(bucket="tokens")
@@ -2352,7 +2284,7 @@ async def test_concord_duplicate_contract_and_generation_mismatch_are_rejected()
     )
 
 
-def test_profile_payloads_terms_hashes_and_hardware_claim_conflicts() -> None:
+def test_hardware_profile_payloads_and_claim_conflicts() -> None:
     hardware_payload = _hardware_payload()
     hardware_advertisement = AdvertisementRecord(
         advertisementId="advertisement-1",
@@ -2366,50 +2298,7 @@ def test_profile_payloads_terms_hashes_and_hardware_claim_conflicts() -> None:
     )
     assert hardware_payload_from_advertisement(hardware_advertisement) == hardware_payload
 
-    actions_payload = ActionsBeaconPayload(
-        providerInstanceId="provider-main",
-        providerEndpoint=action_provider_address("provider-main"),
-        providerId="dev.deckr.clock",
-        sessionId="provider-session",
-        actions={
-            "dev.deckr.clock.time": {
-                "actionId": "dev.deckr.clock.time",
-                "name": "Clock",
-            }
-        },
-    )
-    actions_advertisement = AdvertisementRecord(
-        advertisementId="actions-advertisement-1",
-        featureId=ACTIONS_FEATURE_ID,
-        advertiser=action_provider_address("provider-main"),
-        endpoint=action_provider_address("provider-main"),
-        sessionId="provider-session",
-        refreshSeq=1,
-        ttlSeconds=300,
-        payload=actions_payload.to_dict(),
-    )
-    assert actions_payload_from_advertisement(actions_advertisement) == actions_payload
-
-    with pytest.raises(ValidationError, match="providerEndpoint"):
-        ActionsBeaconPayload(
-            providerInstanceId="provider-main",
-            providerEndpoint=action_provider_address("other"),
-            providerId="dev.deckr.clock",
-            sessionId="provider-session",
-        )
-
     claim_terms = _hardware_claim_terms()
-    session_terms = ActionProviderSessionTerms(
-        sessionId="provider-session",
-        controllerEndpoint=controller_address("controller-main"),
-        providerEndpoint=action_provider_address("provider-main"),
-        providerInstanceId="provider-main",
-        providerId="dev.deckr.clock",
-    )
-    assert profile_terms_hash(claim_terms) == canonical_json_hash(claim_terms)
-    assert profile_terms_hash(session_terms) == canonical_json_hash(session_terms)
-    assert session_terms.profile == ACTION_PROVIDER_SESSION_PROFILE_ID
-
     conflicting = _hardware_claim_terms(claim_id="claim-2")
     non_conflicting = _hardware_claim_terms(
         claim_id="claim-3",

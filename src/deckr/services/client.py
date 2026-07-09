@@ -717,6 +717,7 @@ class ManagedServiceContract:
         params: Mapping[str, Any] | None = None,
         *,
         event: Mapping[str, Any] | None = None,
+        subject=None,
     ) -> DeckrMessage:
         context = await self._context()
         definition = _message_definition_from_mapping(
@@ -730,7 +731,7 @@ class ManagedServiceContract:
             lane=SERVICES_LANE,
             recipient=context.consumer_endpoint,
             recipient_session_id=context.consumer_session_id,
-            subject=_service_message_subject(context, name),
+            subject=subject or _service_message_subject(context, name),
             message_type=SERVICE_MESSAGE,
             body=ServiceMessageBody(
                 serviceNamespace=context.service_namespace,

@@ -4,11 +4,6 @@
       "canonicalJson": "{\"claimId\":\"claim-1\",\"controllerEndpoint\":\"controller:controller-main\",\"devices\":[{\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"instanceCount\":1}],\"managerEndpoint\":\"hardware_manager:mirabox-main\",\"profile\":\"dev.deckr.profile.hardware_claim.v1\"}",
       "hash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113",
       "id": "hardware_claim"
-    },
-    {
-      "canonicalJson": "{\"controllerEndpoint\":\"controller:controller-main\",\"profile\":\"dev.deckr.profile.action_provider_session.v1\",\"providerEndpoint\":\"action_provider:clock-main\",\"providerId\":\"dev.deckr.clock\",\"providerInstanceId\":\"clock-main\",\"sessionId\":\"provider-session\"}",
-      "hash": "sha256:304ed033bf0f28d086a4f2e5a60dd61425008b8096ad4578d56c5ee89248dfa3",
-      "id": "action_provider_session"
     }
   ],
   "schema": "dev.deckr.vector.concord_terms_hash.v1"

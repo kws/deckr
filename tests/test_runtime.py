@@ -4,14 +4,13 @@ import anyio
 import pytest
 from message_bus_mocks import mock_deckr
 
-from deckr.actions.endpoints import action_provider_address
 from deckr.contracts.lanes import (
     DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     SERVICE_LANE_CONTRACT,
     MessageContract,
     MessageContractRegistry,
 )
-from deckr.contracts.messages import ACTIONS_LANE, SERVICES_LANE
+from deckr.contracts.messages import SERVICES_LANE, service_address
 from deckr.runtime import Deckr
 from deckr.services import DeckrServices
 from deckr.substrates.nats import NatsSubstrate
@@ -28,16 +27,13 @@ class _ClosableMessageBus:
 
 
 @pytest.mark.asyncio
-async def test_deckr_services_context_requires_services_lane() -> None:
+async def test_deckr_services_context_builds_with_default_core_lanes() -> None:
     async with (
         mock_deckr() as deckr,
-        deckr.endpoint(
-            action_provider_address("python-dev.deckr.demo")
-        ) as endpoint,
+        deckr.endpoint(service_address("action-runtime.python-dev.deckr.demo")) as endpoint,
+        deckr.services(endpoint) as services,
     ):
-        with pytest.raises(LookupError, match="Required lane 'services'"):
-            async with deckr.services(endpoint):
-                pass
+        assert isinstance(services, DeckrServices)
 
 
 @pytest.mark.asyncio
@@ -48,7 +44,7 @@ async def test_deckr_services_context_builds_managed_client() -> None:
             lanes=(SERVICES_LANE,),
         ) as deckr,
         deckr.endpoint(
-            action_provider_address("python-dev.deckr.demo")
+            service_address("action-runtime.python-dev.deckr.demo")
         ) as endpoint,
         deckr.services(endpoint) as services,
     ):
@@ -112,13 +108,12 @@ def test_message_contract_registry_rejects_duplicates_and_unknown_lanes() -> Non
 
 
 def test_nats_substrates_expose_message_bus_contract_lookup() -> None:
-    expected = DEFAULT_MESSAGE_CONTRACT_REGISTRY.contract_for(ACTIONS_LANE)
+    expected = DEFAULT_MESSAGE_CONTRACT_REGISTRY.contract_for(SERVICES_LANE)
 
     nats = NatsSubstrate(lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY)
     supervised = SupervisedNatsSubstrate(
         lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY
     )
 
-    assert nats.contract_for(ACTIONS_LANE) == expected
-    assert supervised.contract_for(ACTIONS_LANE) == expected
-
+    assert nats.contract_for(SERVICES_LANE) == expected
+    assert supervised.contract_for(SERVICES_LANE) == expected

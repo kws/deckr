@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from deckr.contracts.messages import (
-    ACTIONS_LANE,
     CORE_LANE_SCHEMA_IDS,
     HARDWARE_MESSAGES_LANE,
     SERVICE_MESSAGES_SCHEMA_ID,
@@ -125,29 +124,7 @@ ACTION_OPTIONAL_CONTRACT_MESSAGE_TYPES = frozenset(
 )
 
 CORE_LANE_CONTRACTS: Mapping[str, MessageContract] = {
-    ACTIONS_LANE: MessageContract(
-        lane=ACTIONS_LANE,
-        schema_id=CORE_LANE_SCHEMA_IDS[ACTIONS_LANE],
-        message_types=ACTION_MESSAGE_TYPES,
-        allowed_sender_families=frozenset({"action_provider", "controller"}),
-        allowed_recipient_families=frozenset({"action_provider", "controller"}),
-        broadcast_targets={
-            "action_providers": "action_provider",
-            "controllers": "controller",
-        },
-        default_broadcast_hop_limit=1,
-        default_contract_requirement=ContractRequirement.REQUIRED,
-        contract_requirements={
-            **{
-                message_type: ContractRequirement.FORBIDDEN
-                for message_type in ACTION_NO_CONTRACT_MESSAGE_TYPES
-            },
-            **{
-                message_type: ContractRequirement.OPTIONAL
-                for message_type in ACTION_OPTIONAL_CONTRACT_MESSAGE_TYPES
-            },
-        },
-    ),
+    SERVICES_LANE: SERVICE_LANE_CONTRACT,
     HARDWARE_MESSAGES_LANE: MessageContract(
         lane=HARDWARE_MESSAGES_LANE,
         schema_id=CORE_LANE_SCHEMA_IDS[HARDWARE_MESSAGES_LANE],
