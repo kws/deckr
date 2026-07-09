@@ -80,7 +80,11 @@ then ask the runtime for a managed service context bound to that endpoint.
 from deckr.contracts.lanes import SERVICE_LANE_CONTRACT
 from deckr.contracts.messages import SERVICES_LANE
 from deckr.runtime import Deckr
-from deckr.services import ServiceDescriptor, ServiceUnavailable
+from deckr.services import (
+    ServiceDescriptor,
+    ServiceUnavailable,
+    newest_service_descriptor,
+)
 
 
 def usable_presence_service(descriptor: ServiceDescriptor) -> bool:
@@ -101,6 +105,7 @@ async def report_presence() -> None:
                 async with services.use_matching(
                     EXAMPLE_PROTOCOL,
                     predicate=usable_presence_service,
+                    select=newest_service_descriptor,
                     timeout_seconds=30.0,
                 ) as lease:
                     reply = await services.request(
@@ -118,10 +123,65 @@ async def report_presence() -> None:
 ```
 
 `use_matching(...)` owns discovery and service-use negotiation. The caller
-states matching policy and an optional selector. The returned lease is valid
-only inside the context. If service-use authority is lost, the managed API
+states matching policy and an optional selector. Predicates and selectors must
+be side-effect-free because the directory can evaluate them repeatedly while it
+waits for a current snapshot and future Beacon changes. The returned lease is
+valid only inside the context. If service-use authority is lost, the managed API
 raises `ServiceUnavailable` or a service-message response reports the
 service-domain error.
+
+The managed directory always handles both startup cases: an advertisement can
+already exist before the consumer starts, or it can be created later. Internally
+the directory first materializes the current Beacon snapshot, then waits for
+subsequent feature changes. Consumers should therefore use `use_matching(...)`
+or `wait_for_descriptor(...)` instead of subscribing to raw Beacon events and
+racing the initial snapshot.
+
+Low-level service infrastructure that needs to maintain candidate bookkeeping
+can watch current descriptor snapshots and diff them locally:
+
+```python
+def descriptor_key(descriptor: ServiceDescriptor) -> tuple[str, str, str]:
+    return (
+        descriptor.service_id,
+        str(descriptor.endpoint),
+        descriptor.session_id,
+    )
+
+
+async def watch_presence_candidates(services) -> None:
+    directory = services.directory(EXAMPLE_PROTOCOL)
+    previous: dict[tuple[str, str, str], ServiceDescriptor] = {}
+
+    async for snapshot in directory.watch_records():
+        current = {
+            descriptor_key(descriptor): descriptor
+            for descriptor in snapshot
+            if usable_presence_service(descriptor)
+        }
+        added = current.keys() - previous.keys()
+        removed = previous.keys() - current.keys()
+        updated = {
+            key
+            for key in current.keys() & previous.keys()
+            if current[key] != previous[key]
+        }
+
+        for key in sorted(added | updated):
+            await consider_candidate(current[key])
+
+        for key in sorted(removed):
+            await forget_candidate(previous[key])
+
+        previous = current
+```
+
+The first yielded snapshot represents the already-current Beacon state, so
+entries in that first `added` set are not special or stale. A later `added` or
+`updated` descriptor is a candidate for a new service-use negotiation. A
+`removed` descriptor should only remove discovery bookkeeping; it must not
+cancel or invalidate an already-held service-use lease. Existing lease authority
+continues to be governed by Concord validity and participant tokens.
 
 ## Reading And Watching Views
 
@@ -196,18 +256,18 @@ async with sonos.zone_subscription_session(
 
 Ordinary feature code must not read service views, watch service views, or send
 service messages unless it is doing so through an active service session. For a
-resource-bound action, open the domain session as early as the action lifecycle
-allows. In the Python action SDK, service-backed root components should normally
-use `warmPolicy: "keep_until_stopped"` and open the session in component start,
-so temporary unmount/remount cycles do not churn Concord service-use authority.
-Binding-scoped or page-scoped work can still open the session on mount/page open
-and close it when that binding/page ends.
+resource-bound action, open the domain session at the scope that owns the
+resource. In the Python action SDK, component-scoped service clients and caches
+belong in `started(context)` and component tasks; binding-specific zone/item
+subscriptions belong in `mounted(context)` and `context.tasks`, and close when
+that binding unmounts.
 
 Operation requests for a retained resource should use that same session:
 
 ```python
 class SonosPlayButton(DeckrAction):
-    async def started(self) -> None:
+    async def started(self, context) -> None:
+        del context
         self._session = None
         self.tasks.start_soon(self._run_sonos_session)
 
@@ -223,9 +283,9 @@ class SonosPlayButton(DeckrAction):
         finally:
             self._session = None
 
-    async def input(self, binding, event) -> None:
+    async def input(self, context, event) -> None:
         if self._session is None:
-            await binding.overlay("unavailable", title="UNAVAILABLE")
+            await context.overlay("unavailable", title="UNAVAILABLE")
             return
         await self._session.request("play", {"zone": self.zone_name})
 ```
