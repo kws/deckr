@@ -6,7 +6,6 @@ from pathlib import Path
 
 import anyio
 import pytest
-from memory_kv_bucket import MemoryJsonKvBucket
 from message_bus_mocks import mock_deckr
 
 from deckr.components import ComponentContext
@@ -23,6 +22,7 @@ from deckr.concord import (
     ConcordReaperService,
     ConcordStaleObservationRecord,
     ConcordUnavailable,
+    ConcordUnavailableCode,
     ContractState,
     ContractValidityStatus,
     canonical_json_hash,
@@ -31,6 +31,7 @@ from deckr.concord import (
 from deckr.concord_reaper import CONCORD_REAPER_COMPONENT_ID, component
 from deckr.contracts.messages import controller_address, hardware_manager_address
 from deckr.substrates.nats_kv import KvChange
+from deckr.testing import ConcordMaintenanceHarness, MemoryJsonKvBucket
 
 PROFILE = "com.example.reaper_test.v1"
 
@@ -56,7 +57,10 @@ class UnavailableGetKvBucket:
 
     async def get(self, key: str):
         del key
-        raise ConcordUnavailable("state unavailable")
+        raise ConcordUnavailable(
+            ConcordUnavailableCode.STORE_UNAVAILABLE,
+            "state unavailable",
+        )
 
     async def put(self, *args, **kwargs):
         return await self._inner.put(*args, **kwargs)
@@ -117,7 +121,11 @@ def _reaper(
 
 
 def _concord(contract_bucket, token_bucket, maintenance_bucket) -> Concord:
-    return Concord(contract_bucket, token_bucket, maintenance_bucket)
+    return ConcordMaintenanceHarness(
+        contract_store=contract_bucket,
+        token_store=token_bucket,
+        maintenance_store=maintenance_bucket,
+    ).concord
 
 
 async def _contract(concord: Concord, *, contract_id: str):
@@ -131,9 +139,11 @@ async def _contract(concord: Concord, *, contract_id: str):
 
 
 async def _delete_token(concord: Concord, token) -> None:
-    bucket = concord._coordinator._token_bucket  # noqa: SLF001
+    bucket = concord._coordinator.token_scan  # noqa: SLF001
     await bucket.delete(token.key, revision=token.revision)
-    revision = bucket.revision_cached(token.key) or (token.revision + 1)
+    revision = concord._coordinator.token_source.revision_cached(token.key) or (  # noqa: SLF001
+        token.revision + 1
+    )
     await concord._apply_token_change(  # noqa: SLF001
         KvChange(concord.token_bucket, token.key, revision, "delete")
     )
@@ -291,7 +301,7 @@ async def test_stale_observation_removed_when_contract_deleted() -> None:
     reaper = _reaper(coordinator, clock)
     await reaper.scan_once()
 
-    await coordinator._coordinator._contract_bucket.delete(  # noqa: SLF001
+    await coordinator._coordinator.contract_scan.delete(  # noqa: SLF001
         contract.key,
         revision=contract.revision,
     )
@@ -331,16 +341,16 @@ async def test_cancelled_contract_deleted_after_retention_and_tokens_removed(
     clock.advance(3599)
     result = await reaper.scan_once()
     assert result.contracts_deleted == 0
-    assert await coordinator._coordinator._contract_bucket.get(contract.key) is not None  # noqa: SLF001
+    assert await coordinator._coordinator.contract_scan.get_exact(contract.key) is not None  # noqa: SLF001
 
     clock.advance(1)
     result = await reaper.scan_once()
 
     assert result.contracts_deleted == 1
     assert result.token_keys_deleted == 2
-    assert await coordinator._coordinator._contract_bucket.get(contract.key) is None  # noqa: SLF001
-    assert await coordinator._coordinator._token_bucket.get(controller_token.key) is None  # noqa: SLF001
-    assert await coordinator._coordinator._token_bucket.get(manager_token.key) is None  # noqa: SLF001
+    assert await coordinator._coordinator.contract_scan.get_exact(contract.key) is None  # noqa: SLF001
+    assert await coordinator._coordinator.token_scan.get_exact(controller_token.key) is None  # noqa: SLF001
+    assert await coordinator._coordinator.token_scan.get_exact(manager_token.key) is None  # noqa: SLF001
     await _assert_no_stale_observation(maintenance_state, contract)
 
     log_text = caplog.text
@@ -399,5 +409,3 @@ def test_component_factory_wires_default_stores_and_config_overrides() -> None:
         (DEFAULT_CONCORD_TOKEN_BUCKET_NAME, CONCORD_TOKEN_BUCKET_POLICY),
         (DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME, CONCORD_MAINTENANCE_BUCKET_POLICY),
     ]
-
-

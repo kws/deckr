@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 import anyio
 import pytest
 from descriptor_fixtures import stream_deck_bitmap_grid
-from memory_kv_bucket import MemoryJsonKvBucket
 from pydantic import ValidationError
 
 import deckr.beacon as beacon_module
@@ -29,6 +28,7 @@ from deckr.concord import (
     ConcordManagedContractEventType,
     ConcordParticipant,
     ConcordUnavailable,
+    ConcordUnavailableCode,
     ContractPointer,
     ContractRecord,
     ContractState,
@@ -55,6 +55,7 @@ from deckr.hardware.profiles import (
     hardware_payload_from_advertisement,
 )
 from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, KvUnavailable
+from deckr.testing import ConcordRuntimeHarness, MemoryJsonKvBucket
 
 
 async def _receive(stream):
@@ -137,7 +138,10 @@ class FailingUpdateKvBucket(MemoryJsonKvBucket):
 
 class UnavailableWatch:
     async def __aenter__(self):
-        raise ConcordUnavailable("watch unavailable")
+        raise ConcordUnavailable(
+            ConcordUnavailableCode.STORE_UNAVAILABLE,
+            "watch unavailable",
+        )
 
     async def __aexit__(self, *args):
         return None
@@ -257,11 +261,11 @@ def _concord(
     inner_token_bucket = getattr(token_bucket, "_inner", token_bucket)
     if isinstance(inner_token_bucket, MemoryJsonKvBucket):
         inner_token_bucket._ttl_seconds = token_bucket_ttl_seconds
-    return Concord(
-        contract_bucket,
-        token_bucket,
-        MemoryJsonKvBucket(bucket=f"maintenance-{id(contract_bucket)}-{id(token_bucket)}"),
-    )
+    return ConcordRuntimeHarness(
+        contract_store=contract_bucket,
+        token_store=token_bucket,
+        token_ttl_seconds=token_bucket_ttl_seconds,
+    ).concord
 
 
 def _raw_revision(bucket) -> int:
@@ -1767,10 +1771,10 @@ async def test_concord_wait_current_rebuilds_generation_stale_cache() -> None:
             service._clear_indexes_locked()  # noqa: SLF001
             service._contract_bucket_generation = 0  # noqa: SLF001
             service._token_bucket_generation = (  # noqa: SLF001
-                service._coordinator._token_bucket.generation  # noqa: SLF001
+                service._coordinator.token_source.generation  # noqa: SLF001
             )
             service._maintenance_bucket_generation = (  # noqa: SLF001
-                service._maintenance_bucket.generation  # noqa: SLF001
+                service._maintenance_source.generation  # noqa: SLF001
             )
 
         assert not service.is_current()
@@ -1840,7 +1844,7 @@ async def test_concord_generation_gap_rebuild_notifies_watchers() -> None:
     async with anyio.create_task_group() as tg:
         service.start(tg)
         await service.wait_current()
-        bucket_generation = service._coordinator._contract_bucket.generation  # noqa: SLF001
+        bucket_generation = service._coordinator.contract_source.generation  # noqa: SLF001
 
         async with service.watch(
             HARDWARE_CLAIM_PROFILE_ID,
@@ -1850,10 +1854,10 @@ async def test_concord_generation_gap_rebuild_notifies_watchers() -> None:
                 service._clear_indexes_locked()  # noqa: SLF001
                 service._contract_bucket_generation = 0  # noqa: SLF001
                 service._token_bucket_generation = (  # noqa: SLF001
-                    service._coordinator._token_bucket.generation  # noqa: SLF001
+                    service._coordinator.token_source.generation  # noqa: SLF001
                 )
                 service._maintenance_bucket_generation = (  # noqa: SLF001
-                    service._maintenance_bucket.generation  # noqa: SLF001
+                    service._maintenance_source.generation  # noqa: SLF001
                 )
 
             await service._apply_contract_change(  # noqa: SLF001
@@ -1885,7 +1889,10 @@ async def test_concord_service_watch_preserves_caller_state_unavailable() -> Non
 
     with pytest.raises(ConcordUnavailable, match="broker unavailable"):
         async with service.watch(replay_current=False):
-            raise ConcordUnavailable("broker unavailable")
+            raise ConcordUnavailable(
+                ConcordUnavailableCode.STORE_UNAVAILABLE,
+                "broker unavailable",
+            )
 
 
 @pytest.mark.asyncio
@@ -2099,7 +2106,7 @@ async def test_concord_public_contract_helpers_preserve_validation() -> None:
     assert await service.contract_record(contract) == await service._contract_record(contract)
     with pytest.raises(ValueError, match="Concord contract id"):
         await service.contracts(contract_id="")
-    with pytest.raises(ValueError, match="participant"):
+    with pytest.raises(ConcordConflict, match="participant"):
         await service.cancel(
             contract,
             participant=service_address("not-a-participant"),

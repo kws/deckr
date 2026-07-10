@@ -248,6 +248,53 @@ async with mock_deckr(
     ...
 ```
 
+For focused Concord tests, use the shipped `deckr.testing` surfaces:
+
+```python
+from deckr.testing import ConcordRuntimeHarness, MemoryJsonKvBucket
+
+contracts = MemoryJsonKvBucket(bucket="contracts")
+tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+harness = ConcordRuntimeHarness(
+    contract_store=contracts,
+    token_store=tokens,
+)
+
+contract = await harness.seed_contract(contract_record)
+await harness.seed_token(participant_token_record)
+await harness.materialize()
+
+validity = await harness.concord.validate(contract)
+assert await harness.contract_entry(contract.key) is not None
+```
+
+`contract_record` and `participant_token_record` above are ordinary
+`ContractRecord` and `ParticipantTokenRecord` fixtures. Use
+`seed_raw_contract(...)` and `seed_raw_token(...)` when testing malformed or
+identity-mismatched external JSON. `materialize()` deterministically rebuilds
+the cached view without starting a watcher. The harness also exposes exact
+entry inspection and deterministic token expiry.
+
+Use `ConcordMaintenanceHarness` only for reaper and maintenance tests that must
+inspect all three stores:
+
+```python
+from deckr.testing import ConcordMaintenanceHarness
+
+maintenance = ConcordMaintenanceHarness()
+concord = maintenance.concord
+contract_store = maintenance.contract_store
+token_store = maintenance.token_store
+maintenance_store = maintenance.maintenance_store
+```
+
+Do not call `Concord(contract_store, token_store, maintenance_store)` directly
+in workspace tests, and do not recreate that constructor in a local helper.
+`ConcordRuntimeHarness` intentionally hides its temporary maintenance store;
+only `ConcordMaintenanceHarness` exposes one. This testing boundary does not add
+a production `ConcordMaintenance` API: the production maintenance capability
+remains deferred, and the existing reaper wiring remains in place meanwhile.
+
 Mocks should sit at the `MessageBus` and explicit KV-bucket boundaries. Avoid
 test helpers that recreate removed runtime surfaces such as `deckr.state` or
 `Lane.register_endpoint(...)`.

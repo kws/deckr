@@ -4,12 +4,12 @@ from collections.abc import Sequence
 from unittest.mock import AsyncMock, Mock
 
 import anyio
-from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.contracts.lanes import MessageContract, MessageContractRegistry
 from deckr.contracts.messages import DeckrMessage
 from deckr.runtime import Deckr
 from deckr.substrates.nats_kv import KvBucketPolicy
+from deckr.testing import MemoryJsonKvBucket
 
 
 class MockSubscriptionContext:

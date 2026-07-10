@@ -256,12 +256,65 @@ internal consistency are the session evidence. A missing, invalid, stale, or
 generation-mismatched token means the contract is not valid. A cancelled
 contract is never resumed; recovery uses a successor contract.
 
-The Python runtime exposes two validation paths. `Concord.validate(...)` is the
-normal hot path for runtime participants and uses Concord's managed
-materialized KV view after readiness. `Concord.validate_exact(...)` performs the
-strict exact-read validation described above and is the path for maintenance,
-recovery, diagnostics, and code that must bypass the materialized cache. Concord
-write paths still exact-read current records before revision-guarded updates.
+Malformed external state always fails closed. A stored contract or token that
+cannot be parsed is invalid authority; it must not be treated as absent,
+pending, or recoverable local ownership, and a parsing exception must not
+escape a lease boundary. Mutation paths normalize malformed contract and token
+records to typed terminal conflicts before performing any write.
+
+The Python runtime gathers immutable contract and token observations and sends
+both validation paths through one pure evaluator. The evaluator performs no I/O
+or mutation and checks participants in canonical order. `Concord.validate(...)`
+is the normal hot path and gathers raw cached entries by their canonical exact
+keys from Concord's ready, current materialized source.
+`Concord.validate_exact(...)` gathers the same observations with exact KV reads
+for maintenance, recovery, diagnostics, and code that must bypass the cache.
+Given the same observations, both paths return the same status, parsed contract,
+identity-consistent token mapping, and typed reason code. They do not depend on
+an index that could discard a malformed or identity-mismatched record before it
+is evaluated. The token mapping retains every successfully parsed, canonical,
+identity-consistent named token even if a later participant determines the
+terminal result. Supplied current-session assertions are copied, normalized,
+sorted, and frozen before evaluation.
+
+A started runtime whose contract or token materialized source is stale returns
+`ContractValidityStatus.UNAVAILABLE` with
+`ContractValidityReason.SOURCE_UNAVAILABLE` on the cached path. Exact validation
+remains independently usable when the exact store is available. Maintenance
+store readiness or contents are not part of contract validity.
+
+`ContractValidity.reason_code` is the behavioral discriminator. Its values are:
+
+- source and contract observations: `SOURCE_UNAVAILABLE`, `CONTRACT_MISSING`,
+  `CONTRACT_MALFORMED`, `CONTRACT_KEY_MISMATCH`,
+  `CONTRACT_POINTER_MISMATCH`, and `CONTRACT_CANCELLED`
+- fulfillment and token observations: `PARTICIPANT_NOT_ATTACHED`,
+  `TOKEN_MISSING`, `TOKEN_MALFORMED`, `TOKEN_KEY_MISMATCH`,
+  `TOKEN_CONTRACT_MISMATCH`, `TOKEN_GENERATION_MISMATCH`,
+  `TOKEN_PARTICIPANT_MISMATCH`, `TOKEN_TERMS_HASH_MISMATCH`, and
+  `TOKEN_SESSION_MISMATCH`
+- local lease fencing: `TOKEN_LOCAL_AUTHORITY_LOST`
+
+The status mapping is fixed:
+
+| Status | Reason codes |
+| --- | --- |
+| `UNAVAILABLE` | `SOURCE_UNAVAILABLE` |
+| `MISSING_CONTRACT` | `CONTRACT_MISSING` |
+| `INVALID_CONTRACT` | `CONTRACT_MALFORMED`, `CONTRACT_KEY_MISMATCH`, `CONTRACT_POINTER_MISMATCH` |
+| `CANCELLED` | `CONTRACT_CANCELLED` |
+| `NOT_YET_FULFILLED` | `PARTICIPANT_NOT_ATTACHED` |
+| `MISSING_TOKEN` | `TOKEN_MISSING` |
+| `INVALID_TOKEN` | `TOKEN_MALFORMED`, `TOKEN_KEY_MISMATCH`, `TOKEN_CONTRACT_MISMATCH`, `TOKEN_PARTICIPANT_MISMATCH`, `TOKEN_LOCAL_AUTHORITY_LOST` |
+| `GENERATION_MISMATCH` | `TOKEN_GENERATION_MISMATCH` |
+| `TERMS_HASH_MISMATCH` | `TOKEN_TERMS_HASH_MISMATCH` |
+| `SESSION_MISMATCH` | `TOKEN_SESSION_MISMATCH` |
+| `VALID` | none |
+
+`ContractValidity.reason` remains separate human-readable diagnostic text; code
+must never select lifecycle behavior by comparing or parsing that text. Concord
+write paths still exact-read current records, verify canonical keys and complete
+record identity, and use revision-guarded updates or deletes.
 
 Runtime renewal loops are not discovery mechanisms. Beacon advertisement
 renewal and Concord participant-token renewal must only refresh already-owned

@@ -12,7 +12,6 @@ from deckr.beacon import (
 )
 from deckr.concord import (
     CONCORD_CONTRACT_BUCKET_POLICY,
-    CONCORD_MAINTENANCE_BUCKET_POLICY,
     CONCORD_TOKEN_BUCKET_POLICY,
     Concord,
     ContractValidityStatus,
@@ -29,6 +28,7 @@ from deckr.hardware import (
     HardwareClaimTerms,
     HardwareManagerRuntime,
 )
+from deckr.testing import ConcordRuntimeHarness
 
 pytestmark = pytest.mark.asyncio
 
@@ -56,11 +56,12 @@ def _beacon(deckr) -> Beacon:
 def _concord(deckr) -> Concord:
     concord = getattr(deckr, "_test_concord", None)
     if concord is None:
-        concord = Concord(
-            deckr._message_bus.kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY),
-            deckr._message_bus.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
-            deckr._message_bus.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY),
-        )
+        concord = ConcordRuntimeHarness(
+            contract_store=deckr._message_bus.kv_bucket(
+                CONCORD_CONTRACT_BUCKET_POLICY
+            ),
+            token_store=deckr._message_bus.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
+        ).concord
         deckr._test_concord = concord
     return concord
 

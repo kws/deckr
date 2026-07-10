@@ -21,6 +21,7 @@ from deckr.beacon import Candidate
 from deckr.concord import (
     ConcordAgreementLease,
     ConcordConflict,
+    ConcordConflictCode,
     ConcordManagedContract,
     ConcordParticipant,
     ContractHandle,
@@ -657,29 +658,19 @@ def terminal_concord_conflict_status(
 ) -> ContractValidityStatus | None:
     """Classify terminal Concord conflicts for service infrastructure."""
 
-    message = str(exc)
-    if (
-        "Concord contract is cancelled" in message
-        or message.startswith("Concord contract ")
-        and " is cancelled" in message
-    ):
-        return ContractValidityStatus.CANCELLED
-    if (
-        "Concord contract is missing" in message
-        or message.startswith("Concord contract ")
-        and " is missing" in message
-    ):
-        return ContractValidityStatus.MISSING_CONTRACT
-    if "Concord contract" in message and "changed identity" in message:
-        return ContractValidityStatus.INVALID_CONTRACT
-    if "Concord participant token is missing" in message:
-        return ContractValidityStatus.MISSING_TOKEN
-    if (
-        "Concord participant token is invalid" in message
-        or "Concord participant token changed owner" in message
-    ):
-        return ContractValidityStatus.INVALID_TOKEN
-    return None
+    return {
+        ConcordConflictCode.CONTRACT_CANCELLED: ContractValidityStatus.CANCELLED,
+        ConcordConflictCode.CONTRACT_MISSING: ContractValidityStatus.MISSING_CONTRACT,
+        ConcordConflictCode.CONTRACT_INVALID: ContractValidityStatus.INVALID_CONTRACT,
+        ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH: (
+            ContractValidityStatus.INVALID_CONTRACT
+        ),
+        ConcordConflictCode.TOKEN_MISSING: ContractValidityStatus.MISSING_TOKEN,
+        ConcordConflictCode.TOKEN_INVALID: ContractValidityStatus.INVALID_TOKEN,
+        ConcordConflictCode.TOKEN_IDENTITY_MISMATCH: (
+            ContractValidityStatus.INVALID_TOKEN
+        ),
+    }.get(exc.code)
 
 
 def service_unavailable_ends_service_use(exc: ServiceUnavailable) -> bool:

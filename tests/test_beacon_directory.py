@@ -6,10 +6,10 @@ from typing import Any
 
 import anyio
 import pytest
-from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.beacon import Beacon, BeaconAdvertisementSpec, BeaconDirectory
 from deckr.substrates.nats_kv import KvChange, KvEntry, KvUnavailable
+from deckr.testing import MemoryJsonKvBucket
 
 FEATURE_ID = "dev.deckr.test.directory"
 

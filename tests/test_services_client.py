@@ -11,6 +11,7 @@ import pytest
 from deckr.actions.endpoints import action_provider_address
 from deckr.concord import (
     ConcordConflict,
+    ConcordConflictCode,
     ConcordManagedContract,
     ContractHandle,
     ContractRecord,
@@ -500,24 +501,39 @@ async def test_use_explicit_timeout_covers_proposal_wait() -> None:
 
 
 @pytest.mark.parametrize(
-    ("message", "expected_code"),
+    ("conflict_code", "message", "expected_code"),
     (
-        ("Concord contract is cancelled", "contract_cancelled"),
-        ("Concord contract 'abc' is cancelled", "contract_cancelled"),
-        ("Concord contract is missing", "contract_missing_contract"),
-        ("Concord contract 'abc' is missing", "contract_missing_contract"),
-        ("Concord participant token is invalid", "contract_invalid_token"),
-        ("Concord participant token changed owner", "contract_invalid_token"),
+        (
+            ConcordConflictCode.CONTRACT_CANCELLED,
+            "misleading diagnostic: token is valid",
+            "contract_cancelled",
+        ),
+        (
+            ConcordConflictCode.CONTRACT_MISSING,
+            "misleading diagnostic: contract is cancelled",
+            "contract_missing_contract",
+        ),
+        (
+            ConcordConflictCode.TOKEN_INVALID,
+            "misleading diagnostic: contract is missing",
+            "contract_invalid_token",
+        ),
+        (
+            ConcordConflictCode.TOKEN_IDENTITY_MISMATCH,
+            "misleading diagnostic: participant is attached",
+            "contract_invalid_token",
+        ),
     ),
 )
 @pytest.mark.asyncio
 async def test_use_translates_terminal_protocol_conflict_during_negotiation(
+    conflict_code: ConcordConflictCode,
     message: str,
     expected_code: str,
 ) -> None:
     agreement = SimpleNamespace(
         contract=_contract(),
-        refresh=AsyncMock(side_effect=ConcordConflict(message)),
+        refresh=AsyncMock(side_effect=ConcordConflict(conflict_code, message)),
         cancel=AsyncMock(return_value=True),
         aclose=AsyncMock(),
     )
@@ -543,7 +559,12 @@ async def test_use_translates_unknown_protocol_conflict_to_service_use_conflict(
     message = "Concord participant is already attached"
     agreement = SimpleNamespace(
         contract=_contract(),
-        refresh=AsyncMock(side_effect=ConcordConflict(message)),
+        refresh=AsyncMock(
+            side_effect=ConcordConflict(
+                ConcordConflictCode.PARTICIPANT_ALREADY_ATTACHED,
+                message,
+            )
+        ),
         cancel=AsyncMock(return_value=True),
         aclose=AsyncMock(),
     )
@@ -565,9 +586,10 @@ async def test_use_translates_unknown_protocol_conflict_to_service_use_conflict(
 
 
 @pytest.mark.parametrize(
-    ("message", "expected_code", "expected_status"),
+    ("conflict_code", "message", "expected_code", "expected_status"),
     (
         (
+            ConcordConflictCode.TOKEN_MISSING,
             "Concord participant token is missing",
             "contract_missing_token",
             ContractValidityStatus.MISSING_TOKEN.value,
@@ -576,6 +598,7 @@ async def test_use_translates_unknown_protocol_conflict_to_service_use_conflict(
 )
 @pytest.mark.asyncio
 async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
+    conflict_code: ConcordConflictCode,
     message: str,
     expected_code: str,
     expected_status: str,
@@ -583,7 +606,7 @@ async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
     descriptor = _descriptor()
     agreement = SimpleNamespace(
         contract=_contract(),
-        refresh=AsyncMock(side_effect=ConcordConflict(message)),
+        refresh=AsyncMock(side_effect=ConcordConflict(conflict_code, message)),
     )
     lease = ServiceUseLease(
         agreement=agreement,

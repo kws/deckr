@@ -100,6 +100,13 @@ uv run lint-imports
 uv run pytest
 ```
 
+Focused protocol tests should import `MemoryJsonKvBucket`,
+`ConcordRuntimeHarness`, or `ConcordMaintenanceHarness` from `deckr.testing`.
+Use the runtime harness for ordinary Concord tests and the maintenance harness
+only for reaper/maintenance coverage; workspace tests must not construct
+`Concord` directly from three stores. See the
+[migration guide](docs/migration-guide.md#test-rewrites) for examples.
+
 Run the TypeScript core conformance checks:
 
 ```bash

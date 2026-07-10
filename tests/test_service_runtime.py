@@ -7,7 +7,6 @@ from typing import Any
 
 import anyio
 import pytest
-from memory_kv_bucket import MemoryJsonKvBucket
 
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import Beacon, BeaconAdvertisementSpec, BeaconDirectory
@@ -52,6 +51,7 @@ from deckr.services import (
 )
 from deckr.services.messages import ServiceMessageBody, service_message
 from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
+from deckr.testing import MemoryJsonKvBucket
 
 
 def _protocol(

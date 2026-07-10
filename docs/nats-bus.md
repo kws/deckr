@@ -238,6 +238,39 @@ key:    stale.<contract-id-token>.<generation>
 schema: dev.deckr.concord.stale-observation.v1
 ```
 
+The Python implementation separates three store responsibilities behind narrow
+internal ports:
+
+| Responsibility | Operations and use |
+| --- | --- |
+| exact Concord KV | exact-key reads, create, revision-guarded update/delete, and token-bucket TTL metadata for strict validation and every authority mutation |
+| Concord materialized source | readiness/currentness, generation, cached raw exact-key and prefix snapshots, cached revisions, and the existing runtime subscription hook |
+| Concord maintenance scan | exact prefix listing and exact-key reads plus revision-guarded maintenance create/update/delete operations |
+
+Each supplied raw bucket is normalized to one underlying materialized bucket;
+the exact, source, and scan views over it do not create duplicate materializers
+or watches. Normal runtime reads use the materialized source. Exact reads fence
+writes and serve strict validation or recovery. Broad exact prefix scans remain
+restricted to the low-frequency maintenance path.
+
+Store and lifecycle failures are typed. Callers branch on `.code`, never on
+exception messages:
+
+| Condition | Typed code |
+| --- | --- |
+| KV create collision | `ConcordConflictCode.KEY_ALREADY_EXISTS` |
+| revision-guarded update/delete collision | `ConcordConflictCode.REVISION_CHANGED` |
+| malformed contract/token used by a mutation | `ConcordConflictCode.CONTRACT_INVALID` / `ConcordConflictCode.TOKEN_INVALID` |
+| canonical key, pointer, handle, or parsed-record identity mismatch | `ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH` / `ConcordConflictCode.TOKEN_IDENTITY_MISMATCH` |
+| exact store unavailable | `ConcordUnavailableCode.STORE_UNAVAILABLE` |
+| started materialized source not current | `ConcordUnavailableCode.SOURCE_STALE` |
+| absent or invalid token TTL metadata | `ConcordUnavailableCode.TTL_METADATA_MISSING` / `ConcordUnavailableCode.TTL_INVALID` |
+
+Messages remain human-readable diagnostics only. Malformed external values are
+normalized to invalid validation results or typed terminal conflicts instead of
+leaking model parsing errors. Identity mismatches perform no create, update, or
+delete.
+
 The implementation-level Python API for core runtime, hardware/service
 infrastructure, and conformance tests is `deckr.concord.Concord`. Ordinary
 service consumers should use `deckr.services` instead of constructing Concord
@@ -263,12 +296,14 @@ validity = await concord.validate(agreement.contract)
 await lease.aclose()
 ```
 
-Lower-level tests and maintenance code can still create a `Concord` instance
-directly from materialized or raw KV buckets:
+Tests use the shipped `deckr.testing` harness instead of constructing Concord
+from three stores:
 
 ```python
-concord = Concord(contract_bucket, token_bucket, maintenance_bucket)
-agreement = await concord.propose(
+from deckr.testing import ConcordRuntimeHarness
+
+harness = ConcordRuntimeHarness()
+agreement = await harness.concord.propose(
     ConcordAgreementSpec(
         participants=("controller:main", "hardware_manager:mirabox-main"),
         local_participant="controller:main",
@@ -277,14 +312,21 @@ agreement = await concord.propose(
         terms=terms,
     )
 )
-lease = await concord.attach(
+lease = await harness.concord.attach(
     agreement.contract,
     participant="hardware_manager:mirabox-main",
     session_id="manager-session",
 )
-validity = await concord.validate(agreement.contract)
+validity = await harness.concord.validate(agreement.contract)
 await lease.aclose()
 ```
+
+`ConcordMaintenanceHarness` is the only test surface that exposes contract,
+token, and maintenance stores together. The internal maintenance scan port and
+maintenance-only harness do not introduce a production `ConcordMaintenance`
+capability. Production ownership remains with the existing
+`ConcordReaperService` and its current wiring until that capability is split out
+in the later maintenance phase.
 
 A Concord contract is valid only while the contract is open and every named
 participant maintains an acceptable token for the same contract id, generation,

@@ -52,6 +52,12 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
             "construct",
         ): 1,
         (
+            Path("deckr/src/deckr/testing/concord.py"),
+            "_legacy_concord",
+            "Concord",
+            "construct",
+        ): 1,
+        (
             Path("deckr/src/deckr/runtime.py"),
             "Deckr.__aenter__",
             "Concord",
@@ -195,6 +201,141 @@ def _production_python_files(workspace: Path) -> tuple[Path, ...]:
             if "tests" not in path.parts and "__pycache__" not in path.parts
         )
     return tuple(sorted(files))
+
+
+def test_workspace_tests_do_not_construct_three_store_concord() -> None:
+    workspace = Path(__file__).resolve().parents[2]
+    offenders: list[str] = []
+    for path in sorted(workspace.glob("deckr*/tests/**/*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or len(node.args) < 3:
+                continue
+            name = _receiver_name(node.func)
+            if name.rsplit(".", 1)[-1] == "Concord":
+                offenders.append(f"{path.relative_to(workspace)}:{node.lineno}")
+    assert not offenders, "direct three-store Concord test construction: " + ", ".join(
+        offenders
+    )
+
+
+def test_production_does_not_import_deckr_testing() -> None:
+    workspace = Path(__file__).resolve().parents[2]
+    offenders: list[str] = []
+    for path in _production_python_files(workspace):
+        relative = path.relative_to(workspace)
+        if relative.parts[:4] == ("deckr", "src", "deckr", "testing"):
+            continue
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "deckr.testing":
+                offenders.append(f"{relative}:{node.lineno}")
+            elif isinstance(node, ast.Import):
+                if any(alias.name.startswith("deckr.testing") for alias in node.names):
+                    offenders.append(f"{relative}:{node.lineno}")
+    assert not offenders, "production imports deckr.testing: " + ", ".join(offenders)
+
+
+def test_legacy_core_memory_kv_module_is_removed() -> None:
+    deckr_root = Path(__file__).resolve().parents[1]
+    assert not (deckr_root / "tests" / "memory_kv_bucket.py").exists()
+    offenders: list[Path] = []
+    for path in sorted((deckr_root / "tests").glob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        if any(
+            isinstance(node, ast.ImportFrom) and node.module == "memory_kv_bucket"
+            for node in ast.walk(tree)
+        ):
+            offenders.append(path.relative_to(deckr_root))
+    assert not offenders
+
+
+def test_concord_conflict_handlers_do_not_classify_exception_text() -> None:
+    workspace = Path(__file__).resolve().parents[2]
+    offenders: list[str] = []
+    for path in _production_python_files(workspace):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        relative = path.relative_to(workspace)
+        for handler in (
+            node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)
+        ):
+            if not _exception_type_names(handler.type) & {"ConcordConflict"}:
+                continue
+            exception_name = handler.name
+            if exception_name is None:
+                continue
+            aliases: set[str] = set()
+            for node in ast.walk(handler):
+                if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                    continue
+                target = node.targets[0]
+                if isinstance(target, ast.Name) and _is_exception_text(
+                    node.value,
+                    {exception_name, *aliases},
+                ):
+                    aliases.add(target.id)
+            for condition in _handler_conditions(handler):
+                if _condition_classifies_exception_text(
+                    condition,
+                    exception_name=exception_name,
+                    text_aliases=aliases,
+                ):
+                    offenders.append(f"{relative}:{condition.lineno}")
+    assert not offenders, "Concord conflict text classification: " + ", ".join(offenders)
+
+
+def _exception_type_names(node: ast.AST | None) -> set[str]:
+    if node is None:
+        return set()
+    if isinstance(node, ast.Tuple):
+        return {
+            name
+            for item in node.elts
+            for name in _exception_type_names(item)
+        }
+    name = _receiver_name(node)
+    return {name.rsplit(".", 1)[-1]} if name else set()
+
+
+def _handler_conditions(handler: ast.ExceptHandler) -> tuple[ast.AST, ...]:
+    return tuple(
+        node.test
+        for node in ast.walk(handler)
+        if isinstance(node, (ast.If, ast.While, ast.IfExp))
+    )
+
+
+def _is_exception_text(node: ast.AST, aliases: set[str]) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "str"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id in aliases
+    )
+
+
+def _condition_classifies_exception_text(
+    condition: ast.AST,
+    *,
+    exception_name: str,
+    text_aliases: set[str],
+) -> bool:
+    aliases = {exception_name, *text_aliases}
+    for node in ast.walk(condition):
+        if _is_exception_text(node, aliases):
+            return True
+        if isinstance(node, ast.Name) and node.id in text_aliases:
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in {"startswith", "endswith", "search", "match"}:
+                if any(
+                    isinstance(child, ast.Name) and child.id in aliases
+                    for child in ast.walk(node)
+                ):
+                    return True
+    return False
 
 
 def _receiver_name(node: ast.AST) -> str:
