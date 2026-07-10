@@ -5,14 +5,11 @@ import test from "node:test";
 
 import {
   ACTION_LIFECYCLE_REJECTED,
-  actionsPayloadFromAdvertisement,
   contextSubject,
   parseSettingsTargetKey,
   settingsTargetKey,
   validateActionInstanceMetadata,
   validateActionLifecycleRejectedBody,
-  validateActionProviderSessionTerms,
-  validateActionsBeaconPayload,
   validateSettingsTargetRef,
 } from "../src/actions.ts";
 import {
@@ -36,6 +33,7 @@ import {
   subjectFor,
   validateDeckrMessage,
 } from "../src/lanes.ts";
+import { validateServiceAdvertisementPayload } from "../src/services.ts";
 
 const CONTRACT_ROOT = join(import.meta.dirname, "../../../contract/v1");
 
@@ -114,20 +112,16 @@ test("NATS lane vectors match contract artifacts", () => {
 });
 
 test("valid contract fixtures parse and invalid fixtures fail", () => {
-  const actionsAdvertisement = validateAdvertisementRecord(
-    json("fixtures/valid/beacon/actions-advertisement.v1.json"),
+  const actionRuntimeAdvertisement = validateAdvertisementRecord(
+    json("fixtures/valid/beacon/action-runtime-advertisement.v1.json"),
   );
   validateAdvertisementRecord(json("fixtures/valid/beacon/hardware-advertisement.v1.json"));
   validateContractRecord(json("fixtures/valid/concord/hardware-claim-contract.v1.json"));
   validateParticipantTokenRecord(json("fixtures/valid/concord/hardware-claim-token.v1.json"));
-  validateActionsBeaconPayload(json("fixtures/valid/profiles/actions.v1.json"));
-  validateActionProviderSessionTerms(
-    json("fixtures/valid/profiles/action-provider-session.v1.json"),
+  const actionRuntimePayload = validateServiceAdvertisementPayload(
+    actionRuntimeAdvertisement.payload,
   );
-  assert.equal(
-    actionsPayloadFromAdvertisement(actionsAdvertisement).providerInstanceId,
-    "clock-main",
-  );
+  assert.equal(actionRuntimePayload.serviceId, "action-runtime.clock-main");
 
   assert.throws(() =>
     validateAdvertisementRecord(json("fixtures/invalid/beacon/advertisement-missing-session.v1.json")),

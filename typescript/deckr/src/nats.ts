@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { StateConflict, StateUnavailable } from "./errors.ts";
 import { requireJsonObject, type JsonObject } from "./json.ts";
 import { validateDeckrMessage, validateHeaderHints, validateSubjectHint, type DeckrMessage } from "./lanes.ts";
@@ -14,6 +16,8 @@ export interface NatsStateStoreOptions {
   bucket: string;
   policy?: StateStorePolicy;
 }
+
+const NATS_KV_CREATION_MARKER_METADATA_KEY = "deckr.kv.creation_id";
 
 export async function connectNats(options: Record<string, unknown>): Promise<unknown> {
   const mod = await import("nats").catch((error) => {
@@ -42,6 +46,7 @@ export class NatsStateStore implements StateStore {
 
   private readonly connection: unknown;
   private kv: unknown | null = null;
+  private openingKv: Promise<unknown> | null = null;
 
   constructor(options: NatsStateStoreOptions) {
     this.connection = options.connection;
@@ -157,58 +162,144 @@ export class NatsStateStore implements StateStore {
     if (this.kv !== null) {
       return this.kv;
     }
-    const jetstream = callSync(this.connection, "jetstream");
-    const views = getProperty(jetstream, "views");
-    this.kv = await call(views, "kv", this.name, {
-      history: 1,
-      ...(this.policy.brokerTtlSeconds === null ? {} : { ttl: this.policy.brokerTtlSeconds * 1000 }),
-    });
-    await this.reconcileBucketPolicy(this.kv);
-    return this.kv;
+    if (this.openingKv !== null) {
+      return this.openingKv;
+    }
+    const opening = this.openAndValidateKv();
+    this.openingKv = opening;
+    try {
+      return await opening;
+    } finally {
+      if (this.openingKv === opening) {
+        this.openingKv = null;
+      }
+    }
   }
 
-  private async reconcileBucketPolicy(kv: unknown): Promise<void> {
-    const status = await call(kv, "status");
+  private async openAndValidateKv(): Promise<unknown> {
+    const jetstream = callSync(this.connection, "jetstream");
+    const views = getProperty(jetstream, "views");
+    const creationMarker = randomUUID();
+    const openOptions: Record<string, unknown> = {
+      history: 1,
+      metadata: { [NATS_KV_CREATION_MARKER_METADATA_KEY]: creationMarker },
+      ...(this.policy.brokerTtlSeconds === null
+        ? {}
+        : { ttl: this.policy.brokerTtlSeconds * 1000 }),
+    };
+    let kv: unknown;
+    try {
+      kv = await call(views, "kv", this.name, openOptions);
+    } catch (createError) {
+      // The KV helper races an info lookup against stream creation internally.
+      // If another process wins that race, bind to the winner and validate its
+      // policy as an existing shared bucket. Never infer creation ownership from
+      // a preflight lookup.
+      try {
+        kv = await call(views, "kv", this.name, { bindOnly: true });
+      } catch (bindError) {
+        throw new StateUnavailable(`NATS KV bucket ${JSON.stringify(this.name)} is unavailable`, {
+          cause: new AggregateError([createError, bindError]),
+        });
+      }
+    }
+    let status: unknown;
+    try {
+      status = await call(kv, "status");
+    } catch (error) {
+      throw new StateUnavailable(
+        `Could not inspect NATS KV bucket ${JSON.stringify(this.name)}`,
+        { cause: error },
+      );
+    }
+    const config = streamConfigFromKvStatus(status);
+    const metadata = recordOrNull(config["metadata"]);
+    const newlyCreated =
+      metadata?.[NATS_KV_CREATION_MARKER_METADATA_KEY] === creationMarker;
+    await this.ensureBucketPolicy(kv, status, newlyCreated);
+    // Do not cache a handle until its policy has passed validation. A failed
+    // first operation must not bypass the check on the next operation.
+    this.kv = kv;
+    return kv;
+  }
+
+  private async ensureBucketPolicy(
+    kv: unknown,
+    status: unknown,
+    newlyCreated: boolean,
+  ): Promise<void> {
     const expectedTtlMs =
       this.policy.brokerTtlSeconds === null ? 0 : this.policy.brokerTtlSeconds * 1000;
     const expectedMaxAgeNs = expectedTtlMs * 1_000_000;
     const expectedDeleteMarkerNs =
       this.policy.brokerTtlSeconds === null ? null : expectedMaxAgeNs;
-    const actualTtlMs = Number(getProperty(status, "ttl"));
-    const actualHistory = Number(getProperty(status, "history"));
-    let config: Record<string, unknown> | null = null;
-    let deleteMarkerMatches = true;
-    if (expectedDeleteMarkerNs !== null) {
-      const streamInfo = getProperty(status, "streamInfo");
-      config = getProperty(streamInfo, "config") as Record<string, unknown>;
-      deleteMarkerMatches =
-        Number(config["subject_delete_marker_ttl"] ?? 0) === expectedDeleteMarkerNs;
+    const config = streamConfigFromKvStatus(status);
+    const maxAgeMatches = Number(config["max_age"] ?? 0) === expectedMaxAgeNs;
+    const maxMessagesMatches = Number(config["max_msgs_per_subject"]) === 1;
+    const observedAllowWriteTtl = config["allow_msg_ttl"] === true;
+    const allowWriteTtlMatches =
+      observedAllowWriteTtl === this.policy.allowWriteTtl;
+    const deleteMarkerMatches =
+      expectedDeleteMarkerNs === null ||
+      Number(config["subject_delete_marker_ttl"] ?? 0) === expectedDeleteMarkerNs;
+    const mismatches: string[] = [];
+    if (!maxAgeMatches) {
+      mismatches.push(
+        `max_age (expected ${expectedMaxAgeNs}ns, found ${String(config["max_age"])})`,
+      );
     }
-    if (
-      Math.abs(actualTtlMs - expectedTtlMs) <= 1 &&
-      actualHistory === 1 &&
-      deleteMarkerMatches
-    ) {
+    if (!maxMessagesMatches) {
+      mismatches.push(
+        `max_msgs_per_subject (expected 1, found ${String(config["max_msgs_per_subject"])})`,
+      );
+    }
+    if (!allowWriteTtlMatches) {
+      mismatches.push(
+        `allow_msg_ttl (expected ${String(this.policy.allowWriteTtl)}, found ${String(config["allow_msg_ttl"])})`,
+      );
+    }
+    if (!deleteMarkerMatches) {
+      mismatches.push(
+        `subject_delete_marker_ttl (expected ${expectedDeleteMarkerNs}ns, found ${String(config["subject_delete_marker_ttl"])})`,
+      );
+    }
+    if (mismatches.length === 0) {
       return;
     }
-    if (config === null) {
-      const streamInfo = getProperty(status, "streamInfo");
-      config = getProperty(streamInfo, "config") as Record<string, unknown>;
-    }
+
     const streamName = String(getProperty(config, "name"));
+    if (!newlyCreated) {
+      throw new StateUnavailable(
+        `Existing NATS KV bucket ${JSON.stringify(this.name)} has an incompatible Deckr KV policy: ${mismatches.join(", ")}. Deckr will not rewrite shared bucket policy; delete and recreate the development bucket/stream ${streamName} and restart.`,
+      );
+    }
+
+    // The public KV creation options express max_age and history. If the
+    // broker did not honor either field, a post-create rewrite would disguise
+    // an incompatible server or configuration.
+    if (!maxAgeMatches || !maxMessagesMatches) {
+      throw new StateUnavailable(
+        `New NATS KV bucket ${JSON.stringify(this.name)} was created with an incompatible max_age or max_msgs_per_subject policy.`,
+      );
+    }
+
     const manager = await callSync(this.connection, "jetstreamManager");
     const streams = getProperty(manager, "streams");
     const updatedConfig: Record<string, unknown> = {
       ...config,
-      max_age: expectedMaxAgeNs,
-      max_msgs_per_subject: 1,
     };
+    updatedConfig["allow_msg_ttl"] = this.policy.allowWriteTtl;
     if (expectedDeleteMarkerNs !== null) {
       updatedConfig["subject_delete_marker_ttl"] = expectedDeleteMarkerNs;
     }
-    await call(streams, "update", streamName, {
-      ...updatedConfig,
-    });
+    try {
+      await call(streams, "update", streamName, updatedConfig);
+    } catch (error) {
+      throw new StateUnavailable(
+        `New NATS KV bucket ${JSON.stringify(this.name)} could not be configured for Deckr's current KV policy. Delete the development bucket/stream ${streamName} and restart.`,
+        { cause: error },
+      );
+    }
   }
 
   private validateTtl(ttl: number | null): void {
@@ -248,6 +339,17 @@ export class NatsStateStore implements StateStore {
       }
     }
   }
+}
+
+function streamConfigFromKvStatus(status: unknown): Record<string, unknown> {
+  const streamInfo = getProperty(status, "streamInfo");
+  return getProperty(streamInfo, "config") as Record<string, unknown>;
+}
+
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function stateEntryFromKv(key: string, entry: unknown): StateEntry {

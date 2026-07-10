@@ -6,6 +6,7 @@ import {
   BeaconService,
   BEACON_ADVERTISEMENT_STORE_POLICY,
   CandidateStatus,
+  DEFAULT_BEACON_TTL_SECONDS,
 } from "../src/beacon.ts";
 import {
   canonicalJsonHash,
@@ -17,6 +18,7 @@ import {
   ConcordService,
   ContractState,
   ContractValidityStatus,
+  DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
   type ContractPointer,
   type ContractValidity,
   type ParticipantHandle,
@@ -293,7 +295,7 @@ function token(
     tokenId: `${participant}.token`,
     revision: 1,
     refreshSeq: 1,
-    ttlSeconds: 30,
+    ttlSeconds: DEFAULT_CONCORD_TOKEN_TTL_SECONDS,
   };
 }
 
@@ -319,6 +321,13 @@ function validViewLease(descriptor: ServiceDescriptor): ServiceUseLease {
     } as ServiceUseLease["agreement"],
   };
 }
+
+test("Beacon and Concord use the canonical shared-store TTLs", () => {
+  assert.equal(DEFAULT_BEACON_TTL_SECONDS, 300);
+  assert.equal(BEACON_ADVERTISEMENT_STORE_POLICY.brokerTtlSeconds, 300);
+  assert.equal(DEFAULT_CONCORD_TOKEN_TTL_SECONDS, 120);
+  assert.equal(CONCORD_TOKEN_STORE_POLICY.brokerTtlSeconds, 120);
+});
 
 test("Beacon advertises, refreshes, validates, and withdraws candidates", async () => {
   const state = new MemoryStateStore({ policy: BEACON_ADVERTISEMENT_STORE_POLICY });

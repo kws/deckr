@@ -21,7 +21,7 @@ import {
 
 export const BEACON_ADVERTISEMENT_SCHEMA_ID = "dev.deckr.beacon.advertisement.v1";
 export const DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME = "deckr_beacon_advertisement_v1";
-export const DEFAULT_BEACON_TTL_SECONDS = 30;
+export const DEFAULT_BEACON_TTL_SECONDS = 300;
 export const BEACON_ADVERTISEMENT_STORE_POLICY: StateStorePolicy = Object.freeze({
   brokerTtlSeconds: DEFAULT_BEACON_TTL_SECONDS,
   allowWriteTtl: true,

@@ -13,6 +13,7 @@ from deckr.substrates.nats_kv import (
     KvChange,
     KvConflict,
     KvEntry,
+    KvUnavailable,
     KvViewStatus,
     NatsJsonKvBucket,
     NatsKvMaterializedBucket,
@@ -47,7 +48,26 @@ async def test_nats_json_kv_creates_bucket_with_policy_ttl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_json_kv_updates_existing_bucket_policy() -> None:
+async def test_nats_json_kv_disables_write_ttl_on_new_persistent_bucket() -> None:
+    fake_js = _FakeJs(existing=False)
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(
+            bucket="deckr_concord_contract_v1",
+            ttl_seconds=None,
+            allow_write_ttl=False,
+        ),
+    )
+
+    await bucket.put("contracts.main.1.meta", {"state": "open"})
+
+    assert fake_js.updated_config is not None
+    assert fake_js.updated_config.allow_msg_ttl is False
+    assert fake_js.updated_raw_config is None
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_rejects_existing_incompatible_bucket_policy() -> None:
     fake_js = _FakeJs(existing=True, max_age=None, allow_msg_ttl=False)
     bucket = NatsJsonKvBucket(
         js=fake_js,
@@ -58,13 +78,72 @@ async def test_nats_json_kv_updates_existing_bucket_policy() -> None:
         ),
     )
 
-    await bucket.put("contracts.main.1.participants.controller", {"token": "one"})
+    with pytest.raises(KvUnavailable, match="will not rewrite shared bucket policy"):
+        await bucket.put(
+            "contracts.main.1.participants.controller",
+            {"token": "one"},
+        )
 
-    assert fake_js.updated_raw_config is not None
-    assert fake_js.updated_raw_config["max_age"] == 30_000_000_000
-    assert fake_js.updated_raw_config["max_msgs_per_subject"] == 1
-    assert fake_js.updated_raw_config["allow_msg_ttl"] is True
-    assert fake_js.updated_raw_config["subject_delete_marker_ttl"] == 30_000_000_000
+    assert fake_js.updated_config is None
+    assert fake_js.updated_raw_config is None
+
+    # A failed validation must not cache the KV handle and bypass the check on
+    # the next operation.
+    with pytest.raises(KvUnavailable, match="will not rewrite shared bucket policy"):
+        await bucket.get("contracts.main.1.participants.controller")
+
+    assert fake_js.key_value_calls == 2
+    assert fake_js.updated_config is None
+    assert fake_js.updated_raw_config is None
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_rejects_unexpected_per_message_ttl_capability() -> None:
+    fake_js = _FakeJs(existing=True, max_age=None, allow_msg_ttl=True)
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(
+            bucket="deckr_concord_contract_v1",
+            ttl_seconds=None,
+            allow_write_ttl=False,
+        ),
+    )
+
+    with pytest.raises(KvUnavailable, match="allow_msg_ttl"):
+        await bucket.get("contracts.main.1.meta")
+
+    assert fake_js.updated_config is None
+    assert fake_js.updated_raw_config is None
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_treats_create_race_winner_as_existing() -> None:
+    fake_js = _FakeJs(
+        existing=False,
+        create_race=True,
+        max_age=30.0,
+        allow_msg_ttl=True,
+        subject_delete_marker_ttl=None,
+    )
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(
+            bucket="deckr_concord_token_v1",
+            ttl_seconds=30.0,
+            allow_write_ttl=True,
+        ),
+    )
+
+    with pytest.raises(KvUnavailable, match="will not rewrite shared bucket policy"):
+        await bucket.put(
+            "contracts.main.1.participants.controller",
+            {"token": "one"},
+        )
+
+    assert fake_js.create_key_value_calls == 1
+    assert fake_js.key_value_calls == 2
+    assert fake_js.updated_config is None
+    assert fake_js.updated_raw_config is None
 
 
 @pytest.mark.asyncio
@@ -87,6 +166,8 @@ async def test_nats_json_kv_exposes_resolved_bucket_ttl() -> None:
 
     assert await bucket.ttl_seconds() == 45.0
     assert await materialized.ttl_seconds() == 45.0
+    assert fake_js.updated_config is None
+    assert fake_js.updated_raw_config is None
 
 
 @pytest.mark.asyncio
@@ -543,7 +624,7 @@ class _FakeStreamConfig:
         name: str,
         max_age: float | None,
         max_msgs_per_subject: int | None = 1,
-        allow_msg_ttl: bool | None = True,
+        allow_msg_ttl: bool | None = False,
         subject_delete_marker_ttl: int | None = None,
     ) -> None:
         self.name = name
@@ -563,12 +644,14 @@ class _FakeJs:
         self,
         *,
         existing: bool = True,
+        create_race: bool = False,
         max_age: float | None = None,
-        allow_msg_ttl: bool | None = True,
+        allow_msg_ttl: bool | None = False,
         subject_delete_marker_ttl: int | None = None,
     ) -> None:
         self.bucket = "deckr_concord_contract_v1"
         self.kv = _FakeKv(self) if existing else None
+        self.create_race = create_race
         self.config = _FakeStreamConfig(
             name=f"KV_{self.bucket}",
             max_age=max_age,
@@ -576,6 +659,8 @@ class _FakeJs:
             subject_delete_marker_ttl=subject_delete_marker_ttl,
         )
         self.created_config = None
+        self.key_value_calls = 0
+        self.create_key_value_calls = 0
         self.updated_config = None
         self.updated_raw_config = None
         self.deleted_consumers: list[tuple[str, str]] = []
@@ -589,6 +674,7 @@ class _FakeJs:
         return f"consumer-{self._consumer_index}"
 
     async def key_value(self, bucket: str) -> _FakeKv:
+        self.key_value_calls += 1
         self.bucket = bucket
         if self.kv is None:
             raise RuntimeError("missing")
@@ -597,6 +683,13 @@ class _FakeJs:
         return self.kv
 
     async def create_key_value(self, config=None, **params) -> _FakeKv:
+        self.create_key_value_calls += 1
+        if self.create_race:
+            bucket = config.bucket if config is not None else params["bucket"]
+            self.bucket = bucket
+            self.config.name = f"KV_{bucket}"
+            self.kv = _FakeKv(self)
+            raise RuntimeError("bucket already exists")
         if config is not None:
             self.created_config = config
             self.bucket = config.bucket
