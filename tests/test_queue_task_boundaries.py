@@ -9,6 +9,28 @@ from pathlib import Path
 
 _Boundary = tuple[Path, str, str, str]
 
+_STATE_STREAM_OWNERS = {
+    (Path("deckr/src/deckr/substrates/nats_kv.py"), "NatsKvMaterializedBucket"),
+    (Path("deckr/src/deckr/beacon.py"), "Beacon"),
+    (Path("deckr/src/deckr/beacon.py"), "_BeaconSubscriber"),
+    (Path("deckr/src/deckr/concord.py"), "Concord"),
+    (Path("deckr/src/deckr/concord.py"), "_ConcordSubscriber"),
+    (Path("deckr/src/deckr/concord.py"), "ConcordParticipant"),
+    (Path("deckr/src/deckr/services/views.py"), "ServiceViewStore"),
+    (
+        Path("deckr/src/deckr/services/subscriptions.py"),
+        "SharedResourceSubscriptionManager",
+    ),
+    (
+        Path("deckr-controller/src/deckr/controller/config/_materialized.py"),
+        "MaterializedDeviceConfigService",
+    ),
+    (
+        Path("deckr-controller/src/deckr/controller/config/_service.py"),
+        "FileBackedDeviceConfigService",
+    ),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class _TemporaryBoundary:
@@ -22,6 +44,186 @@ class _TemporaryBoundary:
 # bounds it, and the test fails when an entry disappears without its metadata
 # being removed too.
 _TEMPORARY_BOUNDARIES: dict[_Boundary, _TemporaryBoundary] = {
+    (
+        Path("deckr/src/deckr/core/util/anyio.py"),
+        "SubscribableQueue.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 3/5",
+        reason="remove the generic lossy subscriber registry after callers migrate",
+    ),
+    (
+        Path("deckr/src/deckr/substrates/nats_kv.py"),
+        "NatsKvMaterializedBucket.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace blocking materialized subscribers with capped state wakeups",
+    ),
+    (
+        Path("deckr/src/deckr/substrates/nats_kv.py"),
+        "NatsKvMaterializedBucket.subscribe",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace blocking materialized subscriber streams with capped wakeups",
+    ),
+    (
+        Path("deckr/src/deckr/beacon.py"),
+        "_BeaconSubscriber",
+        "pending_events",
+        "state_queue_without_capacity",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace replay event accumulation with bounded resnapshot state",
+    ),
+    (
+        Path("deckr/src/deckr/beacon.py"),
+        "Beacon.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="move Beacon registrations to the bounded current-state broadcaster",
+    ),
+    (
+        Path("deckr/src/deckr/beacon.py"),
+        "Beacon.watch",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace Beacon replay/fanout with capped resnapshot wakeups",
+    ),
+    (
+        Path("deckr/src/deckr/concord.py"),
+        "_ConcordSubscriber",
+        "pending_events",
+        "state_queue_without_capacity",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace replay event accumulation with bounded resnapshot state",
+    ),
+    (
+        Path("deckr/src/deckr/concord.py"),
+        "Concord.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="move Concord registrations to the bounded current-state broadcaster",
+    ),
+    (
+        Path("deckr/src/deckr/concord.py"),
+        "Concord.watch",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace Concord replay/fanout with capped resnapshot wakeups",
+    ),
+    (
+        Path("deckr/src/deckr/concord.py"),
+        "Concord.watch_contract_notifications_cached",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace notification pumps with atomic capped state wakeups",
+    ),
+    (
+        Path("deckr/src/deckr/concord.py"),
+        "ConcordParticipant.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="move participant state fanout to the bounded state broadcaster",
+    ),
+    (
+        Path("deckr/src/deckr/concord.py"),
+        "ConcordParticipant.watch",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace participant event streams with capped state wakeups",
+    ),
+    (
+        Path("deckr/src/deckr/services/views.py"),
+        "ServiceViewStore.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="move service-view registrations to the bounded state broadcaster",
+    ),
+    (
+        Path("deckr/src/deckr/services/views.py"),
+        "ServiceViewStore.watch",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace lossy service-view fanout with capped resnapshot wakeups",
+    ),
+    (
+        Path("deckr/src/deckr/services/subscriptions.py"),
+        "SharedResourceSubscriptionManager.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 5B",
+        reason="cap logical sessions under provider-lease-scoped ownership",
+    ),
+    (
+        Path("deckr/src/deckr/services/subscriptions.py"),
+        "SharedResourceSubscriptionManager.open_session",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="replace lossy logical-session fanout with capped resnapshot wakeups",
+    ),
+    (
+        Path("deckr-controller/src/deckr/controller/config/_materialized.py"),
+        "MaterializedDeviceConfigService.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="move materialized config fanout to bounded state wakeups",
+    ),
+    (
+        Path("deckr-controller/src/deckr/controller/config/_materialized.py"),
+        "MaterializedDeviceConfigService._subscribe_impl",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="make config bootstrap and fanout convergent under overflow",
+    ),
+    (
+        Path("deckr-controller/src/deckr/controller/config/_service.py"),
+        "FileBackedDeviceConfigService.__init__",
+        "self._subscribers",
+        "subscriber_registry",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="move file-backed config fanout to bounded state wakeups",
+    ),
+    (
+        Path("deckr-controller/src/deckr/controller/config/_service.py"),
+        "FileBackedDeviceConfigService._subscribe_impl",
+        "send, receive",
+        "bounded_state_stream",
+    ): _TemporaryBoundary(
+        phase="Phase 3",
+        reason="make config bootstrap and fanout convergent under overflow",
+    ),
     (
         Path(
             "deckr-action-provider-runtime-python/"
@@ -484,6 +686,40 @@ class Example {
     )
 
 
+def test_queue_task_audit_detects_bounded_state_streams_and_registries() -> None:
+    tree = ast.parse(
+        """
+class NatsKvMaterializedBucket:
+    def __init__(self):
+        self._subscribers: set[object] = set()
+
+    async def subscribe(self):
+        send, receive = anyio.create_memory_object_stream(max_buffer_size=capacity)
+"""
+    )
+    visitor = _QueueTaskBoundaryVisitor(
+        Path("deckr/src/deckr/substrates/nats_kv.py")
+    )
+    visitor.visit(tree)
+
+    assert visitor.boundaries == Counter(
+        {
+            (
+                Path("deckr/src/deckr/substrates/nats_kv.py"),
+                "NatsKvMaterializedBucket.__init__",
+                "self._subscribers",
+                "subscriber_registry",
+            ): 1,
+            (
+                Path("deckr/src/deckr/substrates/nats_kv.py"),
+                "NatsKvMaterializedBucket.subscribe",
+                "send, receive",
+                "bounded_state_stream",
+            ): 1,
+        }
+    )
+
+
 class _QueueTaskBoundaryVisitor(ast.NodeVisitor):
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -546,6 +782,14 @@ class _QueueTaskBoundaryVisitor(ast.NodeVisitor):
             annotation=annotation,
         ):
             self._record(owner, "task_or_reply_route_map")
+        if _is_subscriber_registry(owner) and _is_collection_initializer(value):
+            self._record(owner, "subscriber_registry")
+        if (
+            self._is_state_owner_scope()
+            and owner.rsplit(".", 1)[-1].lower().startswith("pending_")
+            and _is_list_initializer(value)
+        ):
+            self._record(owner, "state_queue_without_capacity")
 
     def _inspect_queue_call(self, node: ast.Call, *, owner: str) -> None:
         name = _callable_leaf_name(node.func)
@@ -553,6 +797,8 @@ class _QueueTaskBoundaryVisitor(ast.NodeVisitor):
             capacity = _call_capacity(node, keyword="max_buffer_size")
             if capacity is None or not _is_explicit_positive_capacity(capacity):
                 self._record(owner, "memory_stream_without_positive_capacity")
+            elif self._is_state_owner_scope():
+                self._record(owner, "bounded_state_stream")
             return
         if name in {"Queue", "PriorityQueue", "LifoQueue"}:
             capacity = _call_capacity(node, keyword="maxsize")
@@ -570,6 +816,12 @@ class _QueueTaskBoundaryVisitor(ast.NodeVisitor):
     def _record(self, owner: str, kind: str) -> None:
         scope = ".".join(self._scope) if self._scope else "<module>"
         self.boundaries[(self._path, scope, owner, kind)] += 1
+
+    def _is_state_owner_scope(self) -> bool:
+        return any(
+            self._path == path and owner in self._scope
+            for path, owner in _STATE_STREAM_OWNERS
+        )
 
 
 def _callable_leaf_name(node: ast.AST) -> str:
@@ -647,6 +899,39 @@ def _is_mapping_initializer(node: ast.AST) -> bool:
         and _callable_leaf_name(item.value) in {"dict", "defaultdict"}
         for item in node.keywords
     )
+
+
+def _is_collection_initializer(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Dict, ast.DictComp, ast.Set, ast.SetComp)):
+        return True
+    if not isinstance(node, ast.Call):
+        return False
+    name = _callable_leaf_name(node.func)
+    if name in {"dict", "defaultdict", "set"}:
+        return True
+    return name == "field" and any(
+        item.arg == "default_factory"
+        and _callable_leaf_name(item.value) in {"dict", "defaultdict", "set"}
+        for item in node.keywords
+    )
+
+
+def _is_list_initializer(node: ast.AST) -> bool:
+    if isinstance(node, (ast.List, ast.ListComp)):
+        return True
+    if not isinstance(node, ast.Call):
+        return False
+    name = _callable_leaf_name(node.func)
+    if name == "list":
+        return True
+    return name == "field" and any(
+        item.arg == "default_factory" and _callable_leaf_name(item.value) == "list"
+        for item in node.keywords
+    )
+
+
+def _is_subscriber_registry(owner: str) -> bool:
+    return owner.rsplit(".", 1)[-1].lower() in {"subscribers", "_subscribers"}
 
 
 def _is_task_or_reply_route_map(owner: str, *, annotation: str) -> bool:
@@ -754,7 +1039,9 @@ def _production_python_files(workspace: Path) -> tuple[Path, ...]:
         files.extend(
             path
             for path in src.rglob("*.py")
-            if "tests" not in path.parts and "__pycache__" not in path.parts
+            if "tests" not in path.parts
+            and "testing" not in path.parts
+            and "__pycache__" not in path.parts
         )
     return tuple(sorted(files))
 

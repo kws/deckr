@@ -21,7 +21,7 @@ from deckr.concord import (
     concord_stale_observation_key,
 )
 from deckr.contracts.messages import controller_address, hardware_manager_address
-from deckr.substrates.nats_kv import KvConflict
+from deckr.substrates.nats_kv import KvConflict, KvEntry
 from deckr.testing import (
     ConcordMaintenanceHarness,
     ConcordRuntimeHarness,
@@ -257,6 +257,53 @@ async def test_noncanonical_participant_handle_performs_no_writes(
             await harness.concord._refresh_token(noncanonical)  # noqa: SLF001
         else:
             await harness.concord._withdraw_token(noncanonical)  # noqa: SLF001
+
+    assert raised.value.code == ConcordConflictCode.TOKEN_IDENTITY_MISMATCH
+    assert _authority_state(harness) == before
+
+
+@pytest.mark.asyncio
+async def test_mismatched_contract_entry_key_performs_no_writes() -> None:
+    harness = ConcordRuntimeHarness()
+    contract = await _create_contract(harness)
+    entry = await harness.contract_entry(contract.key)
+    assert entry is not None
+    harness.contract_store._entries[contract.key] = KvEntry(  # noqa: SLF001
+        entry.bucket,
+        concord_contract_key(contract_id="replacement-contract", generation=1),
+        entry.value,
+        entry.revision,
+    )
+    before = _authority_state(harness)
+
+    with pytest.raises(ConcordConflict) as raised:
+        await harness.concord._cancel(contract, CONTROLLER)  # noqa: SLF001
+
+    assert raised.value.code == ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH
+    assert _authority_state(harness) == before
+
+
+@pytest.mark.asyncio
+async def test_mismatched_token_entry_key_performs_no_writes() -> None:
+    harness = ConcordRuntimeHarness()
+    contract = await _create_contract(harness)
+    token = await _attach(harness, contract)
+    entry = await harness.token_entry(token)
+    assert entry is not None
+    harness.token_store._entries[token.key] = KvEntry(  # noqa: SLF001
+        entry.bucket,
+        concord_participant_token_key(
+            contract_id=token.contract_id,
+            generation=token.generation,
+            participant=MANAGER,
+        ),
+        entry.value,
+        entry.revision,
+    )
+    before = _authority_state(harness)
+
+    with pytest.raises(ConcordConflict) as raised:
+        await harness.concord._withdraw_token(token)  # noqa: SLF001
 
     assert raised.value.code == ConcordConflictCode.TOKEN_IDENTITY_MISMATCH
     assert _authority_state(harness) == before

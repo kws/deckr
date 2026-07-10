@@ -282,6 +282,39 @@ async def test_token_entry_key_mismatch_has_exact_and_cached_parity() -> None:
     _assert_no_runtime_watch_started(case.harness)
 
 
+@pytest.mark.asyncio
+async def test_contract_entry_key_mismatch_has_exact_and_cached_parity() -> None:
+    case = await _build_case("valid_contract")
+    canonical_key = _contract_key()
+    raw_entry = await case.harness.contract_store.get(canonical_key)
+    assert raw_entry is not None
+    mismatched = KvEntry(
+        raw_entry.bucket,
+        concord_contract_key(contract_id="different-contract", generation=1),
+        raw_entry.value,
+        raw_entry.revision,
+    )
+    case.harness.contract_store._entries[canonical_key] = mismatched  # noqa: SLF001
+    case.harness.concord._contract_entries_by_key[canonical_key] = mismatched  # noqa: SLF001
+
+    exact = await case.harness.concord.validate_exact(
+        case.handle,
+        current_sessions=case.current_sessions,
+    )
+    cached = await case.harness.concord.validate(
+        case.handle,
+        current_sessions=case.current_sessions,
+    )
+
+    assert exact.status == cached.status == ContractValidityStatus.INVALID_CONTRACT
+    assert exact.reason_code == cached.reason_code == (
+        ContractValidityReason.CONTRACT_KEY_MISMATCH
+    )
+    assert exact.contract == cached.contract == case.contract
+    assert exact.tokens == cached.tokens
+    _assert_no_runtime_watch_started(case.harness)
+
+
 def test_session_assertions_copy_normalize_sort_and_freeze_the_input() -> None:
     source = {
         _MANAGER: "manager-session",
