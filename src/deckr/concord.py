@@ -16,12 +16,19 @@ from typing import Any, Literal
 import anyio
 from pydantic import Field, field_serializer, field_validator, model_validator
 
+from deckr._authority_buckets import (
+    CONCORD_CONTRACT_BUCKET_POLICY,
+    CONCORD_MAINTENANCE_BUCKET_POLICY,
+    CONCORD_TOKEN_BUCKET_POLICY,
+    DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
+    DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME,
+    DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
+)
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 from deckr.substrates.nats_kv import (
-    KvBucketPolicy,
     KvChange,
     KvConflict,
     KvEntry,
@@ -32,9 +39,6 @@ from deckr.substrates.nats_kv import (
 CONCORD_CONTRACT_SCHEMA_ID = "dev.deckr.concord.contract.v1"
 CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID = "dev.deckr.concord.participant-token.v1"
 CONCORD_STALE_OBSERVATION_SCHEMA_ID = "dev.deckr.concord.stale-observation.v1"
-DEFAULT_CONCORD_CONTRACT_BUCKET_NAME = "deckr_concord_contract_v1"
-DEFAULT_CONCORD_TOKEN_BUCKET_NAME = "deckr_concord_token_v1"
-DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME = "deckr_concord_maintenance_v1"
 DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS = 60.0
 DEFAULT_CONCORD_PARTICIPANT_RECONCILE_SECONDS = 15.0
 DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS = 900
@@ -49,23 +53,6 @@ CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON = (
 CONCORD_AGREEMENT_LOST_PARTICIPANT_TOKEN_REASON = (
     "concord_agreement_lost_participant_token"
 )
-CONCORD_CONTRACT_BUCKET_POLICY = KvBucketPolicy(
-    bucket=DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
-    ttl_seconds=None,
-    description="Concord contract KV",
-)
-CONCORD_MAINTENANCE_BUCKET_POLICY = KvBucketPolicy(
-    bucket=DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME,
-    ttl_seconds=None,
-    description="Concord maintenance KV",
-)
-CONCORD_TOKEN_BUCKET_POLICY = KvBucketPolicy(
-    bucket=DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
-    ttl_seconds=120.0,
-    allow_write_ttl=True,
-    description="Concord participant token KV",
-)
-
 logger = logging.getLogger(__name__)
 
 

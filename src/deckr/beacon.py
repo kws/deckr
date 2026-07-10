@@ -15,11 +15,15 @@ from typing import Any, Generic, Literal, Protocol, TypeVar
 import anyio
 from pydantic import Field, field_serializer, field_validator, model_validator
 
+from deckr._authority_buckets import (
+    BEACON_ADVERTISEMENT_STORE_POLICY,
+    DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+    DEFAULT_BEACON_TTL_SECONDS,
+)
 from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 from deckr.substrates.nats_kv import (
-    KvBucketPolicy,
     KvChange,
     KvConflict,
     KvEntry,
@@ -28,14 +32,6 @@ from deckr.substrates.nats_kv import (
 )
 
 BEACON_ADVERTISEMENT_SCHEMA_ID = "dev.deckr.beacon.advertisement.v1"
-DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME = "deckr_beacon_advertisement_v1"
-DEFAULT_BEACON_TTL_SECONDS = 300
-BEACON_ADVERTISEMENT_STORE_POLICY = KvBucketPolicy(
-    bucket=DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
-    ttl_seconds=float(DEFAULT_BEACON_TTL_SECONDS),
-    allow_write_ttl=True,
-    description="Beacon advertisement KV",
-)
 
 logger = logging.getLogger(__name__)
 

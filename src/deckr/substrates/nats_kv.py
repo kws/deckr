@@ -366,7 +366,35 @@ class NatsJsonKvBucket:
             raise KvUnavailable(f"NATS KV bucket {self.bucket!r} is unavailable") from exc
 
     async def _create_kv(self):
-        from nats.js.api import KeyValueConfig
+        from nats.js.api import DiscardPolicy, KeyValueConfig, StreamConfig
+
+        if not self.policy.allow_write_ttl:
+            # nats.py 2.14 creates every KeyValueConfig stream with
+            # allow_msg_ttl=True. NATS does not allow that capability to be
+            # disabled after creation, so persistent Deckr authority buckets
+            # must be created with their final policy atomically. This mirrors
+            # nats.py's KV stream shape except for the deliberate TTL flag.
+            await self._js.add_stream(
+                StreamConfig(
+                    name=f"KV_{self.bucket}",
+                    subjects=[f"$KV.{self.bucket}.>"],
+                    allow_direct=None,
+                    allow_rollup_hdrs=True,
+                    allow_msg_ttl=False,
+                    deny_delete=True,
+                    discard=DiscardPolicy.NEW,
+                    duplicate_window=120.0,
+                    max_age=None,
+                    max_bytes=None,
+                    max_consumers=-1,
+                    max_msg_size=None,
+                    max_msgs=-1,
+                    max_msgs_per_subject=1,
+                    num_replicas=1,
+                    storage=None,
+                )
+            )
+            return await self._js.key_value(self.bucket)
 
         return await self._js.create_key_value(
             config=KeyValueConfig(
@@ -377,6 +405,15 @@ class NatsJsonKvBucket:
         )
 
     async def _create_kv_with_params(self):
+        if not self.policy.allow_write_ttl:
+            # The exact StreamConfig path above does not depend on the
+            # KeyValueConfig call signature. Reaching this fallback means the
+            # stream creation itself raised TypeError, which is not safe to
+            # reinterpret as permission to create a non-canonical bucket.
+            raise KvUnavailable(
+                f"Could not create persistent NATS KV bucket {self.bucket!r} "
+                "with its required policy"
+            )
         return await self._js.create_key_value(
             bucket=self.bucket,
             history=1,

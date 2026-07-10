@@ -48,7 +48,7 @@ async def test_nats_json_kv_creates_bucket_with_policy_ttl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nats_json_kv_disables_write_ttl_on_new_persistent_bucket() -> None:
+async def test_nats_json_kv_creates_new_persistent_bucket_with_final_policy() -> None:
     fake_js = _FakeJs(existing=False)
     bucket = NatsJsonKvBucket(
         js=fake_js,
@@ -61,8 +61,11 @@ async def test_nats_json_kv_disables_write_ttl_on_new_persistent_bucket() -> Non
 
     await bucket.put("contracts.main.1.meta", {"state": "open"})
 
-    assert fake_js.updated_config is not None
-    assert fake_js.updated_config.allow_msg_ttl is False
+    assert fake_js.created_stream_config is not None
+    assert fake_js.created_stream_config.name == "KV_deckr_concord_contract_v1"
+    assert fake_js.created_stream_config.max_msgs_per_subject == 1
+    assert fake_js.created_stream_config.allow_msg_ttl is False
+    assert fake_js.updated_config is None
     assert fake_js.updated_raw_config is None
 
 
@@ -141,6 +144,32 @@ async def test_nats_json_kv_treats_create_race_winner_as_existing() -> None:
         )
 
     assert fake_js.create_key_value_calls == 1
+    assert fake_js.key_value_calls == 2
+    assert fake_js.updated_config is None
+    assert fake_js.updated_raw_config is None
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_treats_persistent_stream_create_race_as_existing() -> None:
+    fake_js = _FakeJs(
+        existing=False,
+        create_race=True,
+        max_age=None,
+        allow_msg_ttl=True,
+    )
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(
+            bucket="deckr_concord_contract_v1",
+            ttl_seconds=None,
+            allow_write_ttl=False,
+        ),
+    )
+
+    with pytest.raises(KvUnavailable, match="will not rewrite shared bucket policy"):
+        await bucket.get("contracts.main.1.meta")
+
+    assert fake_js.created_stream_config is None
     assert fake_js.key_value_calls == 2
     assert fake_js.updated_config is None
     assert fake_js.updated_raw_config is None
@@ -659,6 +688,7 @@ class _FakeJs:
             subject_delete_marker_ttl=subject_delete_marker_ttl,
         )
         self.created_config = None
+        self.created_stream_config = None
         self.key_value_calls = 0
         self.create_key_value_calls = 0
         self.updated_config = None
@@ -710,6 +740,27 @@ class _FakeJs:
             )
         self.kv = _FakeKv(self)
         return self.kv
+
+    async def add_stream(self, config) -> _FakeStreamInfo:
+        if self.create_race:
+            self.config = _FakeStreamConfig(
+                name=str(config.name),
+                max_age=config.max_age,
+                max_msgs_per_subject=config.max_msgs_per_subject,
+                allow_msg_ttl=True,
+            )
+            self.kv = _FakeKv(self)
+            raise RuntimeError("stream already exists")
+        self.created_stream_config = config
+        self.bucket = str(config.name).removeprefix("KV_")
+        self.config = _FakeStreamConfig(
+            name=str(config.name),
+            max_age=config.max_age,
+            max_msgs_per_subject=config.max_msgs_per_subject,
+            allow_msg_ttl=config.allow_msg_ttl,
+        )
+        self.kv = _FakeKv(self)
+        return _FakeStreamInfo(self.config)
 
     async def stream_info(self, name: str) -> _FakeStreamInfo:
         assert name == self.config.name

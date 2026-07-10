@@ -8,7 +8,7 @@ import {
   type StateStorePolicy,
 } from "../src/state.ts";
 
-test("NatsStateStore completes policy for a bucket created by this open", async () => {
+test("NatsStateStore atomically creates a TTL bucket before binding", async () => {
   const kv = new FakeKv({
     ttl: 30_000,
     history: 1,
@@ -19,7 +19,7 @@ test("NatsStateStore completes policy for a bucket created by this open", async 
     },
   });
   const connection = new FakeConnection(kv, { createdByOpen: true });
-  const store = new NatsStateStore({
+  const store = await NatsStateStore.open({
     connection,
     bucket: "deckr_beacon_advertisement_v1",
     policy: ttlPolicy,
@@ -27,26 +27,70 @@ test("NatsStateStore completes policy for a bucket created by this open", async 
 
   await store.put("advertisements.by_feature.hardware.deck", { owner: "hw" });
 
-  assert.equal(connection.views.opens.length, 1);
-  assert.equal(connection.views.opens[0]!.options["history"], 1);
-  assert.equal(connection.views.opens[0]!.options["ttl"], 30_000);
+  assert.deepEqual(connection.views.opens, [
+    {
+      bucket: "deckr_beacon_advertisement_v1",
+      options: { bindOnly: true },
+    },
+  ]);
+  assert.equal(connection.streams.adds.length, 1);
+  assert.equal(connection.streams.updates.length, 0);
+  const created = connection.streams.adds[0]!.config;
+  assert.equal(created["name"], "KV_deckr_beacon_advertisement_v1");
+  assert.deepEqual(created["subjects"], [
+    "$KV.deckr_beacon_advertisement_v1.>",
+  ]);
+  assert.equal(created["retention"], "limits");
+  assert.equal(created["storage"], "file");
+  assert.equal(created["discard"], "new");
+  assert.equal(created["max_consumers"], -1);
+  assert.equal(created["max_msgs"], -1);
+  assert.equal(created["max_age"], 30_000_000_000);
+  assert.equal(created["max_bytes"], -1);
+  assert.equal(created["max_msg_size"], -1);
+  assert.equal(created["max_msgs_per_subject"], 1);
+  assert.equal(created["duplicate_window"], 120_000_000_000);
+  assert.equal(created["deny_delete"], true);
+  assert.equal(created["allow_rollup_hdrs"], true);
+  assert.equal(created["allow_direct"], true);
+  assert.equal(created["num_replicas"], 1);
+  assert.equal(created["allow_msg_ttl"], true);
+  assert.equal(created["subject_delete_marker_ttl"], 30_000_000_000);
   assert.equal(
-    typeof (connection.views.opens[0]!.options["metadata"] as Record<string, unknown>)[
+    typeof (created["metadata"] as Record<string, unknown>)[
       "deckr.kv.creation_id"
     ],
     "string",
   );
-  assert.equal(connection.streams.updates.length, 1);
-  assert.equal(
-    connection.streams.updates[0]!.config["subject_delete_marker_ttl"],
-    30_000_000_000,
-  );
-  assert.equal(connection.streams.updates[0]!.config["max_age"], 30_000_000_000);
-  assert.equal(connection.streams.updates[0]!.config["max_msgs_per_subject"], 1);
-  assert.equal(connection.streams.updates[0]!.config["allow_msg_ttl"], true);
 });
 
-test("NatsStateStore serializes concurrent first opens", async () => {
+test("NatsStateStore atomically creates persistent policy with message TTL disabled", async () => {
+  const kv = new FakeKv({
+    ttl: 0,
+    history: 1,
+    config: {
+      name: "KV_deckr_concord_contract_v1",
+    },
+  });
+  const connection = new FakeConnection(kv, { createdByOpen: true });
+
+  await NatsStateStore.open({
+    connection,
+    bucket: "deckr_concord_contract_v1",
+    policy: PERSISTENT_STATE_STORE_POLICY,
+  });
+
+  assert.equal(connection.streams.adds.length, 1);
+  assert.equal(connection.streams.updates.length, 0);
+  const created = connection.streams.adds[0]!.config;
+  assert.equal(created["max_age"], 0);
+  assert.equal(created["max_msgs_per_subject"], 1);
+  assert.equal(created["allow_msg_ttl"], false);
+  assert.equal("subject_delete_marker_ttl" in created, false);
+  assert.deepEqual(connection.views.opens[0]!.options, { bindOnly: true });
+});
+
+test("NatsStateStore opens once and reuses its validated handle", async () => {
   const kv = new FakeKv({
     ttl: 30_000,
     history: 1,
@@ -57,7 +101,7 @@ test("NatsStateStore serializes concurrent first opens", async () => {
     },
   });
   const connection = new FakeConnection(kv, { createdByOpen: true });
-  const store = new NatsStateStore({
+  const store = await NatsStateStore.open({
     connection,
     bucket: "deckr_beacon_advertisement_v1",
     policy: ttlPolicy,
@@ -69,7 +113,8 @@ test("NatsStateStore serializes concurrent first opens", async () => {
   ]);
 
   assert.equal(connection.views.opens.length, 1);
-  assert.equal(connection.streams.updates.length, 1);
+  assert.equal(connection.streams.adds.length, 1);
+  assert.equal(connection.streams.updates.length, 0);
 });
 
 test("NatsStateStore keeps TTL buckets with matching subject delete markers", async () => {
@@ -85,7 +130,7 @@ test("NatsStateStore keeps TTL buckets with matching subject delete markers", as
     },
   });
   const connection = new FakeConnection(kv);
-  const store = new NatsStateStore({
+  const store = await NatsStateStore.open({
     connection,
     bucket: "deckr_beacon_advertisement_v1",
     policy: ttlPolicy,
@@ -93,6 +138,7 @@ test("NatsStateStore keeps TTL buckets with matching subject delete markers", as
 
   await store.put("advertisements.by_feature.hardware.deck", { owner: "hw" });
 
+  assert.equal(connection.streams.adds.length, 1);
   assert.equal(connection.streams.updates.length, 0);
 });
 
@@ -107,14 +153,12 @@ test("NatsStateStore rejects incompatible existing TTL policy without updating",
     },
   });
   const connection = new FakeConnection(kv);
-  const store = new NatsStateStore({
-    connection,
-    bucket: "deckr_beacon_advertisement_v1",
-    policy: ttlPolicy,
-  });
-
   await assert.rejects(
-    () => store.put("advertisements.by_feature.hardware.deck", { owner: "hw" }),
+    () => NatsStateStore.open({
+      connection,
+      bucket: "deckr_beacon_advertisement_v1",
+      policy: ttlPolicy,
+    }),
     (error: unknown) =>
       error instanceof StateUnavailable &&
       error.message.includes("will not rewrite shared bucket policy") &&
@@ -136,21 +180,48 @@ test("NatsStateStore treats a create race winner as an existing bucket", async (
       subject_delete_marker_ttl: 12_000_000_000,
     },
   });
-  const connection = new FakeConnection(kv, { failFirstOpen: true });
-  const store = new NatsStateStore({
-    connection,
-    bucket: "deckr_beacon_advertisement_v1",
-    policy: ttlPolicy,
-  });
-
+  const connection = new FakeConnection(kv, { createRace: true });
   await assert.rejects(
-    () => store.put("advertisements.by_feature.hardware.deck", { owner: "hw" }),
+    () => NatsStateStore.open({
+      connection,
+      bucket: "deckr_beacon_advertisement_v1",
+      policy: ttlPolicy,
+    }),
     (error: unknown) =>
       error instanceof StateUnavailable &&
       error.message.includes("will not rewrite shared bucket policy"),
   );
-  assert.equal(connection.views.opens.length, 2);
-  assert.deepEqual(connection.views.opens[1]!.options, { bindOnly: true });
+  assert.equal(connection.streams.adds.length, 1);
+  assert.equal(connection.views.opens.length, 1);
+  assert.deepEqual(connection.views.opens[0]!.options, { bindOnly: true });
+  assert.equal(connection.streams.updates.length, 0);
+});
+
+test("NatsStateStore never rewrites a newly created bucket whose atomic policy was not honored", async () => {
+  const kv = new FakeKv({
+    ttl: 0,
+    history: 1,
+    config: {
+      name: "KV_deckr_concord_contract_v1",
+    },
+  });
+  const connection = new FakeConnection(kv, {
+    createdByOpen: true,
+    createdConfigOverrides: { allow_msg_ttl: true },
+  });
+
+  await assert.rejects(
+    () => NatsStateStore.open({
+      connection,
+      bucket: "deckr_concord_contract_v1",
+      policy: PERSISTENT_STATE_STORE_POLICY,
+    }),
+    (error: unknown) =>
+      error instanceof StateUnavailable &&
+      error.message.includes("New NATS KV bucket") &&
+      error.message.includes("allow_msg_ttl (expected false"),
+  );
+  assert.equal(connection.streams.adds.length, 1);
   assert.equal(connection.streams.updates.length, 0);
 });
 
@@ -166,14 +237,12 @@ test("NatsStateStore rejects incompatible existing persistent policy", async () 
     },
   });
   const connection = new FakeConnection(kv);
-  const store = new NatsStateStore({
-    connection,
-    bucket: "deckr_concord_contract_v1",
-    policy: PERSISTENT_STATE_STORE_POLICY,
-  });
-
   await assert.rejects(
-    () => store.put("contracts.main.1.meta", { state: "open" }),
+    () => NatsStateStore.open({
+      connection,
+      bucket: "deckr_concord_contract_v1",
+      policy: PERSISTENT_STATE_STORE_POLICY,
+    }),
     (error: unknown) =>
       error instanceof StateUnavailable &&
       error.message.includes("will not rewrite shared bucket policy") &&
@@ -195,14 +264,12 @@ test("NatsStateStore rejects unexpected per-message TTL capability", async () =>
     },
   });
   const connection = new FakeConnection(kv);
-  const store = new NatsStateStore({
-    connection,
-    bucket: "deckr_concord_contract_v1",
-    policy: PERSISTENT_STATE_STORE_POLICY,
-  });
-
   await assert.rejects(
-    () => store.get("contracts.main.1.meta"),
+    () => NatsStateStore.open({
+      connection,
+      bucket: "deckr_concord_contract_v1",
+      policy: PERSISTENT_STATE_STORE_POLICY,
+    }),
     (error: unknown) =>
       error instanceof StateUnavailable &&
       error.message.includes("allow_msg_ttl (expected false"),
@@ -222,10 +289,14 @@ class FakeConnection {
 
   constructor(
     kv: FakeKv,
-    options: { createdByOpen?: boolean; failFirstOpen?: boolean } = {},
+    options: {
+      createdByOpen?: boolean;
+      createRace?: boolean;
+      createdConfigOverrides?: Record<string, unknown>;
+    } = {},
   ) {
-    this.views = new FakeViews(kv, options);
-    this.streams = new FakeStreams(kv);
+    this.views = new FakeViews(kv);
+    this.streams = new FakeStreams(kv, options);
   }
 
   jetstream(): { views: FakeViews } {
@@ -240,16 +311,9 @@ class FakeConnection {
 class FakeViews {
   readonly opens: { bucket: string; options: Record<string, unknown> }[] = [];
   private readonly store: FakeKv;
-  private readonly createdByOpen: boolean;
-  private failFirstOpen: boolean;
 
-  constructor(
-    store: FakeKv,
-    options: { createdByOpen?: boolean; failFirstOpen?: boolean },
-  ) {
+  constructor(store: FakeKv) {
     this.store = store;
-    this.createdByOpen = options.createdByOpen ?? false;
-    this.failFirstOpen = options.failFirstOpen ?? false;
   }
 
   async kv(
@@ -258,23 +322,41 @@ class FakeViews {
   ): Promise<FakeKv> {
     this.store.bucket = bucket;
     this.opens.push({ bucket, options });
-    if (this.failFirstOpen) {
-      this.failFirstOpen = false;
-      throw new Error("stream name already in use");
-    }
-    if (this.createdByOpen && options["bindOnly"] !== true) {
-      this.store.markCreated(options);
-    }
     return this.store;
   }
 }
 
 class FakeStreams {
+  readonly adds: { config: Record<string, unknown> }[] = [];
   readonly updates: { name: string; config: Record<string, unknown> }[] = [];
   private readonly store: FakeKv;
+  private readonly createdByOpen: boolean;
+  private readonly createRace: boolean;
+  private readonly createdConfigOverrides: Record<string, unknown>;
 
-  constructor(store: FakeKv) {
+  constructor(
+    store: FakeKv,
+    options: {
+      createdByOpen?: boolean;
+      createRace?: boolean;
+      createdConfigOverrides?: Record<string, unknown>;
+    },
+  ) {
     this.store = store;
+    this.createdByOpen = options.createdByOpen ?? false;
+    this.createRace = options.createRace ?? false;
+    this.createdConfigOverrides = options.createdConfigOverrides ?? {};
+  }
+
+  async add(config: Record<string, unknown>): Promise<void> {
+    this.adds.push({ config });
+    if (!this.createdByOpen || this.createRace) {
+      throw new Error("stream name already in use");
+    }
+    this.store.replaceConfig({
+      ...config,
+      ...this.createdConfigOverrides,
+    });
   }
 
   async update(
@@ -318,10 +400,6 @@ class FakeKv {
   async put(_key: string, _value: string): Promise<number> {
     this.revision += 1;
     return this.revision;
-  }
-
-  markCreated(options: Record<string, unknown>): void {
-    this.statusValue.config["metadata"] = options["metadata"];
   }
 
   replaceConfig(config: Record<string, unknown>): void {
