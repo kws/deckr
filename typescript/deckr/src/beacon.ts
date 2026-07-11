@@ -49,6 +49,13 @@ export const BeaconFeatureEventType = Object.freeze({
 export type BeaconFeatureEventType =
   (typeof BeaconFeatureEventType)[keyof typeof BeaconFeatureEventType];
 
+export const BeaconFeatureWatchItemType = Object.freeze({
+  SNAPSHOT: "snapshot",
+  CHANGE: "change",
+});
+export type BeaconFeatureWatchItemType =
+  (typeof BeaconFeatureWatchItemType)[keyof typeof BeaconFeatureWatchItemType];
+
 export interface BeaconProtocol {
   namespace: string;
   version: string;
@@ -90,7 +97,14 @@ export interface Candidate {
   observedAt: string;
 }
 
-export interface BeaconFeatureEvent {
+export interface BeaconFeatureSnapshot {
+  type: typeof BeaconFeatureWatchItemType.SNAPSHOT;
+  featureId: string;
+  candidates: readonly Candidate[];
+}
+
+export interface BeaconFeatureChange {
+  type: typeof BeaconFeatureWatchItemType.CHANGE;
   eventType: BeaconFeatureEventType;
   featureId: string;
   key: string;
@@ -99,6 +113,8 @@ export interface BeaconFeatureEvent {
   reason?: string;
   change?: StateChange;
 }
+
+export type BeaconFeatureWatchItem = BeaconFeatureSnapshot | BeaconFeatureChange;
 
 export type AdvertisementFilter = (advertisement: AdvertisementRecord) => boolean;
 
@@ -427,8 +443,8 @@ export class BeaconService {
     return this.discovery.validate(candidate, options);
   }
 
-  watchFeature(featureId: string): AsyncIterable<BeaconFeatureEvent> {
-    return beaconFeatureEvents(
+  watchFeature(featureId: string): AsyncIterable<BeaconFeatureWatchItem> {
+    return beaconFeatureWatchItems(
       featureId,
       this.discovery.watch(featureId),
       () => this.discovery.find(featureId),
@@ -497,67 +513,45 @@ export function candidateFromEntry(entry: StateEntry): Candidate | null {
   };
 }
 
-async function* beaconFeatureEvents(
+async function* beaconFeatureWatchItems(
   featureId: string,
   changes: AsyncIterable<StateWatchItem>,
   snapshot: () => Promise<Candidate[]>,
-): AsyncIterable<BeaconFeatureEvent> {
+): AsyncIterable<BeaconFeatureWatchItem> {
   const known = new Map<string, Candidate>();
   for await (const change of changes) {
     if (change.operation === "resnapshot") {
-      const current = new Map(
-        (await snapshot()).map((candidate) => [candidate.key, candidate]),
-      );
-      for (const [key, previous] of known) {
-        if (!current.has(key)) {
-          yield {
-            eventType: BeaconFeatureEventType.WITHDRAWN,
-            featureId,
-            key,
-            previous,
-          };
-        }
-      }
-      for (const [key, candidate] of current) {
-        const previous = known.get(key);
-        if (previous?.revision === candidate.revision) {
-          continue;
-        }
-        yield {
-          eventType:
-            previous === undefined
-              ? BeaconFeatureEventType.ADVERTISED
-              : BeaconFeatureEventType.UPDATED,
-          featureId,
-          key,
-          candidate,
-          ...(previous === undefined ? {} : { previous }),
-        };
-      }
+      const candidates = await snapshot();
       known.clear();
-      for (const [key, candidate] of current) {
-        known.set(key, candidate);
+      for (const candidate of candidates) {
+        known.set(candidate.key, candidate);
       }
+      yield {
+        type: BeaconFeatureWatchItemType.SNAPSHOT,
+        featureId,
+        candidates,
+      };
       continue;
     }
-    const event = beaconFeatureEvent(featureId, change, known);
-    if (event !== null) {
-      yield event;
+    const item = beaconFeatureChange(featureId, change, known);
+    if (item !== null) {
+      yield item;
     }
   }
 }
 
-function beaconFeatureEvent(
+function beaconFeatureChange(
   featureId: string,
   change: StateChange,
   known: Map<string, Candidate>,
-): BeaconFeatureEvent | null {
+): BeaconFeatureChange | null {
   if (change.operation === "put" && change.entry !== undefined) {
     const previous = known.get(change.key);
     const candidate = candidateFromEntry(change.entry);
     if (candidate === null || candidate.advertisement.featureId !== featureId) {
       known.delete(change.key);
       return {
+        type: BeaconFeatureWatchItemType.CHANGE,
         eventType: BeaconFeatureEventType.INVALID,
         featureId,
         key: change.key,
@@ -568,6 +562,7 @@ function beaconFeatureEvent(
     }
     known.set(change.key, candidate);
     return {
+      type: BeaconFeatureWatchItemType.CHANGE,
       eventType:
         previous === undefined
           ? BeaconFeatureEventType.ADVERTISED
@@ -583,6 +578,7 @@ function beaconFeatureEvent(
     const previous = known.get(change.key);
     known.delete(change.key);
     return {
+      type: BeaconFeatureWatchItemType.CHANGE,
       eventType:
         change.operation === "expire"
           ? BeaconFeatureEventType.EXPIRED

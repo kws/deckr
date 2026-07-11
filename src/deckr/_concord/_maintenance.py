@@ -16,9 +16,11 @@ from deckr._concord._keys import (
     concord_contracts_prefix,
     concord_participant_token_key,
     concord_stale_observation_key,
+    concord_token_cleanup_key,
     parse_concord_contract_key,
     parse_concord_participant_token_key,
     parse_concord_stale_observation_key,
+    parse_concord_token_cleanup_key,
 )
 from deckr._concord._models import (
     ConcordConflict,
@@ -54,6 +56,7 @@ from deckr.contracts.models import DeckrModel
 from deckr.substrates.nats_kv import KvEntry
 
 CONCORD_STALE_OBSERVATION_SCHEMA_ID = "dev.deckr.concord.stale-observation.v1"
+CONCORD_TOKEN_CLEANUP_SCHEMA_ID = "dev.deckr.concord.token-cleanup.v1"
 DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS = 900
 DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS = 3600
 DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS = 60
@@ -123,6 +126,60 @@ class ConcordStaleObservationRecord(DeckrModel):
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
+class ConcordTokenCleanupRecord(DeckrModel):
+    """Durable ownership of post-contract participant-token cleanup."""
+
+    schema_id: Literal[CONCORD_TOKEN_CLEANUP_SCHEMA_ID] = Field(
+        default=CONCORD_TOKEN_CLEANUP_SCHEMA_ID,
+        alias="schema",
+    )
+    contract_id: str = Field(alias="contractId")
+    generation: int
+    contract_revision: int = Field(alias="contractRevision")
+    terms_hash: str | None = Field(default=None, alias="termsHash")
+    cleanup_started_at: datetime = Field(alias="cleanupStartedAt")
+
+    @field_validator("contract_id")
+    @classmethod
+    def _validate_contract_id(cls, value: str) -> str:
+        return require_text(value, field_name="contract id")
+
+    @field_validator("generation")
+    @classmethod
+    def _validate_generation(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("generation must be greater than zero")
+        return value
+
+    @field_validator("contract_revision")
+    @classmethod
+    def _validate_contract_revision(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("contractRevision must be non-negative")
+        return value
+
+    @field_validator("terms_hash")
+    @classmethod
+    def _validate_terms_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return require_text(value, field_name="Concord cleanup terms hash")
+
+    @field_validator("cleanup_started_at")
+    @classmethod
+    def _validate_cleanup_started_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("cleanupStartedAt must be timezone-aware")
+        return value.astimezone(UTC)
+
+    @field_serializer("cleanup_started_at")
+    def _serialize_cleanup_started_at(self, value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
 class ConcordReaperConfig(DeckrModel):
     stale_grace_seconds: float = Field(
         default=float(DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS),
@@ -149,7 +206,17 @@ class ConcordReaperConfig(DeckrModel):
 
 @dataclass(frozen=True, slots=True)
 class ConcordMaintenanceDeletionResult:
-    deleted: bool
+    """Outcome of one retained-deletion attempt.
+
+    ``contract_deleted`` reports the physical contract CAS performed by this
+    call. Only ``cleanup_completed`` means the generation has no listed token
+    keys and its durable cleanup marker was cleared. ``cleanup_pending`` means
+    a later maintenance scan owns the remaining work.
+    """
+
+    contract_deleted: bool = False
+    cleanup_completed: bool = False
+    cleanup_pending: bool = False
     deleted_token_key_count: int = 0
 
 
@@ -162,6 +229,15 @@ class ConcordReaperScanResult:
     contracts_cancelled: int = 0
     contracts_deleted: int = 0
     token_keys_deleted: int = 0
+    token_cleanups_completed: int = 0
+    token_cleanups_pending: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ConcordTokenCleanupAttempt:
+    completed: bool
+    deleted_token_key_count: int = 0
+    failure: ConcordConflict | ConcordUnavailable | None = None
 
 
 STALE_OPEN_CONTRACT_STATUSES = frozenset(
@@ -308,20 +384,20 @@ class ConcordMaintenance:
         log_label: str = "Concord",
         now: datetime | None = None,
     ) -> ConcordMaintenanceDeletionResult:
-        """Delete an eligible retained contract and its current participant tokens."""
+        """Delete an eligible retained contract and durably finish token cleanup."""
 
         pointer = _assert_contract_handle(contract)
         observed = await self._contract_store.get_exact(contract.key)
         if observed is None:
-            return ConcordMaintenanceDeletionResult(deleted=False)
+            return ConcordMaintenanceDeletionResult()
         record = _parse_contract_entry(observed, contract.key, pointer)
         if record.state != ContractState.CANCELLED:
-            return ConcordMaintenanceDeletionResult(deleted=False)
+            return ConcordMaintenanceDeletionResult()
         current_time = _ensure_utc(now or _now_utc())
         if record.cancelled_at is None or (
             current_time - record.cancelled_at.astimezone(UTC)
         ).total_seconds() < retention_seconds:
-            return ConcordMaintenanceDeletionResult(deleted=False)
+            return ConcordMaintenanceDeletionResult()
 
         validity = await self.validate_exact(contract)
         token_entries = await _concord_participant_token_entries(
@@ -337,7 +413,13 @@ class ConcordMaintenance:
             state_revision=observed.revision,
             validation_status=validity.status,
             token_entries=token_entries,
-            deleted_token_key_count=len(token_entries),
+            listed_token_key_count=len(token_entries),
+        )
+        cleanup_marker = await self._ensure_token_cleanup_marker(
+            pointer=pointer,
+            contract_revision=observed.revision,
+            terms_hash=record.terms_hash,
+            now=current_time,
         )
         try:
             await self._contract_store.delete(
@@ -356,20 +438,193 @@ class ConcordMaintenance:
                 observed.revision,
                 exc_info=True,
             )
-            return ConcordMaintenanceDeletionResult(deleted=False)
+            return ConcordMaintenanceDeletionResult()
 
-        deleted_token_count = await _delete_concord_participant_tokens_until_empty(
+        try:
+            cleanup = await self._complete_token_cleanup(
+                cleanup_marker,
+                initial_entries=token_entries,
+                log_label=log_label,
+            )
+        except (ConcordConflict, ConcordUnavailable):
+            logger.warning(
+                "%s Concord maintenance token cleanup remains pending "
+                "contract=%s generation=%s marker=%s",
+                log_label,
+                contract.contract_id,
+                contract.generation,
+                cleanup_marker.key,
+                exc_info=True,
+            )
+            return ConcordMaintenanceDeletionResult(
+                contract_deleted=True,
+                cleanup_pending=True,
+            )
+        return ConcordMaintenanceDeletionResult(
+            contract_deleted=True,
+            cleanup_completed=cleanup.completed,
+            cleanup_pending=not cleanup.completed,
+            deleted_token_key_count=cleanup.deleted_token_key_count,
+        )
+
+    async def _ensure_token_cleanup_marker(
+        self,
+        *,
+        pointer: ContractPointer,
+        contract_revision: int,
+        terms_hash: str | None,
+        now: datetime,
+    ) -> KvEntry:
+        key = concord_token_cleanup_key(
+            contract_id=pointer.contract_id,
+            generation=pointer.generation,
+        )
+        candidate = ConcordTokenCleanupRecord(
+            contractId=pointer.contract_id,
+            generation=pointer.generation,
+            contractRevision=contract_revision,
+            termsHash=terms_hash,
+            cleanupStartedAt=now,
+        )
+        last_conflict: ConcordConflict | None = None
+        for _attempt in range(_MAX_OBSERVATION_CAS_ATTEMPTS):
+            current = await self._maintenance_store.get_exact(key)
+            if current is None:
+                try:
+                    return await self._maintenance_store.create(key, candidate)
+                except ConcordConflict as exc:
+                    last_conflict = exc
+                    continue
+            record = _parse_token_cleanup_entry(
+                current,
+                key=key,
+                contract_id=pointer.contract_id,
+                generation=pointer.generation,
+            )
+            if (
+                record.contract_revision == contract_revision
+                and record.terms_hash == terms_hash
+            ):
+                return current
+            try:
+                return await self._maintenance_store.update(
+                    key,
+                    candidate,
+                    revision=current.revision,
+                )
+            except ConcordConflict as exc:
+                last_conflict = exc
+                continue
+        raise ConcordConflict(
+            ConcordConflictCode.REVISION_CHANGED,
+            "Concord token-cleanup marker revision kept changing",
+            key=key,
+            expected_pointer=pointer,
+        ) from last_conflict
+
+    async def _complete_token_cleanup(
+        self,
+        marker_entry: KvEntry,
+        *,
+        initial_entries: tuple[ConcordTokenMaintenanceEntry, ...] | None = None,
+        log_label: str,
+    ) -> _ConcordTokenCleanupAttempt:
+        parsed = parse_concord_token_cleanup_key(marker_entry.key)
+        if parsed is None:
+            raise ConcordConflict(
+                ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH,
+                "Concord token-cleanup marker has a noncanonical key",
+                key=marker_entry.key,
+            )
+        contract_id, generation = parsed
+        marker = _parse_token_cleanup_entry(
+            marker_entry,
+            key=marker_entry.key,
+            contract_id=contract_id,
+            generation=generation,
+        )
+        cleanup = await _delete_concord_participant_tokens_until_empty(
             self._token_store,
-            contract_id=contract.contract_id,
-            generation=contract.generation,
-            terms_hash=record.terms_hash,
-            initial_entries=token_entries,
+            contract_id=contract_id,
+            generation=generation,
+            terms_hash=marker.terms_hash,
+            initial_entries=initial_entries,
             log_label=log_label,
         )
-        return ConcordMaintenanceDeletionResult(
-            deleted=True,
-            deleted_token_key_count=deleted_token_count,
-        )
+        if not cleanup.completed:
+            if cleanup.failure is not None:
+                logger.warning(
+                    "%s Concord maintenance token cleanup remains pending "
+                    "contract=%s generation=%s deleted_token_keys=%s reason=%s",
+                    log_label,
+                    contract_id,
+                    generation,
+                    cleanup.deleted_token_key_count,
+                    cleanup.failure,
+                )
+            return cleanup
+
+        try:
+            current = await self._maintenance_store.get_exact(marker_entry.key)
+        except (ConcordConflict, ConcordUnavailable) as exc:
+            return _ConcordTokenCleanupAttempt(
+                completed=False,
+                deleted_token_key_count=cleanup.deleted_token_key_count,
+                failure=exc,
+            )
+        if current is None:
+            return cleanup
+        try:
+            current_marker = _parse_token_cleanup_entry(
+                current,
+                key=marker_entry.key,
+                contract_id=contract_id,
+                generation=generation,
+            )
+        except ConcordConflict as exc:
+            return _ConcordTokenCleanupAttempt(
+                completed=False,
+                deleted_token_key_count=cleanup.deleted_token_key_count,
+                failure=exc,
+            )
+        if (
+            current_marker.contract_revision != marker.contract_revision
+            or current_marker.terms_hash != marker.terms_hash
+        ):
+            return _ConcordTokenCleanupAttempt(
+                completed=False,
+                deleted_token_key_count=cleanup.deleted_token_key_count,
+            )
+        try:
+            await self._maintenance_store.delete(
+                marker_entry.key,
+                revision=current.revision,
+            )
+        except ConcordConflict as exc:
+            try:
+                marker_still_exists = (
+                    await self._maintenance_store.get_exact(marker_entry.key)
+                    is not None
+                )
+            except (ConcordConflict, ConcordUnavailable) as read_exc:
+                return _ConcordTokenCleanupAttempt(
+                    completed=False,
+                    deleted_token_key_count=cleanup.deleted_token_key_count,
+                    failure=read_exc,
+                )
+            if marker_still_exists:
+                return _ConcordTokenCleanupAttempt(
+                    completed=False,
+                    deleted_token_key_count=cleanup.deleted_token_key_count,
+                    failure=exc,
+                )
+        except ConcordUnavailable as exc:
+            return _ConcordTokenCleanupAttempt(
+                completed=False,
+                deleted_token_key_count=cleanup.deleted_token_key_count,
+                failure=exc,
+            )
+        return cleanup
 
     async def _exact_token_observations(
         self,
@@ -404,6 +659,9 @@ class ConcordMaintenance:
 
     async def _stale_observation_entries(self) -> tuple[KvEntry, ...]:
         return await self._maintenance_store.items_exact("stale.")
+
+    async def _token_cleanup_entries(self) -> tuple[KvEntry, ...]:
+        return await self._maintenance_store.items_exact("cleanup.")
 
     async def _observe_stale(
         self,
@@ -582,7 +840,21 @@ class ConcordReaperService:
             "contracts_cancelled": 0,
             "contracts_deleted": 0,
             "token_keys_deleted": 0,
+            "token_cleanups_completed": 0,
         }
+        for entry in await self._maintenance._token_cleanup_entries():
+            try:
+                entry_counts = await self._resume_token_cleanup_entry(entry)
+            except ConcordConflict:
+                logger.info(
+                    "%s Concord reaper token cleanup failed closed marker_key=%s",
+                    self._config.log_label,
+                    entry.key,
+                    exc_info=True,
+                )
+                continue
+            for key, value in entry_counts.items():
+                counts[key] += value
         for entry in await self._maintenance._contract_entries():
             parsed = parse_concord_contract_key(entry.key)
             if parsed is None:
@@ -615,6 +887,7 @@ class ConcordReaperService:
         stale_observation_count = len(
             await self._maintenance._stale_observation_entries()
         )
+        token_cleanup_count = len(await self._maintenance._token_cleanup_entries())
         result = ConcordReaperScanResult(
             scanned_contract_count=counts["scanned_contract_count"],
             stale_observation_count=stale_observation_count,
@@ -623,22 +896,87 @@ class ConcordReaperService:
             contracts_cancelled=counts["contracts_cancelled"],
             contracts_deleted=counts["contracts_deleted"],
             token_keys_deleted=counts["token_keys_deleted"],
+            token_cleanups_completed=counts["token_cleanups_completed"],
+            token_cleanups_pending=token_cleanup_count,
         )
         logger.info(
             "%s Concord reaper scan completed scanned=%s cancelled=%s "
-            "deleted=%s token_keys_deleted=%s stale_observations=%s "
+            "deleted=%s token_keys_deleted=%s token_cleanups_completed=%s "
+            "token_cleanups_pending=%s stale_observations=%s "
             "stale_created=%s stale_cleared=%s elapsed_ms=%.1f",
             self._config.log_label,
             result.scanned_contract_count,
             result.contracts_cancelled,
             result.contracts_deleted,
             result.token_keys_deleted,
+            result.token_cleanups_completed,
+            result.token_cleanups_pending,
             result.stale_observation_count,
             result.stale_observations_created,
             result.stale_observations_cleared,
             (monotonic() - started_at) * 1000,
         )
         return result
+
+    async def _resume_token_cleanup_entry(self, entry: KvEntry) -> dict[str, int]:
+        counts = _empty_reaper_counts()
+        parsed = parse_concord_token_cleanup_key(entry.key)
+        if parsed is None:
+            raise ConcordConflict(
+                ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH,
+                "Concord token-cleanup marker has a noncanonical key",
+                key=entry.key,
+            )
+        contract_id, generation = parsed
+        marker = _parse_token_cleanup_entry(
+            entry,
+            key=entry.key,
+            contract_id=contract_id,
+            generation=generation,
+        )
+        contract_key = concord_contract_key(
+            contract_id=contract_id,
+            generation=generation,
+        )
+        contract_entry = await self._maintenance._contract_store.get_exact(contract_key)
+        if contract_entry is not None:
+            record = _parse_contract_entry(
+                contract_entry,
+                contract_key,
+                ContractPointer(contractId=contract_id, generation=generation),
+            )
+            if contract_entry.revision == marker.contract_revision:
+                if (
+                    record.state != ContractState.CANCELLED
+                    or record.terms_hash != marker.terms_hash
+                ):
+                    raise ConcordConflict(
+                        ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH,
+                        "Concord token-cleanup marker differs from retained contract",
+                        key=entry.key,
+                        expected_pointer=ContractPointer(
+                            contractId=contract_id,
+                            generation=generation,
+                        ),
+                    )
+                return counts
+            try:
+                await self._maintenance._maintenance_store.delete(
+                    entry.key,
+                    revision=entry.revision,
+                )
+            except ConcordConflict:
+                pass
+            return counts
+
+        cleanup = await self._maintenance._complete_token_cleanup(
+            entry,
+            log_label=self._config.log_label,
+        )
+        counts["token_keys_deleted"] += cleanup.deleted_token_key_count
+        if cleanup.completed:
+            counts["token_cleanups_completed"] += 1
+        return counts
 
     async def _scan_contract_entry(
         self,
@@ -753,14 +1091,16 @@ class ConcordReaperService:
             log_label=self._config.log_label,
             now=now,
         )
-        if result.deleted:
+        if result.contract_deleted:
             counts["contracts_deleted"] += 1
-            counts["token_keys_deleted"] += result.deleted_token_key_count
             if await self._maintenance._clear_stale_observation(
                 contract.contract_id,
                 contract.generation,
             ):
                 counts["stale_observations_cleared"] += 1
+        counts["token_keys_deleted"] += result.deleted_token_key_count
+        if result.cleanup_completed:
+            counts["token_cleanups_completed"] += 1
         return counts
 
     async def _scan_invalid_contract_entry(
@@ -943,6 +1283,48 @@ def _parse_stale_observation_entry(
     return record
 
 
+def _parse_token_cleanup_entry(
+    entry: KvEntry,
+    *,
+    key: str,
+    contract_id: str,
+    generation: int,
+) -> ConcordTokenCleanupRecord:
+    pointer = ContractPointer(contractId=contract_id, generation=generation)
+    canonical_key = concord_token_cleanup_key(
+        contract_id=contract_id,
+        generation=generation,
+    )
+    if entry.key != key or key != canonical_key:
+        raise ConcordConflict(
+            ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH,
+            "Concord token-cleanup marker key differs from the requested key",
+            key=key,
+            expected_pointer=pointer,
+        )
+    try:
+        record = ConcordTokenCleanupRecord.model_validate(entry.value)
+    except (TypeError, ValueError) as exc:
+        raise ConcordConflict(
+            ConcordConflictCode.CONTRACT_INVALID,
+            f"Concord token-cleanup marker {key!r} is malformed: {exc}",
+            key=key,
+            expected_pointer=pointer,
+        ) from exc
+    if record.contract_id != contract_id or record.generation != generation:
+        raise ConcordConflict(
+            ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH,
+            "Concord token-cleanup marker key and record identity differ",
+            key=key,
+            expected_pointer=pointer,
+            observed_pointer=ContractPointer(
+                contractId=record.contract_id,
+                generation=record.generation,
+            ),
+        )
+    return record
+
+
 def _empty_reaper_counts() -> dict[str, int]:
     return {
         "stale_observations_created": 0,
@@ -950,6 +1332,7 @@ def _empty_reaper_counts() -> dict[str, int]:
         "contracts_cancelled": 0,
         "contracts_deleted": 0,
         "token_keys_deleted": 0,
+        "token_cleanups_completed": 0,
     }
 
 
@@ -995,15 +1378,38 @@ async def _concord_participant_token_entries(
 ) -> tuple[ConcordTokenMaintenanceEntry, ...]:
     token_entries: list[ConcordTokenMaintenanceEntry] = []
     pointer = ContractPointer(contractId=contract_id, generation=generation)
-    for entry in await token_store.items_exact(
-        concord_contract_prefix(contract_id=contract_id, generation=generation)
-    ):
+    requested_prefix = concord_contract_prefix(
+        contract_id=contract_id,
+        generation=generation,
+    )
+    for entry in await token_store.items_exact(requested_prefix):
         parsed = parse_concord_participant_token_key(entry.key)
-        if parsed is None:
-            continue
+        if parsed is None or not entry.key.startswith(requested_prefix):
+            raise ConcordConflict(
+                ConcordConflictCode.TOKEN_IDENTITY_MISMATCH,
+                "Concord participant-token scan returned a key outside the "
+                "requested contract generation",
+                key=entry.key,
+                expected_pointer=pointer,
+            )
         parsed_contract_id, parsed_generation, participant = parsed
-        if parsed_contract_id != contract_id or parsed_generation != generation:
-            continue
+        canonical_key = concord_participant_token_key(
+            contract_id=parsed_contract_id,
+            generation=parsed_generation,
+            participant=participant,
+        )
+        if (
+            parsed_contract_id != contract_id
+            or parsed_generation != generation
+            or entry.key != canonical_key
+        ):
+            raise ConcordConflict(
+                ConcordConflictCode.TOKEN_IDENTITY_MISMATCH,
+                "Concord participant-token scan key differs from the requested "
+                "contract generation",
+                key=entry.key,
+                expected_pointer=pointer,
+            )
         try:
             token = ParticipantTokenRecord.model_validate(entry.value)
         except (TypeError, ValueError) as exc:
@@ -1035,11 +1441,26 @@ async def _delete_concord_participant_tokens_until_empty(
     contract_id: str,
     generation: int,
     terms_hash: str | None,
-    initial_entries: tuple[ConcordTokenMaintenanceEntry, ...],
+    initial_entries: tuple[ConcordTokenMaintenanceEntry, ...] | None,
     log_label: str,
-) -> int:
+) -> _ConcordTokenCleanupAttempt:
     entries = initial_entries
     deleted = 0
+    if not entries:
+        try:
+            entries = await _concord_participant_token_entries(
+                token_store,
+                contract_id=contract_id,
+                generation=generation,
+                terms_hash=terms_hash,
+            )
+        except (ConcordConflict, ConcordUnavailable) as exc:
+            return _ConcordTokenCleanupAttempt(
+                completed=False,
+                failure=exc,
+            )
+        if not entries:
+            return _ConcordTokenCleanupAttempt(completed=True)
     for _attempt in range(_MAX_TOKEN_CLEANUP_SCAN_ATTEMPTS):
         for entry, _token in entries:
             try:
@@ -1049,16 +1470,32 @@ async def _delete_concord_participant_tokens_until_empty(
                 )
             except ConcordConflict:
                 continue
+            except ConcordUnavailable as exc:
+                return _ConcordTokenCleanupAttempt(
+                    completed=False,
+                    deleted_token_key_count=deleted,
+                    failure=exc,
+                )
             if marker_revision is not None:
                 deleted += 1
-        entries = await _concord_participant_token_entries(
-            token_store,
-            contract_id=contract_id,
-            generation=generation,
-            terms_hash=terms_hash,
-        )
+        try:
+            entries = await _concord_participant_token_entries(
+                token_store,
+                contract_id=contract_id,
+                generation=generation,
+                terms_hash=terms_hash,
+            )
+        except (ConcordConflict, ConcordUnavailable) as exc:
+            return _ConcordTokenCleanupAttempt(
+                completed=False,
+                deleted_token_key_count=deleted,
+                failure=exc,
+            )
         if not entries:
-            return deleted
+            return _ConcordTokenCleanupAttempt(
+                completed=True,
+                deleted_token_key_count=deleted,
+            )
     logger.warning(
         "%s Concord maintenance token cleanup did not converge contract=%s "
         "generation=%s remaining_keys=%s attempts=%s",
@@ -1068,7 +1505,10 @@ async def _delete_concord_participant_tokens_until_empty(
         [entry.key for entry, _token in entries],
         _MAX_TOKEN_CLEANUP_SCAN_ATTEMPTS,
     )
-    return deleted
+    return _ConcordTokenCleanupAttempt(
+        completed=False,
+        deleted_token_key_count=deleted,
+    )
 
 
 def _token_log_summary(
@@ -1093,7 +1533,7 @@ def _log_concord_contract_deletion_audit(
     state_revision: int,
     validation_status: ContractValidityStatus,
     token_entries: tuple[ConcordTokenMaintenanceEntry, ...],
-    deleted_token_key_count: int,
+    listed_token_key_count: int,
 ) -> None:
     token_participants, token_sessions, token_refresh_sequences = _token_log_summary(
         token_entries
@@ -1105,7 +1545,7 @@ def _log_concord_contract_deletion_audit(
         "cancelled_by=%s cancelled_at=%s cancel_reason=%s cancel_revision=%s "
         "supersedes=%s terms_hash=%s validation_status=%s "
         "state_revision=%s token_participants=%s token_sessions=%s "
-        "token_refresh_sequences=%s deleted_token_key_count=%s",
+        "token_refresh_sequences=%s listed_token_key_count=%s",
         log_label,
         contract_key,
         record.contract_id,
@@ -1131,7 +1571,7 @@ def _log_concord_contract_deletion_audit(
         token_participants,
         token_sessions,
         token_refresh_sequences,
-        deleted_token_key_count,
+        listed_token_key_count,
     )
 
 
@@ -1139,6 +1579,7 @@ __all__ = [
     "CONCORD_MAINTENANCE_ACTOR",
     "CONCORD_REAPER_STALE_CONTRACT_REASON",
     "CONCORD_STALE_OBSERVATION_SCHEMA_ID",
+    "CONCORD_TOKEN_CLEANUP_SCHEMA_ID",
     "DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS",
     "DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS",
     "DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS",
@@ -1149,4 +1590,5 @@ __all__ = [
     "ConcordReaperScanResult",
     "ConcordReaperService",
     "ConcordStaleObservationRecord",
+    "ConcordTokenCleanupRecord",
 ]

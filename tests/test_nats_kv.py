@@ -10,6 +10,8 @@ import pytest
 
 from deckr.substrates.nats_kv import (
     MATERIALIZED_TOMBSTONE_LIMIT,
+    NATS_KV_NON_AUTHORITATIVE_CONFIG_FIELDS,
+    NATS_KV_POLICY_VECTOR_FIELDS,
     KvBucketPolicy,
     KvChange,
     KvConflict,
@@ -23,6 +25,47 @@ from deckr.substrates.nats_kv import (
     kv_value,
 )
 from deckr.testing import MemoryJsonKvBucket
+
+
+def test_nats_kv_policy_vector_fields_are_explicit_and_complete() -> None:
+    assert NATS_KV_POLICY_VECTOR_FIELDS == (
+        "max_age",
+        "max_msgs_per_subject",
+        "allow_msg_ttl",
+        "subject_delete_marker_ttl",
+    )
+    assert {
+        "allow_direct",
+        "metadata",
+        "storage",
+    } == NATS_KV_NON_AUTHORITATIVE_CONFIG_FIELDS
+
+
+@pytest.mark.asyncio
+async def test_nats_json_kv_ignores_non_authoritative_existing_config_fields() -> (
+    None
+):
+    fake_js = _FakeJs(
+        existing=True,
+        max_age=30.0,
+        allow_msg_ttl=True,
+        subject_delete_marker_ttl=30_000_000_000,
+    )
+    fake_js.config.allow_direct = False
+    fake_js.config.storage = "memory"
+    fake_js.config.metadata = {"created-by": "another-runtime"}
+    bucket = NatsJsonKvBucket(
+        js=fake_js,
+        policy=KvBucketPolicy(
+            bucket="deckr_concord_token_v1",
+            ttl_seconds=30.0,
+            allow_write_ttl=True,
+        ),
+    )
+
+    assert await bucket.ttl_seconds() == 30.0
+    assert fake_js.updated_config is None
+    assert fake_js.updated_raw_config is None
 
 
 @pytest.mark.asyncio
@@ -1044,6 +1087,9 @@ class _FakeJs:
         }
         if self.config.subject_delete_marker_ttl is not None:
             raw["subject_delete_marker_ttl"] = self.config.subject_delete_marker_ttl
+        for field in NATS_KV_NON_AUTHORITATIVE_CONFIG_FIELDS:
+            if hasattr(self.config, field):
+                raw[field] = getattr(self.config, field)
         return raw
 
     async def delete_consumer(self, stream: str, consumer: str) -> bool:

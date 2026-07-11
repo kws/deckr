@@ -367,6 +367,11 @@ component own `ConcordReaperService.run()`. Constructing
 `ConcordMaintenance` or `ConcordReaperService` starts no task or watch, and
 ordinary callers do not pass either object a task group.
 
+Retained deletion persists a maintenance cleanup marker before removing the
+contract record. `scan_once()` makes bounded immediate token-cleanup attempts;
+if they cannot complete, `token_cleanups_pending` remains non-zero and a later
+scan resumes from the marker even though the contract no longer exists.
+
 This complete memory-store example deletes one cancelled contract whose
 retention period has elapsed and verifies the persisted result without sleeping:
 
@@ -427,6 +432,8 @@ async def maintenance_example() -> None:
     result = await reaper.scan_once()
 
     assert result.contracts_deleted == 1
+    assert result.token_cleanups_completed == 1
+    assert result.token_cleanups_pending == 0
     assert await contract_store.get(key) is None
 
 

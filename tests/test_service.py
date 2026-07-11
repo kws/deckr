@@ -8,11 +8,15 @@ import pytest
 import pytest_asyncio
 
 from deckr.components import (
+    ComponentLifecycleEvent,
+    ComponentLifecycleEventType,
     ComponentManager,
     ComponentState,
+    ComponentStatus,
     ReadinessState,
     RunContext,
 )
+from deckr.core.util.anyio import StateSubscriptionLimitExceeded
 
 # Tests use anyio backend (configured in conftest.py)
 
@@ -422,6 +426,169 @@ class TestComponentManagerPublicSurface:
             assert status.diagnostics == {"worker": "ok"}
             assert manager.list_component_statuses() == [status]
 
+    @pytest.mark.asyncio
+    async def test_lifecycle_and_status_subscriptions_bootstrap_current_state(self):
+        manager = ComponentManager()
+        alpha = MockComponent(name="alpha")
+        bravo = MockComponent(name="bravo")
+
+        await manager._push_lifecycle(
+            ComponentLifecycleEvent(alpha, ComponentLifecycleEventType.ADDED)
+        )
+        await manager._push_lifecycle(
+            ComponentLifecycleEvent(alpha, ComponentLifecycleEventType.STARTED)
+        )
+        await manager._push_lifecycle(
+            ComponentLifecycleEvent(bravo, ComponentLifecycleEventType.ADDED)
+        )
+        await manager._push_status(
+            ComponentStatus("bravo", ComponentState.STARTING)
+        )
+        await manager._push_status(
+            ComponentStatus(
+                "alpha",
+                ComponentState.RUNNING,
+                readiness_state=ReadinessState.READY,
+            )
+        )
+
+        lifecycle = manager.subscribe()
+        statuses = manager.subscribe_status()
+        try:
+            alpha_event = await anext(lifecycle)
+            bravo_event = await anext(lifecycle)
+            alpha_status = await anext(statuses)
+            bravo_status = await anext(statuses)
+
+            assert alpha_event.component is alpha
+            assert alpha_event.event_type == ComponentLifecycleEventType.STARTED
+            assert bravo_event.component is bravo
+            assert bravo_event.event_type == ComponentLifecycleEventType.ADDED
+            assert alpha_status.runtime_name == "alpha"
+            assert alpha_status.readiness_state == ReadinessState.READY
+            assert bravo_status.runtime_name == "bravo"
+            assert bravo_status.lifecycle_state == ComponentState.STARTING
+        finally:
+            await lifecycle.aclose()
+            await statuses.aclose()
+            await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_and_status_overflow_resnapshots_without_later_event(
+        self,
+    ):
+        manager = ComponentManager()
+        seed = MockComponent(name="seed")
+        await manager._push_lifecycle(
+            ComponentLifecycleEvent(seed, ComponentLifecycleEventType.ADDED)
+        )
+        await manager._push_status(
+            ComponentStatus("seed", ComponentState.RUNNING)
+        )
+
+        lifecycle = manager.subscribe()
+        statuses = manager.subscribe_status()
+        try:
+            assert (await anext(lifecycle)).component.name == "seed"
+            assert (await anext(statuses)).runtime_name == "seed"
+
+            expected_names = {"seed"}
+            for index in range(257):
+                name = f"component-{index:03d}"
+                component = MockComponent(name=name)
+                expected_names.add(name)
+                await manager._push_lifecycle(
+                    ComponentLifecycleEvent(
+                        component,
+                        ComponentLifecycleEventType.ADDED,
+                    )
+                )
+                await manager._push_status(
+                    ComponentStatus(name, ComponentState.RUNNING)
+                )
+
+            events = [await anext(lifecycle) for _ in expected_names]
+            current_statuses = [await anext(statuses) for _ in expected_names]
+
+            assert {event.component.name for event in events} == expected_names
+            assert {status.runtime_name for status in current_statuses} == expected_names
+        finally:
+            await lifecycle.aclose()
+            await statuses.aclose()
+            await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_and_status_subscriptions_enforce_admission(self):
+        manager = ComponentManager()
+        seed = MockComponent(name="seed")
+        await manager._push_lifecycle(
+            ComponentLifecycleEvent(seed, ComponentLifecycleEventType.ADDED)
+        )
+        await manager._push_status(
+            ComponentStatus("seed", ComponentState.RUNNING)
+        )
+        lifecycle_subscriptions = []
+        status_subscriptions = []
+
+        try:
+            for _ in range(256):
+                subscription = manager.subscribe()
+                assert (await anext(subscription)).component is seed
+                lifecycle_subscriptions.append(subscription)
+
+            with pytest.raises(StateSubscriptionLimitExceeded):
+                await anext(manager.subscribe())
+
+            for _ in range(256):
+                subscription = manager.subscribe_status()
+                assert (await anext(subscription)).runtime_name == "seed"
+                status_subscriptions.append(subscription)
+
+            with pytest.raises(StateSubscriptionLimitExceeded):
+                await anext(manager.subscribe_status())
+        finally:
+            for subscription in lifecycle_subscriptions:
+                await subscription.aclose()
+            for subscription in status_subscriptions:
+                await subscription.aclose()
+            await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_manager_close_wakes_blocked_lifecycle_and_status_readers(self):
+        manager = ComponentManager()
+        seed = MockComponent(name="seed")
+        await manager._push_lifecycle(
+            ComponentLifecycleEvent(seed, ComponentLifecycleEventType.ADDED)
+        )
+        await manager._push_status(
+            ComponentStatus("seed", ComponentState.RUNNING)
+        )
+        lifecycle = manager.subscribe()
+        statuses = manager.subscribe_status()
+        assert (await anext(lifecycle)).component is seed
+        assert (await anext(statuses)).runtime_name == "seed"
+        closed_readers: set[str] = set()
+
+        async def read_lifecycle() -> None:
+            with pytest.raises(StopAsyncIteration):
+                await anext(lifecycle)
+            closed_readers.add("lifecycle")
+
+        async def read_status() -> None:
+            with pytest.raises(StopAsyncIteration):
+                await anext(statuses)
+            closed_readers.add("status")
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(read_lifecycle)
+            tg.start_soon(read_status)
+            await anyio.sleep(0)
+            await manager.stop()
+            with anyio.fail_after(1):
+                while closed_readers != {"lifecycle", "status"}:
+                    await anyio.sleep(0)
+            tg.cancel_scope.cancel()
+
 
 class TestComponentManagerTaskCancellation:
     """Test that component tasks are properly cancelled when components are removed."""
@@ -475,4 +642,3 @@ class TestComponentManagerTaskCancellation:
                 component.counter == final_counter
             ), "Tasks should stop even when stop() raises exception"
             assert not component.task_running
-

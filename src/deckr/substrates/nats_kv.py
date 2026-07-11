@@ -25,6 +25,18 @@ NATS_MARKER_REASON_HEADER = "Nats-Marker-Reason"
 NATS_MARKER_MAX_AGE = "MaxAge"
 NATS_NANOSECONDS_PER_SECOND = 1_000_000_000
 NATS_SUBJECT_DELETE_MARKER_TTL_FIELD = "subject_delete_marker_ttl"
+# This is the complete cross-runtime Deckr policy vector. Other JetStream
+# fields are broker/client tuning or creator diagnostics and are never grounds
+# for mutating or rejecting an otherwise compatible existing shared bucket.
+NATS_KV_POLICY_VECTOR_FIELDS = (
+    "max_age",
+    "max_msgs_per_subject",
+    "allow_msg_ttl",
+    NATS_SUBJECT_DELETE_MARKER_TTL_FIELD,
+)
+NATS_KV_NON_AUTHORITATIVE_CONFIG_FIELDS = frozenset(
+    {"allow_direct", "metadata", "storage"}
+)
 NATS_WATCH_CLEANUP_TIMEOUT_SECONDS = 0.5
 NATS_WATCH_HEALTH_INTERVAL_SECONDS = 0.1
 NATS_WATCH_INACTIVE_THRESHOLD_SECONDS = 1.0
@@ -1350,6 +1362,8 @@ __all__ = [
     "KvViewStatus",
     "KvWatchBarrier",
     "MATERIALIZED_TOMBSTONE_LIMIT",
+    "NATS_KV_NON_AUTHORITATIVE_CONFIG_FIELDS",
+    "NATS_KV_POLICY_VECTOR_FIELDS",
     "NatsKvMaterializedBucket",
     "NatsJsonKvBucket",
 ]

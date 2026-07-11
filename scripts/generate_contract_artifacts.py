@@ -43,7 +43,9 @@ from deckr.concord import (
 )
 from deckr.concord_maintenance import (
     CONCORD_STALE_OBSERVATION_SCHEMA_ID,
+    CONCORD_TOKEN_CLEANUP_SCHEMA_ID,
     ConcordStaleObservationRecord,
+    ConcordTokenCleanupRecord,
 )
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import (
@@ -208,6 +210,12 @@ def _add_schemas(add_artifact) -> None:
             "schemas/concord/stale-observation.v1.schema.json",
             ConcordStaleObservationRecord,
             "Concord stale observation",
+        ),
+        (
+            CONCORD_TOKEN_CLEANUP_SCHEMA_ID,
+            "schemas/concord/token-cleanup.v1.schema.json",
+            ConcordTokenCleanupRecord,
+            "Concord token cleanup marker",
         ),
         (
             HARDWARE_PROFILE_ID,

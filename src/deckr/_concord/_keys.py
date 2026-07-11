@@ -91,6 +91,24 @@ def parse_concord_stale_observation_key(key: str) -> tuple[str, int] | None:
     return contract_id, generation
 
 
+def concord_token_cleanup_key(*, contract_id: str, generation: int) -> str:
+    return ".".join(("cleanup", encode_key_token(contract_id), str(generation)))
+
+
+def parse_concord_token_cleanup_key(key: str) -> tuple[str, int] | None:
+    parts = key.split(".")
+    if len(parts) != 3 or parts[0] != "cleanup":
+        return None
+    try:
+        contract_id = decode_key_token(parts[1])
+        generation = int(parts[2])
+    except (TypeError, ValueError):
+        return None
+    if generation < 1:
+        return None
+    return contract_id, generation
+
+
 def canonical_json_bytes(value: Mapping[str, Any] | DeckrModel) -> bytes:
     if isinstance(value, DeckrModel):
         payload = value.model_dump(by_alias=True, exclude_none=True, mode="json")

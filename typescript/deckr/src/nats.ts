@@ -21,6 +21,21 @@ const NATS_KV_CREATION_MARKER_METADATA_KEY = "deckr.kv.creation_id";
 const NATS_KV_STREAM_PREFIX = "KV_";
 const NATS_KV_SUBJECT_PREFIX = "$KV";
 
+// This is the complete cross-runtime Deckr policy vector. Other JetStream
+// fields are broker/client tuning or creator diagnostics and are never grounds
+// for mutating or rejecting an otherwise compatible existing shared bucket.
+export const NATS_KV_POLICY_VECTOR_FIELDS = Object.freeze([
+  "max_age",
+  "max_msgs_per_subject",
+  "allow_msg_ttl",
+  "subject_delete_marker_ttl",
+] as const);
+export const NATS_KV_NON_AUTHORITATIVE_CONFIG_FIELDS = Object.freeze([
+  "allow_direct",
+  "metadata",
+  "storage",
+] as const);
+
 export async function connectNats(options: Record<string, unknown>): Promise<unknown> {
   const mod = await import("nats").catch((error) => {
     throw new StateUnavailable("Install the optional nats peer dependency to use @deckr/core/nats", {

@@ -444,10 +444,24 @@ period, 3600 seconds by default. Before deleting a cancelled record, maintenance
 logs contract identity, profile, participants, attached participants, lifecycle
 timestamps, cancellation metadata, supersession, terms hash, current validation
 status, and participant-token summaries. Full `terms` are not logged by default.
-After the contract record is deleted, any remaining participant-token keys for
-that contract generation are deleted. If the contract record changes during a
+The pre-mutation audit calls this the listed token-key count; successful delete
+counts are reported separately by the cleanup result and reaper scan.
+Before the revision-guarded contract delete, maintenance validates every listed
+participant-token entry against the exact requested prefix and persists a
+`cleanup.*` marker containing the contract generation, deleted contract
+revision, and terms hash. A listed key, token identity, or marker mismatch fails
+closed without deleting the contract. If the contract record changes during a
 delete attempt, maintenance logs the conflict and leaves the record for a later
 scan.
+
+After the contract record is deleted, maintenance makes at most eight immediate
+revision-guarded cleanup passes over that generation. The generation is complete
+only when an exact rescan finds no participant tokens and the cleanup marker is
+revision-guarded deleted. Conflict-budget exhaustion, malformed or
+identity-inconsistent rescan state, and token-store unavailability leave the
+marker durable and report cleanup pending. Later low-frequency scans enumerate
+`cleanup.*` independently of contract records and resume the bounded cleanup;
+participant-token TTL remains only a fail-safe.
 
 At the end of each scan, orphaned `stale.*` maintenance observations whose
 contract record no longer exists are removed with revision-guarded deletes.

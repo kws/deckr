@@ -7,6 +7,7 @@ import {
   BEACON_ADVERTISEMENT_STORE_POLICY,
   CandidateStatus,
   DEFAULT_BEACON_TTL_SECONDS,
+  type Candidate,
 } from "../src/beacon.ts";
 import {
   canonicalJsonHash,
@@ -342,6 +343,11 @@ test("memory state watches coalesce by key and resnapshot on overflow", async ()
   const state = new MemoryStateStore();
   const iterator = state.watch()[Symbol.asyncIterator]();
 
+  assert.deepEqual(await iterator.next(), {
+    done: false,
+    value: { operation: "resnapshot" },
+  });
+
   for (let index = 0; index <= MAX_MEMORY_WATCH_CHANGED_KEYS; index += 1) {
     await state.put(`key.${index}`, { index });
   }
@@ -350,6 +356,21 @@ test("memory state watches coalesce by key and resnapshot on overflow", async ()
     done: false,
     value: { operation: "resnapshot" },
   });
+  await iterator.return?.();
+});
+
+test("memory state watches begin with an armed current-state resnapshot", async () => {
+  const state = new MemoryStateStore();
+  await state.put("existing", { value: 1 });
+
+  const iterator = state.watch("existing")[Symbol.asyncIterator]();
+  assert.deepEqual(await iterator.next(), {
+    done: false,
+    value: { operation: "resnapshot" },
+  });
+  assert.deepEqual(await state.items("existing"), [
+    { key: "existing", value: { value: 1 }, revision: 1 },
+  ]);
   await iterator.return?.();
 });
 
@@ -386,6 +407,100 @@ test("Beacon advertises, refreshes, validates, and withdraws candidates", async 
 
   await advertisement.close();
   assert.equal(await beacon.find("dev.deckr.test.feature").then((items) => items.length), 0);
+});
+
+test("Beacon feature watches emit an empty current snapshot first", async () => {
+  const state = new MemoryStateStore({ policy: BEACON_ADVERTISEMENT_STORE_POLICY });
+  const beacon = new BeaconService(new BeaconDiscovery(state));
+
+  const iterator = beacon.watchFeature("dev.deckr.test.feature")[Symbol.asyncIterator]();
+  const first = await iterator.next();
+
+  assert.equal(first.done, false);
+  assert.equal(first.value?.type, "snapshot");
+  if (first.value?.type !== "snapshot") {
+    assert.fail("first Beacon watch item was not a snapshot");
+  }
+  assert.deepEqual(first.value.candidates, []);
+  await iterator.return?.();
+});
+
+test("Beacon feature watches atomically snapshot after arming", async () => {
+  const state = new MemoryStateStore({ policy: BEACON_ADVERTISEMENT_STORE_POLICY });
+  const beacon = new BeaconService(new BeaconDiscovery(state));
+  const iterator = beacon.watchFeature("dev.deckr.test.feature")[Symbol.asyncIterator]();
+  await beacon.advertise({
+    featureId: "dev.deckr.test.feature",
+    endpoint: "service:test-service",
+    sessionId: "session-1",
+    advertisementId: "current-advertisement",
+  });
+  const first = await iterator.next();
+
+  assert.equal(first.done, false);
+  assert.equal(first.value?.type, "snapshot");
+  if (first.value?.type !== "snapshot") {
+    assert.fail("first Beacon watch item was not a snapshot");
+  }
+  assert.equal(first.value.candidates.length, 1);
+  assert.equal(
+    first.value.candidates[0]?.advertisement.advertisementId,
+    "current-advertisement",
+  );
+
+  await beacon.advertise({
+    featureId: "dev.deckr.test.feature",
+    endpoint: "service:test-service-2",
+    sessionId: "session-2",
+    advertisementId: "later-advertisement",
+  });
+  const later = await iterator.next();
+  assert.equal(later.value?.type, "change");
+  if (later.value?.type !== "change") {
+    assert.fail("later Beacon watch item was not a change");
+  }
+  assert.equal(later.value.eventType, "advertised");
+  assert.equal(
+    later.value.candidate?.advertisement.advertisementId,
+    "later-advertisement",
+  );
+  await iterator.return?.();
+});
+
+test("Beacon feature watch overflow yields one full current snapshot", async () => {
+  const state = new MemoryStateStore({ policy: BEACON_ADVERTISEMENT_STORE_POLICY });
+  const beacon = new BeaconService(new BeaconDiscovery(state));
+  const iterator = beacon.watchFeature("dev.deckr.test.feature")[Symbol.asyncIterator]();
+  const initial = await iterator.next();
+  assert.equal(initial.value?.type, "snapshot");
+
+  for (let index = 0; index <= MAX_MEMORY_WATCH_CHANGED_KEYS; index += 1) {
+    await beacon.advertise({
+      featureId: "dev.deckr.test.feature",
+      endpoint: `service:test-service-${index}`,
+      sessionId: `session-${index}`,
+      advertisementId: `advertisement-${index}`,
+    });
+  }
+
+  const current = await iterator.next();
+  assert.equal(current.value?.type, "snapshot");
+  if (current.value?.type !== "snapshot") {
+    assert.fail("overflow Beacon watch item was not a snapshot");
+  }
+  assert.equal(
+    current.value.candidates.length,
+    MAX_MEMORY_WATCH_CHANGED_KEYS + 1,
+  );
+  assert.equal(
+    new Set(
+      current.value.candidates.map(
+        (candidate: Candidate) => candidate.advertisement.advertisementId,
+      ),
+    ).size,
+    MAX_MEMORY_WATCH_CHANGED_KEYS + 1,
+  );
+  await iterator.return?.();
 });
 
 test("Concord validates lifecycle and does not recreate a lost attached token", async () => {
@@ -856,6 +971,28 @@ test("service view access enforces declared writer direction", async () => {
     () => consumerReader.read(consumerView),
     ValidationError,
   );
+});
+
+test("service view watches emit the current fenced value first", async () => {
+  const view = serviceViewRef("status", "deck");
+  const state = new MemoryStateStore({ name: "dev_deckr_test_service_view_v1" });
+  const writer = new ManagedServiceViewAccess({
+    state,
+    writeContext: serviceViewWriteContext(ServiceViewWriter.SERVICE),
+  });
+  const reader = new ManagedServiceViewAccess({
+    state,
+    readContext: serviceViewReadContext(ServiceViewWriter.CONSUMER),
+  });
+  await writer.put(view, { status: "playing" });
+
+  const iterator = reader.watch(view)[Symbol.asyncIterator]();
+  const first = await iterator.next();
+
+  assert.equal(first.done, false);
+  assert.equal(first.value?.operation, "put");
+  assert.equal(first.value?.entry?.value.status, "playing");
+  await iterator.return?.();
 });
 
 test("service-use scope index replaces a valid same-session pointer without local token", async () => {

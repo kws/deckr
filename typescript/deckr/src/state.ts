@@ -206,7 +206,10 @@ export class MemoryStateStore implements StateStore {
 
 class MemoryWatcher implements AsyncIterable<StateWatchItem> {
   private pending = new Map<string, StateChange>();
-  private resnapshotRequired = false;
+  // Every watcher begins dirty. Public projections handle this marker by
+  // reading their complete current state while the watcher is already armed,
+  // so bootstrap cannot miss a concurrent mutation.
+  private resnapshotRequired = true;
   private waiter: ((value: IteratorResult<StateWatchItem>) => void) | null = null;
   private closed = false;
   private readonly prefix: string;

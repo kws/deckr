@@ -2,11 +2,29 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { StateUnavailable } from "../src/errors.ts";
-import { NatsStateStore } from "../src/nats.ts";
+import {
+  NATS_KV_NON_AUTHORITATIVE_CONFIG_FIELDS,
+  NATS_KV_POLICY_VECTOR_FIELDS,
+  NatsStateStore,
+} from "../src/nats.ts";
 import {
   PERSISTENT_STATE_STORE_POLICY,
   type StateStorePolicy,
 } from "../src/state.ts";
+
+test("NATS KV policy vector fields are explicit and complete", () => {
+  assert.deepEqual(NATS_KV_POLICY_VECTOR_FIELDS, [
+    "max_age",
+    "max_msgs_per_subject",
+    "allow_msg_ttl",
+    "subject_delete_marker_ttl",
+  ]);
+  assert.deepEqual(NATS_KV_NON_AUTHORITATIVE_CONFIG_FIELDS, [
+    "allow_direct",
+    "metadata",
+    "storage",
+  ]);
+});
 
 test("NatsStateStore atomically creates a TTL bucket before binding", async () => {
   const kv = new FakeKv({
@@ -117,7 +135,7 @@ test("NatsStateStore opens once and reuses its validated handle", async () => {
   assert.equal(connection.streams.updates.length, 0);
 });
 
-test("NatsStateStore keeps TTL buckets with matching subject delete markers", async () => {
+test("NatsStateStore ignores non-authoritative fields on compatible existing buckets", async () => {
   const kv = new FakeKv({
     ttl: 30_000,
     history: 1,
@@ -127,6 +145,9 @@ test("NatsStateStore keeps TTL buckets with matching subject delete markers", as
       max_msgs_per_subject: 1,
       allow_msg_ttl: true,
       subject_delete_marker_ttl: 30_000_000_000,
+      allow_direct: false,
+      storage: "memory",
+      metadata: { "created-by": "another-runtime" },
     },
   });
   const connection = new FakeConnection(kv);

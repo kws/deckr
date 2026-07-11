@@ -194,6 +194,14 @@
       "title": "Concord stale observation"
     },
     {
+      "description": "Canonical JSON Schema for Concord token cleanup marker.",
+      "id": "dev.deckr.concord.token-cleanup.v1",
+      "kind": "schema",
+      "path": "schemas/concord/token-cleanup.v1.schema.json",
+      "schemaId": "dev.deckr.concord.token-cleanup.v1",
+      "title": "Concord token cleanup marker"
+    },
+    {
       "description": "Canonical JSON Schema for Deckr CapabilityDescriptor.",
       "id": "dev.deckr.hardware.capability_descriptor.v1",
       "kind": "schema",

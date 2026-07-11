@@ -276,6 +276,20 @@ key:    stale.<contract-id-token>.<generation>
 schema: dev.deckr.concord.stale-observation.v1
 ```
 
+Durable post-contract token cleanup uses:
+
+```text
+bucket: deckr_concord_maintenance_v1
+key:    cleanup.<contract-id-token>.<generation>
+schema: dev.deckr.concord.token-cleanup.v1
+```
+
+Maintenance persists the cleanup marker before deleting a retained cancelled
+contract. The marker fences the deleted contract revision and terms hash and
+remains until an exact participant-token rescan is empty. Later reaper scans
+enumerate these markers independently of contract records, so bounded cleanup
+conflicts or a post-delete store outage cannot orphan the generation.
+
 The Python implementation separates three store responsibilities behind narrow
 internal ports:
 
@@ -386,8 +400,8 @@ persists first stale observations, cancels stale open contracts after the
 configured grace period, logs deletion context without full `terms`, deletes
 cancelled records after retention, and cleans any remaining participant-token
 keys for deleted contract generations. Its `scan_once()` path intentionally
-lists `contracts.` and `stale.` KV keys and exact-reads participant-token keys;
-it does not start Concord materialized watches.
+lists `contracts.`, `stale.`, and durable `cleanup.` KV keys and exact-reads
+participant-token keys; it does not start Concord materialized watches.
 
 ## Deckr Profiles
 
@@ -520,6 +534,30 @@ delete or expire events depending on header visibility; either event must remove
 the cached key. Persistent buckets reject per-write TTL. Reopening the same
 bucket with a conflicting policy is an error.
 
+The complete cross-runtime Deckr KV policy vector is exactly:
+
+| JetStream field | Deckr interpretation |
+| --- | --- |
+| `max_age` | bucket TTL in nanoseconds, or `0` for a persistent bucket |
+| `max_msgs_per_subject` | `1` |
+| `allow_msg_ttl` | whether the bucket permits Deckr's broker-owned TTL writes |
+| `subject_delete_marker_ttl` | equal to `max_age` for a TTL bucket; not applicable to a persistent bucket |
+
+Python and TypeScript compare those normalized fields before exposing a bucket
+handle. `allow_direct` is a client access optimization, `storage` is
+deployment-owned broker policy, and Deckr creation `metadata` is a
+creator-local diagnostic. Those three fields, and every other JetStream stream
+setting, are not part of the shared Deckr policy vector. Fresh creators may set
+different non-authoritative values; an opener neither rejects nor mutates an
+existing bucket because of them. An incompatible value in the four-field
+Deckr vector is rejected without mutating the existing stream.
+
+The real-NATS cross-runtime gate compares the complete fresh stream configs
+after normalizing only bucket names and subjects. With the current clients, the
+observed Python/TypeScript difference set is exactly `allow_direct` and Deckr
+creation `metadata`. Both creators currently resolve to file storage, but
+storage remains deployment-owned rather than a Deckr lifecycle policy field.
+
 Concord treats the token bucket's configured TTL as the single token TTL source.
 Token records mirror that TTL; they are not independently configured by
 participants. Lowering the bucket TTL while participants are already sleeping
@@ -566,6 +604,7 @@ nats kv ls deckr_beacon_advertisement_v1 'advertisements.by_feature.>' --server 
 nats kv ls deckr_concord_contract_v1 'contracts.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_concord_token_v1 'contracts.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_concord_maintenance_v1 'stale.>' --server nats://127.0.0.1:4222
+nats kv ls deckr_concord_maintenance_v1 'cleanup.>' --server nats://127.0.0.1:4222
 ```
 
 Summarize current Beacon/Concord KV contents:

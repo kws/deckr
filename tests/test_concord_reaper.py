@@ -260,7 +260,12 @@ async def test_reaper_scan_uses_raw_items_without_materialized_watches() -> None
     assert result.scanned_contract_count == 1
     assert result.stale_observations_created == 1
     assert contract_state.items_prefixes == ["contracts."]
-    assert maintenance_state.items_prefixes == ["stale.", "stale."]
+    assert maintenance_state.items_prefixes == [
+        "cleanup.",
+        "stale.",
+        "stale.",
+        "cleanup.",
+    ]
     assert not contract_state.watch_called
     assert not token_state.watch_called
     assert not maintenance_state.watch_called
@@ -516,7 +521,54 @@ async def test_cancelled_contract_deleted_after_retention_and_tokens_removed(
     assert "hardware_manager:manager-main" in log_text
     assert "controller-session" in log_text
     assert "manager-session" in log_text
-    assert "deleted_token_key_count=2" in log_text
+    assert "listed_token_key_count=2" in log_text
+
+
+@pytest.mark.asyncio
+async def test_documented_usage_maintenance_example() -> None:
+    contract_store = MemoryJsonKvBucket(bucket="contracts")
+    token_store = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+    maintenance_store = MemoryJsonKvBucket(bucket="maintenance")
+    maintenance = ConcordMaintenance(
+        contract_store,
+        token_store,
+        maintenance_store,
+    )
+
+    now = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    key = concord_contract_key(contract_id="retained-contract", generation=1)
+    await contract_store.create(
+        key,
+        ContractRecord(
+            contractId="retained-contract",
+            generation=1,
+            participants=("controller:maintenance-example",),
+            attachedParticipants=(),
+            state=ContractState.CANCELLED,
+            createdBy="controller:maintenance-example",
+            createdAt=now - timedelta(minutes=2),
+            cancelledBy="controller:maintenance-example",
+            cancelledAt=now - timedelta(minutes=1),
+            cancelRevision=1,
+            cancelReason="example cleanup",
+        ),
+    )
+
+    reaper = ConcordReaperService(
+        maintenance,
+        config=ConcordReaperConfig(
+            staleGraceSeconds=900,
+            cancelledRetentionSeconds=0,
+            scanIntervalSeconds=60,
+        ),
+        clock=lambda: now,
+    )
+    result = await reaper.scan_once()
+
+    assert result.contracts_deleted == 1
+    assert result.token_cleanups_completed == 1
+    assert result.token_cleanups_pending == 0
+    assert await contract_store.get(key) is None
 
 
 @pytest.mark.asyncio

@@ -20,10 +20,12 @@ from deckr.concord import (
 from deckr.concord_maintenance import (
     ConcordReaperConfig,
     ConcordReaperService,
+    ConcordTokenCleanupRecord,
     concord_stale_observation_key,
+    concord_token_cleanup_key,
 )
 from deckr.contracts.messages import controller_address, hardware_manager_address
-from deckr.substrates.nats_kv import KvConflict, KvEntry
+from deckr.substrates.nats_kv import KvConflict, KvEntry, KvUnavailable
 from deckr.testing import (
     ConcordMaintenanceHarness,
     ConcordRuntimeHarness,
@@ -84,6 +86,155 @@ class RacingTokenDeleteStore(MemoryJsonKvBucket):
             )
             await super().update(key, replacement, revision=current.revision)
             self.raced = True
+        return await super().delete(key, revision=revision)
+
+
+class AlwaysRefreshingTokenDeleteStore(MemoryJsonKvBucket):
+    def __init__(self) -> None:
+        super().__init__(bucket="tokens", ttl_seconds=120)
+        self.refresh_on_delete = False
+        self.delete_attempts = 0
+
+    async def delete(self, key: str, *, revision: int | None = None):
+        if self.refresh_on_delete:
+            self.delete_attempts += 1
+            current = await self.get_exact(key)
+            assert current is not None
+            token = ParticipantTokenRecord.model_validate(current.value)
+            await super().update(
+                key,
+                token.model_copy(update={"refresh_seq": token.refresh_seq + 1}),
+                revision=current.revision,
+            )
+        return await super().delete(key, revision=revision)
+
+
+class ToggleUnavailableTokenStore(MemoryJsonKvBucket):
+    def __init__(self) -> None:
+        super().__init__(bucket="tokens", ttl_seconds=120)
+        self.unavailable = False
+
+    def _check_available(self) -> None:
+        if self.unavailable:
+            raise KvUnavailable("token store unavailable after contract deletion")
+
+    async def get(self, key: str):
+        self._check_available()
+        return await super().get(key)
+
+    async def items(self, prefix: str = ""):
+        self._check_available()
+        return await super().items(prefix)
+
+    async def delete(self, key: str, *, revision: int | None = None):
+        self._check_available()
+        return await super().delete(key, revision=revision)
+
+
+class UnavailableAfterOneTokenDeleteStore(MemoryJsonKvBucket):
+    def __init__(self) -> None:
+        super().__init__(bucket="tokens", ttl_seconds=120)
+        self.unavailable = False
+        self.successful_delete_count = 0
+
+    def _check_available(self) -> None:
+        if self.unavailable:
+            raise KvUnavailable("token store became unavailable during cleanup")
+
+    async def get(self, key: str):
+        self._check_available()
+        return await super().get(key)
+
+    async def items(self, prefix: str = ""):
+        self._check_available()
+        return await super().items(prefix)
+
+    async def delete(self, key: str, *, revision: int | None = None):
+        self._check_available()
+        result = await super().delete(key, revision=revision)
+        self.successful_delete_count += 1
+        if self.successful_delete_count == 1:
+            self.unavailable = True
+        return result
+
+
+class ContractDeleteMakesTokenStoreUnavailable(MemoryJsonKvBucket):
+    def __init__(self, token_store: ToggleUnavailableTokenStore) -> None:
+        super().__init__(bucket="contracts")
+        self._token_store = token_store
+
+    async def delete(self, key: str, *, revision: int | None = None):
+        result = await super().delete(key, revision=revision)
+        self._token_store.unavailable = True
+        return result
+
+
+class MismatchedTokenScanEntryStore(MemoryJsonKvBucket):
+    def __init__(self) -> None:
+        super().__init__(bucket="tokens", ttl_seconds=120)
+        self.return_mismatched_key = False
+
+    async def items(self, prefix: str = ""):
+        entries = await super().items(prefix)
+        if not self.return_mismatched_key or not entries:
+            return entries
+        entry = entries[0]
+        return (
+            KvEntry(
+                entry.bucket,
+                concord_participant_token_key(
+                    contract_id="different-contract",
+                    generation=1,
+                    participant=CONTROLLER,
+                ),
+                entry.value,
+                entry.revision,
+            ),
+        )
+
+
+class FaultingTokenCleanupRescanStore(MemoryJsonKvBucket):
+    def __init__(self, fault: str) -> None:
+        super().__init__(bucket="tokens", ttl_seconds=120)
+        self.fault: str | None = fault
+        self.scan_count = 0
+        self.injected = False
+
+    async def items(self, prefix: str = ""):
+        entries = await super().items(prefix)
+        self.scan_count += 1
+        if self.fault == "key" and self.injected and entries:
+            entry = entries[0]
+            return (
+                KvEntry(
+                    entry.bucket,
+                    concord_participant_token_key(
+                        contract_id="different-contract",
+                        generation=1,
+                        participant=CONTROLLER,
+                    ),
+                    entry.value,
+                    entry.revision,
+                ),
+            )
+        return entries
+
+    async def delete(self, key: str, *, revision: int | None = None):
+        if self.fault is not None and not self.injected and self.scan_count >= 1:
+            self.injected = True
+            if self.fault == "key":
+                raise KvConflict("token refreshed while cleanup deleted it")
+            current = await self.get_exact(key)
+            assert current is not None
+            replacement = dict(current.value)
+            if self.fault == "malformed":
+                replacement = {
+                    "schema": CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
+                    "contractId": replacement["contractId"],
+                }
+            else:
+                replacement["contractId"] = "different-contract"
+            await super().put(key, replacement)
         return await super().delete(key, revision=revision)
 
 
@@ -487,10 +638,254 @@ async def test_raced_maintenance_token_delete_removes_refreshed_token() -> None:
         now=datetime.now(UTC) + timedelta(seconds=1),
     )
 
-    assert result.deleted
+    assert result.contract_deleted
+    assert result.cleanup_completed
+    assert not result.cleanup_pending
     assert result.deleted_token_key_count == 1
     assert token_store.raced
     assert await harness.token_entry(token.key) is None
+
+
+@pytest.mark.asyncio
+async def test_token_cleanup_exhaustion_remains_durably_pending() -> None:
+    token_store = AlwaysRefreshingTokenDeleteStore()
+    harness = ConcordMaintenanceHarness(token_store=token_store)
+    contract = await _create_contract(harness, contract_id="cleanup-exhaustion")
+    token = await _attach(harness, contract)
+    assert await harness.concord._cancel(  # noqa: SLF001
+        contract,
+        CONTROLLER,
+        reason="ready for retention cleanup",
+    )
+    token_store.refresh_on_delete = True
+
+    result = await harness.maintenance.delete_cancelled_contract(
+        contract,
+        retention_seconds=0,
+        now=datetime.now(UTC) + timedelta(seconds=1),
+    )
+
+    marker_key = concord_token_cleanup_key(
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+    )
+    marker_entry = await harness.maintenance_store.get_exact(marker_key)
+    assert result.contract_deleted
+    assert not result.cleanup_completed
+    assert result.cleanup_pending
+    assert result.deleted_token_key_count == 0
+    assert token_store.delete_attempts == 8
+    assert await harness.contract_entry(contract.key) is None
+    assert await harness.token_entry(token.key) is not None
+    assert marker_entry is not None
+    assert ConcordTokenCleanupRecord.model_validate(marker_entry.value).contract_id == (
+        contract.contract_id
+    )
+
+    token_store.refresh_on_delete = False
+    reaper = ConcordReaperService(
+        harness.maintenance,
+        config=ConcordReaperConfig(cancelledRetentionSeconds=0),
+    )
+    later = await reaper.scan_once()
+
+    assert later.contracts_deleted == 0
+    assert later.token_keys_deleted == 1
+    assert later.token_cleanups_completed == 1
+    assert later.token_cleanups_pending == 0
+    assert await harness.token_entry(token.key) is None
+    assert await harness.maintenance_store.get_exact(marker_key) is None
+
+
+@pytest.mark.asyncio
+async def test_post_contract_delete_store_unavailability_remains_durably_pending() -> None:
+    token_store = ToggleUnavailableTokenStore()
+    contract_store = ContractDeleteMakesTokenStoreUnavailable(token_store)
+    harness = ConcordMaintenanceHarness(
+        contract_store=contract_store,
+        token_store=token_store,
+    )
+    contract = await _create_contract(harness, contract_id="cleanup-unavailable")
+    token = await _attach(harness, contract)
+    assert await harness.concord._cancel(  # noqa: SLF001
+        contract,
+        CONTROLLER,
+        reason="ready for retention cleanup",
+    )
+
+    result = await harness.maintenance.delete_cancelled_contract(
+        contract,
+        retention_seconds=0,
+        now=datetime.now(UTC) + timedelta(seconds=1),
+    )
+
+    marker_key = concord_token_cleanup_key(
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+    )
+    assert result.contract_deleted
+    assert not result.cleanup_completed
+    assert result.cleanup_pending
+    assert await harness.contract_entry(contract.key) is None
+    assert await harness.maintenance_store.get_exact(marker_key) is not None
+
+    token_store.unavailable = False
+    assert await harness.token_entry(token.key) is not None
+    reaper = ConcordReaperService(
+        harness.maintenance,
+        config=ConcordReaperConfig(cancelledRetentionSeconds=0),
+    )
+    later = await reaper.scan_once()
+
+    assert later.token_keys_deleted == 1
+    assert later.token_cleanups_completed == 1
+    assert later.token_cleanups_pending == 0
+    assert await harness.token_entry(token.key) is None
+    assert await harness.maintenance_store.get_exact(marker_key) is None
+
+
+@pytest.mark.asyncio
+async def test_partial_token_cleanup_count_is_preserved_and_later_completed() -> None:
+    token_store = UnavailableAfterOneTokenDeleteStore()
+    harness = ConcordMaintenanceHarness(token_store=token_store)
+    contract = await _create_contract(harness, contract_id="cleanup-partial-count")
+    controller_token = await _attach(harness, contract)
+    manager_token = await harness.concord._attach(  # noqa: SLF001
+        contract,
+        MANAGER,
+        "manager-session",
+        token_id="manager-token",
+    )
+    assert await harness.concord._cancel(  # noqa: SLF001
+        contract,
+        CONTROLLER,
+        reason="ready for retention cleanup",
+    )
+    reaper = ConcordReaperService(
+        harness.maintenance,
+        config=ConcordReaperConfig(cancelledRetentionSeconds=0),
+    )
+
+    first = await reaper.scan_once()
+
+    marker_key = concord_token_cleanup_key(
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+    )
+    assert first.contracts_deleted == 1
+    assert first.token_keys_deleted == 1
+    assert first.token_cleanups_completed == 0
+    assert first.token_cleanups_pending == 1
+    assert token_store.successful_delete_count == 1
+    assert await harness.contract_entry(contract.key) is None
+    assert await harness.maintenance_store.get_exact(marker_key) is not None
+
+    token_store.unavailable = False
+    remaining = [
+        token
+        for token in (
+            await harness.token_entry(controller_token.key),
+            await harness.token_entry(manager_token.key),
+        )
+        if token is not None
+    ]
+    assert len(remaining) == 1
+
+    second = await reaper.scan_once()
+
+    assert second.contracts_deleted == 0
+    assert second.token_keys_deleted == 1
+    assert second.token_cleanups_completed == 1
+    assert second.token_cleanups_pending == 0
+    assert token_store.successful_delete_count == 2
+    assert await harness.token_entry(controller_token.key) is None
+    assert await harness.token_entry(manager_token.key) is None
+    assert await harness.maintenance_store.get_exact(marker_key) is None
+
+
+@pytest.mark.asyncio
+async def test_token_scan_entry_key_mismatch_prevents_contract_deletion() -> None:
+    token_store = MismatchedTokenScanEntryStore()
+    harness = ConcordMaintenanceHarness(token_store=token_store)
+    contract = await _create_contract(harness, contract_id="cleanup-key-mismatch")
+    token = await _attach(harness, contract)
+    assert await harness.concord._cancel(  # noqa: SLF001
+        contract,
+        CONTROLLER,
+        reason="ready for retention cleanup",
+    )
+    token_store.return_mismatched_key = True
+    before = _authority_state(harness)
+
+    with pytest.raises(ConcordConflict) as raised:
+        await harness.maintenance.delete_cancelled_contract(
+            contract,
+            retention_seconds=0,
+            now=datetime.now(UTC) + timedelta(seconds=1),
+        )
+
+    marker_key = concord_token_cleanup_key(
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+    )
+    assert raised.value.code == ConcordConflictCode.TOKEN_IDENTITY_MISMATCH
+    assert _authority_state(harness) == before
+    assert await harness.contract_entry(contract.key) is not None
+    assert await harness.token_entry(token.key) is not None
+    assert await harness.maintenance_store.get_exact(marker_key) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["key", "malformed", "identity"])
+async def test_post_delete_rescan_fault_retains_marker_until_later_completion(
+    fault: str,
+) -> None:
+    token_store = FaultingTokenCleanupRescanStore(fault)
+    harness = ConcordMaintenanceHarness(token_store=token_store)
+    contract = await _create_contract(
+        harness,
+        contract_id=f"cleanup-rescan-{fault}",
+    )
+    token = await _attach(harness, contract)
+    token_entry = await harness.token_entry(token.key)
+    assert token_entry is not None
+    original_token = token_entry.value
+    assert await harness.concord._cancel(  # noqa: SLF001
+        contract,
+        CONTROLLER,
+        reason="ready for retention cleanup",
+    )
+
+    result = await harness.maintenance.delete_cancelled_contract(
+        contract,
+        retention_seconds=0,
+        now=datetime.now(UTC) + timedelta(seconds=1),
+    )
+
+    marker_key = concord_token_cleanup_key(
+        contract_id=contract.contract_id,
+        generation=contract.generation,
+    )
+    assert result.contract_deleted
+    assert not result.cleanup_completed
+    assert result.cleanup_pending
+    assert await harness.contract_entry(contract.key) is None
+    assert await harness.token_entry(token.key) is not None
+    assert await harness.maintenance_store.get_exact(marker_key) is not None
+
+    token_store.fault = None
+    await token_store.put(token.key, original_token)
+    reaper = ConcordReaperService(
+        harness.maintenance,
+        config=ConcordReaperConfig(cancelledRetentionSeconds=0),
+    )
+    later = await reaper.scan_once()
+
+    assert later.token_keys_deleted == 1
+    assert later.token_cleanups_completed == 1
+    assert later.token_cleanups_pending == 0
+    assert await harness.token_entry(token.key) is None
+    assert await harness.maintenance_store.get_exact(marker_key) is None
 
 
 @pytest.mark.asyncio

@@ -479,6 +479,137 @@ async def test_participant_watch_converges_before_repair_interval() -> None:
         task_group.cancel_scope.cancel()
 
 
+@pytest.mark.asyncio
+async def test_participant_discovers_post_subscription_contract_and_token_loss_without_repair() -> None:
+    contracts = _RecoveringBucket(bucket="contracts")
+    tokens = _RecoveringBucket(bucket="tokens", ttl_seconds=120)
+    concord, _contracts, _tokens = _concord(contracts, tokens)
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+
+    async with anyio.create_task_group() as task_group:
+        concord.start(task_group)
+        await concord.wait_current()
+        participant = concord.participant(
+            participant=manager,
+            session_id="manager-session",
+            profile=TEST_PROFILE,
+            accept_contract=lambda _contract, _record: True,
+            reconcile_interval=3_600,
+            cancel_terminal_statuses=(),
+        )
+        participant.start(task_group)
+
+        async with participant.watch() as snapshots:
+            initial = await _receive(snapshots)
+            assert isinstance(initial, ConcordParticipantSnapshot)
+            assert initial.contracts == ()
+
+            contract = await concord._create_contract(
+                (controller, manager),
+                contract_id="post-subscription",
+                profile=TEST_PROFILE,
+            )
+            pending = await _receive_participant_until_status(
+                snapshots,
+                ContractValidityStatus.NOT_YET_FULFILLED,
+            )
+            assert {item.contract.key for item in pending.contracts} == {contract.key}
+
+            controller_token = await concord._attach(
+                contract,
+                controller,
+                "controller-session",
+                token_id="controller-token",
+            )
+            valid = await _receive_participant_until_status(
+                snapshots,
+                ContractValidityStatus.VALID,
+            )
+            assert {item.contract.key for item in valid.contracts} == {contract.key}
+
+            tokens.pause_next_watch()
+            tokens.close_current_watch()
+            await tokens.wait_next_watch_paused()
+            await tokens.remove_without_publish(controller_token.key)
+            tokens.resume_next_watch()
+
+            with anyio.fail_after(2):
+                while participant.managed_contract(contract) is not None:
+                    await anyio.sleep(0)
+            assert await tokens.get(controller_token.key) is None
+
+        await participant.aclose()
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_participant_filtered_view_ignores_unrelated_authority_without_repair() -> None:
+    concord, _contracts, _tokens = _concord()
+    controller = controller_address("controller-main")
+    manager = hardware_manager_address("manager-main")
+    accepted: list[str] = []
+
+    def accept_contract(contract, _record) -> bool:
+        accepted.append(contract.contract_id)
+        return True
+
+    async with anyio.create_task_group() as task_group:
+        concord.start(task_group)
+        await concord.wait_current()
+        participant = concord.participant(
+            participant=manager,
+            session_id="manager-session",
+            profile=TEST_PROFILE,
+            accept_contract=accept_contract,
+            reconcile_interval=3_600,
+            cancel_terminal_statuses=(),
+        )
+        participant.start(task_group)
+        async with participant.watch() as snapshots:
+            assert (await _receive(snapshots)).contracts == ()
+
+            unrelated = await concord._create_contract(
+                (controller, manager),
+                contract_id="unrelated",
+                profile="dev.deckr.test.unrelated.v1",
+            )
+            await concord._attach(
+                unrelated,
+                controller,
+                "controller-session",
+                token_id="unrelated-controller-token",
+            )
+
+            first = await concord._create_contract(
+                (controller, manager),
+                contract_id="selected-1",
+                profile=TEST_PROFILE,
+            )
+            await _receive_participant_until_contracts(snapshots, {first.key})
+
+            await concord._attach(
+                unrelated,
+                manager,
+                "other-manager-session",
+                token_id="unrelated-manager-token",
+            )
+            second = await concord._create_contract(
+                (controller, manager),
+                contract_id="selected-2",
+                profile=TEST_PROFILE,
+            )
+            await _receive_participant_until_contracts(
+                snapshots,
+                {first.key, second.key},
+            )
+
+        assert set(accepted) == {"selected-1", "selected-2"}
+        assert "unrelated" not in accepted
+        await participant.aclose()
+        task_group.cancel_scope.cancel()
+
+
 async def _receive_until_status(stream, status: ContractValidityStatus):
     with anyio.fail_after(2):
         while True:
@@ -492,6 +623,14 @@ async def _receive_participant_until_status(stream, status: ContractValidityStat
         while True:
             snapshot = await anext(stream)
             if any(managed.validity.status == status for managed in snapshot.contracts):
+                return snapshot
+
+
+async def _receive_participant_until_contracts(stream, keys: set[str]):
+    with anyio.fail_after(2):
+        while True:
+            snapshot = await anext(stream)
+            if {managed.contract.key for managed in snapshot.contracts} == keys:
                 return snapshot
 
 
