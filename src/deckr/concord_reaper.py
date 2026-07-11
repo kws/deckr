@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import anyio
 
+from deckr._authority_buckets import CONCORD_REAPER_COMPONENT_ID
 from deckr.components import (
     BaseComponent,
     ComponentContext,
@@ -9,16 +10,11 @@ from deckr.components import (
     ComponentManifest,
     RunContext,
 )
-from deckr.concord import (
-    CONCORD_CONTRACT_BUCKET_POLICY,
-    CONCORD_MAINTENANCE_BUCKET_POLICY,
-    CONCORD_TOKEN_BUCKET_POLICY,
-    Concord,
+from deckr.concord_maintenance import (
+    ConcordMaintenance,
     ConcordReaperConfig,
     ConcordReaperService,
 )
-
-CONCORD_REAPER_COMPONENT_ID = "dev.deckr.concord.reaper"
 
 
 class ConcordReaperComponent(BaseComponent):
@@ -36,7 +32,6 @@ class ConcordReaperComponent(BaseComponent):
         return self._service
 
     async def start(self, ctx: RunContext) -> None:
-        self._service.start(ctx.tg)
         ctx.start_task(
             self._run,
             ctx.stopping,
@@ -61,12 +56,13 @@ class ConcordReaperComponent(BaseComponent):
 
 def component_factory(context: ComponentContext) -> ConcordReaperComponent:
     config = ConcordReaperConfig.model_validate(dict(context.config))
-    concord = Concord(
-        context.kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY),
-        context.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
-        context.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY),
+    stores = context._concord_maintenance_stores()  # noqa: SLF001
+    maintenance = ConcordMaintenance(
+        stores.contract_store,
+        stores.token_store,
+        stores.maintenance_store,
     )
-    service = ConcordReaperService(concord, config=config)
+    service = ConcordReaperService(maintenance, config=config)
     return ConcordReaperComponent(
         runtime_name=context.runtime_name,
         service=service,

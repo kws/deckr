@@ -357,3 +357,84 @@ Provider implementations should follow these boundaries:
 For protocol semantics, stale contract cleanup, cancellation rules, and
 participant-token behavior, use [beacon-concord.md](beacon-concord.md) and
 [nats-bus.md](nats-bus.md) as the implementation references.
+
+## Maintenance Infrastructure
+
+Concord maintenance is separate from the normal runtime. Import it from
+`deckr.concord_maintenance`, construct it from the three exact/raw stores, and
+either call `scan_once()` explicitly or let the built-in lane-less reaper
+component own `ConcordReaperService.run()`. Constructing
+`ConcordMaintenance` or `ConcordReaperService` starts no task or watch, and
+ordinary callers do not pass either object a task group.
+
+This complete memory-store example deletes one cancelled contract whose
+retention period has elapsed and verifies the persisted result without sleeping:
+
+```python
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import anyio
+
+from deckr.concord import ContractRecord, ContractState, concord_contract_key
+from deckr.concord_maintenance import (
+    ConcordMaintenance,
+    ConcordReaperConfig,
+    ConcordReaperService,
+)
+from deckr.testing import MemoryJsonKvBucket
+
+
+async def maintenance_example() -> None:
+    contract_store = MemoryJsonKvBucket(bucket="contracts")
+    token_store = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+    maintenance_store = MemoryJsonKvBucket(bucket="maintenance")
+    maintenance = ConcordMaintenance(
+        contract_store,
+        token_store,
+        maintenance_store,
+    )
+
+    now = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    key = concord_contract_key(contract_id="retained-contract", generation=1)
+    await contract_store.create(
+        key,
+        ContractRecord(
+            contractId="retained-contract",
+            generation=1,
+            participants=("controller:maintenance-example",),
+            attachedParticipants=(),
+            state=ContractState.CANCELLED,
+            createdBy="controller:maintenance-example",
+            createdAt=now - timedelta(minutes=2),
+            cancelledBy="controller:maintenance-example",
+            cancelledAt=now - timedelta(minutes=1),
+            cancelRevision=1,
+            cancelReason="example cleanup",
+        ),
+    )
+
+    reaper = ConcordReaperService(
+        maintenance,
+        config=ConcordReaperConfig(
+            staleGraceSeconds=900,
+            cancelledRetentionSeconds=0,
+            scanIntervalSeconds=60,
+        ),
+        clock=lambda: now,
+    )
+    result = await reaper.scan_once()
+
+    assert result.contracts_deleted == 1
+    assert await contract_store.get(key) is None
+
+
+if __name__ == "__main__":
+    anyio.run(maintenance_example)
+```
+
+The memory buckets above are test/example dependencies. The built-in reaper
+receives the canonical contract, token, and maintenance stores through a typed
+core-owned factory. Generic component KV access rejects those reserved bucket
+names.

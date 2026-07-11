@@ -92,3 +92,38 @@ class ConcordMaintenanceScanPort(Protocol):
     ) -> KvEntry: ...
 
     async def delete(self, key: str, *, revision: int) -> int | None: ...
+
+
+class ConcordRawMaintenanceStorePort(Protocol):
+    """Raw exact/CAS store shape used to build a maintenance scanner.
+
+    Production NATS JSON buckets expose ``get`` and ``items``. Test stores may
+    instead already expose the normalized ``get_exact`` and ``items_exact``
+    methods through :class:`ConcordMaintenanceScanPort`.
+    """
+
+    @property
+    def bucket(self) -> str: ...
+
+    async def items(self, prefix: str = "") -> tuple[KvEntry, ...]: ...
+
+    async def get(self, key: str) -> KvEntry | None: ...
+
+    async def create(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        ttl: float | None = None,
+    ) -> KvEntry: ...
+
+    async def update(
+        self,
+        key: str,
+        value: Mapping[str, Any] | DeckrModel,
+        *,
+        revision: int,
+        ttl: float | None = None,
+    ) -> KvEntry: ...
+
+    async def delete(self, key: str, *, revision: int) -> int | None: ...

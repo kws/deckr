@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+from inspect import signature
+
 import anyio
 import pytest
 from message_bus_mocks import mock_deckr
 
+from deckr.beacon import DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME
+from deckr.concord import (
+    DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
+    DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
+    Concord,
+)
+from deckr.concord_maintenance import DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME
 from deckr.contracts.lanes import (
     DEFAULT_MESSAGE_CONTRACT_REGISTRY,
     SERVICE_LANE_CONTRACT,
@@ -30,7 +39,9 @@ class _ClosableMessageBus:
 async def test_deckr_services_context_builds_with_default_core_lanes() -> None:
     async with (
         mock_deckr() as deckr,
-        deckr.endpoint(service_address("action-runtime.python-dev.deckr.demo")) as endpoint,
+        deckr.endpoint(
+            service_address("action-runtime.python-dev.deckr.demo")
+        ) as endpoint,
         deckr.services(endpoint) as services,
     ):
         assert isinstance(services, DeckrServices)
@@ -76,6 +87,37 @@ async def test_deckr_exit_closes_message_bus_in_cancelled_scope() -> None:
 
     assert bus.closed is True
     assert deckr.is_running is False
+
+
+@pytest.mark.asyncio
+async def test_normal_deckr_opens_only_runtime_authority_stores() -> None:
+    deckr = mock_deckr()
+    buckets = deckr._message_bus.kv_buckets  # noqa: SLF001
+
+    async with deckr:
+        with anyio.fail_after(1):
+            await deckr.concord.wait_current()
+
+        assert set(buckets) == {
+            DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
+            DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
+            DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
+        }
+        assert DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME not in buckets
+
+
+def test_normal_concord_constructor_and_surface_have_no_maintenance() -> None:
+    assert tuple(signature(Concord).parameters) == (
+        "contract_bucket",
+        "token_bucket",
+        "buffer_size",
+    )
+    for name in (
+        "maintenance_bucket",
+        "maintenance_cancel_contract",
+        "maintenance_delete_cancelled_contract",
+    ):
+        assert not hasattr(Concord, name)
 
 
 def test_extension_lanes_require_matching_explicit_contracts() -> None:

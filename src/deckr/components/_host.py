@@ -10,6 +10,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import anyio
 
+from deckr._authority_buckets import (
+    CONCORD_REAPER_COMPONENT_ID,
+    RESERVED_AUTHORITY_BUCKET_POLICIES,
+    ConcordMaintenanceStores,
+)
 from deckr.beacon import (
     Beacon,
 )
@@ -106,6 +111,9 @@ class ComponentContext:
     beacon: Beacon | None = None
     concord: Concord | None = None
     kv_bucket_for: Callable[[KvBucketPolicy], Any] | None = None
+    _concord_maintenance_stores_for: (
+        Callable[[], ConcordMaintenanceStores[Any]] | None
+    ) = None
     endpoint_for: ComponentEndpointOpener | None = None
 
     def require_lane(self, name: str) -> Lane:
@@ -150,9 +158,23 @@ class ComponentContext:
         return self.concord
 
     def kv_bucket(self, policy: KvBucketPolicy) -> Any:
+        if policy.bucket in RESERVED_AUTHORITY_BUCKET_POLICIES:
+            raise ValueError(
+                f"KV bucket {policy.bucket!r} is reserved for a typed Deckr "
+                "authority-store capability"
+            )
         if self.kv_bucket_for is None:
             raise RuntimeError("Deckr component context does not provide KV buckets")
         return self.kv_bucket_for(policy)
+
+    def _concord_maintenance_stores(
+        self,
+    ) -> ConcordMaintenanceStores[Any]:
+        if self._concord_maintenance_stores_for is None:
+            raise RuntimeError(
+                "Deckr component context does not provide Concord maintenance stores"
+            )
+        return self._concord_maintenance_stores_for()
 
 
 class ComponentFactory(Protocol):
@@ -1261,6 +1283,11 @@ async def _activate_component_plan(
             beacon=beacon,
             concord=concord,
             kv_bucket_for=deckr.kv_bucket,
+            _concord_maintenance_stores_for=(
+                deckr._concord_maintenance_stores  # noqa: SLF001
+                if spec.component_id == CONCORD_REAPER_COMPONENT_ID
+                else None
+            ),
             endpoint_for=_endpoint_opener_for_spec(deckr, spec),
         )
         component = spec.definition.factory(context)

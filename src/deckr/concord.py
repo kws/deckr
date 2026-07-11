@@ -11,14 +11,11 @@ from time import monotonic
 from typing import Any, Literal
 
 import anyio
-from pydantic import Field, field_serializer, field_validator
 
 from deckr._authority_buckets import (
     CONCORD_CONTRACT_BUCKET_POLICY,
-    CONCORD_MAINTENANCE_BUCKET_POLICY,
     CONCORD_TOKEN_BUCKET_POLICY,
     DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
-    DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME,
     DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
 )
 from deckr._concord._keys import (
@@ -28,10 +25,8 @@ from deckr._concord._keys import (
     concord_contract_prefix,
     concord_contracts_prefix,
     concord_participant_token_key,
-    concord_stale_observation_key,
     parse_concord_contract_key,
     parse_concord_participant_token_key,
-    parse_concord_stale_observation_key,
 )
 from deckr._concord._models import (
     CONCORD_CONTRACT_SCHEMA_ID,
@@ -62,12 +57,8 @@ from deckr._concord._models import (
 from deckr._concord._models import (
     require_text as _require_text,
 )
-from deckr._concord._ports import ConcordMaintenanceScanPort
 from deckr._concord._store import (
     ConcordKvStore as _ConcordKvStore,
-)
-from deckr._concord._store import (
-    concord_bucket_adapters,
 )
 from deckr._concord._validation import (
     ConcordObservationState,
@@ -79,21 +70,15 @@ from deckr._concord._validation import (
 )
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
-from deckr.contracts.models import DeckrModel, freeze_json, thaw_json
+from deckr.contracts.models import DeckrModel, freeze_json
 from deckr.substrates.nats_kv import (
     KvChange,
     KvEntry,
     NatsKvMaterializedBucket,
 )
 
-CONCORD_STALE_OBSERVATION_SCHEMA_ID = "dev.deckr.concord.stale-observation.v1"
 DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS = 60.0
 DEFAULT_CONCORD_PARTICIPANT_RECONCILE_SECONDS = 15.0
-DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS = 900
-DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS = 3600
-DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS = 60
-CONCORD_MAINTENANCE_ACTOR = "concord:maintenance"
-CONCORD_REAPER_STALE_CONTRACT_REASON = "concord_reaper_stale_contract"
 CONCORD_REFRESH_UNAVAILABLE_CANCEL_REASON = "participant_token_refresh_unavailable"
 CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON = (
     "concord_managed_lost_participant_token"
@@ -181,100 +166,6 @@ def _concord_token_refresh_delay(
     upper = ttl * 0.75
     lower = min(max(float(requested), ttl * 0.5), upper)
     return random.uniform(lower, upper)
-
-
-class ConcordStaleObservationRecord(DeckrModel):
-    schema_id: Literal[CONCORD_STALE_OBSERVATION_SCHEMA_ID] = Field(
-        default=CONCORD_STALE_OBSERVATION_SCHEMA_ID,
-        alias="schema",
-    )
-    contract_id: str = Field(alias="contractId")
-    generation: int
-    first_observed_stale_at: datetime = Field(alias="firstObservedStaleAt")
-    status: ContractValidityStatus
-    reason: str | None = None
-    contract_revision: int | None = Field(default=None, alias="contractRevision")
-
-    @field_validator("contract_id")
-    @classmethod
-    def _validate_contract_id(cls, value: str) -> str:
-        return _require_text(value, field_name="contract id")
-
-    @field_validator("generation")
-    @classmethod
-    def _validate_generation(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("generation must be greater than zero")
-        return value
-
-    @field_validator("first_observed_stale_at")
-    @classmethod
-    def _validate_first_observed_stale_at(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
-            raise ValueError("firstObservedStaleAt must be timezone-aware")
-        return value.astimezone(UTC)
-
-    @field_validator("reason")
-    @classmethod
-    def _validate_reason(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return _require_text(value, field_name="Concord stale observation reason")
-
-    @field_validator("contract_revision")
-    @classmethod
-    def _validate_contract_revision(cls, value: int | None) -> int | None:
-        if value is not None and value < 0:
-            raise ValueError("contractRevision must be non-negative")
-        return value
-
-    @field_serializer("first_observed_stale_at")
-    def _serialize_first_observed_stale_at(self, value: datetime) -> str:
-        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-    def to_dict(self) -> dict[str, Any]:
-        return self.model_dump(by_alias=True, exclude_none=True, mode="json")
-
-
-class ConcordReaperConfig(DeckrModel):
-    stale_grace_seconds: float = Field(
-        default=float(DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS),
-        ge=0,
-        alias="staleGraceSeconds",
-    )
-    cancelled_retention_seconds: float = Field(
-        default=float(DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS),
-        ge=0,
-        alias="cancelledRetentionSeconds",
-    )
-    scan_interval_seconds: float = Field(
-        default=float(DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS),
-        gt=0,
-        alias="scanIntervalSeconds",
-    )
-    log_label: str = Field(default="ConcordReaper", alias="logLabel")
-
-    @field_validator("log_label")
-    @classmethod
-    def _validate_log_label(cls, value: str) -> str:
-        return _require_text(value, field_name="Concord reaper log label")
-
-
-@dataclass(frozen=True, slots=True)
-class ConcordMaintenanceDeletionResult:
-    deleted: bool
-    deleted_token_key_count: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class ConcordReaperScanResult:
-    scanned_contract_count: int = 0
-    stale_observation_count: int = 0
-    stale_observations_created: int = 0
-    stale_observations_cleared: int = 0
-    contracts_cancelled: int = 0
-    contracts_deleted: int = 0
-    token_keys_deleted: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -602,7 +493,6 @@ class Concord:
         self,
         contract_bucket: NatsKvMaterializedBucket | Any,
         token_bucket: NatsKvMaterializedBucket | Any,
-        maintenance_bucket: NatsKvMaterializedBucket | Any,
         *,
         buffer_size: int = 100,
     ) -> None:
@@ -610,9 +500,6 @@ class Concord:
             contract_bucket,
             token_bucket,
         )
-        maintenance = concord_bucket_adapters(maintenance_bucket)
-        self._maintenance_source = maintenance.source
-        self._maintenance_scan = maintenance.scan
         self._buffer_size = buffer_size
         self._ready = anyio.Event()
         self._started = False
@@ -639,12 +526,8 @@ class Concord:
         self._token_keys_by_contract: dict[tuple[str, int], set[str]] = {}
         self._token_key_by_contract_participant: dict[tuple[str, int, str], str] = {}
         self._token_revision_by_key: dict[str, int] = {}
-        self._maintenance_entries_by_key: dict[str, KvEntry] = {}
-        self._maintenance_records_by_key: dict[str, ConcordStaleObservationRecord] = {}
-        self._maintenance_revision_by_key: dict[str, int] = {}
         self._contract_bucket_generation = 0
         self._token_bucket_generation = 0
-        self._maintenance_bucket_generation = 0
         self._last_status_by_contract_key: dict[str, ContractValidityStatus] = {}
 
     @property
@@ -655,15 +538,10 @@ class Concord:
     def token_bucket(self) -> str:
         return self._coordinator.token_source.bucket
 
-    @property
-    def maintenance_bucket(self) -> str:
-        return self._maintenance_source.bucket
-
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
         self._task_group = task_group
         self._coordinator.contract_source.start(task_group)
         self._coordinator.token_source.start(task_group)
-        self._maintenance_source.start(task_group)
         if not self._started:
             self._started = True
             task_group.start_soon(self._event_loop)
@@ -685,7 +563,6 @@ class Concord:
         while True:
             await self._coordinator.contract_source.wait_current()
             await self._coordinator.token_source.wait_current()
-            await self._maintenance_source.wait_current()
             if self._state_cache_generations_current():
                 return
             await self._rebuild_from_buckets()
@@ -777,21 +654,15 @@ class Concord:
         token_bucket = self._coordinator.token_source
         await contract_bucket.wait_current()
         await token_bucket.wait_current()
-        await self._maintenance_source.wait_current()
         async with (
             contract_bucket.subscribe() as contract_changes,
             token_bucket.subscribe() as token_changes,
-            self._maintenance_source.subscribe() as maintenance_changes,
             anyio.create_task_group() as task_group,
         ):
             await self._rebuild_from_buckets()
             self._ready.set()
             task_group.start_soon(self._consume_contract_changes, contract_changes)
             task_group.start_soon(self._consume_token_changes, token_changes)
-            task_group.start_soon(
-                self._consume_maintenance_changes,
-                maintenance_changes,
-            )
 
     async def _consume_contract_changes(
         self,
@@ -807,13 +678,6 @@ class Concord:
         async for change in changes:
             await self._apply_token_change(change)
 
-    async def _consume_maintenance_changes(
-        self,
-        changes: anyio.abc.ObjectReceiveStream[KvChange],
-    ) -> None:
-        async for change in changes:
-            await self._apply_maintenance_change(change)
-
     async def _rebuild_from_buckets(self, *, publish_events: bool = False) -> None:
         contract_entries = self._coordinator.contract_source.items_cached(
             concord_contracts_prefix()
@@ -821,10 +685,8 @@ class Concord:
         token_entries = self._coordinator.token_source.items_cached(
             concord_contracts_prefix()
         )
-        maintenance_entries = self._maintenance_source.items_cached("stale.")
         contract_generation = self._coordinator.contract_source.generation
         token_generation = self._coordinator.token_source.generation
-        maintenance_generation = self._maintenance_source.generation
         async with self._lock:
             previous_contract_handles = dict(self._contract_handles_by_key)
             previous_contract_records = dict(self._contract_records_by_key)
@@ -835,8 +697,6 @@ class Concord:
                 self._index_contract_entry_locked(entry)
             for entry in token_entries:
                 self._index_token_entry_locked(entry)
-            for entry in maintenance_entries:
-                self._index_maintenance_entry_locked(entry)
             events = (
                 self._rebuild_events_locked(
                     previous_contract_handles=previous_contract_handles,
@@ -853,7 +713,6 @@ class Concord:
             }
             self._contract_bucket_generation = contract_generation
             self._token_bucket_generation = token_generation
-            self._maintenance_bucket_generation = maintenance_generation
             deliveries = self._subscriber_deliveries_locked(events)
         if events:
             await self._publish_events(events, deliveries)
@@ -1054,7 +913,6 @@ class Concord:
         return (
             self._coordinator.contract_source.is_current()
             and self._coordinator.token_source.is_current()
-            and self._maintenance_source.is_current()
         )
 
     def _state_cache_generations_current(self) -> bool:
@@ -1063,7 +921,6 @@ class Concord:
             == self._coordinator.contract_source.generation
             and self._token_bucket_generation
             == self._coordinator.token_source.generation
-            and self._maintenance_bucket_generation == self._maintenance_source.generation
         )
 
     def _clear_indexes_locked(self) -> None:
@@ -1084,9 +941,6 @@ class Concord:
         self._token_keys_by_contract.clear()
         self._token_key_by_contract_participant.clear()
         self._token_revision_by_key.clear()
-        self._maintenance_entries_by_key.clear()
-        self._maintenance_records_by_key.clear()
-        self._maintenance_revision_by_key.clear()
 
     async def _apply_contract_change(self, change: KvChange) -> None:
         if change.operation == "put" and change.entry is None:
@@ -1118,12 +972,6 @@ class Concord:
             deliveries = self._subscriber_deliveries_locked(events)
         await self._publish_events(events, deliveries)
 
-    async def _apply_maintenance_change(self, change: KvChange) -> None:
-        if await self._rebuild_if_maintenance_generation_gap(change):
-            return
-        async with self._lock:
-            self._apply_maintenance_change_locked(change)
-
     async def _rebuild_if_contract_generation_gap(self, change: KvChange) -> bool:
         if change.view_generation is None:
             return False
@@ -1139,16 +987,6 @@ class Concord:
             return False
         async with self._lock:
             gap = change.view_generation > self._token_bucket_generation + 1
-        if not gap:
-            return False
-        await self._rebuild_from_buckets(publish_events=True)
-        return True
-
-    async def _rebuild_if_maintenance_generation_gap(self, change: KvChange) -> bool:
-        if change.view_generation is None:
-            return False
-        async with self._lock:
-            gap = change.view_generation > self._maintenance_bucket_generation + 1
         if not gap:
             return False
         await self._rebuild_from_buckets(publish_events=True)
@@ -1305,20 +1143,6 @@ class Concord:
         self._advance_token_bucket_generation_locked(change)
         return tuple(events)
 
-    def _apply_maintenance_change_locked(self, change: KvChange) -> None:
-        if not self._should_apply_maintenance_change_locked(change):
-            return
-        current_revision = self._maintenance_revision_by_key.get(change.key, 0)
-        if change.revision <= current_revision:
-            self._advance_maintenance_bucket_generation_locked(change)
-            return
-        self._maintenance_entries_by_key.pop(change.key, None)
-        self._maintenance_records_by_key.pop(change.key, None)
-        self._maintenance_revision_by_key[change.key] = change.revision
-        if change.operation == "put" and change.entry is not None:
-            self._index_maintenance_entry_locked(change.entry)
-        self._advance_maintenance_bucket_generation_locked(change)
-
     def _should_apply_contract_change_locked(self, change: KvChange) -> bool:
         return _change_is_next_generation(
             change,
@@ -1329,12 +1153,6 @@ class Concord:
         return _change_is_next_generation(
             change,
             current_generation=self._token_bucket_generation,
-        )
-
-    def _should_apply_maintenance_change_locked(self, change: KvChange) -> bool:
-        return _change_is_next_generation(
-            change,
-            current_generation=self._maintenance_bucket_generation,
         )
 
     def _advance_contract_bucket_generation_locked(self, change: KvChange) -> None:
@@ -1353,13 +1171,6 @@ class Concord:
             self._coordinator.token_source,
         )
         self._token_bucket_generation = max(self._token_bucket_generation, generation)
-
-    def _advance_maintenance_bucket_generation_locked(self, change: KvChange) -> None:
-        generation = _change_generation(change, self._maintenance_source)
-        self._maintenance_bucket_generation = max(
-            self._maintenance_bucket_generation,
-            generation,
-        )
 
     def _index_contract_entry_locked(self, entry: KvEntry) -> ContractHandle | None:
         parsed = parse_concord_contract_key(entry.key)
@@ -1465,15 +1276,6 @@ class Concord:
             (record.contract_id, record.generation, str(record.participant)),
             None,
         )
-
-    def _index_maintenance_entry_locked(self, entry: KvEntry) -> None:
-        self._maintenance_entries_by_key[entry.key] = entry
-        self._maintenance_revision_by_key[entry.key] = entry.revision
-        try:
-            record = ConcordStaleObservationRecord.model_validate(entry.value)
-        except ValueError:
-            return
-        self._maintenance_records_by_key[entry.key] = record
 
     def _status_event_locked(
         self,
@@ -1962,112 +1764,6 @@ class Concord:
             current_sessions=assertions,
         )
 
-    async def maintenance_cancel_contract(
-        self,
-        contract: ContractHandle,
-        *,
-        reason: str = CONCORD_REAPER_STALE_CONTRACT_REASON,
-        log_label: str = "Concord",
-        now: datetime | None = None,
-    ) -> bool:
-        cancelled = await self._coordinator.maintenance_cancel(
-            contract,
-            reason=reason,
-            cancelled_by=CONCORD_MAINTENANCE_ACTOR,
-            now=now,
-        )
-        if cancelled:
-            entry = self._coordinator.contract_source.get_cached(contract.key)
-            if entry is not None:
-                await self._apply_contract_change(
-                    KvChange(
-                        self.contract_bucket,
-                        contract.key,
-                        entry.revision,
-                        "put",
-                        entry,
-                    )
-                )
-            logger.log(
-                _contract_terminal_log_level(contract.profile),
-                "%s Concord maintenance cancelled contract profile=%s contract=%s "
-                "generation=%s cancelled_by=%s reason=%s revision=%s",
-                log_label,
-                contract.profile,
-                contract.contract_id,
-                contract.generation,
-                CONCORD_MAINTENANCE_ACTOR,
-                reason,
-                contract.revision,
-            )
-        return cancelled
-
-    async def maintenance_delete_cancelled_contract(
-        self,
-        contract: ContractHandle,
-        *,
-        retention_seconds: float = float(
-            DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS
-        ),
-        log_label: str = "Concord",
-        now: datetime | None = None,
-    ) -> ConcordMaintenanceDeletionResult:
-        now = now or _now_utc()
-        observed = await self._coordinator.maintenance_contract_entry(contract)
-        if observed is None:
-            return ConcordMaintenanceDeletionResult(deleted=False)
-        current, record = observed
-        if record.state != ContractState.CANCELLED:
-            return ConcordMaintenanceDeletionResult(deleted=False)
-        if record.cancelled_at is None or (
-            now - record.cancelled_at.astimezone(UTC)
-        ).total_seconds() < retention_seconds:
-            return ConcordMaintenanceDeletionResult(deleted=False)
-
-        validity = await self._coordinator.validate_exact(contract)
-        token_entries = await _concord_participant_token_entries(
-            self._coordinator.token_scan,
-            contract_id=contract.contract_id,
-            generation=contract.generation,
-            terms_hash=record.terms_hash,
-        )
-        _log_concord_contract_deletion_audit(
-            log_label=log_label,
-            contract_key=contract.key,
-            record=record,
-            state_revision=current.revision,
-            validation_status=validity.status,
-            token_entries=token_entries,
-            deleted_token_key_count=len(token_entries),
-        )
-        try:
-            await self._coordinator.contract_scan.delete(
-                contract.key,
-                revision=current.revision,
-            )
-        except ConcordConflict:
-            logger.info(
-                "%s Concord maintenance delete conflict; leaving contract "
-                "for next scan contract_key=%s contract=%s generation=%s "
-                "revision=%s",
-                log_label,
-                contract.key,
-                contract.contract_id,
-                contract.generation,
-                current.revision,
-                exc_info=True,
-            )
-            return ConcordMaintenanceDeletionResult(deleted=False)
-
-        deleted_token_count = await _delete_concord_participant_token_entries(
-            self._coordinator.token_scan,
-            token_entries,
-        )
-        return ConcordMaintenanceDeletionResult(
-            deleted=True,
-            deleted_token_key_count=deleted_token_count,
-        )
-
     async def _contract_record(self, contract: ContractHandle) -> ContractRecord | None:
         async with self._lock:
             record = self._contract_records_by_key.get(contract.key)
@@ -2520,466 +2216,6 @@ class Concord:
                     return
             for event in pending:
                 await subscriber.send.send(event)
-
-
-STALE_OPEN_CONTRACT_STATUSES = frozenset(
-    {
-        ContractValidityStatus.MISSING_TOKEN,
-        ContractValidityStatus.INVALID_TOKEN,
-        ContractValidityStatus.SESSION_MISMATCH,
-        ContractValidityStatus.TERMS_HASH_MISMATCH,
-        ContractValidityStatus.GENERATION_MISMATCH,
-        ContractValidityStatus.INVALID_CONTRACT,
-    }
-)
-
-
-class ConcordReaperService:
-    """Periodic Concord-only maintenance for stale and cancelled contracts."""
-
-    def __init__(
-        self,
-        concord: Concord,
-        *,
-        config: ConcordReaperConfig | Mapping[str, Any] | None = None,
-        clock: Callable[[], datetime] = _now_utc,
-    ) -> None:
-        self._concord = concord
-        self._contract_bucket = concord._coordinator.contract_scan  # noqa: SLF001
-        self._token_bucket = concord._coordinator.token_scan  # noqa: SLF001
-        self._maintenance_bucket = concord._maintenance_scan  # noqa: SLF001
-        self._config = (
-            config
-            if isinstance(config, ConcordReaperConfig)
-            else ConcordReaperConfig.model_validate(dict(config or {}))
-        )
-        self._clock = clock
-        self._closed = False
-
-    @property
-    def config(self) -> ConcordReaperConfig:
-        return self._config
-
-    def start(self, task_group: anyio.abc.TaskGroup) -> None:
-        del task_group
-
-    async def aclose(self) -> None:
-        self._closed = True
-
-    async def run(self, *, stop_event: anyio.Event | None = None) -> None:
-        while not self._closed:
-            try:
-                await self.scan_once()
-            except ConcordUnavailable:
-                logger.warning(
-                    "%s Concord reaper state unavailable; scan will retry",
-                    self._config.log_label,
-                    exc_info=True,
-                )
-            if self._closed or (stop_event is not None and stop_event.is_set()):
-                return
-            if stop_event is None:
-                await anyio.sleep(self._config.scan_interval_seconds)
-                continue
-            with anyio.move_on_after(self._config.scan_interval_seconds):
-                await stop_event.wait()
-            if stop_event.is_set():
-                return
-
-    async def scan_once(self) -> ConcordReaperScanResult:
-        started_at = monotonic()
-        now = _ensure_utc(self._clock())
-        counts: dict[str, int] = {
-            "scanned_contract_count": 0,
-            "stale_observations_created": 0,
-            "stale_observations_cleared": 0,
-            "contracts_cancelled": 0,
-            "contracts_deleted": 0,
-            "token_keys_deleted": 0,
-        }
-        for entry in await self._contract_bucket.items_exact(concord_contracts_prefix()):
-            parsed = parse_concord_contract_key(entry.key)
-            if parsed is None:
-                continue
-            counts["scanned_contract_count"] += 1
-            contract_id, generation = parsed
-            try:
-                entry_counts = await self._scan_contract_entry(
-                    entry,
-                    contract_id=contract_id,
-                    generation=generation,
-                    now=now,
-                )
-            except ConcordConflict:
-                logger.info(
-                    "%s Concord reaper entry failed closed contract_key=%s "
-                    "contract=%s generation=%s",
-                    self._config.log_label,
-                    entry.key,
-                    contract_id,
-                    generation,
-                    exc_info=True,
-                )
-                continue
-            for key, value in entry_counts.items():
-                counts[key] += value
-        counts["stale_observations_cleared"] += (
-            await self._clear_orphaned_stale_observations()
-        )
-        stale_observation_count = len(
-            await self._maintenance_bucket.items_exact("stale.")
-        )
-        result = ConcordReaperScanResult(
-            scanned_contract_count=counts["scanned_contract_count"],
-            stale_observation_count=stale_observation_count,
-            stale_observations_created=counts["stale_observations_created"],
-            stale_observations_cleared=counts["stale_observations_cleared"],
-            contracts_cancelled=counts["contracts_cancelled"],
-            contracts_deleted=counts["contracts_deleted"],
-            token_keys_deleted=counts["token_keys_deleted"],
-        )
-        logger.info(
-            "%s Concord reaper scan completed scanned=%s cancelled=%s "
-            "deleted=%s token_keys_deleted=%s stale_observations=%s "
-            "stale_created=%s stale_cleared=%s elapsed_ms=%.1f",
-            self._config.log_label,
-            result.scanned_contract_count,
-            result.contracts_cancelled,
-            result.contracts_deleted,
-            result.token_keys_deleted,
-            result.stale_observation_count,
-            result.stale_observations_created,
-            result.stale_observations_cleared,
-            (monotonic() - started_at) * 1000,
-        )
-        return result
-
-    async def _scan_contract_entry(
-        self,
-        entry: KvEntry,
-        *,
-        contract_id: str,
-        generation: int,
-        now: datetime,
-    ) -> dict[str, int]:
-        try:
-            record = ContractRecord.model_validate(entry.value)
-        except ValueError as exc:
-            return await self._scan_invalid_contract_entry(
-                entry,
-                contract_id=contract_id,
-                generation=generation,
-                now=now,
-                invalid_reason=str(exc),
-            )
-        if record.contract_id != contract_id or record.generation != generation:
-            return await self._scan_invalid_contract_entry(
-                entry,
-                contract_id=contract_id,
-                generation=generation,
-                now=now,
-                invalid_reason="contract key and record identity differ",
-            )
-        handle = _contract_handle(entry.key, record, entry.revision)
-        if record.state == ContractState.CANCELLED:
-            return await self._scan_cancelled_contract(handle, record, now=now)
-        return await self._scan_open_contract(handle, now=now)
-
-    async def _scan_open_contract(
-        self,
-        contract: ContractHandle,
-        *,
-        now: datetime,
-    ) -> dict[str, int]:
-        counts = _empty_reaper_counts()
-        validity = await self._concord._coordinator.validate_exact(  # noqa: SLF001
-            contract,
-        )
-        if _open_contract_validity_is_stale(validity):
-            first_observed, created = await self._observe_stale(
-                contract_id=contract.contract_id,
-                generation=contract.generation,
-                status=validity.status,
-                reason=validity.reason,
-                contract_revision=contract.revision,
-                now=now,
-            )
-            if created:
-                counts["stale_observations_created"] += 1
-            if (
-                now - first_observed
-            ).total_seconds() >= self._config.stale_grace_seconds:
-                try:
-                    cancelled = await self._concord.maintenance_cancel_contract(
-                        contract,
-                        reason=CONCORD_REAPER_STALE_CONTRACT_REASON,
-                        log_label=self._config.log_label,
-                        now=now,
-                    )
-                except (ConcordConflict, ValueError):
-                    logger.info(
-                        "%s Concord reaper stale contract cancel conflict; "
-                        "leaving for next scan contract=%s generation=%s "
-                        "status=%s",
-                        self._config.log_label,
-                        contract.contract_id,
-                        contract.generation,
-                        validity.status.value,
-                        exc_info=True,
-                    )
-                else:
-                    if cancelled:
-                        counts["contracts_cancelled"] += 1
-                    if await self._clear_stale_observation(
-                        contract.contract_id,
-                        contract.generation,
-                    ):
-                        counts["stale_observations_cleared"] += 1
-            return counts
-
-        if validity.status == ContractValidityStatus.UNAVAILABLE:
-            return counts
-        if await self._clear_stale_observation(
-            contract.contract_id,
-            contract.generation,
-        ):
-            counts["stale_observations_cleared"] += 1
-        return counts
-
-    async def _scan_cancelled_contract(
-        self,
-        contract: ContractHandle,
-        record: ContractRecord,
-        *,
-        now: datetime,
-    ) -> dict[str, int]:
-        counts = _empty_reaper_counts()
-        if await self._clear_stale_observation(contract.contract_id, contract.generation):
-            counts["stale_observations_cleared"] += 1
-        if record.cancelled_at is None or (
-            now - record.cancelled_at.astimezone(UTC)
-        ).total_seconds() < self._config.cancelled_retention_seconds:
-            return counts
-        result = await self._concord.maintenance_delete_cancelled_contract(
-            contract,
-            retention_seconds=self._config.cancelled_retention_seconds,
-            log_label=self._config.log_label,
-            now=now,
-        )
-        if result.deleted:
-            counts["contracts_deleted"] += 1
-            counts["token_keys_deleted"] += result.deleted_token_key_count
-            if await self._clear_stale_observation(
-                contract.contract_id,
-                contract.generation,
-            ):
-                counts["stale_observations_cleared"] += 1
-        return counts
-
-    async def _scan_invalid_contract_entry(
-        self,
-        entry: KvEntry,
-        *,
-        contract_id: str,
-        generation: int,
-        now: datetime,
-        invalid_reason: str,
-    ) -> dict[str, int]:
-        counts = _empty_reaper_counts()
-        raw_state = str(entry.value.get("state", ContractState.OPEN.value))
-        if raw_state == ContractState.CANCELLED.value:
-            if await self._clear_stale_observation(contract_id, generation):
-                counts["stale_observations_cleared"] += 1
-            cancelled_at = _datetime_from_raw_value(entry.value.get("cancelledAt"))
-            if cancelled_at is None or (
-                now - cancelled_at
-            ).total_seconds() < self._config.cancelled_retention_seconds:
-                return counts
-            result = await self._delete_invalid_cancelled_contract(
-                entry,
-                contract_id=contract_id,
-                generation=generation,
-                invalid_reason=invalid_reason,
-            )
-            if result.deleted:
-                counts["contracts_deleted"] += 1
-                counts["token_keys_deleted"] += result.deleted_token_key_count
-            return counts
-
-        first_observed, created = await self._observe_stale(
-            contract_id=contract_id,
-            generation=generation,
-            status=ContractValidityStatus.INVALID_CONTRACT,
-            reason=invalid_reason,
-            contract_revision=entry.revision,
-            now=now,
-        )
-        if created:
-            counts["stale_observations_created"] += 1
-        if (
-            now - first_observed
-        ).total_seconds() < self._config.stale_grace_seconds:
-            return counts
-        try:
-            await self._maintenance_cancel_invalid_entry(
-                entry,
-                contract_id=contract_id,
-                generation=generation,
-                now=now,
-            )
-        except ConcordConflict:
-            logger.info(
-                "%s Concord reaper invalid contract cancel conflict; "
-                "leaving for next scan contract=%s generation=%s",
-                self._config.log_label,
-                contract_id,
-                generation,
-                exc_info=True,
-            )
-            return counts
-        counts["contracts_cancelled"] += 1
-        if await self._clear_stale_observation(contract_id, generation):
-            counts["stale_observations_cleared"] += 1
-        return counts
-
-    async def _observe_stale(
-        self,
-        *,
-        contract_id: str,
-        generation: int,
-        status: ContractValidityStatus,
-        reason: str | None,
-        contract_revision: int | None,
-        now: datetime,
-    ) -> tuple[datetime, bool]:
-        key = concord_stale_observation_key(
-            contract_id=contract_id,
-            generation=generation,
-        )
-        current = await self._maintenance_bucket.get_exact(key)
-        if current is not None:
-            record = _parse_stale_observation_entry(
-                current,
-                key=key,
-                contract_id=contract_id,
-                generation=generation,
-            )
-            return record.first_observed_stale_at, False
-        observation = ConcordStaleObservationRecord(
-            contractId=contract_id,
-            generation=generation,
-            firstObservedStaleAt=now,
-            status=status,
-            reason=reason,
-            contractRevision=contract_revision,
-        )
-        try:
-            await self._maintenance_bucket.create(key, observation)
-        except ConcordConflict:
-            latest = await self._maintenance_bucket.get_exact(key)
-            if latest is None:
-                raise
-            record = _parse_stale_observation_entry(
-                latest,
-                key=key,
-                contract_id=contract_id,
-                generation=generation,
-            )
-            return record.first_observed_stale_at, False
-        return now, True
-
-    async def _clear_stale_observation(
-        self,
-        contract_id: str,
-        generation: int,
-    ) -> bool:
-        key = concord_stale_observation_key(
-            contract_id=contract_id,
-            generation=generation,
-        )
-        current = await self._maintenance_bucket.get_exact(key)
-        if current is None:
-            return False
-        _parse_stale_observation_entry(
-            current,
-            key=key,
-            contract_id=contract_id,
-            generation=generation,
-        )
-        try:
-            await self._maintenance_bucket.delete(key, revision=current.revision)
-        except ConcordConflict:
-            return False
-        return True
-
-    async def _clear_orphaned_stale_observations(self) -> int:
-        cleared = 0
-        for entry in await self._maintenance_bucket.items_exact("stale."):
-            try:
-                parsed = parse_concord_stale_observation_key(entry.key)
-                if parsed is None:
-                    continue
-                observation = _parse_stale_observation_entry(
-                    entry,
-                    key=entry.key,
-                    contract_id=parsed[0],
-                    generation=parsed[1],
-                )
-            except ConcordConflict:
-                continue
-            contract_entry = await self._contract_bucket.get_exact(
-                concord_contract_key(
-                    contract_id=observation.contract_id,
-                    generation=observation.generation,
-                )
-            )
-            if contract_entry is not None:
-                continue
-            try:
-                await self._maintenance_bucket.delete(entry.key, revision=entry.revision)
-            except ConcordConflict:
-                continue
-            cleared += 1
-        return cleared
-
-    async def _maintenance_cancel_invalid_entry(
-        self,
-        entry: KvEntry,
-        *,
-        contract_id: str,
-        generation: int,
-        now: datetime,
-    ) -> None:
-        del now
-        raise ConcordConflict(
-            ConcordConflictCode.CONTRACT_INVALID,
-            "Concord maintenance will not mutate a malformed contract record",
-            key=entry.key,
-            expected_pointer=ContractPointer(
-                contractId=contract_id,
-                generation=generation,
-            ),
-        )
-
-    async def _delete_invalid_cancelled_contract(
-        self,
-        entry: KvEntry,
-        *,
-        contract_id: str,
-        generation: int,
-        invalid_reason: str,
-    ) -> ConcordMaintenanceDeletionResult:
-        logger.info(
-            "%s Concord maintenance retained malformed cancelled contract "
-            "contract_key=%s contract=%s generation=%s revision=%s reason=%s",
-            self._config.log_label,
-            entry.key,
-            contract_id,
-            generation,
-            entry.revision,
-            invalid_reason,
-        )
-        return ConcordMaintenanceDeletionResult(deleted=False)
 
 
 ConcordContractPredicate = Callable[
@@ -4137,311 +3373,12 @@ def _log_concord_event(event: ConcordEvent) -> None:
     )
 
 
-ConcordTokenMaintenanceEntry = tuple[KvEntry, ParticipantTokenRecord | None]
-
-
-def _open_contract_validity_is_stale(validity: ContractValidity) -> bool:
-    if validity.status in STALE_OPEN_CONTRACT_STATUSES:
-        return True
-    return (
-        validity.status == ContractValidityStatus.NOT_YET_FULFILLED
-        and not validity.tokens
-    )
-
-
-def _parse_stale_observation_entry(
-    entry: KvEntry,
-    *,
-    key: str,
-    contract_id: str,
-    generation: int,
-) -> ConcordStaleObservationRecord:
-    pointer = ContractPointer(contractId=contract_id, generation=generation)
-    if entry.key != key:
-        raise ConcordConflict(
-            ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH,
-            "Concord stale observation entry key differs from the requested key",
-            key=key,
-            expected_pointer=pointer,
-        )
-    try:
-        record = ConcordStaleObservationRecord.model_validate(entry.value)
-    except (TypeError, ValueError) as exc:
-        raise ConcordConflict(
-            ConcordConflictCode.CONTRACT_INVALID,
-            f"Concord stale observation {key!r} is malformed: {exc}",
-            key=key,
-            expected_pointer=pointer,
-        ) from exc
-    if record.contract_id != contract_id or record.generation != generation:
-        raise ConcordConflict(
-            ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH,
-            "Concord stale observation key and record identity differ",
-            key=key,
-            expected_pointer=pointer,
-            observed_pointer=ContractPointer(
-                contractId=record.contract_id,
-                generation=record.generation,
-            ),
-        )
-    return record
-
-
-def _empty_reaper_counts() -> dict[str, int]:
-    return {
-        "stale_observations_created": 0,
-        "stale_observations_cleared": 0,
-        "contracts_cancelled": 0,
-        "contracts_deleted": 0,
-        "token_keys_deleted": 0,
-    }
-
-
-def _ensure_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
-
-
-def _datetime_log_value(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return _ensure_utc(value).isoformat().replace("+00:00", "Z")
-
-
-def _datetime_from_raw_value(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return _ensure_utc(value)
-    if not isinstance(value, str):
-        return None
-    source = value[:-1] + "+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(source)
-    except ValueError:
-        return None
-    return _ensure_utc(parsed)
-
-
-def _actor_log_value(value: EndpointAddress | str | None) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-async def _concord_participant_token_entries(
-    token_bucket: ConcordMaintenanceScanPort,
-    *,
-    contract_id: str,
-    generation: int,
-    terms_hash: str | None,
-) -> tuple[ConcordTokenMaintenanceEntry, ...]:
-    token_entries: list[ConcordTokenMaintenanceEntry] = []
-    for entry in await token_bucket.items_exact(
-        concord_contract_prefix(contract_id=contract_id, generation=generation)
-    ):
-        parsed = parse_concord_participant_token_key(entry.key)
-        if parsed is None:
-            continue
-        parsed_contract_id, parsed_generation, participant = parsed
-        if parsed_contract_id != contract_id or parsed_generation != generation:
-            continue
-        try:
-            token = ParticipantTokenRecord.model_validate(entry.value)
-        except (TypeError, ValueError) as exc:
-            raise ConcordConflict(
-                ConcordConflictCode.TOKEN_INVALID,
-                f"Concord participant token {entry.key!r} is malformed: {exc}",
-                key=entry.key,
-                expected_pointer=ContractPointer(
-                    contractId=contract_id,
-                    generation=generation,
-                ),
-            ) from exc
-        if (
-            token.contract_id != contract_id
-            or token.generation != generation
-            or token.participant != participant
-            or token.terms_hash != terms_hash
-        ):
-            raise ConcordConflict(
-                ConcordConflictCode.TOKEN_IDENTITY_MISMATCH,
-                "Concord participant token key and record identity differ",
-                key=entry.key,
-                expected_pointer=ContractPointer(
-                    contractId=contract_id,
-                    generation=generation,
-                ),
-            )
-        token_entries.append((entry, token))
-    return tuple(sorted(token_entries, key=lambda item: item[0].key))
-
-
-async def _delete_concord_participant_token_entries(
-    token_bucket: ConcordMaintenanceScanPort,
-    token_entries: tuple[ConcordTokenMaintenanceEntry, ...],
-) -> int:
-    deleted = 0
-    for entry, token in token_entries:
-        if token is None:
-            continue
-        parsed = parse_concord_participant_token_key(entry.key)
-        if parsed is None:
-            continue
-        contract_id, generation, participant = parsed
-        if (
-            token.contract_id != contract_id
-            or token.generation != generation
-            or token.participant != participant
-        ):
-            continue
-        try:
-            marker_revision = await token_bucket.delete(
-                entry.key,
-                revision=entry.revision,
-            )
-        except ConcordConflict:
-            continue
-        if marker_revision is None:
-            continue
-        deleted += 1
-    return deleted
-
-
-def _token_log_summary(
-    token_entries: tuple[ConcordTokenMaintenanceEntry, ...],
-) -> tuple[list[str], dict[str, str], dict[str, int | None]]:
-    participants: list[str] = []
-    sessions: dict[str, str] = {}
-    refresh_sequences: dict[str, int | None] = {}
-    for entry, token in token_entries:
-        if token is None:
-            participants.append(f"<invalid:{entry.key}>")
-            refresh_sequences[entry.key] = None
-            continue
-        participant = str(token.participant)
-        participants.append(participant)
-        sessions[participant] = token.session_id
-        refresh_sequences[participant] = token.refresh_seq
-    return participants, sessions, refresh_sequences
-
-
-def _log_concord_contract_deletion_audit(
-    *,
-    log_label: str,
-    contract_key: str,
-    record: ContractRecord,
-    state_revision: int,
-    validation_status: ContractValidityStatus,
-    token_entries: tuple[ConcordTokenMaintenanceEntry, ...],
-    deleted_token_key_count: int,
-) -> None:
-    token_participants, token_sessions, token_refresh_sequences = _token_log_summary(
-        token_entries
-    )
-    logger.info(
-        "%s Concord maintenance deleting cancelled contract contract_key=%s "
-        "contract=%s generation=%s profile=%s state=%s participants=%s "
-        "attached_participants=%s created_by=%s created_at=%s "
-        "cancelled_by=%s cancelled_at=%s cancel_reason=%s cancel_revision=%s "
-        "supersedes=%s terms_hash=%s validation_status=%s "
-        "state_revision=%s token_participants=%s token_sessions=%s "
-        "token_refresh_sequences=%s deleted_token_key_count=%s",
-        log_label,
-        contract_key,
-        record.contract_id,
-        record.generation,
-        record.profile,
-        record.state.value,
-        [str(item) for item in record.participants],
-        [str(item) for item in record.attached_participants],
-        _actor_log_value(record.created_by),
-        _datetime_log_value(record.created_at),
-        _actor_log_value(record.cancelled_by),
-        _datetime_log_value(record.cancelled_at),
-        record.cancel_reason,
-        record.cancel_revision,
-        (
-            record.supersedes.model_dump(by_alias=True, mode="json")
-            if record.supersedes is not None
-            else None
-        ),
-        record.terms_hash,
-        validation_status.value,
-        state_revision,
-        token_participants,
-        token_sessions,
-        token_refresh_sequences,
-        deleted_token_key_count,
-    )
-
-
-def _log_concord_raw_contract_deletion_audit(
-    *,
-    log_label: str,
-    contract_key: str,
-    contract_id: str,
-    generation: int,
-    raw_record: Mapping[str, Any],
-    state_revision: int,
-    validation_status: ContractValidityStatus,
-    validation_reason: str,
-    token_entries: tuple[ConcordTokenMaintenanceEntry, ...],
-    deleted_token_key_count: int,
-) -> None:
-    record = thaw_json(raw_record)
-    token_participants, token_sessions, token_refresh_sequences = _token_log_summary(
-        token_entries
-    )
-    logger.info(
-        "%s Concord maintenance deleting cancelled contract contract_key=%s "
-        "contract=%s generation=%s profile=%s state=%s participants=%s "
-        "attached_participants=%s created_by=%s created_at=%s "
-        "cancelled_by=%s cancelled_at=%s cancel_reason=%s cancel_revision=%s "
-        "supersedes=%s terms_hash=%s validation_status=%s validation_reason=%s "
-        "state_revision=%s token_participants=%s token_sessions=%s "
-        "token_refresh_sequences=%s deleted_token_key_count=%s",
-        log_label,
-        contract_key,
-        contract_id,
-        generation,
-        record.get("profile"),
-        record.get("state"),
-        record.get("participants"),
-        record.get("attachedParticipants"),
-        record.get("createdBy"),
-        record.get("createdAt"),
-        record.get("cancelledBy"),
-        record.get("cancelledAt"),
-        record.get("cancelReason"),
-        record.get("cancelRevision"),
-        record.get("supersedes"),
-        record.get("termsHash"),
-        validation_status.value,
-        validation_reason,
-        state_revision,
-        token_participants,
-        token_sessions,
-        token_refresh_sequences,
-        deleted_token_key_count,
-    )
-
-
 __all__ = [
     "CONCORD_CONTRACT_SCHEMA_ID",
     "CONCORD_CONTRACT_BUCKET_POLICY",
-    "CONCORD_MAINTENANCE_ACTOR",
-    "CONCORD_MAINTENANCE_BUCKET_POLICY",
     "CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID",
-    "CONCORD_REAPER_STALE_CONTRACT_REASON",
-    "CONCORD_STALE_OBSERVATION_SCHEMA_ID",
     "CONCORD_TOKEN_BUCKET_POLICY",
     "DEFAULT_CONCORD_CONTRACT_BUCKET_NAME",
-    "DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME",
-    "DEFAULT_CONCORD_REAPER_CANCELLED_RETENTION_SECONDS",
-    "DEFAULT_CONCORD_REAPER_SCAN_INTERVAL_SECONDS",
-    "DEFAULT_CONCORD_REAPER_STALE_GRACE_SECONDS",
     "DEFAULT_CONCORD_TOKEN_BUCKET_NAME",
     "DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS",
     "ContractHandle",
@@ -4458,20 +3395,14 @@ __all__ = [
     "ConcordConflictCode",
     "ConcordEvent",
     "ConcordEventType",
-    "ConcordMaintenanceDeletionResult",
     "ConcordManagedContract",
     "ConcordManagedContractEvent",
     "ConcordManagedContractEventType",
     "ConcordParticipant",
-    "ConcordReaperConfig",
-    "ConcordReaperScanResult",
-    "ConcordReaperService",
-    "ConcordStaleObservationRecord",
     "ConcordUnavailable",
     "ConcordUnavailableCode",
     "ParticipantHandle",
     "ParticipantTokenRecord",
-    "STALE_OPEN_CONTRACT_STATUSES",
     "TokenObservation",
     "canonical_json_bytes",
     "canonical_json_hash",
@@ -4479,7 +3410,6 @@ __all__ = [
     "concord_contract_prefix",
     "concord_contracts_prefix",
     "concord_participant_token_key",
-    "concord_stale_observation_key",
     "parse_concord_contract_key",
     "parse_concord_participant_token_key",
 ]

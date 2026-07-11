@@ -11,13 +11,15 @@ from deckr.concord import (
     CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
     ConcordConflict,
     ConcordConflictCode,
-    ConcordReaperConfig,
-    ConcordReaperService,
     ContractHandle,
     ParticipantHandle,
     ParticipantTokenRecord,
     concord_contract_key,
     concord_participant_token_key,
+)
+from deckr.concord_maintenance import (
+    ConcordReaperConfig,
+    ConcordReaperService,
     concord_stale_observation_key,
 )
 from deckr.contracts.messages import controller_address, hardware_manager_address
@@ -228,7 +230,8 @@ async def test_noncanonical_contract_handle_performs_no_writes(operation: str) -
                 CONTROLLER,
             )
         else:
-            await harness.concord.maintenance_cancel_contract(noncanonical)
+            assert isinstance(harness, ConcordMaintenanceHarness)
+            await harness.maintenance.cancel_contract(noncanonical)
 
     assert raised.value.code == ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH
     assert _authority_state(harness) == before
@@ -420,7 +423,8 @@ async def test_invalid_external_records_fail_closed_without_writes(
         elif operation == "cancel":
             await harness.concord._cancel(contract, CONTROLLER)  # noqa: SLF001
         else:
-            await harness.concord.maintenance_cancel_contract(contract)
+            assert isinstance(harness, ConcordMaintenanceHarness)
+            await harness.maintenance.cancel_contract(contract)
 
     assert raised.value.code == expected_code
     assert _authority_state(harness) == before
@@ -465,7 +469,7 @@ async def test_attached_participant_cas_stops_after_eight_conflicts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_raced_maintenance_token_delete_leaves_replacement_untouched() -> None:
+async def test_raced_maintenance_token_delete_removes_refreshed_token() -> None:
     token_store = RacingTokenDeleteStore()
     harness = ConcordMaintenanceHarness(token_store=token_store)
     contract = await _create_contract(harness)
@@ -477,21 +481,16 @@ async def test_raced_maintenance_token_delete_leaves_replacement_untouched() -> 
     )
     token_store.race_on_delete = True
 
-    result = await harness.concord.maintenance_delete_cancelled_contract(
+    result = await harness.maintenance.delete_cancelled_contract(
         contract,
         retention_seconds=0,
         now=datetime.now(UTC) + timedelta(seconds=1),
     )
 
     assert result.deleted
-    assert result.deleted_token_key_count == 0
+    assert result.deleted_token_key_count == 1
     assert token_store.raced
-    replacement_entry = await harness.token_entry(token.key)
-    assert replacement_entry is not None
-    replacement = ParticipantTokenRecord.model_validate(replacement_entry.value)
-    assert replacement.token_id == token_store.replacement_token_id
-    assert replacement.session_id == "replacement-session"
-    assert replacement.refresh_seq == token.refresh_seq + 1
+    assert await harness.token_entry(token.key) is None
 
 
 @pytest.mark.asyncio
@@ -621,7 +620,7 @@ async def test_retained_contract_cleanup_fails_closed_before_any_write(
     before = _authority_state(harness)
 
     with pytest.raises(ConcordConflict) as raised:
-        await harness.concord.maintenance_delete_cancelled_contract(
+        await harness.maintenance.delete_cancelled_contract(
             contract,
             retention_seconds=0,
             now=datetime.now(UTC) + timedelta(seconds=1),
@@ -653,7 +652,7 @@ async def test_token_cleanup_fails_closed_before_contract_delete(
     before = _authority_state(harness)
 
     with pytest.raises(ConcordConflict) as raised:
-        await harness.concord.maintenance_delete_cancelled_contract(
+        await harness.maintenance.delete_cancelled_contract(
             contract,
             retention_seconds=0,
             now=datetime.now(UTC) + timedelta(seconds=1),
@@ -692,7 +691,7 @@ async def test_maintenance_observation_identity_failure_performs_no_writes(
     await harness.maintenance_store.put(key, value)
     before = _authority_state(harness)
     reaper = ConcordReaperService(
-        harness.concord,
+        harness.maintenance,
         config=ConcordReaperConfig(
             staleGraceSeconds=0,
             cancelledRetentionSeconds=0,

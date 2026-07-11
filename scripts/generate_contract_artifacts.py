@@ -34,14 +34,16 @@ from deckr.beacon import (
 from deckr.concord import (
     CONCORD_CONTRACT_SCHEMA_ID,
     CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
-    CONCORD_STALE_OBSERVATION_SCHEMA_ID,
-    ConcordStaleObservationRecord,
     ContractRecord,
     ParticipantTokenRecord,
     canonical_json_bytes,
     canonical_json_hash,
     concord_contract_key,
     concord_participant_token_key,
+)
+from deckr.concord_maintenance import (
+    CONCORD_STALE_OBSERVATION_SCHEMA_ID,
+    ConcordStaleObservationRecord,
 )
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.messages import (

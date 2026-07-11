@@ -4,19 +4,29 @@ import ast
 from collections import Counter
 from pathlib import Path
 
-from deckr._authority_buckets import RESERVED_AUTHORITY_BUCKET_POLICIES
+import pytest
+
+from deckr._authority_buckets import (
+    RESERVED_AUTHORITY_BUCKET_POLICIES,
+    ConcordMaintenanceStores,
+)
 from deckr.beacon import (
     BEACON_ADVERTISEMENT_STORE_POLICY,
     DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
 )
+from deckr.components import ComponentContext, ComponentManifest, LaneRegistry
 from deckr.concord import (
     CONCORD_CONTRACT_BUCKET_POLICY,
-    CONCORD_MAINTENANCE_BUCKET_POLICY,
     CONCORD_TOKEN_BUCKET_POLICY,
     DEFAULT_CONCORD_CONTRACT_BUCKET_NAME,
-    DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME,
     DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
 )
+from deckr.concord_maintenance import (
+    CONCORD_MAINTENANCE_BUCKET_POLICY,
+    DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME,
+)
+from deckr.runtime import Deckr
+from deckr.substrates.nats_kv import KvBucketPolicy
 
 _AUTHORITY_POLICY_NAMES = {
     "BEACON_ADVERTISEMENT_STORE_POLICY",
@@ -28,31 +38,42 @@ _RESERVED_BUCKET_NAMES = frozenset(RESERVED_AUTHORITY_BUCKET_POLICIES)
 
 _CallSite = tuple[Path, str, str, str]
 
-# Phase 2 replaces this exact generic component-KV escape hatch with a typed
-# Concord maintenance capability. Core Deckr startup opens the same policies
-# directly through its substrate owner and is not a component-KV exception.
-_PHASE_2_REAPER_AUTHORITY_BUCKET_CALLS: Counter[_CallSite] = Counter(
-    {
-        (
-            Path("deckr/src/deckr/concord_reaper.py"),
-            "component_factory",
-            "context",
-            "CONCORD_CONTRACT_BUCKET_POLICY",
-        ): 1,
-        (
-            Path("deckr/src/deckr/concord_reaper.py"),
-            "component_factory",
-            "context",
-            "CONCORD_TOKEN_BUCKET_POLICY",
-        ): 1,
-        (
-            Path("deckr/src/deckr/concord_reaper.py"),
-            "component_factory",
-            "context",
-            "CONCORD_MAINTENANCE_BUCKET_POLICY",
-        ): 1,
-    }
+_RESERVED_POLICY_CASES = tuple(RESERVED_AUTHORITY_BUCKET_POLICIES.values()) + tuple(
+    KvBucketPolicy(
+        bucket=policy.bucket,
+        ttl_seconds=1,
+        description="forged authority policy",
+    )
+    for policy in RESERVED_AUTHORITY_BUCKET_POLICIES.values()
 )
+
+
+class _RecordingBucketOpener:
+    def __init__(self) -> None:
+        self.calls: list[KvBucketPolicy] = []
+
+    def kv_bucket(self, policy: KvBucketPolicy) -> KvBucketPolicy:
+        self.calls.append(policy)
+        return policy
+
+
+def _component_context(
+    *,
+    kv_bucket_for=None,
+    concord_maintenance_stores_for=None,
+) -> ComponentContext:
+    return ComponentContext(
+        component_id="dev.deckr.test",
+        instance_id="main",
+        runtime_name="dev.deckr.test:main",
+        manifest=ComponentManifest(component_id="dev.deckr.test"),
+        config={},
+        endpoints={},
+        base_dir=Path.cwd(),
+        lanes=LaneRegistry({}),
+        kv_bucket_for=kv_bucket_for,
+        _concord_maintenance_stores_for=concord_maintenance_stores_for,
+    )
 
 
 def test_public_authority_bucket_constants_reexport_internal_registry() -> None:
@@ -79,20 +100,55 @@ def test_generic_component_kv_cannot_open_reserved_authority_buckets() -> None:
         visitor.visit(tree)
         observed.update(visitor.calls)
 
-    available_paths = {path.relative_to(workspace) for path in production_files}
-    allowed = Counter(
-        {
-            callsite: count
-            for callsite, count in _PHASE_2_REAPER_AUTHORITY_BUCKET_CALLS.items()
-            if callsite[0] in available_paths
-        }
+    assert not observed, "unexpected generic authority bucket access:\n" + "\n".join(
+        _format_callsites(observed)
     )
-    unexpected = observed - allowed
-    stale_allowlist = allowed - observed
-    assert not unexpected and not stale_allowlist, _format_callsite_diff(
-        unexpected=unexpected,
-        stale_allowlist=stale_allowlist,
+
+
+@pytest.mark.parametrize("policy", _RESERVED_POLICY_CASES)
+def test_deckr_generic_kv_rejects_reserved_authority_name(
+    policy: KvBucketPolicy,
+) -> None:
+    opener = _RecordingBucketOpener()
+    deckr = Deckr(message_bus=opener)
+
+    with pytest.raises(ValueError, match="reserved"):
+        deckr.kv_bucket(policy)
+
+    assert opener.calls == []
+
+
+@pytest.mark.parametrize("policy", _RESERVED_POLICY_CASES)
+def test_component_generic_kv_rejects_reserved_authority_name(
+    policy: KvBucketPolicy,
+) -> None:
+    opener = _RecordingBucketOpener()
+    context = _component_context(kv_bucket_for=opener.kv_bucket)
+
+    with pytest.raises(ValueError, match="reserved"):
+        context.kv_bucket(policy)
+
+    assert opener.calls == []
+
+
+def test_component_typed_maintenance_route_uses_canonical_store_bundle() -> None:
+    opener = _RecordingBucketOpener()
+    deckr = Deckr(message_bus=opener)
+    context = _component_context(
+        concord_maintenance_stores_for=deckr._concord_maintenance_stores,  # noqa: SLF001
     )
+
+    stores = context._concord_maintenance_stores()  # noqa: SLF001
+
+    assert isinstance(stores, ConcordMaintenanceStores)
+    assert opener.calls == [
+        CONCORD_CONTRACT_BUCKET_POLICY,
+        CONCORD_TOKEN_BUCKET_POLICY,
+        CONCORD_MAINTENANCE_BUCKET_POLICY,
+    ]
+    assert stores.contract_store is CONCORD_CONTRACT_BUCKET_POLICY
+    assert stores.token_store is CONCORD_TOKEN_BUCKET_POLICY
+    assert stores.maintenance_store is CONCORD_MAINTENANCE_BUCKET_POLICY
 
 
 def test_reserved_authority_bucket_names_have_one_production_definition() -> None:
@@ -181,7 +237,10 @@ class _GenericAuthorityKvVisitor(ast.NodeVisitor):
         if isinstance(node, ast.Attribute) and node.attr in _AUTHORITY_POLICY_NAMES:
             return node.attr
         for child in ast.walk(node):
-            if isinstance(child, ast.Constant) and child.value in _RESERVED_BUCKET_NAMES:
+            if (
+                isinstance(child, ast.Constant)
+                and child.value in _RESERVED_BUCKET_NAMES
+            ):
                 return str(child.value)
         return None
 
@@ -207,21 +266,6 @@ def _production_python_files(workspace: Path) -> tuple[Path, ...]:
             if "tests" not in path.parts and "__pycache__" not in path.parts
         )
     return tuple(sorted(files))
-
-
-def _format_callsite_diff(
-    *,
-    unexpected: Counter[_CallSite],
-    stale_allowlist: Counter[_CallSite],
-) -> str:
-    lines: list[str] = []
-    if unexpected:
-        lines.append("unexpected generic authority bucket access:")
-        lines.extend(_format_callsites(unexpected))
-    if stale_allowlist:
-        lines.append("stale Phase 2 authority bucket allowlist entries:")
-        lines.extend(_format_callsites(stale_allowlist))
-    return "\n".join(lines)
 
 
 def _format_callsites(calls: Counter[_CallSite]) -> list[str]:

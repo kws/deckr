@@ -21,6 +21,7 @@ from deckr._concord._models import (
     participant_handle,
 )
 from deckr.concord import Concord
+from deckr.concord_maintenance import ConcordMaintenance
 from deckr.contracts.authority import ContractPointer
 from deckr.substrates.nats_kv import (
     KvChange,
@@ -31,17 +32,15 @@ from deckr.substrates.nats_kv import (
 from deckr.testing.kv import MemoryJsonKvBucket
 
 
-def _legacy_concord(
+def _runtime_concord(
     contract_store: Any,
     token_store: Any,
-    maintenance_store: Any,
     *,
     buffer_size: int,
 ) -> Concord:
     return Concord(
         contract_store,
         token_store,
-        maintenance_store,
         buffer_size=buffer_size,
     )
 
@@ -78,17 +77,11 @@ class ConcordRuntimeHarness:
             bucket=DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
             ttl_seconds=token_ttl_seconds,
         )
-        maintenance_store = MemoryJsonKvBucket(
-            bucket=DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME
-        )
-        self._maintenance_store_for_materialize = maintenance_store
         self._contract_view = _materialized(self.contract_store)
         self._token_view = _materialized(self.token_store)
-        self._maintenance_view = _materialized(maintenance_store)
-        self.concord = _legacy_concord(
+        self.concord = _runtime_concord(
             self._contract_view,
             self._token_view,
-            self._maintenance_view,
             buffer_size=buffer_size,
         )
 
@@ -126,10 +119,6 @@ class ConcordRuntimeHarness:
     async def materialize(self) -> None:
         await _materialize_store(self._contract_view, self.contract_store)
         await _materialize_store(self._token_view, self.token_store)
-        await _materialize_store(
-            self._maintenance_view,
-            self._maintenance_store_for_materialize,
-        )
         await self.concord._rebuild_from_buckets()  # noqa: SLF001
 
     async def contract_entry(
@@ -179,25 +168,19 @@ class ConcordMaintenanceHarness(ConcordRuntimeHarness):
         token_ttl_seconds: float = 120,
         buffer_size: int = 100,
     ) -> None:
-        self.contract_store = contract_store or MemoryJsonKvBucket(
-            bucket=DEFAULT_CONCORD_CONTRACT_BUCKET_NAME
-        )
-        self.token_store = token_store or MemoryJsonKvBucket(
-            bucket=DEFAULT_CONCORD_TOKEN_BUCKET_NAME,
-            ttl_seconds=token_ttl_seconds,
+        super().__init__(
+            contract_store=contract_store,
+            token_store=token_store,
+            token_ttl_seconds=token_ttl_seconds,
+            buffer_size=buffer_size,
         )
         self.maintenance_store = maintenance_store or MemoryJsonKvBucket(
             bucket=DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME
         )
-        self._maintenance_store_for_materialize = self.maintenance_store
-        self._contract_view = _materialized(self.contract_store)
-        self._token_view = _materialized(self.token_store)
-        self._maintenance_view = _materialized(self.maintenance_store)
-        self.concord = _legacy_concord(
-            self._contract_view,
-            self._token_view,
-            self._maintenance_view,
-            buffer_size=buffer_size,
+        self.maintenance = ConcordMaintenance(
+            self.contract_store,
+            self.token_store,
+            self.maintenance_store,
         )
 
 

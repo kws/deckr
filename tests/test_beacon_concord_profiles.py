@@ -1773,9 +1773,6 @@ async def test_concord_wait_current_rebuilds_generation_stale_cache() -> None:
             service._token_bucket_generation = (  # noqa: SLF001
                 service._coordinator.token_source.generation  # noqa: SLF001
             )
-            service._maintenance_bucket_generation = (  # noqa: SLF001
-                service._maintenance_source.generation  # noqa: SLF001
-            )
 
         assert not service.is_current()
         await service.wait_current()
@@ -1855,9 +1852,6 @@ async def test_concord_generation_gap_rebuild_notifies_watchers() -> None:
                 service._contract_bucket_generation = 0  # noqa: SLF001
                 service._token_bucket_generation = (  # noqa: SLF001
                     service._coordinator.token_source.generation  # noqa: SLF001
-                )
-                service._maintenance_bucket_generation = (  # noqa: SLF001
-                    service._maintenance_source.generation  # noqa: SLF001
                 )
 
             await service._apply_contract_change(  # noqa: SLF001

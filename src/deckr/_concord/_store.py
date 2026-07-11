@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 import anyio
 
@@ -34,6 +34,7 @@ from deckr._concord._models import (
 from deckr._concord._ports import (
     ConcordMaintenanceScanPort,
     ConcordMaterializedSourcePort,
+    ConcordRawMaintenanceStorePort,
     ExactConcordKvPort,
 )
 from deckr._concord._validation import (
@@ -99,8 +100,10 @@ class _ExactKvAdapter:
         return str(self._bucket.bucket)
 
     async def get_exact(self, key: str) -> KvEntry | None:
+        get_exact = getattr(self._bucket, "get_exact", None)
+        get_value = get_exact if get_exact is not None else self._bucket.get
         try:
-            return await self._bucket.get_exact(key)
+            return await get_value(key)
         except KvUnavailable as exc:
             raise ConcordUnavailable(
                 ConcordUnavailableCode.STORE_UNAVAILABLE,
@@ -293,8 +296,10 @@ class _MaintenanceScanAdapter:
         return self._exact.bucket
 
     async def items_exact(self, prefix: str = "") -> tuple[KvEntry, ...]:
+        items_exact = getattr(self._bucket, "items_exact", None)
+        items = items_exact if items_exact is not None else self._bucket.items
         try:
-            return await self._bucket.items_exact(prefix)
+            return await items(prefix)
         except KvUnavailable as exc:
             raise ConcordUnavailable(
                 ConcordUnavailableCode.STORE_UNAVAILABLE,
@@ -337,7 +342,6 @@ class _MaintenanceScanAdapter:
 class ConcordBucketAdapters:
     exact: ExactConcordKvPort
     source: ConcordMaterializedSourcePort
-    scan: ConcordMaintenanceScanPort
 
 
 def concord_bucket_adapters(
@@ -347,8 +351,36 @@ def concord_bucket_adapters(
     return ConcordBucketAdapters(
         exact=_ExactKvAdapter(materialized),
         source=_MaterializedSourceAdapter(materialized),
-        scan=_MaintenanceScanAdapter(materialized),
     )
+
+
+def concord_maintenance_scan_store(
+    bucket: ConcordRawMaintenanceStorePort | ConcordMaintenanceScanPort,
+) -> ConcordMaintenanceScanPort:
+    """Adapt one raw KV bucket to the exact maintenance scan boundary.
+
+    Unlike :func:`concord_bucket_adapters`, this constructor never composes a
+    materialized view. Prefix scans therefore use the raw store's temporary
+    list consumer and maintenance construction starts no watch or background
+    task.
+    """
+
+    required_methods = {
+        "exact read": ("get_exact", "get"),
+        "exact prefix scan": ("items_exact", "items"),
+        "create": ("create",),
+        "revision update": ("update",),
+        "revision delete": ("delete",),
+    }
+    missing = [
+        operation
+        for operation, names in required_methods.items()
+        if not any(callable(getattr(bucket, name, None)) for name in names)
+    ]
+    if missing or not hasattr(bucket, "bucket"):
+        operations = ", ".join(missing or ["bucket identity"])
+        raise TypeError(f"Concord maintenance store is missing {operations}")
+    return _MaintenanceScanAdapter(bucket)
 
 
 class ConcordKvStore:
@@ -361,10 +393,8 @@ class ConcordKvStore:
         token = concord_bucket_adapters(token_bucket)
         self.contract_exact = contract.exact
         self.contract_source = contract.source
-        self.contract_scan = contract.scan
         self.token_exact = token.exact
         self.token_source = token.source
-        self.token_scan = token.scan
 
     async def create_contract(
         self,
@@ -722,48 +752,6 @@ class ConcordKvStore:
             revision=current.revision,
         )
         return True
-
-    async def maintenance_cancel(
-        self,
-        contract: ContractHandle,
-        *,
-        reason: str,
-        cancelled_by: Literal["concord:maintenance"],
-        now: datetime | None = None,
-    ) -> bool:
-        pointer = _assert_contract_handle(contract)
-        current = await self.contract_scan.get_exact(contract.key)
-        if current is None:
-            return False
-        record = _parse_contract_entry(current, contract.key, pointer)
-        if record.state == ContractState.CANCELLED:
-            return False
-        cancelled = record.model_copy(
-            update={
-                "state": ContractState.CANCELLED,
-                "cancelled_by": cancelled_by,
-                "cancelled_at": now or _now_utc(),
-                "cancel_revision": current.revision,
-                "cancel_reason": reason,
-            }
-        )
-        _assert_contract_replacement_identity(record, cancelled, pointer, contract.key)
-        await self.contract_scan.update(
-            contract.key,
-            cancelled,
-            revision=current.revision,
-        )
-        return True
-
-    async def maintenance_contract_entry(
-        self,
-        contract: ContractHandle,
-    ) -> tuple[KvEntry, ContractRecord] | None:
-        pointer = _assert_contract_handle(contract)
-        current = await self.contract_scan.get_exact(contract.key)
-        if current is None:
-            return None
-        return current, _parse_contract_entry(current, contract.key, pointer)
 
     async def validate_exact(
         self,

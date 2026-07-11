@@ -103,8 +103,9 @@ uv run pytest
 Focused protocol tests should import `MemoryJsonKvBucket`,
 `ConcordRuntimeHarness`, or `ConcordMaintenanceHarness` from `deckr.testing`.
 Use the runtime harness for ordinary Concord tests and the maintenance harness
-only for reaper/maintenance coverage; workspace tests must not construct
-`Concord` directly from three stores. See the
+only for reaper/maintenance coverage. Normal `Concord` accepts only contract
+and token stores; dedicated maintenance code imports `ConcordMaintenance` and
+`ConcordReaperService` from `deckr.concord_maintenance`. See the
 [migration guide](docs/migration-guide.md#test-rewrites) for examples.
 
 Run the TypeScript core conformance checks:
@@ -149,8 +150,10 @@ presence.
 The Python runtime owns Beacon/Concord materialized KV views, reconciles watch
 recovery snapshots, and coalesces no-op heartbeat writes behind TTL-derived
 cadence rules. The optional Concord reaper is the maintenance exception: it runs
-infrequently and uses exact raw KV scans to clear orphaned stale observations and
-bound the cancelled-contract archive.
+infrequently through a separate task-free `ConcordMaintenance` capability and
+uses exact raw KV scans to clear orphaned stale observations and bound the
+cancelled-contract archive. Normal Concord startup never opens or waits for the
+maintenance store.
 
 If you are looking for the design rules around discovery, endpoint sessions,
 message bus configuration, wire-safe schemas, component planning, and alpha

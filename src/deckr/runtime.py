@@ -6,10 +6,14 @@ from types import TracebackType
 
 import anyio
 
+from deckr._authority_buckets import (
+    RESERVED_AUTHORITY_BUCKET_POLICIES,
+    ConcordMaintenanceStores,
+    concord_maintenance_stores,
+)
 from deckr.beacon import BEACON_ADVERTISEMENT_STORE_POLICY, Beacon
 from deckr.concord import (
     CONCORD_CONTRACT_BUCKET_POLICY,
-    CONCORD_MAINTENANCE_BUCKET_POLICY,
     CONCORD_TOKEN_BUCKET_POLICY,
     DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
     Concord,
@@ -104,10 +108,23 @@ class Deckr:
         return self._concord
 
     def kv_bucket(self, policy: KvBucketPolicy) -> NatsJsonKvBucket:
+        if policy.bucket in RESERVED_AUTHORITY_BUCKET_POLICIES:
+            raise ValueError(
+                f"KV bucket {policy.bucket!r} is reserved for a typed Deckr "
+                "authority-store capability"
+            )
+        return self._raw_kv_bucket(policy)
+
+    def _raw_kv_bucket(self, policy: KvBucketPolicy) -> NatsJsonKvBucket:
         kv_bucket = getattr(self._message_bus, "kv_bucket", None)
         if kv_bucket is None:
             raise RuntimeError("Deckr message bus does not provide NATS KV buckets")
         return kv_bucket(policy)
+
+    def _concord_maintenance_stores(
+        self,
+    ) -> ConcordMaintenanceStores[NatsJsonKvBucket]:
+        return concord_maintenance_stores(self._raw_kv_bucket)
 
     @asynccontextmanager
     async def services(
@@ -157,7 +174,6 @@ class Deckr:
             self._concord = Concord(
                 kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY),
                 kv_bucket(CONCORD_TOKEN_BUCKET_POLICY),
-                kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY),
             )
             self._concord.start(self._task_group)
         return self

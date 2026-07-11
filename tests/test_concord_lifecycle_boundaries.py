@@ -47,7 +47,7 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
     {
         (
             Path("deckr/src/deckr/runtime.py"),
-            155,
+            172,
             "Deckr.__aenter__",
             "Beacon",
             "construct",
@@ -55,27 +55,27 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
         (
             Path("deckr/src/deckr/testing/concord.py"),
             41,
-            "_legacy_concord",
+            "_runtime_concord",
             "Concord",
             "construct",
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            157,
+            174,
             "Deckr.__aenter__",
             "Concord",
             "construct",
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            156,
+            173,
             "Deckr.__aenter__",
             "self._beacon",
             "start",
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            162,
+            178,
             "Deckr.__aenter__",
             "self._concord",
             "start",
@@ -89,15 +89,6 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
 # hatch. A removed call must also be removed here.
 _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
     {
-        # Phase 2 replaces this three-store Concord construction with the
-        # separate typed ConcordMaintenance capability.
-        (
-            Path("deckr/src/deckr/concord_reaper.py"),
-            64,
-            "component_factory",
-            "Concord",
-            "construct",
-        ): 1,
         (
             Path(
                 "deckr-action-provider-runtime-python/"
@@ -258,6 +249,7 @@ def test_production_code_uses_managed_lifecycle_routes() -> None:
         relative = path.relative_to(workspace)
         if relative in {
             Path("deckr/src/deckr/beacon.py"),
+            Path("deckr/src/deckr/_concord/_maintenance.py"),
             Path("deckr/src/deckr/concord.py"),
         }:
             continue
@@ -385,11 +377,16 @@ def test_production_does_not_import_deckr_testing() -> None:
             continue
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == "deckr.testing":
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "deckr.testing"
+            ) or (
+                isinstance(node, ast.Import)
+                and any(
+                    alias.name.startswith("deckr.testing") for alias in node.names
+                )
+            ):
                 offenders.append(f"{relative}:{node.lineno}")
-            elif isinstance(node, ast.Import):
-                if any(alias.name.startswith("deckr.testing") for alias in node.names):
-                    offenders.append(f"{relative}:{node.lineno}")
     assert not offenders, "production imports deckr.testing: " + ", ".join(offenders)
 
 
@@ -438,7 +435,9 @@ def test_concord_conflict_handlers_do_not_classify_exception_text() -> None:
                     text_aliases=aliases,
                 ):
                     offenders.append(f"{relative}:{condition.lineno}")
-    assert not offenders, "Concord conflict text classification: " + ", ".join(offenders)
+    assert not offenders, "Concord conflict text classification: " + ", ".join(
+        offenders
+    )
 
 
 def _exception_type_names(node: ast.AST | None) -> set[str]:
@@ -485,13 +484,16 @@ def _condition_classifies_exception_text(
             return True
         if isinstance(node, ast.Name) and node.id in text_aliases:
             return True
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in {"startswith", "endswith", "search", "match"}:
-                if any(
-                    isinstance(child, ast.Name) and child.id in aliases
-                    for child in ast.walk(node)
-                ):
-                    return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"startswith", "endswith", "search", "match"}
+            and any(
+                isinstance(child, ast.Name) and child.id in aliases
+                for child in ast.walk(node)
+            )
+        ):
+            return True
     return False
 
 

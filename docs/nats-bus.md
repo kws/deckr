@@ -29,16 +29,18 @@ The supported shared stores are:
 | Concord participant tokens | `deckr_concord_token_v1` | TTL-bound |
 | Concord maintenance observations | `deckr_concord_maintenance_v1` | persistent |
 
-Beacon and Concord use explicit KV bucket policies and materialized views.
-Production runtime code does not subscribe directly to Beacon or Concord
-authority state. Python runtime participants use the shared `Beacon` and
-`Concord` APIs; both own materialized KV views, semantic lifecycle events,
-leases, heartbeats, freshness checks, recovery reconciliation, and lifecycle
-logging. Non-Python implementations must follow the same protocol semantics in
-[`beacon-concord.md`](beacon-concord.md).
-The optional Concord reaper is the maintenance exception. It is a standalone,
-low-frequency component that uses exact raw KV scans instead of long-lived
-materialized views.
+Beacon and normal Concord use explicit KV bucket policies and materialized
+views. Production runtime code does not subscribe directly to Beacon or
+Concord authority state. Python runtime participants use the shared `Beacon`
+and `Concord` APIs; both own their materialized runtime views, semantic
+lifecycle events, leases, heartbeats, freshness checks, recovery
+reconciliation, and lifecycle logging. Non-Python implementations must follow
+the same protocol semantics in [`beacon-concord.md`](beacon-concord.md).
+The optional Concord reaper is the maintenance exception. It receives the
+separate `deckr.concord_maintenance.ConcordMaintenance` capability and uses
+exact raw KV scans instead of long-lived materialized views. A normal
+`Concord` instance never opens, watches, indexes, or waits for the maintenance
+store.
 Retired shared coordination buckets are not part of the v1 surface. Opening a
 generic state store is no longer part of the Python runtime. Beacon and Concord
 open their explicit JetStream KV bucket policies directly and serve normal reads
@@ -245,13 +247,14 @@ internal ports:
 | --- | --- |
 | exact Concord KV | exact-key reads, create, revision-guarded update/delete, and token-bucket TTL metadata for strict validation and every authority mutation |
 | Concord materialized source | readiness/currentness, generation, cached raw exact-key and prefix snapshots, cached revisions, and the existing runtime subscription hook |
-| Concord maintenance scan | exact prefix listing and exact-key reads plus revision-guarded maintenance create/update/delete operations |
+| Concord maintenance capability | exact prefix listing and exact-key reads plus revision-guarded maintenance create/update/delete operations over dedicated raw stores |
 
-Each supplied raw bucket is normalized to one underlying materialized bucket;
-the exact, source, and scan views over it do not create duplicate materializers
-or watches. Normal runtime reads use the materialized source. Exact reads fence
-writes and serve strict validation or recovery. Broad exact prefix scans remain
-restricted to the low-frequency maintenance path.
+Normal runtime contract and token stores provide exact access and materialized
+sources without exposing maintenance mutation. `ConcordMaintenance` receives
+the contract, token, and maintenance raw-store ports directly. Constructing it
+starts no task or watch. Normal runtime reads use materialized sources; exact
+reads fence writes and serve strict validation or recovery. Broad exact prefix
+scans remain restricted to the low-frequency maintenance path.
 
 Store and lifecycle failures are typed. Callers branch on `.code`, never on
 exception messages:
@@ -296,8 +299,8 @@ validity = await concord.validate(agreement.contract)
 await lease.aclose()
 ```
 
-Tests use the shipped `deckr.testing` harness instead of constructing Concord
-from three stores:
+Tests use the shipped `deckr.testing` harness instead of constructing normal
+Concord runtime stores directly:
 
 ```python
 from deckr.testing import ConcordRuntimeHarness
@@ -321,12 +324,11 @@ validity = await harness.concord.validate(agreement.contract)
 await lease.aclose()
 ```
 
-`ConcordMaintenanceHarness` is the only test surface that exposes contract,
-token, and maintenance stores together. The internal maintenance scan port and
-maintenance-only harness do not introduce a production `ConcordMaintenance`
-capability. Production ownership remains with the existing
-`ConcordReaperService` and its current wiring until that capability is split out
-in the later maintenance phase.
+Maintenance and reaper tests use the dedicated
+`deckr.concord_maintenance.ConcordMaintenance` capability with three exact/raw
+stores. `ConcordMaintenanceHarness` packages those stores and exposes its
+dedicated `.maintenance` capability for focused tests, but it does not add
+maintenance state to `ConcordRuntimeHarness` or normal `Concord` readiness.
 
 A Concord contract is valid only while the contract is open and every named
 participant maintains an acceptable token for the same contract id, generation,
@@ -340,15 +342,16 @@ successor rather than adopting that token.
 The full Concord semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#concord).
 
-The optional lane-less component `dev.deckr.concord.reaper` runs
-`ConcordReaperService`. It uses only Concord contract/token validity. Beacon
-advertisements are TTL-bound and are not reaped. The reaper persists first stale
-observations, cancels stale open contracts after the configured grace period,
-logs deletion context without full `terms`, deletes cancelled records after
-retention, and cleans any remaining participant-token keys for deleted contract
-generations. Its `scan_once()` path intentionally lists `contracts.` and `stale.`
-KV keys and exact-reads participant-token keys; it does not start Concord
-materialized watches.
+The optional lane-less component `dev.deckr.concord.reaper` owns
+`ConcordReaperService.run()`. The service receives `ConcordMaintenance`, uses
+only Concord contract/token validity, and is not passed a task group by ordinary
+callers. Beacon advertisements are TTL-bound and are not reaped. The reaper
+persists first stale observations, cancels stale open contracts after the
+configured grace period, logs deletion context without full `terms`, deletes
+cancelled records after retention, and cleans any remaining participant-token
+keys for deleted contract generations. Its `scan_once()` path intentionally
+lists `contracts.` and `stale.` KV keys and exact-reads participant-token keys;
+it does not start Concord materialized watches.
 
 ## Deckr Profiles
 
@@ -462,20 +465,15 @@ views = ServiceViewStore(
 views.start(task_group)
 ```
 
-Component factories that need raw KV buckets, such as the Concord reaper, receive
-them from `ComponentContext`:
-
-```python
-contract_bucket = context.kv_bucket(CONCORD_CONTRACT_BUCKET_POLICY)
-token_bucket = context.kv_bucket(CONCORD_TOKEN_BUCKET_POLICY)
-maintenance_bucket = context.kv_bucket(CONCORD_MAINTENANCE_BUCKET_POLICY)
-```
-
-The reaper wraps these buckets in Concord maintenance logic for CAS
-cancellation, retention deletion, token cleanup, and orphaned stale-observation
-cleanup. Other components should prefer managed `deckr.beacon`, `deckr.concord`,
-and explicit `ServiceViewStore` instances opened from `deckr.kv_bucket(...)` for
-normal protocol and protected service-view authority.
+Core authority bucket names are reserved. Generic `Deckr.kv_bucket(...)` and
+`ComponentContext.kv_bucket(...)` access rejects Beacon and Concord authority
+policies, including the maintenance bucket. The built-in reaper receives its
+three raw stores through a core-owned typed maintenance-store factory and wraps
+them in `ConcordMaintenance` for exact validation, CAS cancellation, retention
+deletion, token cleanup, and orphaned stale-observation cleanup. Other
+components should prefer managed `deckr.beacon`, `deckr.concord`, and explicit
+`ServiceViewStore` instances opened from `deckr.kv_bucket(...)` for
+package-owned state and protected service views.
 
 TTL-bound buckets are configured with broker-owned bucket TTL, subject delete
 markers retained for the same duration as the bucket TTL, and one retained
@@ -552,9 +550,10 @@ watch/list consumers must be explicitly deleted or avoided once the read is
 complete; server-side inactive cleanup is a fallback, not the steady-state
 cleanup path.
 
-`ConcordReaperService` is allowed to use list-style raw scans because it runs
-infrequently and does not provide immediate notification. It avoids materialized
-watches entirely, so it should not leave watch consumers behind.
+`deckr.concord_maintenance.ConcordReaperService` is allowed to use list-style
+raw scans because it runs infrequently and does not provide immediate
+notification. `ConcordMaintenance` avoids materialized watches entirely, and
+each temporary list consumer is closed before the scan returns.
 
 Treat watch events as wakeups. Managed materialized views are the normal Python
 runtime authority for reads; exact KV reads are used for writes, strict

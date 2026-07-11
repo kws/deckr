@@ -365,13 +365,20 @@ Concord authority in the lane envelope.
 
 ### Concord Maintenance
 
-Core Concord maintenance is optional and Concord-only. The lane-less component
-`dev.deckr.concord.reaper` and reusable `ConcordReaperService` scan Concord
-contract, participant-token, and maintenance stores with exact raw KV reads. The
-reaper is a low-frequency maintenance scanner, not a materialized-view runtime
-or immediate notification service. It never consults Beacon advertisements,
-endpoint presence, catalogs, lane subscriptions, or any other parallel
-authority.
+Core Concord maintenance is optional and Concord-only. Python exposes it from
+the separate `deckr.concord_maintenance` facade. `ConcordMaintenance` receives
+the contract, participant-token, and maintenance exact/raw stores directly;
+normal `Concord` has no maintenance store, watcher, cache, readiness dependency,
+or mutation route. Constructing the maintenance capability starts no task or
+watch.
+
+The lane-less component `dev.deckr.concord.reaper` owns
+`ConcordReaperService.run()`. Infrastructure may instead construct the service
+from `ConcordMaintenance` and call `scan_once()` explicitly. Ordinary callers
+do not pass a task group to the service. The reaper is a low-frequency
+maintenance scanner, not a materialized-view runtime or immediate notification
+service. It never consults Beacon advertisements, endpoint presence, catalogs,
+lane subscriptions, or any other parallel authority.
 
 The reaper records `firstObservedStaleAt` in the persistent
 `deckr_concord_maintenance_v1` store for each `contractId:generation`. Open

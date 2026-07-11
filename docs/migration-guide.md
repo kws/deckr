@@ -15,7 +15,7 @@ The current model is:
 - `ComponentHost` resolves component instances, lanes, endpoint slots, and
   duplicate endpoint ids.
 - `ComponentContext` exposes component-scoped access to lanes, declared endpoint
-  slots, Beacon, Concord, and explicit KV buckets.
+  slots, Beacon, Concord, and package-owned KV buckets.
 - Components open endpoint sessions from declared slots with
   `context.open_endpoint(...)`.
 - Beacon is discovery only. Concord is live agreement authority.
@@ -160,11 +160,15 @@ Use:
 - `context.require_beacon()` for Beacon advertisements
 - `context.require_concord()` for Concord agreements and tokens
 - `context.kv_bucket(policy)` only for explicit package-owned KV buckets
+- `deckr.concord_maintenance.ConcordMaintenance` only for dedicated
+  maintenance/reaper infrastructure
 - service-view helpers for service-owned protected views
 
 Package-owned KV buckets must be owner-qualified, purpose-specific, and
 versioned. They must not redefine Beacon, Concord, or Deckr core hardware/action
-profile authority.
+profile authority. Generic runtime and component KV access rejects the reserved
+Beacon and Concord authority bucket names. The built-in reaper receives those
+stores through a typed core-owned route instead.
 
 ## Hardware Managers
 
@@ -275,25 +279,27 @@ identity-mismatched external JSON. `materialize()` deterministically rebuilds
 the cached view without starting a watcher. The harness also exposes exact
 entry inspection and deterministic token expiry.
 
-Use `ConcordMaintenanceHarness` only for reaper and maintenance tests that must
-inspect all three stores:
+Maintenance tests construct the dedicated capability from three exact/raw
+stores. This construction starts no task or materialized watch:
 
 ```python
+from deckr.concord_maintenance import ConcordReaperService
 from deckr.testing import ConcordMaintenanceHarness
 
-maintenance = ConcordMaintenanceHarness()
-concord = maintenance.concord
-contract_store = maintenance.contract_store
-token_store = maintenance.token_store
-maintenance_store = maintenance.maintenance_store
+harness = ConcordMaintenanceHarness()
+contract_store = harness.contract_store
+token_store = harness.token_store
+maintenance_store = harness.maintenance_store
+maintenance = harness.maintenance
+reaper = ConcordReaperService(maintenance)
 ```
 
-Do not call `Concord(contract_store, token_store, maintenance_store)` directly
-in workspace tests, and do not recreate that constructor in a local helper.
-`ConcordRuntimeHarness` intentionally hides its temporary maintenance store;
-only `ConcordMaintenanceHarness` exposes one. This testing boundary does not add
-a production `ConcordMaintenance` API: the production maintenance capability
-remains deferred, and the existing reaper wiring remains in place meanwhile.
+Normal `Concord` accepts only contract and token runtime stores. Use
+`ConcordRuntimeHarness` for runtime tests and `ConcordMaintenanceHarness` or
+three `MemoryJsonKvBucket` instances for maintenance tests. Do not add a hidden
+maintenance store to the runtime harness. A caller may invoke `scan_once()`
+directly; the lane-less reaper component, not capability construction, owns the
+background `ConcordReaperService.run()` task.
 
 Mocks should sit at the `MessageBus` and explicit KV-bucket boundaries. Avoid
 test helpers that recreate removed runtime surfaces such as `deckr.state` or
