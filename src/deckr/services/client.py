@@ -54,9 +54,10 @@ from deckr.services.runtime import (
 )
 from deckr.services.views import (
     ManagedServiceViewAccess,
-    ServiceViewChange,
     ServiceViewEntry,
     ServiceViewStore,
+    ServiceViewWatchChange,
+    ServiceViewWatchSnapshot,
 )
 from deckr.substrates.nats_kv import KvBucketPolicy, KvUnavailable, NatsJsonKvBucket
 
@@ -426,7 +427,6 @@ class DeckrServices:
         infrastructure instead.
         """
 
-        yield await self.read_view(lease, view)
         try:
             store = self._view_store(view.store_name)
             await lease.refresh()
@@ -434,11 +434,11 @@ class DeckrServices:
                 self._consumer_view_read_context(lease),
                 view,
             ) as changes:
-                async for change in changes:
+                async for snapshot in changes:
                     await lease.refresh()
                     yield (
-                        dict(change.entry.value)
-                        if change.entry is not None
+                        dict(snapshot.entry.value)
+                        if snapshot.entry is not None
                         else None
                     )
         except KvUnavailable as exc:
@@ -940,7 +940,9 @@ class _ServiceManagedServiceViewAccess(ManagedServiceViewAccess):
     async def watch(
         self,
         view: ServiceViewRef,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
+    ) -> AsyncIterator[
+        AsyncIterator[ServiceViewWatchSnapshot | ServiceViewWatchChange]
+    ]:
         context = await self._contract._context()
         async with self._store.watch(context.view_read_context(), view) as changes:
             yield changes
@@ -1032,7 +1034,9 @@ class _LeaseManagedServiceViewAccess(ManagedServiceViewAccess):
     async def watch(
         self,
         view: ServiceViewRef,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
+    ) -> AsyncIterator[
+        AsyncIterator[ServiceViewWatchSnapshot | ServiceViewWatchChange]
+    ]:
         await self._lease.refresh()
         async with super().watch(view) as changes:
             yield changes

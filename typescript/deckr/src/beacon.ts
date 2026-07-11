@@ -17,6 +17,7 @@ import {
   type StateEntry,
   type StateStore,
   type StateStorePolicy,
+  type StateWatchItem,
 } from "./state.ts";
 
 export const BEACON_ADVERTISEMENT_SCHEMA_ID = "dev.deckr.beacon.advertisement.v1";
@@ -308,7 +309,7 @@ export class BeaconDiscovery {
     return CandidateStatus.CANDIDATE;
   }
 
-  watch(featureId: string): AsyncIterable<StateChange> {
+  watch(featureId: string): AsyncIterable<StateWatchItem> {
     if (this.state.watch === undefined) {
       throw new StateUnavailable("State store does not support watch");
     }
@@ -427,7 +428,11 @@ export class BeaconService {
   }
 
   watchFeature(featureId: string): AsyncIterable<BeaconFeatureEvent> {
-    return beaconFeatureEvents(featureId, this.discovery.watch(featureId));
+    return beaconFeatureEvents(
+      featureId,
+      this.discovery.watch(featureId),
+      () => this.discovery.find(featureId),
+    );
   }
 
   async advertise(
@@ -494,10 +499,47 @@ export function candidateFromEntry(entry: StateEntry): Candidate | null {
 
 async function* beaconFeatureEvents(
   featureId: string,
-  changes: AsyncIterable<StateChange>,
+  changes: AsyncIterable<StateWatchItem>,
+  snapshot: () => Promise<Candidate[]>,
 ): AsyncIterable<BeaconFeatureEvent> {
   const known = new Map<string, Candidate>();
   for await (const change of changes) {
+    if (change.operation === "resnapshot") {
+      const current = new Map(
+        (await snapshot()).map((candidate) => [candidate.key, candidate]),
+      );
+      for (const [key, previous] of known) {
+        if (!current.has(key)) {
+          yield {
+            eventType: BeaconFeatureEventType.WITHDRAWN,
+            featureId,
+            key,
+            previous,
+          };
+        }
+      }
+      for (const [key, candidate] of current) {
+        const previous = known.get(key);
+        if (previous?.revision === candidate.revision) {
+          continue;
+        }
+        yield {
+          eventType:
+            previous === undefined
+              ? BeaconFeatureEventType.ADVERTISED
+              : BeaconFeatureEventType.UPDATED,
+          featureId,
+          key,
+          candidate,
+          ...(previous === undefined ? {} : { previous }),
+        };
+      }
+      known.clear();
+      for (const [key, candidate] of current) {
+        known.set(key, candidate);
+      }
+      continue;
+    }
     const event = beaconFeatureEvent(featureId, change, known);
     if (event !== null) {
       yield event;

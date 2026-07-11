@@ -38,6 +38,15 @@ export interface StateChange {
   entry?: StateEntry;
 }
 
+export interface StateResnapshot {
+  operation: "resnapshot";
+}
+
+export type StateWatchItem = StateChange | StateResnapshot;
+
+export const MAX_MEMORY_WATCH_CHANGED_KEYS = 256;
+export const MAX_MEMORY_WATCHERS = 256;
+
 export interface StateStore {
   get(key: string): Promise<StateEntry | null>;
   items(prefix?: string): Promise<StateEntry[]>;
@@ -49,7 +58,7 @@ export interface StateStore {
     options: { revision: number; ttl?: number | null },
   ): Promise<StateEntry>;
   delete(key: string, options?: { revision?: number | null }): Promise<void>;
-  watch?(prefix?: string): AsyncIterable<StateChange>;
+  watch?(prefix?: string): AsyncIterable<StateWatchItem>;
 }
 
 export interface PrefixObservation {
@@ -159,7 +168,12 @@ export class MemoryStateStore implements StateStore {
     this.emit({ operation: "delete", key });
   }
 
-  watch(prefix = ""): AsyncIterable<StateChange> {
+  watch(prefix = ""): AsyncIterable<StateWatchItem> {
+    if (this.watchers.size >= MAX_MEMORY_WATCHERS) {
+      throw new StateUnavailable(
+        `Memory state store supports at most ${MAX_MEMORY_WATCHERS} simultaneous watchers`,
+      );
+    }
     const watcher = new MemoryWatcher(prefix, () => this.watchers.delete(watcher));
     this.watchers.add(watcher);
     return watcher;
@@ -190,9 +204,10 @@ export class MemoryStateStore implements StateStore {
   }
 }
 
-class MemoryWatcher implements AsyncIterable<StateChange> {
-  private queue: StateChange[] = [];
-  private waits: Array<(value: IteratorResult<StateChange>) => void> = [];
+class MemoryWatcher implements AsyncIterable<StateWatchItem> {
+  private pending = new Map<string, StateChange>();
+  private resnapshotRequired = false;
+  private waiter: ((value: IteratorResult<StateWatchItem>) => void) | null = null;
   private closed = false;
   private readonly prefix: string;
   private readonly onClose: () => void;
@@ -206,25 +221,51 @@ class MemoryWatcher implements AsyncIterable<StateChange> {
     if (this.closed || !change.key.startsWith(this.prefix)) {
       return;
     }
-    const copied = copyChange(change);
-    const wait = this.waits.shift();
-    if (wait !== undefined) {
-      wait({ done: false, value: copied });
-      return;
+    if (!this.resnapshotRequired) {
+      this.pending.set(change.key, copyChange(change));
+      if (this.pending.size > MAX_MEMORY_WATCH_CHANGED_KEYS) {
+        this.pending.clear();
+        this.resnapshotRequired = true;
+      }
     }
-    this.queue.push(copied);
+    const waiter = this.waiter;
+    if (waiter !== null) {
+      this.waiter = null;
+      waiter({ done: false, value: this.takePending() });
+    }
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<StateChange> {
+  private takePending(): StateWatchItem {
+    if (this.resnapshotRequired) {
+      this.resnapshotRequired = false;
+      return { operation: "resnapshot" };
+    }
+    const first = this.pending.entries().next();
+    if (first.done) {
+      throw new StateUnavailable("Memory watcher woke without pending state");
+    }
+    const [key, change] = first.value;
+    this.pending.delete(key);
+    return change;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<StateWatchItem> {
     return {
       next: () => {
-        if (this.queue.length > 0) {
-          return Promise.resolve({ done: false, value: this.queue.shift()! });
+        if (this.resnapshotRequired || this.pending.size > 0) {
+          return Promise.resolve({ done: false, value: this.takePending() });
         }
         if (this.closed) {
           return Promise.resolve({ done: true, value: undefined });
         }
-        return new Promise((resolve) => this.waits.push(resolve));
+        if (this.waiter !== null) {
+          return Promise.reject(
+            new StateUnavailable("Memory watcher supports only one pending reader"),
+          );
+        }
+        return new Promise((resolve) => {
+          this.waiter = resolve;
+        });
       },
       return: () => {
         this.close();
@@ -239,8 +280,10 @@ class MemoryWatcher implements AsyncIterable<StateChange> {
     }
     this.closed = true;
     this.onClose();
-    for (const wait of this.waits.splice(0)) {
-      wait({ done: true, value: undefined });
+    if (this.waiter !== null) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter({ done: true, value: undefined });
     }
   }
 }

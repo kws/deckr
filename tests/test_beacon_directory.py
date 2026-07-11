@@ -8,7 +8,12 @@ import anyio
 import pytest
 
 from deckr.beacon import Beacon, BeaconAdvertisementSpec, BeaconDirectory
-from deckr.substrates.nats_kv import KvChange, KvEntry, KvUnavailable
+from deckr.substrates.nats_kv import (
+    KvChange,
+    KvEntry,
+    KvUnavailable,
+    KvWatchBarrier,
+)
 from deckr.testing import MemoryJsonKvBucket
 
 FEATURE_ID = "dev.deckr.test.directory"
@@ -72,16 +77,18 @@ class _RecoveringBeaconBucket(MemoryJsonKvBucket):
     async def watch(
         self,
         prefix: str = "",
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
+    ) -> AsyncIterator[
+        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
+    ]:
         if self._pause_next_watch:
             self._pause_next_watch = False
             self._watch_paused.set()
             await self._resume_watch.wait()
         close_event = anyio.Event()
         self._close_events.append(close_event)
-        send, receive = anyio.create_memory_object_stream[KvChange | None](
-            max_buffer_size=self._buffer_size
-        )
+        send, receive = anyio.create_memory_object_stream[
+            KvChange | KvWatchBarrier
+        ](max_buffer_size=self._buffer_size)
         async with self._lock:
             self._watchers[send] = prefix
             snapshot: tuple[KvEntry, ...] = tuple(
@@ -89,13 +96,14 @@ class _RecoveringBeaconBucket(MemoryJsonKvBucket):
                 for key, entry in sorted(self._entries.items())
                 if key.startswith(prefix)
             )
+            barrier = KvWatchBarrier(self._revision)
 
         async def run() -> None:
             for entry in snapshot:
                 await send.send(
                     KvChange(self.bucket, entry.key, entry.revision, "put", entry)
                 )
-            await send.send(None)
+            await send.send(barrier)
             await close_event.wait()
             await send.aclose()
 
@@ -242,12 +250,12 @@ async def test_beacon_directory_wait_for_returns_later_match_and_times_out() -> 
 @pytest.mark.asyncio
 async def test_beacon_directory_wait_current_recovers_from_stale_view() -> None:
     directory = BeaconDirectory(_ManualCurrentBeacon(), FEATURE_ID, _parse_payload)
-    directory._mark_current()  # noqa: SLF001
+    directory._apply_snapshot((), current=True)  # noqa: SLF001
     directory._mark_stale()  # noqa: SLF001
 
     async def recover() -> None:
         await anyio.sleep(0.01)
-        directory._mark_current()  # noqa: SLF001
+        directory._apply_snapshot((), current=True)  # noqa: SLF001
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(recover)
@@ -294,6 +302,6 @@ async def test_beacon_directory_surfaces_stale_and_recovers_current_view() -> No
             directory.resolve()
 
         raw.resume_next_watch()
-        await beacon.wait_current()
+        await directory.wait_current(timeout=1)
         assert directory.resolve() == "one"
         tg.cancel_scope.cancel()

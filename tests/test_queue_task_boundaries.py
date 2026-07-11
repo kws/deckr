@@ -10,6 +10,10 @@ from pathlib import Path
 _Boundary = tuple[Path, str, str, str]
 
 _STATE_STREAM_OWNERS = {
+    (
+        Path("deckr/src/deckr/core/util/anyio.py"),
+        "CoalescedStateBroadcaster",
+    ),
     (Path("deckr/src/deckr/substrates/nats_kv.py"), "NatsKvMaterializedBucket"),
     (Path("deckr/src/deckr/beacon.py"), "Beacon"),
     (Path("deckr/src/deckr/beacon.py"), "_BeaconSubscriber"),
@@ -39,137 +43,42 @@ class _TemporaryBoundary:
     count: int = 1
 
 
+# These are the deliberately bounded state-fanout primitives left after Phase 3.
+# Keeping exact semantic call sites here makes accidental replacement with an
+# unbounded registry or queue visible in the same audit as temporary debt.
+_PERMANENT_BOUNDED_BOUNDARIES: dict[_Boundary, int] = {
+    (
+        Path("deckr/src/deckr/core/util/anyio.py"),
+        "CoalescedStateBroadcaster.__init__",
+        "self._registrations",
+        "subscriber_registry",
+    ): 1,
+    (
+        Path("deckr/src/deckr/core/util/anyio.py"),
+        "CoalescedStateBroadcaster.subscribe",
+        "send, receive",
+        "bounded_state_stream",
+    ): 1,
+    (
+        Path("deckr/typescript/deckr/src/state.ts"),
+        "MemoryWatcher",
+        "pending",
+        "typescript_task_or_reply_route_map",
+    ): 1,
+    (
+        Path("deckr/typescript/deckr/src/state.ts"),
+        "MemoryStateStore",
+        "watchers",
+        "typescript_task_or_reply_route_map",
+    ): 1,
+}
+
+
 # Phase 0 freezes each unsafe creator by semantic call site. These are not
 # approved APIs: every entry names the implementation phase that removes or
 # bounds it, and the test fails when an entry disappears without its metadata
 # being removed too.
 _TEMPORARY_BOUNDARIES: dict[_Boundary, _TemporaryBoundary] = {
-    (
-        Path("deckr/src/deckr/core/util/anyio.py"),
-        "SubscribableQueue.__init__",
-        "self._subscribers",
-        "subscriber_registry",
-    ): _TemporaryBoundary(
-        phase="Phase 3/5",
-        reason="remove the generic lossy subscriber registry after callers migrate",
-    ),
-    (
-        Path("deckr/src/deckr/substrates/nats_kv.py"),
-        "NatsKvMaterializedBucket.__init__",
-        "self._subscribers",
-        "subscriber_registry",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace blocking materialized subscribers with capped state wakeups",
-    ),
-    (
-        Path("deckr/src/deckr/substrates/nats_kv.py"),
-        "NatsKvMaterializedBucket.subscribe",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace blocking materialized subscriber streams with capped wakeups",
-    ),
-    (
-        Path("deckr/src/deckr/beacon.py"),
-        "_BeaconSubscriber",
-        "pending_events",
-        "state_queue_without_capacity",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace replay event accumulation with bounded resnapshot state",
-    ),
-    (
-        Path("deckr/src/deckr/beacon.py"),
-        "Beacon.__init__",
-        "self._subscribers",
-        "subscriber_registry",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move Beacon registrations to the bounded current-state broadcaster",
-    ),
-    (
-        Path("deckr/src/deckr/beacon.py"),
-        "Beacon.watch",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace Beacon replay/fanout with capped resnapshot wakeups",
-    ),
-    (
-        Path("deckr/src/deckr/concord.py"),
-        "_ConcordSubscriber",
-        "pending_events",
-        "state_queue_without_capacity",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace replay event accumulation with bounded resnapshot state",
-    ),
-    (
-        Path("deckr/src/deckr/concord.py"),
-        "Concord.__init__",
-        "self._subscribers",
-        "subscriber_registry",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move Concord registrations to the bounded current-state broadcaster",
-    ),
-    (
-        Path("deckr/src/deckr/concord.py"),
-        "Concord.watch",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace Concord replay/fanout with capped resnapshot wakeups",
-    ),
-    (
-        Path("deckr/src/deckr/concord.py"),
-        "Concord.watch_contract_notifications_cached",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace notification pumps with atomic capped state wakeups",
-    ),
-    (
-        Path("deckr/src/deckr/concord.py"),
-        "ConcordParticipant.__init__",
-        "self._subscribers",
-        "subscriber_registry",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move participant state fanout to the bounded state broadcaster",
-    ),
-    (
-        Path("deckr/src/deckr/concord.py"),
-        "ConcordParticipant.watch",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace participant event streams with capped state wakeups",
-    ),
-    (
-        Path("deckr/src/deckr/services/views.py"),
-        "ServiceViewStore.__init__",
-        "self._subscribers",
-        "subscriber_registry",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move service-view registrations to the bounded state broadcaster",
-    ),
-    (
-        Path("deckr/src/deckr/services/views.py"),
-        "ServiceViewStore.watch",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace lossy service-view fanout with capped resnapshot wakeups",
-    ),
     (
         Path("deckr/src/deckr/services/subscriptions.py"),
         "SharedResourceSubscriptionManager.__init__",
@@ -178,51 +87,6 @@ _TEMPORARY_BOUNDARIES: dict[_Boundary, _TemporaryBoundary] = {
     ): _TemporaryBoundary(
         phase="Phase 5B",
         reason="cap logical sessions under provider-lease-scoped ownership",
-    ),
-    (
-        Path("deckr/src/deckr/services/subscriptions.py"),
-        "SharedResourceSubscriptionManager.open_session",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace lossy logical-session fanout with capped resnapshot wakeups",
-    ),
-    (
-        Path("deckr-controller/src/deckr/controller/config/_materialized.py"),
-        "MaterializedDeviceConfigService.__init__",
-        "self._subscribers",
-        "subscriber_registry",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move materialized config fanout to bounded state wakeups",
-    ),
-    (
-        Path("deckr-controller/src/deckr/controller/config/_materialized.py"),
-        "MaterializedDeviceConfigService._subscribe_impl",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="make config bootstrap and fanout convergent under overflow",
-    ),
-    (
-        Path("deckr-controller/src/deckr/controller/config/_service.py"),
-        "FileBackedDeviceConfigService.__init__",
-        "self._subscribers",
-        "subscriber_registry",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move file-backed config fanout to bounded state wakeups",
-    ),
-    (
-        Path("deckr-controller/src/deckr/controller/config/_service.py"),
-        "FileBackedDeviceConfigService._subscribe_impl",
-        "send, receive",
-        "bounded_state_stream",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="make config bootstrap and fanout convergent under overflow",
     ),
     (
         Path(
@@ -235,42 +99,6 @@ _TEMPORARY_BOUNDARIES: dict[_Boundary, _TemporaryBoundary] = {
     ): _TemporaryBoundary(
         phase="Phase 5",
         reason="replace infinite per-key dispatch lanes with bounded keyed workers",
-    ),
-    (
-        Path("deckr/src/deckr/components/_runner.py"),
-        "ComponentManager.__init__",
-        "self._subscribers",
-        "SubscribableQueue",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace lifecycle fanout with the bounded current-state broadcaster",
-    ),
-    (
-        Path("deckr/src/deckr/components/_runner.py"),
-        "ComponentManager.__init__",
-        "self._status_subscribers",
-        "SubscribableQueue",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace status fanout with the bounded current-state broadcaster",
-    ),
-    (
-        Path("deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"),
-        "SonosServiceComponent.__init__",
-        "self._zone_events",
-        "SubscribableQueue",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move zone state events to bounded resnapshot-capable fanout",
-    ),
-    (
-        Path("deckr-plugin-sonos/src/deckr/plugins/sonos/_soco_remote.py"),
-        "SoCoSonosRemoteZone.__init__",
-        "self._subscribers",
-        "SubscribableQueue",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move remote zone state to bounded resnapshot-capable fanout",
     ),
     (
         Path("deckr/src/deckr/substrates/nats.py"),
@@ -370,33 +198,6 @@ _TEMPORARY_BOUNDARIES: dict[_Boundary, _TemporaryBoundary] = {
     ): _TemporaryBoundary(
         phase="Phase 5",
         reason="bound provider work through managed command ownership",
-    ),
-    (
-        Path("deckr/typescript/deckr/src/state.ts"),
-        "MemoryWatcher",
-        "queue",
-        "typescript_array_queue_without_capacity",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace unbounded state delivery with capped resnapshot wakeups",
-    ),
-    (
-        Path("deckr/typescript/deckr/src/state.ts"),
-        "MemoryWatcher",
-        "waits",
-        "typescript_array_queue_without_capacity",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="replace queued state waiters with one bounded wakeup owner",
-    ),
-    (
-        Path("deckr/typescript/deckr/src/state.ts"),
-        "MemoryStateStore",
-        "watchers",
-        "typescript_task_or_reply_route_map",
-    ): _TemporaryBoundary(
-        phase="Phase 3",
-        reason="move state subscribers to the capped current-state broadcaster",
     ),
     (
         Path("deckr/typescript/deckr/src/services.ts"),
@@ -559,6 +360,13 @@ def test_production_queue_and_task_boundaries_are_inventoried() -> None:
         {
             boundary: metadata.count
             for boundary, metadata in _TEMPORARY_BOUNDARIES.items()
+            if boundary[0] in available_paths
+        }
+    )
+    allowed.update(
+        {
+            boundary: count
+            for boundary, count in _PERMANENT_BOUNDED_BOUNDARIES.items()
             if boundary[0] in available_paths
         }
     )
@@ -782,7 +590,10 @@ class _QueueTaskBoundaryVisitor(ast.NodeVisitor):
             annotation=annotation,
         ):
             self._record(owner, "task_or_reply_route_map")
-        if _is_subscriber_registry(owner) and _is_collection_initializer(value):
+        if (
+            _is_subscriber_registry(owner)
+            or (self._is_state_owner_scope() and _is_registration_registry(owner))
+        ) and _is_collection_initializer(value):
             self._record(owner, "subscriber_registry")
         if (
             self._is_state_owner_scope()
@@ -932,6 +743,10 @@ def _is_list_initializer(node: ast.AST) -> bool:
 
 def _is_subscriber_registry(owner: str) -> bool:
     return owner.rsplit(".", 1)[-1].lower() in {"subscribers", "_subscribers"}
+
+
+def _is_registration_registry(owner: str) -> bool:
+    return owner.rsplit(".", 1)[-1].lower() in {"registrations", "_registrations"}
 
 
 def _is_task_or_reply_route_map(owner: str, *, annotation: str) -> bool:

@@ -26,32 +26,19 @@ from deckr.contracts.authority import ContractPointer
 from deckr.substrates.nats_kv import (
     KvChange,
     KvEntry,
-    KvViewStatus,
+    KvMaterializedSnapshot,
+    KvWatchBarrier,
     NatsKvMaterializedBucket,
 )
 from deckr.testing.kv import MemoryJsonKvBucket
-
-
-def _runtime_concord(
-    contract_store: Any,
-    token_store: Any,
-    *,
-    buffer_size: int,
-) -> Concord:
-    return Concord(
-        contract_store,
-        token_store,
-        buffer_size=buffer_size,
-    )
 
 
 def _materialized(store: Any) -> Any:
     if all(
         hasattr(store, name)
         for name in (
-            "get_exact",
+            "exact_bucket",
             "get_cached",
-            "items_exact",
             "items_cached",
             "subscribe",
             "start",
@@ -68,7 +55,6 @@ class ConcordRuntimeHarness:
         contract_store: Any | None = None,
         token_store: Any | None = None,
         token_ttl_seconds: float = 120,
-        buffer_size: int = 100,
     ) -> None:
         self.contract_store = contract_store or MemoryJsonKvBucket(
             bucket=DEFAULT_CONCORD_CONTRACT_BUCKET_NAME
@@ -79,10 +65,9 @@ class ConcordRuntimeHarness:
         )
         self._contract_view = _materialized(self.contract_store)
         self._token_view = _materialized(self.token_store)
-        self.concord = _runtime_concord(
+        self.concord = Concord(
             self._contract_view,
             self._token_view,
-            buffer_size=buffer_size,
         )
 
     async def seed_contract(self, record: ContractRecord) -> ContractHandle:
@@ -117,9 +102,20 @@ class ConcordRuntimeHarness:
         return await self.token_store.put(key, value)
 
     async def materialize(self) -> None:
-        await _materialize_store(self._contract_view, self.contract_store)
-        await _materialize_store(self._token_view, self.token_store)
-        await self.concord._rebuild_from_buckets()  # noqa: SLF001
+        contract_snapshot = await _materialize_store(
+            self._contract_view,
+            self.contract_store,
+        )
+        token_snapshot = await _materialize_store(
+            self._token_view,
+            self.token_store,
+        )
+        await self.concord._view._install_contract_snapshot(  # noqa: SLF001
+            contract_snapshot
+        )
+        await self.concord._view._install_token_snapshot(  # noqa: SLF001
+            token_snapshot
+        )
 
     async def contract_entry(
         self,
@@ -166,13 +162,11 @@ class ConcordMaintenanceHarness(ConcordRuntimeHarness):
         token_store: Any | None = None,
         maintenance_store: Any | None = None,
         token_ttl_seconds: float = 120,
-        buffer_size: int = 100,
     ) -> None:
         super().__init__(
             contract_store=contract_store,
             token_store=token_store,
             token_ttl_seconds=token_ttl_seconds,
-            buffer_size=buffer_size,
         )
         self.maintenance_store = maintenance_store or MemoryJsonKvBucket(
             bucket=DEFAULT_CONCORD_MAINTENANCE_BUCKET_NAME
@@ -184,24 +178,16 @@ class ConcordMaintenanceHarness(ConcordRuntimeHarness):
         )
 
 
-async def _materialize_store(view: Any, store: Any | None) -> None:
-    if store is None or view is store:
-        return
-    apply_change = getattr(view, "_apply_change", None)
-    if apply_change is None:
-        return
+async def _materialize_store(view: Any, store: Any) -> KvMaterializedSnapshot:
     entries = await store.items()
-    present = {entry.key for entry in entries}
-    for entry in entries:
-        await apply_change(
-            KvChange(view.bucket, entry.key, entry.revision, "put", entry)
-        )
-    for cached in view.items_cached():
-        if cached.key in present:
-            continue
-        await apply_change(
-            KvChange(view.bucket, cached.key, cached.revision + 1, "delete")
-        )
-    set_status = getattr(view, "_set_status", None)
-    if set_status is not None:
-        await set_status(KvViewStatus.READY)
+    observed = {
+        entry.key: KvChange(view.bucket, entry.key, entry.revision, "put", entry)
+        for entry in entries
+    }
+    revision = int(getattr(store, "revision", max((e.revision for e in entries), default=0)))
+    await view._install_recovered_snapshot(  # noqa: SLF001
+        observed,
+        {},
+        barrier=KvWatchBarrier(revision),
+    )
+    return await view.snapshot()

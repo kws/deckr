@@ -7,7 +7,13 @@ from typing import Any
 import anyio
 
 from deckr.contracts.models import DeckrModel
-from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
+from deckr.substrates.nats_kv import (
+    KvChange,
+    KvConflict,
+    KvEntry,
+    KvWatchBarrier,
+    kv_value,
+)
 
 
 class MemoryJsonKvBucket:
@@ -25,10 +31,10 @@ class MemoryJsonKvBucket:
         self._ttl_seconds = ttl_seconds
         self._revision = 0
         self._mutation_count = 0
-        self._generation = 0
         self._entries: dict[str, KvEntry] = {}
-        self._watchers: dict[anyio.abc.ObjectSendStream[KvChange | None], str] = {}
-        self._subscribers: set[anyio.abc.ObjectSendStream[KvChange]] = set()
+        self._watchers: dict[
+            anyio.abc.ObjectSendStream[KvChange | KvWatchBarrier], str
+        ] = {}
         self._lock = anyio.Lock()
         self._ready = anyio.Event()
         self._ready.set()
@@ -48,10 +54,6 @@ class MemoryJsonKvBucket:
         return self._mutation_count
 
     @property
-    def generation(self) -> int:
-        return self._generation
-
-    @property
     def watch_count(self) -> int:
         return self._watch_count
 
@@ -61,11 +63,11 @@ class MemoryJsonKvBucket:
 
     @property
     def subscription_count(self) -> int:
-        return self._subscription_count
+        return 0
 
     @property
     def active_subscription_count(self) -> int:
-        return len(self._subscribers)
+        return 0
 
     @property
     def start_count(self) -> int:
@@ -137,17 +139,15 @@ class MemoryJsonKvBucket:
         ttl: float | None = None,
     ) -> KvEntry:
         del ttl
-        entry, watchers, subscribers = await self._write(key, value)
+        entry, watchers = await self._write(key, value)
         await self._publish(
             watchers,
-            subscribers,
             KvChange(
                 self.bucket,
                 key,
                 entry.revision,
                 "put",
                 entry,
-                view_generation=self._generation,
             ),
         )
         return entry
@@ -167,17 +167,14 @@ class MemoryJsonKvBucket:
             entry = self._next_entry(key, normalized)
             self._entries[key] = entry
             watchers = self._watchers_for(key)
-            subscribers = tuple(self._subscribers)
         await self._publish(
             watchers,
-            subscribers,
             KvChange(
                 self.bucket,
                 key,
                 entry.revision,
                 "put",
                 entry,
-                view_generation=self._generation,
             ),
         )
         return entry
@@ -199,17 +196,14 @@ class MemoryJsonKvBucket:
             entry = self._next_entry(key, normalized)
             self._entries[key] = entry
             watchers = self._watchers_for(key)
-            subscribers = tuple(self._subscribers)
         await self._publish(
             watchers,
-            subscribers,
             KvChange(
                 self.bucket,
                 key,
                 entry.revision,
                 "put",
                 entry,
-                view_generation=self._generation,
             ),
         )
         return entry
@@ -225,16 +219,13 @@ class MemoryJsonKvBucket:
             self._entries.pop(key, None)
             delete_revision = self._revision
             watchers = self._watchers_for(key)
-            subscribers = tuple(self._subscribers)
         await self._publish(
             watchers,
-            subscribers,
             KvChange(
                 self.bucket,
                 key,
                 delete_revision,
                 "delete",
-                view_generation=self._generation,
             ),
         )
         return delete_revision
@@ -247,16 +238,13 @@ class MemoryJsonKvBucket:
             self._advance_mutation()
             expire_revision = self._revision
             watchers = self._watchers_for(key)
-            subscribers = tuple(self._subscribers)
         await self._publish(
             watchers,
-            subscribers,
             KvChange(
                 self.bucket,
                 key,
                 expire_revision,
                 "expire",
-                view_generation=self._generation,
             ),
         )
         return True
@@ -265,20 +253,30 @@ class MemoryJsonKvBucket:
     async def watch(
         self,
         prefix: str = "",
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
-        send, receive = anyio.create_memory_object_stream[KvChange | None](
+    ) -> AsyncIterator[
+        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
+    ]:
+        send, receive = anyio.create_memory_object_stream[KvChange | KvWatchBarrier](
             max_buffer_size=self._buffer_size
         )
         async with self._lock:
             self._watch_count += 1
             self._watchers[send] = prefix
             snapshot = self.items_cached(prefix)
-        for entry in snapshot:
-            await send.send(KvChange(self.bucket, entry.key, entry.revision, "put", entry))
-        await send.send(None)
+            barrier = KvWatchBarrier(self._revision)
+
+        async def publish_snapshot() -> None:
+            for entry in snapshot:
+                await send.send(
+                    KvChange(self.bucket, entry.key, entry.revision, "put", entry)
+                )
+            await send.send(barrier)
+
         try:
-            async with send, receive:
+            async with send, receive, anyio.create_task_group() as task_group:
+                task_group.start_soon(publish_snapshot)
                 yield receive
+                task_group.cancel_scope.cancel()
         finally:
             async with self._lock:
                 self._watchers.pop(send, None)
@@ -289,14 +287,13 @@ class MemoryJsonKvBucket:
         value: Mapping[str, Any] | DeckrModel,
     ) -> tuple[
         KvEntry,
-        tuple[anyio.abc.ObjectSendStream[KvChange | None], ...],
-        tuple[anyio.abc.ObjectSendStream[KvChange], ...],
+        tuple[anyio.abc.ObjectSendStream[KvChange | KvWatchBarrier], ...],
     ]:
         normalized = kv_value(value)
         async with self._lock:
             entry = self._next_entry(key, normalized)
             self._entries[key] = entry
-            return entry, self._watchers_for(key), tuple(self._subscribers)
+            return entry, self._watchers_for(key)
 
     def _next_entry(self, key: str, value: Mapping[str, Any]) -> KvEntry:
         self._advance_mutation()
@@ -305,23 +302,23 @@ class MemoryJsonKvBucket:
     def _advance_mutation(self) -> None:
         self._revision += 1
         self._mutation_count += 1
-        self._generation += 1
 
     def _watchers_for(
         self,
         key: str,
-    ) -> tuple[anyio.abc.ObjectSendStream[KvChange | None], ...]:
+    ) -> tuple[
+        anyio.abc.ObjectSendStream[KvChange | KvWatchBarrier], ...
+    ]:
         return tuple(
             stream for stream, prefix in self._watchers.items() if key.startswith(prefix)
         )
 
     async def _publish(
         self,
-        watchers: tuple[anyio.abc.ObjectSendStream[KvChange | None], ...],
-        subscribers: tuple[anyio.abc.ObjectSendStream[KvChange], ...],
+        watchers: tuple[
+            anyio.abc.ObjectSendStream[KvChange | KvWatchBarrier], ...
+        ],
         change: KvChange,
     ) -> None:
         for watcher in watchers:
             await watcher.send(change)
-        for subscriber in subscribers:
-            await subscriber.send(change)

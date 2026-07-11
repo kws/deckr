@@ -7,7 +7,10 @@ from typing import Any, Protocol
 import anyio
 
 from deckr.contracts.models import DeckrModel
-from deckr.substrates.nats_kv import KvChange, KvEntry
+from deckr.substrates.nats_kv import (
+    KvEntry,
+    KvMaterializedSnapshot,
+)
 
 
 class ExactConcordKvPort(Protocol):
@@ -43,7 +46,7 @@ class ConcordMaterializedSourcePort(Protocol):
     def bucket(self) -> str: ...
 
     @property
-    def generation(self) -> int: ...
+    def version(self) -> int: ...
 
     def start(self, task_group: anyio.abc.TaskGroup) -> None: ...
 
@@ -55,6 +58,8 @@ class ConcordMaterializedSourcePort(Protocol):
 
     async def wait_current(self) -> None: ...
 
+    async def aclose(self) -> None: ...
+
     def get_cached(self, key: str) -> KvEntry | None: ...
 
     def items_cached(self, prefix: str = "") -> tuple[KvEntry, ...]: ...
@@ -63,7 +68,11 @@ class ConcordMaterializedSourcePort(Protocol):
 
     def subscribe(
         self,
-    ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[KvChange]]: ...
+    ) -> AbstractAsyncContextManager[
+        Any
+    ]: ...
+
+    async def snapshot(self) -> KvMaterializedSnapshot: ...
 
 
 class ConcordMaintenanceScanPort(Protocol):

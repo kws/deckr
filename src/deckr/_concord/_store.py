@@ -78,22 +78,21 @@ def _is_materialized_bucket(value: Any) -> bool:
             "is_ready",
             "is_current",
             "wait_current",
-            "get_exact",
+            "exact_bucket",
             "get_cached",
             "items_cached",
-            "items_exact",
             "revision_cached",
+            "snapshot",
             "subscribe",
-            "create",
-            "update",
-            "delete",
+            "wait_for_revision",
         )
     )
 
 
 class _ExactKvAdapter:
-    def __init__(self, bucket: Any) -> None:
+    def __init__(self, bucket: Any, *, source: Any | None = None) -> None:
         self._bucket = bucket
+        self._source = source
 
     @property
     def bucket(self) -> str:
@@ -120,7 +119,9 @@ class _ExactKvAdapter:
         ttl: float | None = None,
     ) -> KvEntry:
         try:
-            return await self._bucket.create(key, value, ttl=ttl)
+            entry = await self._bucket.create(key, value, ttl=ttl)
+            await self._wait_observed(key, entry.revision)
+            return entry
         except KvConflict as exc:
             raise ConcordConflict(
                 ConcordConflictCode.KEY_ALREADY_EXISTS,
@@ -144,12 +145,14 @@ class _ExactKvAdapter:
         ttl: float | None = None,
     ) -> KvEntry:
         try:
-            return await self._bucket.update(
+            entry = await self._bucket.update(
                 key,
                 value,
                 revision=revision,
                 ttl=ttl,
             )
+            await self._wait_observed(key, entry.revision)
+            return entry
         except KvConflict as exc:
             raise ConcordConflict(
                 ConcordConflictCode.REVISION_CHANGED,
@@ -166,7 +169,10 @@ class _ExactKvAdapter:
 
     async def delete(self, key: str, *, revision: int) -> int | None:
         try:
-            return await self._bucket.delete(key, revision=revision)
+            marker_revision = await self._bucket.delete(key, revision=revision)
+            if marker_revision is not None:
+                await self._wait_observed(key, marker_revision)
+            return marker_revision
         except KvConflict as exc:
             raise ConcordConflict(
                 ConcordConflictCode.REVISION_CHANGED,
@@ -180,6 +186,11 @@ class _ExactKvAdapter:
                 bucket=self.bucket,
                 key=key,
             ) from exc
+
+    async def _wait_observed(self, key: str, revision: int) -> None:
+        if self._source is None:
+            return
+        await self._source.wait_for_revision(key, revision)
 
     async def ttl_seconds(self) -> int:
         ttl_seconds = getattr(self._bucket, "ttl_seconds", None)
@@ -238,8 +249,8 @@ class _MaterializedSourceAdapter:
         return str(self._bucket.bucket)
 
     @property
-    def generation(self) -> int:
-        return int(getattr(self._bucket, "generation", 0))
+    def version(self) -> int:
+        return int(getattr(self._bucket, "version", 0))
 
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
         self._bucket.start(task_group)
@@ -270,6 +281,9 @@ class _MaterializedSourceAdapter:
                 bucket=self.bucket,
             ) from exc
 
+    async def aclose(self) -> None:
+        await self._bucket.aclose()
+
     def get_cached(self, key: str) -> KvEntry | None:
         return self._bucket.get_cached(key)
 
@@ -279,6 +293,9 @@ class _MaterializedSourceAdapter:
     def revision_cached(self, key: str) -> int | None:
         revision_cached = getattr(self._bucket, "revision_cached", None)
         return None if revision_cached is None else revision_cached(key)
+
+    async def snapshot(self):
+        return await self._bucket.snapshot()
 
     @asynccontextmanager
     async def subscribe(self):
@@ -349,7 +366,7 @@ def concord_bucket_adapters(
 ) -> ConcordBucketAdapters:
     materialized = _normalize_materialized_bucket(bucket)
     return ConcordBucketAdapters(
-        exact=_ExactKvAdapter(materialized),
+        exact=_ExactKvAdapter(materialized.exact_bucket, source=materialized),
         source=_MaterializedSourceAdapter(materialized),
     )
 

@@ -110,7 +110,6 @@ def test_normal_concord_constructor_and_surface_have_no_maintenance() -> None:
     assert tuple(signature(Concord).parameters) == (
         "contract_bucket",
         "token_bucket",
-        "buffer_size",
     )
     for name in (
         "maintenance_bucket",

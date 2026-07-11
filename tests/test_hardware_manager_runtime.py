@@ -146,18 +146,44 @@ async def _runtime(
     reset_handler=None,
 ):
     deckr = mock_deckr()
+    view_task_group_cm = anyio.create_task_group()
+    view_task_group = await view_task_group_cm.__aenter__()
+    beacon = _beacon(deckr)
+    concord = _concord(deckr)
+    beacon.start(view_task_group)
+    concord.start(view_task_group)
+    await beacon.wait_current()
+    await concord.wait_current()
     endpoint_cm = deckr.endpoint(hardware_manager_address("manager-main"))
     endpoint = await endpoint_cm.__aenter__()
     runtime = HardwareManagerRuntime(
         endpoint=endpoint,
-        beacon=_beacon(deckr),
-        concord=_concord(deckr),
+        beacon=beacon,
+        concord=concord,
         manager_id="manager-main",
         labels=labels,
         command_handler=command_handler,
         reset_handler=reset_handler,
     )
-    return deckr, endpoint_cm, runtime
+    return (
+        deckr,
+        _RuntimeTestContext(endpoint_cm, view_task_group_cm, view_task_group),
+        runtime,
+    )
+
+
+class _RuntimeTestContext:
+    def __init__(self, endpoint_cm, task_group_cm, task_group) -> None:
+        self._endpoint_cm = endpoint_cm
+        self._task_group_cm = task_group_cm
+        self._task_group = task_group
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        try:
+            return await self._endpoint_cm.__aexit__(exc_type, exc, traceback)
+        finally:
+            self._task_group.cancel_scope.cancel()
+            await self._task_group_cm.__aexit__(exc_type, exc, traceback)
 
 
 async def _add_device(runtime: HardwareManagerRuntime, descriptor: DeviceDescriptor):

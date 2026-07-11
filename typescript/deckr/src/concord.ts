@@ -20,6 +20,7 @@ import {
   type StateEntry,
   type StateStore,
   type StateStorePolicy,
+  type StateWatchItem,
 } from "./state.ts";
 
 export { canonicalJson, canonicalJsonBytes, canonicalJsonHash } from "./json.ts";
@@ -526,7 +527,7 @@ export class ConcordCoordinator {
     return contracts.sort((left, right) => left.key.localeCompare(right.key));
   }
 
-  watchContracts(): AsyncIterable<StateChange> {
+  watchContracts(): AsyncIterable<StateWatchItem> {
     if (this.contractState.watch === undefined) {
       throw new StateUnavailable("Contract state store does not support watch");
     }
@@ -1047,7 +1048,7 @@ export class ConcordService {
     return this.coordinator.contracts(profile, options);
   }
 
-  watchContracts(): AsyncIterable<StateChange> {
+  watchContracts(): AsyncIterable<StateWatchItem> {
     return this.coordinator.watchContracts();
   }
 

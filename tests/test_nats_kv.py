@@ -9,17 +9,20 @@ import anyio
 import pytest
 
 from deckr.substrates.nats_kv import (
+    MATERIALIZED_TOMBSTONE_LIMIT,
     KvBucketPolicy,
     KvChange,
     KvConflict,
     KvEntry,
     KvUnavailable,
     KvViewStatus,
+    KvWatchBarrier,
     NatsJsonKvBucket,
     NatsKvMaterializedBucket,
     kv_entry_is_absent_marker,
     kv_value,
 )
+from deckr.testing import MemoryJsonKvBucket
 
 
 @pytest.mark.asyncio
@@ -238,7 +241,7 @@ async def test_nats_json_kv_watch_maps_put_delete_and_expire_markers() -> None:
     assert unclassified_marker is not None
     assert unclassified_marker.operation == "delete"
     assert unclassified_marker.marker_reason == "absent"
-    assert ready is None
+    assert ready == KvWatchBarrier(revision=4)
     assert fake_js.deleted_consumers == [("KV_deckr_concord_contract_v1", "consumer-1")]
 
 
@@ -411,6 +414,234 @@ async def test_materialized_bucket_reconciles_absent_keys_on_watch_recovery() ->
         task_group.cancel_scope.cancel()
 
 
+@pytest.mark.asyncio
+async def test_materialized_bucket_installs_oversized_initial_snapshot_atomically() -> (
+    None
+):
+    raw = MemoryJsonKvBucket(bucket="oversized", buffer_size=1)
+    for index in range(600):
+        await raw.put(f"items.{index:04d}", {"value": index})
+    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        with anyio.fail_after(2):
+            await materialized.wait_current()
+
+        async with materialized.subscribe() as snapshots:
+            initial = await anext(snapshots)
+            assert initial.current
+            assert initial.version == materialized.version
+            assert len(initial.entries) == 600
+            assert initial.entries == materialized.items_cached("items.")
+
+        await materialized.aclose()
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_bootstrap_keeps_newer_put_and_delete() -> None:
+    raw = _BootstrapRaceBucket(bucket="bootstrap")
+    first = await raw.put("items.a", {"value": "old"})
+    stale = await raw.put("items.b", {"value": "stale"})
+    materialized = NatsKvMaterializedBucket(bucket=raw, key_prefix="items.")
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        with anyio.fail_after(1):
+            await raw.snapshot_captured.wait()
+
+        updated = await raw.update(
+            first.key,
+            {"value": "new"},
+            revision=first.revision,
+        )
+        deleted_revision = await raw.delete(stale.key, revision=stale.revision)
+        assert deleted_revision is not None
+        raw.release_snapshot.set()
+
+        with anyio.fail_after(1):
+            await materialized.wait_current()
+        assert materialized.get_cached(first.key) == updated
+        assert materialized.get_cached(stale.key) is None
+        assert materialized.revision_cached(stale.key) == deleted_revision
+        await materialized.aclose()
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_slow_reader_does_not_block_writes_or_convergence() -> (
+    None
+):
+    raw = MemoryJsonKvBucket(bucket="slow-reader", buffer_size=4)
+    materialized = NatsKvMaterializedBucket(bucket=raw)
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        await materialized.wait_current()
+        async with (
+            materialized.subscribe() as slow,
+            materialized.subscribe() as observer,
+        ):
+            await anext(slow)
+            await anext(observer)
+
+            for index in range(257):
+                with anyio.fail_after(1):
+                    await raw.put(f"items.{index:04d}", {"value": index})
+
+            with anyio.fail_after(1):
+                while len(materialized.items_cached()) != 257:
+                    await anyio.sleep(0)
+            change = await anext(observer)
+            assert change.resnapshot_required
+            assert change.changed_keys == frozenset()
+            snapshot = await materialized.snapshot()
+            assert snapshot.current
+            assert len(snapshot.entries) == 257
+
+        await materialized.aclose()
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_ignores_duplicate_and_out_of_order_revisions() -> (
+    None
+):
+    raw = MemoryJsonKvBucket(bucket="ordered")
+    materialized = NatsKvMaterializedBucket(bucket=raw)
+    current = KvEntry(raw.bucket, "items.a", kv_value({"value": 5}), 5)
+    newer = KvEntry(raw.bucket, "items.a", kv_value({"value": 7}), 7)
+
+    await materialized._apply_change(  # noqa: SLF001
+        KvChange(raw.bucket, current.key, current.revision, "put", current)
+    )
+    version = materialized.version
+    await materialized._apply_change(  # noqa: SLF001
+        KvChange(raw.bucket, current.key, 4, "delete")
+    )
+    await materialized._apply_change(  # noqa: SLF001
+        KvChange(raw.bucket, current.key, current.revision, "put", current)
+    )
+    assert materialized.version == version
+    assert materialized.get_cached(current.key) == current
+
+    await materialized._apply_change(  # noqa: SLF001
+        KvChange(raw.bucket, current.key, 6, "delete")
+    )
+    await materialized._apply_change(  # noqa: SLF001
+        KvChange(raw.bucket, current.key, current.revision, "put", current)
+    )
+    assert materialized.get_cached(current.key) is None
+    assert materialized.revision_cached(current.key) == 6
+
+    await materialized._apply_change(  # noqa: SLF001
+        KvChange(raw.bucket, newer.key, newer.revision, "put", newer)
+    )
+    assert materialized.get_cached(newer.key) == newer
+    await materialized.aclose()
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_bounds_post_barrier_tombstones() -> None:
+    raw = MemoryJsonKvBucket(bucket="tombstones")
+    materialized = NatsKvMaterializedBucket(bucket=raw)
+    changes = {
+        f"items.{revision:04d}": KvChange(
+            raw.bucket,
+            f"items.{revision:04d}",
+            revision,
+            "delete",
+        )
+        for revision in range(1, MATERIALIZED_TOMBSTONE_LIMIT + 502)
+    }
+
+    compact = await materialized._install_recovered_snapshot(  # noqa: SLF001
+        {},
+        changes,
+        barrier=KvWatchBarrier(0),
+    )
+    assert compact
+    assert materialized.tombstone_count == MATERIALIZED_TOMBSTONE_LIMIT
+    assert materialized.revision_cached("items.0001") is None
+    assert (
+        materialized.revision_cached(
+            f"items.{MATERIALIZED_TOMBSTONE_LIMIT + 501:04d}"
+        )
+        == MATERIALIZED_TOMBSTONE_LIMIT + 501
+    )
+
+    await materialized._install_recovered_snapshot(  # noqa: SLF001
+        {},
+        {},
+        barrier=KvWatchBarrier(MATERIALIZED_TOMBSTONE_LIMIT + 501),
+    )
+    assert materialized.tombstone_count == 0
+    await materialized.aclose()
+
+
+@pytest.mark.asyncio
+async def test_materialized_bucket_close_ends_blocked_async_iterator() -> None:
+    raw = MemoryJsonKvBucket(bucket="close")
+    materialized = NatsKvMaterializedBucket(bucket=raw)
+
+    async with anyio.create_task_group() as task_group:
+        materialized.start(task_group)
+        await materialized.wait_current()
+        async with materialized.subscribe() as snapshots:
+            await anext(snapshots)
+            stopped = anyio.Event()
+
+            async def blocked_reader() -> None:
+                async for _change in snapshots:
+                    raise AssertionError("closed materializer emitted another change")
+                stopped.set()
+
+            task_group.start_soon(blocked_reader)
+            await anyio.sleep(0)
+            with anyio.fail_after(1):
+                await materialized.aclose()
+                await stopped.wait()
+
+
+class _BootstrapRaceBucket(MemoryJsonKvBucket):
+    def __init__(self, *, bucket: str) -> None:
+        super().__init__(bucket=bucket, buffer_size=16)
+        self.snapshot_captured = anyio.Event()
+        self.release_snapshot = anyio.Event()
+
+    @asynccontextmanager
+    async def watch(
+        self,
+        prefix: str = "",
+    ) -> AsyncIterator[
+        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
+    ]:
+        send, receive = anyio.create_memory_object_stream[
+            KvChange | KvWatchBarrier
+        ](16)
+        async with self._lock:  # noqa: SLF001
+            self._watch_count += 1  # noqa: SLF001
+            self._watchers[send] = prefix  # noqa: SLF001
+            snapshot = self.items_cached(prefix)
+            barrier = KvWatchBarrier(self.revision)
+
+        async def publish_snapshot() -> None:
+            await self.release_snapshot.wait()
+            for entry in snapshot:
+                await send.send(
+                    KvChange(self.bucket, entry.key, entry.revision, "put", entry)
+                )
+            await send.send(barrier)
+
+        try:
+            async with send, receive, anyio.create_task_group() as task_group:
+                task_group.start_soon(publish_snapshot)
+                self.snapshot_captured.set()
+                yield receive
+                task_group.cancel_scope.cancel()
+        finally:
+            async with self._lock:  # noqa: SLF001
+                self._watchers.pop(send, None)  # noqa: SLF001
+
+
 class _RecoveringWatchBucket:
     def __init__(self, *, bucket: str) -> None:
         self.bucket = bucket
@@ -456,7 +687,9 @@ class _RecoveringWatchBucket:
     async def watch(
         self,
         prefix: str = "",
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
+    ) -> AsyncIterator[
+        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
+    ]:
         self.watch_count += 1
         if self._pause_next_watch:
             self._pause_next_watch = False
@@ -464,17 +697,20 @@ class _RecoveringWatchBucket:
             await self._resume_watch.wait()
         close_event = anyio.Event()
         self._close_events.append(close_event)
-        send, receive = anyio.create_memory_object_stream[KvChange | None](100)
+        send, receive = anyio.create_memory_object_stream[KvChange | KvWatchBarrier](
+            100
+        )
         snapshot = tuple(
             entry for key, entry in sorted(self._entries.items()) if key.startswith(prefix)
         )
+        barrier = KvWatchBarrier(self._revision)
 
         async def run() -> None:
             for entry in snapshot:
                 await send.send(
                     KvChange(self.bucket, entry.key, entry.revision, "put", entry)
                 )
-            await send.send(None)
+            await send.send(barrier)
             await close_event.wait()
             await send.aclose()
 

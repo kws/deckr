@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -462,9 +462,10 @@ class HardwareManagerRuntime:
 
     async def _contract_event_loop(self) -> None:
         async with self._claim_manager.watch() as stream:
-            async for event in stream:
+            async for snapshot in stream:
                 await self._reconcile_claims(
-                    reason=f"managed contract {event.event_type.value}"
+                    reason=f"managed contracts version {snapshot.version}",
+                    managed=snapshot.contracts,
                 )
 
     async def _contract_reconcile_loop(self) -> None:
@@ -478,13 +479,23 @@ class HardwareManagerRuntime:
                 )
             await anyio.sleep(self.claim_reconcile_seconds)
 
-    async def _reconcile_claims(self, *, reason: str) -> None:
+    async def _reconcile_claims(
+        self,
+        *,
+        reason: str,
+        managed: Iterable[Any] | None = None,
+    ) -> None:
         async with self._lock:
-            await self._reconcile_claims_locked(reason=reason)
+            await self._reconcile_claims_locked(reason=reason, managed=managed)
 
-    async def _reconcile_claims_locked(self, *, reason: str) -> None:
+    async def _reconcile_claims_locked(
+        self,
+        *,
+        reason: str,
+        managed: Iterable[Any] | None = None,
+    ) -> None:
         logger.debug("Reconciling hardware manager claims via %s", reason)
-        candidates = await self._matching_claim_candidates()
+        candidates = await self._matching_claim_candidates(managed=managed)
         ordered = self._ordered_claim_candidates(candidates)
         next_claims: dict[str, LiveHardwareClaim] = {}
         next_by_device: dict[str, LiveHardwareClaim] = {}
@@ -520,11 +531,20 @@ class HardwareManagerRuntime:
             await self._reset_lost_claim_devices(lost_claims.values())
         await self._publish_advertisement_if_changed()
 
-    async def _matching_claim_candidates(self) -> dict[str, _ClaimCandidate]:
+    async def _matching_claim_candidates(
+        self,
+        *,
+        managed: Iterable[Any] | None = None,
+    ) -> dict[str, _ClaimCandidate]:
         candidates: dict[str, _ClaimCandidate] = {}
-        for managed in await self._claim_manager.reconcile(reason="hardware runtime"):
-            validity = managed.validity
-            record = managed.record
+        managed_contracts = (
+            await self._claim_manager.reconcile(reason="hardware runtime")
+            if managed is None
+            else managed
+        )
+        for managed_contract in managed_contracts:
+            validity = managed_contract.validity
+            record = managed_contract.record
             if record is None or record.state != ContractState.OPEN:
                 continue
             try:
@@ -533,14 +553,14 @@ class HardwareManagerRuntime:
                 continue
             if not self._claim_terms_match_current_devices(terms):
                 continue
-            if self.endpoint.address not in managed.contract.participants:
+            if self.endpoint.address not in managed_contract.contract.participants:
                 continue
-            if terms.controller_endpoint not in managed.contract.participants:
+            if terms.controller_endpoint not in managed_contract.contract.participants:
                 continue
-            candidates[managed.contract.key] = _ClaimCandidate(
-                contract=managed.contract,
+            candidates[managed_contract.contract.key] = _ClaimCandidate(
+                contract=managed_contract.contract,
                 terms=terms,
-                token=managed.token,
+                token=managed_contract.token,
                 valid=validity.status == ContractValidityStatus.VALID,
                 controller_session_id=(
                     validity.tokens[str(terms.controller_endpoint)].session_id

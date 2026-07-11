@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Collection, Hashable, Mapping
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Hashable,
+    Mapping,
+)
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -11,6 +18,10 @@ from typing import Any, Generic, TypeVar
 
 import anyio
 
+from deckr.core.util.anyio import (
+    CoalescedStateBroadcaster,
+    CoalescedStateSubscription,
+)
 from deckr.services.messages import ServiceError, ServiceMessageBody
 from deckr.services.runtime import (
     ServiceDescriptor,
@@ -59,7 +70,61 @@ class ServiceSubscriptionMessage(Generic[ResourceT]):
 @dataclass(slots=True)
 class _LogicalSubscriber(Generic[ResourceT]):
     resources: set[ResourceT]
-    send: anyio.abc.ObjectSendStream[ServiceSubscriptionMessage[ResourceT]]
+
+
+class _LogicalMessageStream(Generic[ResourceT]):
+    def __init__(
+        self,
+        manager: SharedResourceSubscriptionManager[ResourceT],
+        session_id: str,
+        subscription: CoalescedStateSubscription[
+            ResourceT,
+            tuple[ResourceT, ...],
+        ],
+        subscription_context: AbstractAsyncContextManager[
+            CoalescedStateSubscription[ResourceT, tuple[ResourceT, ...]]
+        ],
+    ) -> None:
+        self._manager = manager
+        self._session_id = session_id
+        self._subscription = subscription
+        self._subscription_context = subscription_context
+        self._pending = list(subscription.initial)
+        self._closed = False
+
+    def __aiter__(self) -> _LogicalMessageStream[ResourceT]:
+        return self
+
+    async def __anext__(self) -> ServiceSubscriptionMessage[ResourceT]:
+        try:
+            return await self.receive()
+        except anyio.EndOfStream:
+            raise StopAsyncIteration from None
+
+    async def receive(self) -> ServiceSubscriptionMessage[ResourceT]:
+        while True:
+            while self._pending:
+                resource = self._pending.pop(0)
+                message = await self._manager._current_session_message(  # noqa: SLF001
+                    self._session_id,
+                    resource,
+                )
+                if message is not None:
+                    return message
+            wakeup = await self._subscription.receive()
+            self._pending = list(
+                await self._manager._dirty_session_resources(  # noqa: SLF001
+                    self._session_id,
+                    None if wakeup.resnapshot_required else wakeup.changed,
+                )
+            )
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._manager.close_session(self._session_id)
+        await self._subscription_context.__aexit__(None, None, None)
 
 
 class ResourceSubscriptionSession(Generic[ResourceT]):
@@ -69,18 +134,18 @@ class ResourceSubscriptionSession(Generic[ResourceT]):
         self,
         manager: SharedResourceSubscriptionManager[ResourceT],
         session_id: str,
-        receive: anyio.abc.ObjectReceiveStream[ServiceSubscriptionMessage[ResourceT]],
+        messages: _LogicalMessageStream[ResourceT],
     ) -> None:
         self._manager = manager
         self._session_id = session_id
-        self._receive = receive
+        self._messages = messages
         self._closed = False
 
     @property
     def messages(
         self,
-    ) -> anyio.abc.ObjectReceiveStream[ServiceSubscriptionMessage[ResourceT]]:
-        return self._receive
+    ) -> _LogicalMessageStream[ResourceT]:
+        return self._messages
 
     async def ensure(self, resources: Collection[ResourceT]) -> None:
         await self._manager.ensure(self._session_id, resources)
@@ -110,8 +175,7 @@ class ResourceSubscriptionSession(Generic[ResourceT]):
         if self._closed:
             return
         self._closed = True
-        await self._manager.close_session(self._session_id)
-        await self._receive.aclose()
+        await self._messages.aclose()
 
 
 class SharedResourceSubscriptionManager(Generic[ResourceT]):
@@ -143,14 +207,11 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         service_use_timeout_seconds: float | None = None,
         reconnect_delay_seconds: float = 0.05,
         lease_monitor_interval_seconds: float = 1.0,
-        subscriber_buffer_size: int = 100,
     ) -> None:
         if reconnect_delay_seconds < 0:
             raise ValueError("reconnect_delay_seconds must not be negative")
         if lease_monitor_interval_seconds <= 0:
             raise ValueError("lease_monitor_interval_seconds must be greater than zero")
-        if subscriber_buffer_size <= 0:
-            raise ValueError("subscriber_buffer_size must be greater than zero")
         if set_resources is None and ensure_resources is None:
             raise ValueError("ensure_resources or set_resources is required")
         if set_resources is not None and (
@@ -171,8 +232,8 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         self._service_use_timeout_seconds = service_use_timeout_seconds
         self._reconnect_delay_seconds = reconnect_delay_seconds
         self._lease_monitor_interval_seconds = lease_monitor_interval_seconds
-        self._subscriber_buffer_size = subscriber_buffer_size
-        self._lock = anyio.Lock()
+        self._state = CoalescedStateBroadcaster[ResourceT](current=True)
+        self._lock = self._state.lock
         self._subscribers: dict[str, _LogicalSubscriber[ResourceT]] = {}
         self._latest: dict[ResourceT, ServiceSubscriptionMessage[ResourceT]] = {}
         self._generation = 0
@@ -188,29 +249,37 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         self,
         resources: Collection[ResourceT] = (),
     ) -> ResourceSubscriptionSession[ResourceT]:
-        send, receive = anyio.create_memory_object_stream[
-            ServiceSubscriptionMessage[ResourceT]
-        ](self._subscriber_buffer_size)
         async with self._lock:
             self._next_session_id += 1
             session_id = f"{self._name}:{self._next_session_id}"
             requested = set(resources)
             self._subscribers[session_id] = _LogicalSubscriber(
                 resources=requested,
-                send=send,
             )
             self._ensure_runner_locked()
             self._notify_changed_locked()
-            initial = [
-                self._latest.get(resource) or _state_message(
-                    resource,
-                    ServiceSubscriptionState.PENDING,
-                )
-                for resource in sorted(requested, key=repr)
-            ]
-        for message in initial:
-            _send_nowait(send, message)
-        return ResourceSubscriptionSession(self, session_id, receive)
+        subscription_context = self._state.subscribe(
+            lambda _version, _current: self._session_resources_locked(session_id)
+        )
+        try:
+            subscription = await subscription_context.__aenter__()
+        except BaseException:
+            async with self._lock:
+                self._subscribers.pop(session_id, None)
+                self._prune_latest_locked()
+                self._notify_changed_locked()
+            raise
+        messages = _LogicalMessageStream(
+            self,
+            session_id,
+            subscription,
+            subscription_context,
+        )
+        return ResourceSubscriptionSession(
+            self,
+            session_id,
+            messages,
+        )
 
     async def set(
         self,
@@ -228,12 +297,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             added = requested.difference(previous)
             subscriber.resources = requested
             self._prune_latest_locked()
-            for resource in added:
-                if resource not in self._latest:
-                    _send_nowait(
-                        subscriber.send,
-                        _state_message(resource, ServiceSubscriptionState.PENDING),
-                    )
+            self._state.publish_locked(added)
             self._notify_changed_locked()
 
     async def ensure(
@@ -250,12 +314,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
                 return
             added = requested.difference(subscriber.resources)
             subscriber.resources.update(requested)
-            for resource in added:
-                if resource not in self._latest:
-                    _send_nowait(
-                        subscriber.send,
-                        _state_message(resource, ServiceSubscriptionState.PENDING),
-                    )
+            self._state.publish_locked(added)
             self._notify_changed_locked()
 
     async def drop(
@@ -272,6 +331,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
                 return
             subscriber.resources.difference_update(requested)
             self._prune_latest_locked()
+            self._state.publish_locked(requested)
             self._notify_changed_locked()
 
     async def close_session(self, session_id: str) -> None:
@@ -279,8 +339,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             subscriber = self._subscribers.pop(session_id, None)
             self._prune_latest_locked()
             self._notify_changed_locked()
-        if subscriber is not None:
-            await subscriber.send.aclose()
+        del subscriber
 
     async def request(
         self,
@@ -347,18 +406,19 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         return None
 
     async def aclose(self) -> None:
+        # Let cancellation cleanup from resource watcher task groups relinquish
+        # any queued state-lock acquisition before closing the manager itself.
+        await anyio.sleep(0)
         async with self._lock:
             if self._closed:
                 return
             self._closed = True
-            subscribers = tuple(self._subscribers.values())
             self._subscribers.clear()
             done = self._runner_done
             self._notify_changed_locked()
-        for subscriber in subscribers:
-            await subscriber.send.aclose()
         if done is not None:
             await done.wait()
+        await self._state.aclose()
 
     async def _active_request_lease(
         self,
@@ -654,6 +714,50 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             retained.update(subscriber.resources)
         return frozenset(retained)
 
+    def _session_resources_locked(self, session_id: str) -> tuple[ResourceT, ...]:
+        subscriber = self._subscribers.get(session_id)
+        if subscriber is None:
+            return ()
+        return tuple(sorted(subscriber.resources, key=repr))
+
+    async def _dirty_session_resources(
+        self,
+        session_id: str,
+        changed: frozenset[ResourceT] | None,
+    ) -> tuple[ResourceT, ...]:
+        return await self._state.capture(
+            lambda _version, _current: tuple(
+                resource
+                for resource in self._session_resources_locked(session_id)
+                if changed is None or resource in changed
+            )
+        )
+
+    async def _current_session_message(
+        self,
+        session_id: str,
+        resource: ResourceT,
+    ) -> ServiceSubscriptionMessage[ResourceT] | None:
+        return await self._state.capture(
+            lambda _version, _current: self._current_session_message_locked(
+                session_id,
+                resource,
+            )
+        )
+
+    def _current_session_message_locked(
+        self,
+        session_id: str,
+        resource: ResourceT,
+    ) -> ServiceSubscriptionMessage[ResourceT] | None:
+        subscriber = self._subscribers.get(session_id)
+        if subscriber is None or resource not in subscriber.resources:
+            return None
+        return self._latest.get(resource) or _state_message(
+            resource,
+            ServiceSubscriptionState.PENDING,
+        )
+
     def _prune_latest_locked(self) -> None:
         retained = self._retained_resources_locked()
         for resource in tuple(self._latest):
@@ -711,21 +815,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             if resource not in self._retained_resources_locked():
                 return
             self._latest[resource] = message
-            deliveries = [
-                (session_id, subscriber.send)
-                for session_id, subscriber in self._subscribers.items()
-                if resource in subscriber.resources
-            ]
-        stale: list[str] = []
-        for session_id, send in deliveries:
-            if not _send_nowait(send, message):
-                stale.append(session_id)
-        if stale:
-            async with self._lock:
-                for session_id in stale:
-                    self._subscribers.pop(session_id, None)
-                self._prune_latest_locked()
-                self._notify_changed_locked()
+            self._state.publish_locked((resource,))
 
 def _state_message(
     resource: ResourceT,
@@ -758,22 +848,3 @@ def _service_unavailable_from_reply(reply: ServiceMessageBody) -> ServiceUnavail
             "Service-use contract ended",
         )
     return ServiceUnavailable(error.code, error.message, dict(error.diagnostics))
-
-
-def _send_nowait(
-    send: anyio.abc.ObjectSendStream[ServiceSubscriptionMessage[ResourceT]],
-    message: ServiceSubscriptionMessage[ResourceT],
-) -> bool:
-    try:
-        send.send_nowait(message)
-        return True
-    except anyio.WouldBlock:
-        logger.debug(
-            "Service subscription subscriber buffer is full; dropping message "
-            "state=%s resource=%r",
-            message.state,
-            message.resource,
-        )
-        return True
-    except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-        return False

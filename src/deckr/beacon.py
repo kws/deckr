@@ -5,7 +5,7 @@ import random
 import uuid
 from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from threading import RLock
@@ -20,11 +20,11 @@ from deckr._authority_buckets import (
     DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME,
     DEFAULT_BEACON_TTL_SECONDS,
 )
+from deckr._beacon._view import BeaconView
 from deckr.contracts.keys import decode_key_token, encode_key_token
 from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 from deckr.substrates.nats_kv import (
-    KvChange,
     KvConflict,
     KvEntry,
     KvUnavailable,
@@ -52,14 +52,6 @@ class CandidateStatus(StrEnum):
     FEATURE_MISMATCH = "feature_mismatch"
     SESSION_MISMATCH = "session_mismatch"
     UNAVAILABLE = "unavailable"
-
-
-class BeaconFeatureEventType(StrEnum):
-    ADVERTISED = "advertised"
-    UPDATED = "updated"
-    WITHDRAWN = "withdrawn"
-    EXPIRED = "expired"
-    INVALID = "invalid"
 
 
 class AdvertisementSelector(Protocol):
@@ -270,20 +262,25 @@ class Candidate:
         return self.advertisement.endpoint
 
 
-BeaconDirectoryParser = Callable[[Candidate], T | list[T] | tuple[T, ...] | None]
-BeaconDirectoryPredicate = Callable[[T], bool]
-BeaconDirectorySelector = Callable[[Collection[T]], T | None]
+@dataclass(frozen=True, slots=True)
+class BeaconWatchSnapshot:
+    version: int
+    current: bool
+    candidates: tuple[Candidate, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class BeaconFeatureEvent:
-    event_type: BeaconFeatureEventType
-    feature_id: str
-    key: str
-    candidate: Candidate | None = None
-    previous: Candidate | None = None
-    reason: str | None = None
-    change: KvChange | None = None
+class BeaconWatchChange:
+    version: int
+    current: bool
+    candidates: tuple[Candidate, ...]
+    changed_keys: frozenset[str]
+    resnapshot_required: bool
+
+
+BeaconDirectoryParser = Callable[[Candidate], T | list[T] | tuple[T, ...] | None]
+BeaconDirectoryPredicate = Callable[[T], bool]
+BeaconDirectorySelector = Callable[[Collection[T]], T | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,42 +334,30 @@ class BeaconAdvertisementSpec:
         object.__setattr__(self, "payload", None if self.payload is None else dict(self.payload))
 
 
-@dataclass(slots=True, eq=False)
-class _BeaconSubscriber:
-    send: anyio.abc.ObjectSendStream[BeaconFeatureEvent]
-    feature_id: str | None
-    selector: AdvertisementFilter | None
-    known_keys: set[str] = field(default_factory=set)
-    replay_pending: bool = False
-    pending_events: list[BeaconFeatureEvent] = field(default_factory=list)
-
-
 class Beacon:
     """Direct KV-backed Beacon runtime with a materialized advertisement view."""
 
     def __init__(
         self,
         bucket: NatsKvMaterializedBucket | Any,
-        *,
-        buffer_size: int = 100,
     ) -> None:
         self._bucket = (
-            bucket
-            if _is_materialized_bucket(bucket)
-            else NatsKvMaterializedBucket(bucket=bucket, buffer_size=buffer_size)
+            bucket if _is_materialized_bucket(bucket) else NatsKvMaterializedBucket(bucket=bucket)
         )
-        self._buffer_size = buffer_size
-        self._ready = anyio.Event()
+        self._exact = self._bucket.exact_bucket
+        self._view = BeaconView[Candidate](
+            self._bucket,
+            parse_entry=_candidate_from_entry,
+            candidate_key=lambda candidate: candidate.key,
+            candidate_feature=lambda candidate: candidate.advertisement.feature_id,
+            candidate_endpoint_key=lambda candidate: _feature_endpoint_key(
+                candidate.advertisement
+            ),
+            sort_key=_candidate_newest_sort_key,
+        )
         self._started = False
         self._closed = False
         self._task_group: anyio.abc.TaskGroup | None = None
-        self._entries_by_key: dict[str, Candidate] = {}
-        self._revision_by_key: dict[str, int] = {}
-        self._invalid_by_key: dict[str, tuple[int, str]] = {}
-        self._keys_by_feature: dict[str, set[str]] = {}
-        self._keys_by_feature_endpoint: dict[tuple[str, str, str], set[str]] = {}
-        self._bucket_generation = 0
-        self._subscribers: set[_BeaconSubscriber] = set()
         self._leases: set[BeaconAdvertisementLease] = set()
         self._lock = anyio.Lock()
 
@@ -385,28 +370,18 @@ class Beacon:
         self._bucket.start(task_group)
         if not self._started:
             self._started = True
-            task_group.start_soon(self._event_loop)
+            task_group.start_soon(self._view.run)
         for lease in tuple(self._leases):
             lease.start(task_group)
 
     async def wait_ready(self) -> None:
-        await self._ready.wait()
+        await self._view.wait_ready()
 
     def is_current(self) -> bool:
-        return (
-            self._ready.is_set()
-            and self._bucket.is_current()
-            and self._bucket_generation == _bucket_generation_cached(self._bucket)
-        )
+        return self._bucket.is_current() and self._view.is_current()
 
     async def wait_current(self) -> None:
-        await self.wait_ready()
-        while True:
-            await self._bucket.wait_current()
-            if self._bucket_generation == _bucket_generation_cached(self._bucket):
-                return
-            await self._rebuild_from_bucket()
-            await anyio.sleep(0)
+        await self._view.wait_current()
 
     async def aclose(self) -> None:
         self._closed = True
@@ -415,6 +390,7 @@ class Beacon:
             self._leases.clear()
         for lease in leases:
             await lease.aclose()
+        await self._view.aclose()
 
     async def advertise(
         self,
@@ -456,39 +432,14 @@ class Beacon:
     ) -> tuple[Candidate, ...]:
         self._raise_if_cache_unavailable()
         feature_id = _require_text(feature_id, field_name="Beacon feature id")
-        keys = tuple(self._keys_by_feature.get(feature_id, ()))
-        candidates = [
+        candidates = self._view.candidates(feature_id)
+        if selector is None:
+            return candidates
+        return tuple(
             candidate
-            for key in keys
-            if (candidate := self._entries_by_key.get(key)) is not None
-            and (
-                selector is None
-                or _selector_accepts(selector, candidate.advertisement)
-            )
-        ]
-        return tuple(sorted(candidates, key=_candidate_newest_sort_key))
-
-    async def candidates_exact(
-        self,
-        feature_id: str,
-        *,
-        selector: AdvertisementFilter | None = None,
-    ) -> tuple[Candidate, ...]:
-        feature_id = _require_text(feature_id, field_name="Beacon feature id")
-        candidates: list[Candidate] = []
-        for entry in await self._bucket.items_exact(beacon_feature_prefix(feature_id)):
-            candidate, _reason = _candidate_from_entry(entry)
-            if candidate is None:
-                continue
-            if candidate.advertisement.feature_id != feature_id:
-                continue
-            if selector is not None and not _selector_accepts(
-                selector,
-                candidate.advertisement,
-            ):
-                continue
-            candidates.append(candidate)
-        return tuple(sorted(candidates, key=_candidate_newest_sort_key))
+            for candidate in candidates
+            if _selector_accepts(selector, candidate.advertisement)
+        )
 
     def get(
         self,
@@ -504,7 +455,7 @@ class Beacon:
                 field_name="Beacon advertisement id",
             ),
         )
-        return self._entries_by_key.get(key)
+        return self._view.get(key)
 
     async def validate(
         self,
@@ -515,9 +466,9 @@ class Beacon:
         if self._started:
             if not self.is_current():
                 return CandidateStatus.UNAVAILABLE
-        current = self._entries_by_key.get(candidate.key)
+        current = self._view.get(candidate.key)
         if current is None:
-            if candidate.key in self._invalid_by_key:
+            if self._view.is_invalid(candidate.key):
                 return CandidateStatus.SCHEMA_INVALID
             return CandidateStatus.MISSING
         advertisement = current.advertisement
@@ -537,62 +488,51 @@ class Beacon:
         feature_id: str | None = None,
         *,
         selector: AdvertisementFilter | None = None,
-        replay_current: bool = True,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[BeaconFeatureEvent]]:
+    ) -> AsyncIterator[AsyncIterator[BeaconWatchSnapshot | BeaconWatchChange]]:
         if feature_id is not None:
             feature_id = _require_text(feature_id, field_name="Beacon feature id")
         if self._started:
             await self.wait_current()
-        send, receive = anyio.create_memory_object_stream[BeaconFeatureEvent](
-            max_buffer_size=self._buffer_size
-        )
-        subscriber = _BeaconSubscriber(
-            send,
-            feature_id,
-            selector,
-            replay_pending=replay_current,
-        )
-        initial: tuple[BeaconFeatureEvent, ...] = ()
-        async with self._lock:
-            self._subscribers.add(subscriber)
-            if replay_current:
-                initial_candidates = self._matching_candidates(feature_id, selector)
-                subscriber.known_keys.update(
-                    candidate.key for candidate in initial_candidates
-                )
-                initial = tuple(
-                    BeaconFeatureEvent(
-                        BeaconFeatureEventType.ADVERTISED,
-                        candidate.advertisement.feature_id,
-                        candidate.key,
-                        candidate=candidate,
-                    )
-                    for candidate in initial_candidates
-                )
-        try:
-            async with send, receive:
-                for event in initial:
-                    await send.send(event)
-                if replay_current:
-                    await self._finish_subscriber_replay(subscriber)
-                yield receive
-        finally:
-            async with self._lock:
-                self._subscribers.discard(subscriber)
+        async with self._view.subscribe(feature_id) as subscription:
 
-    async def _finish_subscriber_replay(
-        self,
-        subscriber: _BeaconSubscriber,
-    ) -> None:
-        while True:
-            async with self._lock:
-                pending = tuple(subscriber.pending_events)
-                subscriber.pending_events.clear()
-                if not pending:
-                    subscriber.replay_pending = False
-                    return
-            for event in pending:
-                await subscriber.send.send(event)
+            async def stream() -> AsyncIterator[BeaconWatchSnapshot | BeaconWatchChange]:
+                initial_candidates = _filter_candidates(
+                    subscription.initial.candidates,
+                    selector,
+                )
+                known_keys = {candidate.key for candidate in initial_candidates}
+                last_current = subscription.initial.current
+                yield BeaconWatchSnapshot(
+                    version=subscription.initial.version,
+                    current=last_current,
+                    candidates=initial_candidates,
+                )
+                async for wakeup in subscription:
+                    try:
+                        snapshot = await self._view.snapshot(feature_id)
+                    except anyio.ClosedResourceError:
+                        return
+                    candidates = _filter_candidates(snapshot.candidates, selector)
+                    current_keys = {candidate.key for candidate in candidates}
+                    relevant = wakeup.changed & (known_keys | current_keys)
+                    if (
+                        not wakeup.resnapshot_required
+                        and not relevant
+                        and snapshot.current == last_current
+                    ):
+                        known_keys = current_keys
+                        continue
+                    known_keys = current_keys
+                    last_current = snapshot.current
+                    yield BeaconWatchChange(
+                        version=snapshot.version,
+                        current=snapshot.current,
+                        candidates=candidates,
+                        changed_keys=frozenset(relevant),
+                        resnapshot_required=wakeup.resnapshot_required,
+                    )
+
+            yield stream()
 
     async def remove_stale_advertisements(
         self,
@@ -600,17 +540,10 @@ class Beacon:
     ) -> int:
         if self._started:
             await self.wait_current()
-        keys = tuple(
-            self._keys_by_feature_endpoint.get(
-                (spec.feature_id, str(spec.advertiser), str(spec.endpoint)),
-                (),
-            )
-        )
         removed = 0
-        for key in keys:
-            candidate = self._entries_by_key.get(key)
-            if candidate is None:
-                continue
+        for candidate in self._view.candidates_for_endpoint(
+            (spec.feature_id, str(spec.advertiser), str(spec.endpoint))
+        ):
             if _advertisement_matches_spec_config(candidate.advertisement, spec):
                 continue
             try:
@@ -625,52 +558,11 @@ class Beacon:
         return removed
 
     async def _event_loop(self) -> None:
-        try:
-            await self._bucket.wait_current()
-            async with self._bucket.subscribe() as changes:
-                await self._rebuild_from_bucket()
-                self._ready.set()
-                async for change in changes:
-                    await self._apply_kv_change(change)
-        except anyio.get_cancelled_exc_class():
-            self._started = False
-            raise
+        await self._view.run()
 
     def _raise_if_cache_unavailable(self) -> None:
-        if self._started and self._ready.is_set() and not self.is_current():
+        if self._started and not self.is_current():
             raise KvUnavailable("Beacon materialized view is not current")
-
-    async def _rebuild_from_bucket(self) -> tuple[BeaconFeatureEvent, ...]:
-        entries_by_key: dict[str, Candidate] = {}
-        revision_by_key: dict[str, int] = {}
-        invalid_by_key: dict[str, tuple[int, str]] = {}
-        keys_by_feature: dict[str, set[str]] = {}
-        keys_by_feature_endpoint: dict[tuple[str, str, str], set[str]] = {}
-        bucket_generation = _bucket_generation_cached(self._bucket)
-        for entry in self._bucket.items_cached():
-            revision_by_key[entry.key] = entry.revision
-            candidate, reason = _candidate_from_entry(entry)
-            if candidate is None:
-                invalid_by_key[entry.key] = (entry.revision, reason)
-                continue
-            entries_by_key[entry.key] = candidate
-            _index_candidate(
-                candidate,
-                keys_by_feature=keys_by_feature,
-                keys_by_feature_endpoint=keys_by_feature_endpoint,
-            )
-        async with self._lock:
-            events = _beacon_rebuild_events(
-                previous=self._entries_by_key,
-                current=entries_by_key,
-            )
-            self._entries_by_key = entries_by_key
-            self._revision_by_key = revision_by_key
-            self._invalid_by_key = invalid_by_key
-            self._keys_by_feature = keys_by_feature
-            self._keys_by_feature_endpoint = keys_by_feature_endpoint
-            self._bucket_generation = bucket_generation
-            return events
 
     async def _create_advertisement(
         self,
@@ -688,17 +580,8 @@ class Beacon:
             feature_id=record.feature_id,
             advertisement_id=record.advertisement_id,
         )
-        entry = await self._bucket.create(key, record, ttl=ttl_seconds)
-        await self._apply_kv_change(
-            KvChange(
-                self.bucket,
-                key,
-                entry.revision,
-                "put",
-                entry,
-                view_generation=_bucket_generation_cached(self._bucket),
-            )
-        )
+        entry = await self._exact.create(key, record, ttl=ttl_seconds)
+        await self._observe_write(key, entry.revision)
         return _advertisement_handle(key, record, entry.revision)
 
     async def _refresh_advertisement(
@@ -713,9 +596,9 @@ class Beacon:
         force_refresh: bool,
     ) -> AdvertisementHandle:
         ttl_seconds = await self._ttl_seconds()
-        current = self._entries_by_key.get(handle.key)
+        current = self._view.get(handle.key)
         if current is None:
-            exact = await self._bucket.get_exact(handle.key)
+            exact = await _exact_get(self._exact, handle.key)
             if exact is None:
                 raise _BeaconAdvertisementMissing(
                     f"Beacon advertisement {handle.key!r} is missing"
@@ -739,14 +622,14 @@ class Beacon:
         if refreshed is record:
             return handle
         try:
-            entry = await self._bucket.update(
+            entry = await self._exact.update(
                 handle.key,
                 refreshed,
                 revision=current.revision,
                 ttl=ttl_seconds,
             )
         except KvConflict as exc:
-            exact = await self._bucket.get_exact(handle.key)
+            exact = await _exact_get(self._exact, handle.key)
             if exact is None:
                 raise _BeaconAdvertisementMissing(
                     f"Beacon advertisement {handle.key!r} is missing"
@@ -767,26 +650,17 @@ class Beacon:
                 ttl_seconds=ttl_seconds,
                 force_refresh=True,
             )
-            entry = await self._bucket.update(
+            entry = await self._exact.update(
                 handle.key,
                 refreshed,
                 revision=exact_candidate.revision,
                 ttl=ttl_seconds,
             )
-        await self._apply_kv_change(
-            KvChange(
-                self.bucket,
-                handle.key,
-                entry.revision,
-                "put",
-                entry,
-                view_generation=_bucket_generation_cached(self._bucket),
-            )
-        )
+        await self._observe_write(handle.key, entry.revision)
         return _advertisement_handle(handle.key, refreshed, entry.revision)
 
     async def _ttl_seconds(self) -> int:
-        ttl_seconds = getattr(self._bucket, "ttl_seconds", None)
+        ttl_seconds = getattr(self._exact, "ttl_seconds", None)
         value = None
         if ttl_seconds is not None:
             value = ttl_seconds()
@@ -795,7 +669,7 @@ class Beacon:
         return _beacon_ttl_seconds(value, bucket=self.bucket)
 
     async def _withdraw_advertisement(self, handle: AdvertisementHandle) -> bool:
-        current = await self._bucket.get_exact(handle.key)
+        current = await _exact_get(self._exact, handle.key)
         if current is None:
             return False
         candidate, _reason = _candidate_from_entry(current)
@@ -803,229 +677,30 @@ class Beacon:
             raise KvConflict(f"Beacon advertisement {handle.key!r} is invalid")
         if not _advertisement_matches_handle(candidate.advertisement, handle):
             raise KvConflict(f"Beacon advertisement {handle.key!r} changed owner")
-        await self._bucket.delete(handle.key, revision=current.revision)
-        marker_revision = _bucket_revision_cached(self._bucket, handle.key) or (
-            current.revision + 1
+        marker_revision = await self._exact.delete(
+            handle.key,
+            revision=current.revision,
         )
-        await self._apply_kv_change(
-            KvChange(
-                self.bucket,
-                handle.key,
-                marker_revision,
-                "delete",
-                view_generation=_bucket_generation_cached(self._bucket),
-            )
-        )
+        if marker_revision is not None:
+            await self._observe_write(handle.key, marker_revision)
         return True
 
     async def _delete_candidate(self, candidate: Candidate) -> None:
-        await self._bucket.delete(candidate.key, revision=candidate.revision)
-        marker_revision = _bucket_revision_cached(self._bucket, candidate.key) or (
-            candidate.revision + 1
+        marker_revision = await self._exact.delete(
+            candidate.key,
+            revision=candidate.revision,
         )
-        await self._apply_kv_change(
-            KvChange(
-                self.bucket,
-                candidate.key,
-                marker_revision,
-                "delete",
-                view_generation=_bucket_generation_cached(self._bucket),
-            )
-        )
+        if marker_revision is not None:
+            await self._observe_write(candidate.key, marker_revision)
+
+    async def _observe_write(self, key: str, revision: int) -> None:
+        await self._bucket.wait_for_revision(key, revision)
+        if self._started:
+            await self._view.wait_for_revision(revision)
 
     async def _forget_lease(self, lease: BeaconAdvertisementLease) -> None:
         async with self._lock:
             self._leases.discard(lease)
-
-    async def _apply_kv_change(self, change: KvChange) -> None:
-        if await self._rebuild_if_generation_gap(change):
-            return
-        async with self._lock:
-            events = self._apply_kv_change_locked(change)
-        await self._send_events(events)
-
-    async def _send_events(
-        self,
-        events: tuple[tuple[_BeaconSubscriber, BeaconFeatureEvent], ...],
-    ) -> None:
-        for subscriber, event in events:
-            try:
-                subscriber.send.send_nowait(event)
-            except anyio.WouldBlock:
-                logger.warning(
-                    "Beacon watcher buffer full feature=%s key=%s",
-                    subscriber.feature_id,
-                    event.key,
-                )
-            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                async with self._lock:
-                    self._subscribers.discard(subscriber)
-
-    async def _rebuild_if_generation_gap(self, change: KvChange) -> bool:
-        if change.view_generation is None:
-            return False
-        async with self._lock:
-            gap = change.view_generation > self._bucket_generation + 1
-        if not gap:
-            return False
-        events = await self._rebuild_from_bucket()
-        await self._publish_rebuild_events(events)
-        return True
-
-    async def _publish_rebuild_events(
-        self,
-        events: tuple[BeaconFeatureEvent, ...],
-    ) -> None:
-        if not events:
-            return
-        async with self._lock:
-            deliveries: list[tuple[_BeaconSubscriber, BeaconFeatureEvent]] = []
-            for event in events:
-                _log_beacon_feature_event(event)
-                for subscriber in tuple(self._subscribers):
-                    item = _event_for_subscriber(
-                        subscriber,
-                        event,
-                        candidate=event.candidate,
-                        previous=event.previous,
-                    )
-                    if item is None:
-                        continue
-                    if subscriber.replay_pending:
-                        subscriber.pending_events.append(item)
-                        continue
-                    deliveries.append((subscriber, item))
-        await self._send_events(tuple(deliveries))
-
-    def _apply_kv_change_locked(
-        self,
-        change: KvChange,
-    ) -> tuple[tuple[_BeaconSubscriber, BeaconFeatureEvent], ...]:
-        if change.view_generation is not None:
-            if change.view_generation <= self._bucket_generation:
-                return ()
-            if change.view_generation != self._bucket_generation + 1:
-                return ()
-        current_revision = self._revision_by_key.get(change.key, 0)
-        if change.revision <= current_revision:
-            self._advance_bucket_generation_locked(change)
-            return ()
-        previous = self._entries_by_key.get(change.key)
-        feature_id = (
-            previous.advertisement.feature_id if previous is not None else ""
-        )
-        candidate: Candidate | None = None
-        event_type: BeaconFeatureEventType | None = None
-        reason: str | None = None
-
-        self._revision_by_key[change.key] = change.revision
-        if change.operation == "put" and change.entry is not None:
-            candidate, reason = _candidate_from_entry(change.entry)
-            if candidate is None:
-                parsed = parse_beacon_advertisement_key(change.key)
-                feature_id = parsed[0] if parsed is not None else feature_id
-                self._invalid_by_key[change.key] = (change.revision, reason)
-                if previous is not None:
-                    self._remove_candidate(previous)
-                event_type = BeaconFeatureEventType.INVALID
-            else:
-                feature_id = candidate.advertisement.feature_id
-                self._invalid_by_key.pop(change.key, None)
-                if previous is not None:
-                    self._remove_candidate(previous)
-                self._entries_by_key[change.key] = candidate
-                _index_candidate(
-                    candidate,
-                    keys_by_feature=self._keys_by_feature,
-                    keys_by_feature_endpoint=self._keys_by_feature_endpoint,
-                )
-                event_type = (
-                    BeaconFeatureEventType.ADVERTISED
-                    if previous is None
-                    else BeaconFeatureEventType.UPDATED
-                )
-        elif change.operation in {"delete", "expire"}:
-            self._invalid_by_key.pop(change.key, None)
-            if previous is not None:
-                self._remove_candidate(previous)
-                feature_id = previous.advertisement.feature_id
-            event_type = (
-                BeaconFeatureEventType.EXPIRED
-                if change.operation == "expire"
-                else BeaconFeatureEventType.WITHDRAWN
-            )
-            reason = change.operation
-        self._advance_bucket_generation_locked(change)
-        if event_type is None:
-            return ()
-
-        base_event = BeaconFeatureEvent(
-            event_type,
-            feature_id,
-            change.key,
-            candidate=candidate,
-            previous=previous,
-            reason=reason,
-            change=change,
-        )
-        _log_beacon_feature_event(base_event)
-        deliveries: list[tuple[_BeaconSubscriber, BeaconFeatureEvent]] = []
-        for subscriber in tuple(self._subscribers):
-            item = _event_for_subscriber(
-                subscriber,
-                base_event,
-                candidate=candidate,
-                previous=previous,
-            )
-            if item is None:
-                continue
-            if subscriber.replay_pending:
-                subscriber.pending_events.append(item)
-                continue
-            deliveries.append((subscriber, item))
-        return tuple(deliveries)
-
-    def _advance_bucket_generation_locked(self, change: KvChange) -> None:
-        generation = change.view_generation
-        if generation is None:
-            generation = _bucket_generation_cached(self._bucket)
-        self._bucket_generation = max(self._bucket_generation, generation)
-
-    def _remove_candidate(self, candidate: Candidate) -> None:
-        key = candidate.key
-        self._entries_by_key.pop(key, None)
-        feature_keys = self._keys_by_feature.get(candidate.advertisement.feature_id)
-        if feature_keys is not None:
-            feature_keys.discard(key)
-            if not feature_keys:
-                self._keys_by_feature.pop(candidate.advertisement.feature_id, None)
-        endpoint_key = _feature_endpoint_key(candidate.advertisement)
-        endpoint_keys = self._keys_by_feature_endpoint.get(endpoint_key)
-        if endpoint_keys is not None:
-            endpoint_keys.discard(key)
-            if not endpoint_keys:
-                self._keys_by_feature_endpoint.pop(endpoint_key, None)
-
-    def _matching_candidates(
-        self,
-        feature_id: str | None,
-        selector: AdvertisementFilter | None,
-    ) -> tuple[Candidate, ...]:
-        if feature_id is None:
-            candidates = tuple(self._entries_by_key.values())
-        else:
-            candidates = tuple(
-                candidate
-                for key in self._keys_by_feature.get(feature_id, ())
-                if (candidate := self._entries_by_key.get(key)) is not None
-            )
-        if selector is not None:
-            candidates = tuple(
-                candidate
-                for candidate in candidates
-                if _selector_accepts(selector, candidate.advertisement)
-            )
-        return tuple(sorted(candidates, key=_candidate_newest_sort_key))
 
 
 class BeaconDirectory(Generic[T]):
@@ -1038,15 +713,11 @@ class BeaconDirectory(Generic[T]):
         parser: BeaconDirectoryParser[T],
         *,
         log_label: str = "BeaconDirectory",
-        retry_interval: float = 1.0,
     ) -> None:
-        if retry_interval <= 0:
-            raise ValueError("retry_interval must be greater than zero")
         self._beacon = beacon
         self.feature_id = _require_text(feature_id, field_name="Beacon feature id")
         self._parser = parser
         self._log_label = _require_text(log_label, field_name="Beacon directory log label")
-        self._retry_interval = retry_interval
         self._ready = anyio.Event()
         self._changed = anyio.Event()
         self._closed = False
@@ -1096,8 +767,7 @@ class BeaconDirectory(Generic[T]):
                 continue
 
             assert changed is not None
-            with anyio.move_on_after(self._retry_interval):
-                await changed.wait()
+            await changed.wait()
 
     def is_current(self) -> bool:
         with self._lock:
@@ -1189,69 +859,44 @@ class BeaconDirectory(Generic[T]):
     async def _event_loop(self) -> None:
         with anyio.CancelScope() as cancel_scope:
             self._cancel_scope = cancel_scope
-            while not self._closed:
-                try:
-                    async with self._beacon.watch(self.feature_id) as events:
-                        if not self._consume_pending_events(events):
-                            continue
-                        self._mark_current()
-                        async for event in events:
-                            self._apply_event(event)
-                        self._mark_stale()
-                except anyio.get_cancelled_exc_class():
-                    raise
-                except KvUnavailable:
-                    self._mark_stale()
-                    await anyio.sleep(self._retry_interval)
-                except Exception:
-                    self._mark_stale()
-                    logger.warning(
-                        "%s Beacon directory watch failed feature=%s",
-                        self._log_label,
-                        self.feature_id,
-                        exc_info=True,
-                    )
-                    await anyio.sleep(self._retry_interval)
-
-    def _consume_pending_events(
-        self,
-        events: anyio.abc.ObjectReceiveStream[BeaconFeatureEvent],
-    ) -> bool:
-        while True:
             try:
-                event = events.receive_nowait()
-            except anyio.WouldBlock:
-                return True
-            except anyio.EndOfStream:
+                async with self._beacon.watch(self.feature_id) as snapshots:
+                    async for snapshot in snapshots:
+                        self._apply_snapshot(
+                            snapshot.candidates,
+                            current=snapshot.current,
+                        )
+            except anyio.get_cancelled_exc_class():
+                raise
+            except KvUnavailable:
+                pass
+            except Exception:
+                logger.warning(
+                    "%s Beacon directory watch failed feature=%s",
+                    self._log_label,
+                    self.feature_id,
+                    exc_info=True,
+                )
+            finally:
                 self._mark_stale()
-                return False
-            self._apply_event(event, mark_current=False)
 
-    def _apply_event(
+    def _apply_snapshot(
         self,
-        event: BeaconFeatureEvent,
+        candidates: tuple[Candidate, ...],
         *,
-        mark_current: bool = True,
+        current: bool,
     ) -> None:
-        if event.feature_id != self.feature_id:
-            return
-        records = (
-            self._parse_candidate(event.candidate)
-            if event.event_type
-            in {
-                BeaconFeatureEventType.ADVERTISED,
-                BeaconFeatureEventType.UPDATED,
-            }
-            and event.candidate is not None
-            else ()
-        )
+        # Parser code is intentionally outside the directory state lock so one
+        # slow or faulty feature parser cannot block readers or view ingestion.
+        records_by_key = {
+            candidate.key: records
+            for candidate in candidates
+            if (records := self._parse_candidate(candidate))
+        }
         with self._lock:
-            if records:
-                self._records_by_key[event.key] = records
-            else:
-                self._records_by_key.pop(event.key, None)
-            if mark_current:
-                self._current = True
+            self._records_by_key = records_by_key
+            self._current = current
+            if current:
                 self._ready.set()
             self._notify_changed_locked()
 
@@ -1274,12 +919,6 @@ class BeaconDirectory(Generic[T]):
         if isinstance(parsed, list | tuple):
             return tuple(parsed)
         return (parsed,)
-
-    def _mark_current(self) -> None:
-        with self._lock:
-            self._current = True
-            self._ready.set()
-            self._notify_changed_locked()
 
     def _mark_stale(self) -> None:
         with self._lock:
@@ -1545,30 +1184,35 @@ def _is_materialized_bucket(value: Any) -> bool:
         hasattr(value, name)
         for name in (
             "start",
-            "wait_ready",
             "is_current",
             "wait_current",
-            "get_exact",
-            "items_exact",
+            "exact_bucket",
+            "get_cached",
             "items_cached",
             "revision_cached",
+            "snapshot",
             "subscribe",
-            "create",
-            "update",
-            "delete",
+            "wait_for_revision",
         )
     )
 
 
-def _bucket_revision_cached(bucket: Any, key: str) -> int | None:
-    revision_cached = getattr(bucket, "revision_cached", None)
-    if revision_cached is None:
-        return None
-    return revision_cached(key)
+async def _exact_get(bucket: Any, key: str) -> KvEntry | None:
+    get_exact = getattr(bucket, "get_exact", None)
+    return await (get_exact if get_exact is not None else bucket.get)(key)
 
 
-def _bucket_generation_cached(bucket: Any) -> int:
-    return int(getattr(bucket, "generation", 0))
+def _filter_candidates(
+    candidates: tuple[Candidate, ...],
+    selector: AdvertisementFilter | None,
+) -> tuple[Candidate, ...]:
+    if selector is None:
+        return candidates
+    return tuple(
+        candidate
+        for candidate in candidates
+        if _selector_accepts(selector, candidate.advertisement)
+    )
 
 
 def _record_from_spec(
@@ -1736,162 +1380,6 @@ def _feature_endpoint_key(record: AdvertisementRecord) -> tuple[str, str, str]:
     return (record.feature_id, str(record.advertiser), str(record.endpoint))
 
 
-def _index_candidate(
-    candidate: Candidate,
-    *,
-    keys_by_feature: dict[str, set[str]],
-    keys_by_feature_endpoint: dict[tuple[str, str, str], set[str]],
-) -> None:
-    keys_by_feature.setdefault(candidate.advertisement.feature_id, set()).add(
-        candidate.key
-    )
-    keys_by_feature_endpoint.setdefault(
-        _feature_endpoint_key(candidate.advertisement),
-        set(),
-    ).add(candidate.key)
-
-
-def _beacon_rebuild_events(
-    *,
-    previous: Mapping[str, Candidate],
-    current: Mapping[str, Candidate],
-) -> tuple[BeaconFeatureEvent, ...]:
-    events: list[BeaconFeatureEvent] = []
-    for key in sorted(set(previous) | set(current)):
-        before = previous.get(key)
-        after = current.get(key)
-        if after is not None and before is None:
-            events.append(
-                BeaconFeatureEvent(
-                    BeaconFeatureEventType.ADVERTISED,
-                    after.advertisement.feature_id,
-                    key,
-                    candidate=after,
-                    previous=before,
-                    reason="rebuild",
-                )
-            )
-            continue
-        if after is not None and before != after:
-            events.append(
-                BeaconFeatureEvent(
-                    BeaconFeatureEventType.UPDATED,
-                    after.advertisement.feature_id,
-                    key,
-                    candidate=after,
-                    previous=before,
-                    reason="rebuild",
-                )
-            )
-            continue
-        if before is not None and after is None:
-            events.append(
-                BeaconFeatureEvent(
-                    BeaconFeatureEventType.WITHDRAWN,
-                    before.advertisement.feature_id,
-                    key,
-                    previous=before,
-                    reason="rebuild",
-                )
-            )
-    return tuple(events)
-
-
-def _event_for_subscriber(
-    subscriber: _BeaconSubscriber,
-    event: BeaconFeatureEvent,
-    *,
-    candidate: Candidate | None,
-    previous: Candidate | None,
-) -> BeaconFeatureEvent | None:
-    key = event.key
-    if event.event_type == BeaconFeatureEventType.INVALID:
-        if not _subscriber_accepts_feature(subscriber, event.feature_id):
-            return None
-        subscriber.known_keys.discard(key)
-        return event
-    if candidate is not None:
-        matches = _subscriber_accepts_candidate(subscriber, candidate)
-        known = key in subscriber.known_keys
-        if matches:
-            subscriber.known_keys.add(key)
-            return BeaconFeatureEvent(
-                BeaconFeatureEventType.UPDATED
-                if known
-                else BeaconFeatureEventType.ADVERTISED,
-                candidate.advertisement.feature_id,
-                key,
-                candidate=candidate,
-                previous=previous,
-                change=event.change,
-            )
-        if known:
-            subscriber.known_keys.discard(key)
-            return BeaconFeatureEvent(
-                BeaconFeatureEventType.WITHDRAWN,
-                event.feature_id,
-                key,
-                previous=previous,
-                reason="selector_mismatch",
-                change=event.change,
-            )
-        return None
-    if key not in subscriber.known_keys:
-        return None
-    subscriber.known_keys.discard(key)
-    return event
-
-
-def _subscriber_accepts_feature(
-    subscriber: _BeaconSubscriber,
-    feature_id: str,
-) -> bool:
-    return subscriber.feature_id is None or subscriber.feature_id == feature_id
-
-
-def _subscriber_accepts_candidate(
-    subscriber: _BeaconSubscriber,
-    candidate: Candidate,
-) -> bool:
-    if not _subscriber_accepts_feature(subscriber, candidate.advertisement.feature_id):
-        return False
-    return (
-        subscriber.selector is None
-        or _selector_accepts(subscriber.selector, candidate.advertisement)
-    )
-
-
-def _log_beacon_feature_event(event: BeaconFeatureEvent) -> None:
-    candidate = event.candidate or event.previous
-    advertisement = candidate.advertisement if candidate is not None else None
-    if event.event_type == BeaconFeatureEventType.UPDATED:
-        return
-    if event.event_type == BeaconFeatureEventType.INVALID:
-        logger.warning(
-            "Beacon advertisement invalid feature=%s key=%s reason=%s",
-            event.feature_id,
-            event.key,
-            event.reason,
-        )
-        return
-    message = "Beacon advertisement %s feature=%s key=%s"
-    args: tuple[Any, ...] = (
-        event.event_type.value,
-        event.feature_id,
-        event.key,
-    )
-    if advertisement is not None:
-        message += " endpoint=%s session=%s advertisement=%s refresh=%s revision=%s"
-        args += (
-            advertisement.endpoint,
-            advertisement.session_id,
-            advertisement.advertisement_id,
-            advertisement.refresh_seq,
-            candidate.revision if candidate is not None else None,
-        )
-    logger.log(_beacon_lifecycle_log_level(event.feature_id), message, *args)
-
-
 __all__ = [
     "BEACON_ADVERTISEMENT_SCHEMA_ID",
     "BEACON_ADVERTISEMENT_STORE_POLICY",
@@ -1903,9 +1391,9 @@ __all__ = [
     "BeaconAdvertisementLease",
     "BeaconAdvertisementSpec",
     "BeaconDirectory",
-    "BeaconFeatureEvent",
-    "BeaconFeatureEventType",
     "BeaconProtocol",
+    "BeaconWatchChange",
+    "BeaconWatchSnapshot",
     "Candidate",
     "CandidateStatus",
     "beacon_advertisement_key",

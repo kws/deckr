@@ -227,8 +227,10 @@ async def test_stale_cached_source_does_not_disable_exact_validation() -> None:
     case = await _build_case("valid_contract")
     await case.harness._contract_view._set_status(KvViewStatus.STALE)  # noqa: SLF001
     await case.harness._token_view._set_status(KvViewStatus.STALE)  # noqa: SLF001
+    await case.harness.concord._view._broadcaster.publish(  # noqa: SLF001
+        current=False
+    )
     case.harness.concord._started = True  # noqa: SLF001
-    case.harness.concord._ready.set()  # noqa: SLF001
 
     cached = await case.harness.concord.validate(
         case.handle,
@@ -261,7 +263,9 @@ async def test_token_entry_key_mismatch_has_exact_and_cached_parity() -> None:
         raw_entry.revision,
     )
     case.harness.token_store._entries[canonical_key] = mismatched  # noqa: SLF001
-    case.harness.concord._token_entries_by_key[canonical_key] = mismatched  # noqa: SLF001
+    case.harness.concord._view._token_entries_by_key[  # noqa: SLF001
+        canonical_key
+    ] = mismatched
 
     exact = await case.harness.concord.validate_exact(
         case.handle,
@@ -295,7 +299,9 @@ async def test_contract_entry_key_mismatch_has_exact_and_cached_parity() -> None
         raw_entry.revision,
     )
     case.harness.contract_store._entries[canonical_key] = mismatched  # noqa: SLF001
-    case.harness.concord._contract_entries_by_key[canonical_key] = mismatched  # noqa: SLF001
+    case.harness.concord._view._contract_entries_by_key[  # noqa: SLF001
+        canonical_key
+    ] = mismatched
 
     exact = await case.harness.concord.validate_exact(
         case.handle,

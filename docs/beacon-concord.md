@@ -153,6 +153,24 @@ Selectors, labels, hints, and capacity fields are policy hints, not authority.
 Duplicate or overlapping advertisements are allowed. Consumer policy chooses
 which candidate to try.
 
+### Beacon Runtime View
+
+The Python `Beacon` facade owns a parsed, indexed current-state view. Feature
+queries seed from the feature index; arbitrary selectors run outside the view
+lock. Malformed or identity-inconsistent observations remain recorded as
+invalid state and never become candidates.
+
+`Beacon.watch()` always yields one `BeaconWatchSnapshot` first. It contains the
+view `version`, `current` flag, and the complete filtered candidate tuple. Later
+`BeaconWatchChange` values contain the same complete membership plus at most
+256 changed keys. `resnapshot_required` means the changed-key detail overflowed;
+the membership on that item is still the authoritative current result. There is
+no replay option and no event-enum delivery model. Reconnect rebuilds the view
+atomically, reports stale/current transitions, and includes disappeared keys in
+the resulting diff. `BeaconDirectory.watch_records()` preserves its existing
+domain values while using this current-first source; it does not poll for
+recovery.
+
 ## Concord
 
 A Concord contract is a temporary runtime agreement between named participants.
@@ -282,6 +300,32 @@ A started runtime whose contract or token materialized source is stale returns
 `ContractValidityReason.SOURCE_UNAVAILABLE` on the cached path. Exact validation
 remains independently usable when the exact store is available. Maintenance
 store readiness or contents are not part of contract validity.
+
+### Concord Runtime View
+
+The Python `Concord` facade owns one parsed, indexed view of contract records,
+participant tokens, invalid observations, and cached validity. Filters seed from
+the smallest applicable profile, participant, contract-state, contract-id, or
+pointer index. Cached validation gathers only the selected contract and its
+named participant-token observations; unrelated contracts are not parsed or
+validated for a filtered watch.
+
+`Concord.watch()` always yields one `ConcordWatchSnapshot` first. Each snapshot
+contains its `version`, `current` flag, and the complete filtered tuple of
+`ConcordContractState` records. Later `ConcordWatchChange` values also carry at
+most 256 changed contract pointers and `resnapshot_required`. The complete
+membership remains authoritative when pointer detail overflows. Contract and
+token reconnect rebuilds are installed atomically and include missing-pointer
+removals.
+
+`ConcordParticipant.watch()` follows the same current-first contract with
+`ConcordParticipantSnapshot` and `ConcordParticipantChange`. It exposes the full
+managed-contract membership and changed pointers. The participant manager uses
+one filtered Concord-view subscription per authority bucket pair and reconciles
+only affected pointers during ordinary operation; startup, reconnect, and
+overflow take a full resnapshot. This view is observation and convergence
+machinery only. Concord contract creation, cancellation, and participant-token
+validity remain the sole lifecycle authority.
 
 `ContractValidity.reason_code` is the behavioral discriminator. Its values are:
 

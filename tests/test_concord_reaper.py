@@ -296,7 +296,9 @@ async def test_pending_open_contract_with_valid_token_is_not_stale() -> None:
 
     assert result.stale_observations_created == 0
     assert result.contracts_cancelled == 0
-    assert (await harness.concord.contract_record(contract)).state == ContractState.OPEN
+    current = await contract_state.get(contract.key)
+    assert current is not None
+    assert ContractRecord.model_validate(current.value).state == ContractState.OPEN
     await _assert_no_stale_observation(maintenance_state, contract)
 
 
@@ -354,7 +356,9 @@ async def test_unavailable_status_does_not_create_or_advance_stale_observation()
 
     assert result.stale_observations_created == 0
     assert result.contracts_cancelled == 0
-    assert (await harness.concord.contract_record(contract)).state == ContractState.OPEN
+    current = await contract_state.get(contract.key)
+    assert current is not None
+    assert ContractRecord.model_validate(current.value).state == ContractState.OPEN
     await _assert_no_stale_observation(maintenance_state, contract)
 
 

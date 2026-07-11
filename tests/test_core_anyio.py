@@ -5,11 +5,12 @@ import pytest
 
 from deckr.core.util.anyio import (
     AsyncMap,
+    CoalescedStateBroadcaster,
     CoalescedTrigger,
     ConcurrentModificationError,
     EnsureStarted,
     ScheduledQueue,
-    SubscribableQueue,
+    StateSubscriptionLimitExceeded,
 )
 
 
@@ -73,6 +74,76 @@ async def test_coalesced_trigger_validation_close_and_reason_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_coalesced_state_broadcaster_snapshot_coalescing_and_overflow() -> None:
+    broadcaster = CoalescedStateBroadcaster[str](current=True)
+    state: dict[str, int] = {"initial": 1}
+
+    async with broadcaster.subscribe(
+        lambda version, current: (version, current, dict(state))
+    ) as subscription:
+        assert subscription.initial == (0, True, {"initial": 1})
+
+        async with broadcaster.lock:
+            state["one"] = 1
+            broadcaster.publish_locked(("one",))
+            state["two"] = 2
+            broadcaster.publish_locked(("two",))
+
+        change = await subscription.receive()
+        assert change.version == 2
+        assert change.current is True
+        assert change.changed == {"one", "two"}
+        assert not change.resnapshot_required
+
+        await broadcaster.publish(str(index) for index in range(257))
+        overflow = await subscription.receive()
+        assert overflow.version == 3
+        assert overflow.changed == frozenset()
+        assert overflow.resnapshot_required
+
+
+@pytest.mark.asyncio
+async def test_coalesced_state_broadcaster_has_no_receive_publish_lost_wakeup() -> None:
+    broadcaster = CoalescedStateBroadcaster[str](current=True)
+    async with broadcaster.subscribe(lambda version, current: (version, current)) as sub:
+        await broadcaster.publish(("one",))
+        first = await sub.receive()
+        assert first.changed == {"one"}
+
+        await broadcaster.publish(("two",))
+        second = await sub.receive()
+        assert second.changed == {"two"}
+        assert second.version == 2
+
+
+@pytest.mark.asyncio
+async def test_coalesced_state_broadcaster_rejects_excess_subscriptions_and_closes() -> (
+    None
+):
+    broadcaster = CoalescedStateBroadcaster[str](max_subscriptions=1)
+    async with broadcaster.subscribe(lambda version, current: (version, current)) as sub:
+        with pytest.raises(StateSubscriptionLimitExceeded):
+            async with broadcaster.subscribe(lambda version, current: (version, current)):
+                raise AssertionError("excess subscription was admitted")
+
+        closed = anyio.Event()
+
+        async def blocked_reader() -> None:
+            try:
+                await sub.receive()
+            except (anyio.ClosedResourceError, anyio.EndOfStream):
+                closed.set()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(blocked_reader)
+            await anyio.sleep(0)
+            await broadcaster.aclose()
+            with anyio.fail_after(1):
+                await closed.wait()
+            tg.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
 async def test_scheduled_queue_due_ordering_and_earlier_wakeup() -> None:
     queue: ScheduledQueue[str] = ScheduledQueue()
     now = anyio.current_time()
@@ -89,37 +160,6 @@ async def test_scheduled_queue_due_ordering_and_earlier_wakeup() -> None:
         await anyio.sleep(0)
         await queue.put_after(0, "early")
         await _wait_until(lambda: result == ["early"])
-        tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_subscribable_queue_cleanup_full_and_filtered_subscription() -> None:
-    queue: SubscribableQueue[str] = SubscribableQueue(maxsize=1)
-    send, receive = anyio.create_memory_object_stream[str](1)
-    queue._subscribers[send] = receive  # noqa: SLF001
-    await send.aclose()
-
-    await queue.push("ignored")
-
-    assert queue._subscribers == {}  # noqa: SLF001
-
-    queue = SubscribableQueue[str](maxsize=1, fail_on_undelivered=True)
-    send, receive = anyio.create_memory_object_stream[str](1)
-    queue._subscribers[send] = receive  # noqa: SLF001
-    await queue.push("first")
-    with pytest.raises(SubscribableQueue.SubscriberBufferFullError):
-        await queue.push("second")
-    await send.aclose()
-    await receive.aclose()
-
-    filtered = SubscribableQueue[int]()
-    received: list[int] = []
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(_receive_filtered, filtered, received)
-        await anyio.sleep(0)
-        await filtered.push(1)
-        await filtered.push(2)
-        await _wait_until(lambda: received == [2])
         tg.cancel_scope.cancel()
 
 
@@ -164,15 +204,6 @@ class AsyncMockHandler:
 
 async def _receive_scheduled(queue: ScheduledQueue[str], result: list[str]) -> None:
     result.append(await queue.get())
-
-
-async def _receive_filtered(
-    queue: SubscribableQueue[int],
-    received: list[int],
-) -> None:
-    async for event in queue.subscribe(lambda value: value % 2 == 0):
-        received.append(event)
-        return
 
 
 async def _wait_until(predicate) -> None:

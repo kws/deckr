@@ -34,7 +34,6 @@ from deckr.services import (
     ServicePayloadSchema,
     ServiceProtocol,
     ServiceUseAuthorizationError,
-    ServiceViewChange,
     ServiceViewEntry,
     ServiceViewFamily,
     ServiceViewFamilyDefinition,
@@ -50,7 +49,13 @@ from deckr.services import (
     service_view_key,
 )
 from deckr.services.messages import ServiceMessageBody, service_message
-from deckr.substrates.nats_kv import KvChange, KvConflict, KvEntry, kv_value
+from deckr.substrates.nats_kv import (
+    KvChange,
+    KvConflict,
+    KvEntry,
+    KvWatchBarrier,
+    kv_value,
+)
 from deckr.testing import MemoryJsonKvBucket
 
 
@@ -135,8 +140,12 @@ async def _descriptor(
 async def _service_view_context(*, contract_id: str = "service-contract-1"):
     beacon = _memory_beacon()
     protocol = _protocol()
-    await _publish_service_advertisement(beacon, protocol)
-    descriptor = await _descriptor(beacon, protocol)
+    async with anyio.create_task_group() as task_group:
+        beacon.start(task_group)
+        await beacon.wait_ready()
+        await _publish_service_advertisement(beacon, protocol)
+        descriptor = await _descriptor(beacon, protocol)
+        task_group.cancel_scope.cancel()
     lease = _FakeServiceUseLease(
         descriptor=descriptor,
         contract=_contract_handle(contract_id=contract_id),
@@ -375,13 +384,13 @@ class _FakeServiceParticipant:
 
 async def _receive_service_change(stream):
     with anyio.fail_after(1):
-        return await stream.receive()
+        return await anext(stream)
 
 
 async def _assert_no_service_change(stream) -> None:
     received = None
     with anyio.move_on_after(0.05) as scope:
-        received = await stream.receive()
+        received = await anext(stream)
     assert scope.cancel_called, f"unexpected service view change: {received!r}"
 
 
@@ -422,55 +431,59 @@ class _CountingBeacon:
 async def test_parse_service_descriptor_validates_profile_identity() -> None:
     beacon = _memory_beacon()
     protocol = _protocol()
-    await _publish_service_advertisement(beacon, protocol)
-    candidate = beacon.candidates(protocol.feature_id)[0]
+    async with anyio.create_task_group() as task_group:
+        beacon.start(task_group)
+        await beacon.wait_ready()
+        await _publish_service_advertisement(beacon, protocol)
+        candidate = beacon.candidates(protocol.feature_id)[0]
 
-    descriptor = parse_service_descriptor(candidate, protocol)
-    assert descriptor is not None
-    assert descriptor.namespace == protocol.namespace
-    assert descriptor.endpoint == service_address("openhab-home")
+        descriptor = parse_service_descriptor(candidate, protocol)
+        assert descriptor is not None
+        assert descriptor.namespace == protocol.namespace
+        assert descriptor.endpoint == service_address("openhab-home")
 
-    wrong_feature_protocol = _protocol()
-    object.__setattr__(wrong_feature_protocol, "feature_id", protocol.namespace)
-    assert parse_service_descriptor(candidate, wrong_feature_protocol) is None
+        wrong_feature_protocol = _protocol()
+        object.__setattr__(wrong_feature_protocol, "feature_id", protocol.namespace)
+        assert parse_service_descriptor(candidate, wrong_feature_protocol) is None
 
-    payload = protocol.advertisement_payload(
-        service_id="openhab-home",
-        session_id="service-session",
-        backend_status=ServiceBackendStatus.AVAILABLE,
-    ).to_dict()
-    payload["profile"] = "wrong-profile"
-    await _publish_service_advertisement(
-        beacon,
-        protocol,
-        advertisement_id="ad-2",
-        payload=payload,
-    )
-    wrong_profile = [
-        item
-        for item in beacon.candidates(protocol.feature_id)
-        if item.advertisement.advertisement_id == "ad-2"
-    ][0]
-    assert parse_service_descriptor(wrong_profile, protocol) is None
+        payload = protocol.advertisement_payload(
+            service_id="openhab-home",
+            session_id="service-session",
+            backend_status=ServiceBackendStatus.AVAILABLE,
+        ).to_dict()
+        payload["profile"] = "wrong-profile"
+        await _publish_service_advertisement(
+            beacon,
+            protocol,
+            advertisement_id="ad-2",
+            payload=payload,
+        )
+        wrong_profile = [
+            item
+            for item in beacon.candidates(protocol.feature_id)
+            if item.advertisement.advertisement_id == "ad-2"
+        ][0]
+        assert parse_service_descriptor(wrong_profile, protocol) is None
 
-    payload = protocol.advertisement_payload(
-        service_id="openhab-home",
-        session_id="service-session",
-        backend_status=ServiceBackendStatus.AVAILABLE,
-    ).to_dict()
-    payload["serviceNamespace"] = "wrong-namespace"
-    await _publish_service_advertisement(
-        beacon,
-        protocol,
-        advertisement_id="ad-3",
-        payload=payload,
-    )
-    wrong_namespace = [
-        item
-        for item in beacon.candidates(protocol.feature_id)
-        if item.advertisement.advertisement_id == "ad-3"
-    ][0]
-    assert parse_service_descriptor(wrong_namespace, protocol) is None
+        payload = protocol.advertisement_payload(
+            service_id="openhab-home",
+            session_id="service-session",
+            backend_status=ServiceBackendStatus.AVAILABLE,
+        ).to_dict()
+        payload["serviceNamespace"] = "wrong-namespace"
+        await _publish_service_advertisement(
+            beacon,
+            protocol,
+            advertisement_id="ad-3",
+            payload=payload,
+        )
+        wrong_namespace = [
+            item
+            for item in beacon.candidates(protocol.feature_id)
+            if item.advertisement.advertisement_id == "ad-3"
+        ][0]
+        assert parse_service_descriptor(wrong_namespace, protocol) is None
+        task_group.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
@@ -857,18 +870,8 @@ async def test_authorize_service_message_rejects_name_outside_protocol() -> None
 
 @pytest.mark.asyncio
 async def test_service_view_store_uses_explicit_lease_scope() -> None:
-    beacon = _memory_beacon()
-    protocol = _protocol()
-    await _publish_service_advertisement(beacon, protocol)
-    descriptor = await _descriptor(beacon, protocol)
-    lease = _FakeServiceUseLease(descriptor=descriptor)
-    view_store = ServiceViewStore(
-        bucket=MemoryJsonKvBucket(bucket="deckr_openhab_service_view_v1")
-    )
-    view_ref = ServiceViewRef(
-        "deckr_openhab_service_view_v1",
-        service_view_key("openhab-home", "items", "Kitchen Light"),
-    )
+    _protocol, lease, view_ref = await _service_view_context()
+    view_store = ServiceViewStore(bucket=MemoryJsonKvBucket(bucket=view_ref.store_name))
 
     async with anyio.create_task_group() as tg:
         view_store.start(tg)
@@ -885,14 +888,15 @@ async def test_service_view_store_uses_explicit_lease_scope() -> None:
         assert current.value["state"] == "ON"
 
         async with view_store.watch(_view_read_context(lease), view_ref) as changes:
+            initial = await _receive_service_change(changes)
+            assert initial.entry == created
             updated = await view_store.update(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "OFF"},
                 context=_service_view_write_context(lease),
                 revision=created.revision,
             )
-            change = await changes.receive()
-            assert change.operation == "put"
+            change = await _receive_service_change(changes)
             assert change.entry == updated
 
         with pytest.raises(KvConflict):
@@ -983,6 +987,8 @@ async def test_service_view_store_enforces_declared_writer() -> None:
             _view_read_context(consumer_writer_lease, ServiceViewWriter.SERVICE),
             view_ref,
         ) as changes:
+            initial = await _receive_service_change(changes)
+            assert initial.entry == created
             updated = await view_store.update(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "OFF"},
@@ -1034,7 +1040,7 @@ async def test_service_view_store_ignores_old_fenced_entries() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_view_store_logs_write_apply_and_stale_revision(caplog) -> None:
+async def test_service_view_store_logs_exact_write_after_view_observation(caplog) -> None:
     caplog.set_level(logging.DEBUG, logger="deckr.services.views")
     protocol, lease, view_ref = await _service_view_context()
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
@@ -1045,32 +1051,18 @@ async def test_service_view_store_logs_write_apply_and_stale_revision(caplog) ->
         await view_store.wait_ready()
 
         async with view_store.watch(_view_read_context(lease), view_ref) as changes:
+            initial = await _receive_service_change(changes)
+            assert initial.entry is None
             created = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "ON"},
                 context=_service_view_write_context(lease),
             )
-            await _receive_service_change(changes)
+            applied = await _receive_service_change(changes)
+            assert applied.entry == created
 
         assert "Service view write" in caplog.text
-        assert "Service view change applied" in caplog.text
-        assert "delivery_count=1" in caplog.text
         assert "payload_hash=" in caplog.text
-
-        caplog.clear()
-        await view_store._apply_service_change(  # noqa: SLF001
-            ServiceViewChange(
-                "put",
-                view_ref.store_name,
-                view_ref.key,
-                created.revision,
-                created,
-                created.storage_key,
-            )
-        )
-
-        assert "Service view stale change ignored" in caplog.text
-        assert "reason=revision" in caplog.text
         tg.cancel_scope.cancel()
 
 
@@ -1089,31 +1081,30 @@ async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry(
         await view_store.wait_ready()
 
         async with view_store.watch(_view_read_context(lease), view_ref) as changes:
+            initial = await _receive_service_change(changes)
+            assert initial.entry is None
             first_hidden = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "ON"},
                 context=_service_view_write_context(other_lease),
             )
-            await _assert_no_service_change(changes)
 
             await view_store.delete(
                 view=view_ref,
                 context=_service_view_write_context(other_lease),
                 revision=first_hidden.revision,
             )
-            await _assert_no_service_change(changes)
 
             second_hidden = await view_store.put(
                 view=view_ref,
                 payload={"item": "Kitchen Light", "state": "OFF"},
                 context=_service_view_write_context(other_lease),
             )
-            await _assert_no_service_change(changes)
 
             await raw.expire(second_hidden.storage_key)
             with anyio.fail_after(1):
                 while (
-                    view_store._revision_by_key[second_hidden.storage_key]
+                    view_store._observed_revision[second_hidden.storage_key]
                     <= second_hidden.revision
                 ):
                     await anyio.sleep(0)
@@ -1156,8 +1147,8 @@ async def test_service_view_store_get_waits_while_materialized_view_stale() -> N
 
 
 @pytest.mark.asyncio
-async def test_service_view_store_get_rebuilds_generation_stale_cache() -> None:
-    protocol, lease, view_ref = await _service_view_context()
+async def test_service_view_watch_resnapshots_after_changed_key_overflow() -> None:
+    _protocol, lease, view_ref = await _service_view_context()
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
     view_store = ServiceViewStore(bucket=raw)
 
@@ -1169,64 +1160,15 @@ async def test_service_view_store_get_rebuilds_generation_stale_cache() -> None:
             payload={"item": "Kitchen Light", "state": "ON"},
             context=_service_view_write_context(lease),
         )
-        assert await view_store.get(_view_read_context(lease), view_ref) == created
-
-        async with view_store._lock:  # noqa: SLF001
-            view_store._entries.clear()  # noqa: SLF001
-            view_store._revision_by_key.clear()  # noqa: SLF001
-            view_store._bucket_generation = 0  # noqa: SLF001
-
-        assert not view_store.is_current()
-        assert await view_store.get(_view_read_context(lease), view_ref) == created
-        tg.cancel_scope.cancel()
-
-
-@pytest.mark.asyncio
-async def test_service_view_store_generation_gap_rebuilds_from_bucket() -> None:
-    protocol, lease, view_ref = await _service_view_context()
-    raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
-    view_store = ServiceViewStore(bucket=raw)
-    other_ref = ServiceViewRef(
-        view_ref.store_name,
-        service_view_key("openhab-home", "items", "Kitchen Fan"),
-    )
-
-    async with anyio.create_task_group() as tg:
-        view_store.start(tg)
-        await view_store.wait_current()
-        created = await view_store.put(
-            view=view_ref,
-            payload={"item": "Kitchen Light", "state": "ON"},
-            context=_service_view_write_context(lease),
-        )
-        other = await view_store.put(
-            view=other_ref,
-            payload={"item": "Kitchen Fan", "state": "ON"},
-            context=_service_view_write_context(lease),
-        )
-        await view_store.wait_current()
-        bucket_generation = view_store._bucket.generation  # noqa: SLF001
-        other_entry = view_store._bucket.get_cached(other.storage_key)  # noqa: SLF001
-        assert other_entry is not None
-
-        async with view_store._lock:  # noqa: SLF001
-            view_store._entries.clear()  # noqa: SLF001
-            view_store._revision_by_key.clear()  # noqa: SLF001
-            view_store._bucket_generation = 0  # noqa: SLF001
-
-        await view_store._apply_kv_change(  # noqa: SLF001
-            KvChange(
-                view_store.bucket,
-                other.storage_key,
-                other.revision,
-                "put",
-                other_entry,
-                view_generation=bucket_generation,
+        async with view_store.watch(_view_read_context(lease), view_ref) as changes:
+            initial = await _receive_service_change(changes)
+            assert initial.entry == created
+            await view_store._state.publish(  # noqa: SLF001
+                f"unrelated-{index}" for index in range(257)
             )
-        )
-
-        assert view_store.is_current()
-        assert await view_store.get(_view_read_context(lease), view_ref) == created
+            resnapshot = await _receive_service_change(changes)
+            assert resnapshot.entry == created
+            assert resnapshot.resnapshot_required
         tg.cancel_scope.cancel()
 
 
@@ -1246,6 +1188,8 @@ async def test_service_view_store_delete_updates_cache_immediately() -> None:
         )
 
         async with view_store.watch(_view_read_context(lease), view_ref) as changes:
+            initial = await _receive_service_change(changes)
+            assert initial.entry == created
             await view_store.delete(
                 view=view_ref,
                 context=_service_view_write_context(lease),
@@ -1253,7 +1197,7 @@ async def test_service_view_store_delete_updates_cache_immediately() -> None:
             )
             change = await _receive_service_change(changes)
 
-        assert change.operation == "delete"
+        assert change.entry is None
         assert await view_store.get(_view_read_context(lease), view_ref) is None
         tg.cancel_scope.cancel()
 
@@ -1316,24 +1260,29 @@ class _RecoveringServiceViewBucket:
     async def watch(
         self,
         prefix: str = "",
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
+    ) -> AsyncIterator[
+        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
+    ]:
         if self._pause_next_watch:
             self._pause_next_watch = False
             self._watch_paused.set()
             await self._resume_watch.wait()
         close_event = anyio.Event()
         self._close_events.append(close_event)
-        send, receive = anyio.create_memory_object_stream[KvChange | None](100)
+        send, receive = anyio.create_memory_object_stream[
+            KvChange | KvWatchBarrier
+        ](100)
         snapshot = tuple(
             entry for key, entry in sorted(self._entries.items()) if key.startswith(prefix)
         )
+        barrier = KvWatchBarrier(self._revision)
 
         async def run() -> None:
             for entry in snapshot:
                 await send.send(
                     KvChange(self.bucket, entry.key, entry.revision, "put", entry)
                 )
-            await send.send(None)
+            await send.send(barrier)
             await close_event.wait()
             await send.aclose()
 

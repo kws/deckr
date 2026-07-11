@@ -6,13 +6,14 @@ import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import anyio
 
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
 from deckr.contracts.models import freeze_json, thaw_json
+from deckr.core.util.anyio import CoalescedStateBroadcaster
 from deckr.services.runtime import (
     ServiceViewReadContext,
     ServiceViewRef,
@@ -21,8 +22,10 @@ from deckr.services.runtime import (
     UnsupportedServiceScope,
 )
 from deckr.substrates.nats_kv import (
-    KvChange,
     KvEntry,
+    KvMaterializedChange,
+    KvMaterializedSnapshot,
+    KvUnavailable,
     NatsJsonKvBucket,
     NatsKvMaterializedBucket,
 )
@@ -49,13 +52,18 @@ class ServiceViewEntry:
 
 
 @dataclass(frozen=True, slots=True)
-class ServiceViewChange:
-    operation: Literal["put", "delete", "expire"]
-    bucket: str
-    key: str
-    revision: int
-    entry: ServiceViewEntry | None = None
-    storage_key: str | None = None
+class ServiceViewWatchSnapshot:
+    version: int
+    current: bool
+    entry: ServiceViewEntry | None
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceViewWatchChange:
+    version: int
+    current: bool
+    entry: ServiceViewEntry | None
+    resnapshot_required: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,39 +77,27 @@ class _ServiceViewLeaseFence:
     contract: ContractPointer
 
 
-@dataclass(slots=True)
-class _ServiceViewSubscriber:
-    key: str
-    storage_key: str
-    fence: _ServiceViewLeaseFence
-    visible: bool
-
-
 class ServiceViewStore:
-    """Direct KV-backed materialized service-view store."""
+    """Exact fenced service-view store with a coalesced materialized read model."""
 
     def __init__(
         self,
         *,
         bucket: NatsJsonKvBucket | NatsKvMaterializedBucket | Any,
-        buffer_size: int = 100,
     ) -> None:
         self._bucket = (
             bucket
             if _is_materialized_bucket(bucket)
-            else NatsKvMaterializedBucket(bucket=bucket, buffer_size=buffer_size)
+            else NatsKvMaterializedBucket(bucket=bucket)
         )
-        self._buffer_size = buffer_size
+        self._exact = self._bucket.exact_bucket
+        self._entries: dict[str, ServiceViewEntry] = {}
+        self._observed_revision: dict[str, int] = {}
+        self._revision_condition = anyio.Condition()
         self._ready = anyio.Event()
         self._started = False
-        self._entries: dict[str, ServiceViewEntry] = {}
-        self._revision_by_key: dict[str, int] = {}
-        self._bucket_generation = 0
-        self._subscribers: dict[
-            anyio.abc.ObjectSendStream[ServiceViewChange],
-            _ServiceViewSubscriber,
-        ] = {}
-        self._lock = anyio.Lock()
+        self._state = CoalescedStateBroadcaster[str](current=False)
+        self._closed = False
 
     @property
     def bucket(self) -> str:
@@ -114,23 +110,29 @@ class ServiceViewStore:
         self._started = True
         task_group.start_soon(self._event_loop)
 
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._state.aclose()
+        await self._bucket.aclose()
+        await self._notify_revisions()
+
     async def wait_ready(self) -> None:
         await self._ready.wait()
 
     def is_current(self) -> bool:
         return (
-            self._ready.is_set()
-            and self._bucket.is_current()
-            and self._bucket_generation == _bucket_generation_cached(self._bucket)
+            self._bucket.is_current()
+            and self._ready.is_set()
+            and self._state.current
         )
 
     async def wait_current(self) -> None:
-        await self.wait_ready()
-        while True:
+        while not self.is_current():
             await self._bucket.wait_current()
-            if self._bucket_generation == _bucket_generation_cached(self._bucket):
+            if self.is_current():
                 return
-            await self._rebuild_from_bucket()
             await anyio.sleep(0)
 
     async def get(
@@ -140,12 +142,8 @@ class ServiceViewStore:
     ) -> ServiceViewEntry | None:
         self._assert_read_authorized(context, view)
         await self.wait_current()
-        storage_key = _storage_key_for_context(view, context)
-        async with self._lock:
-            entry = self._entries.get(storage_key)
-        if entry is None:
-            return None
-        if not _entry_matches_read_context(entry, context):
+        entry = self._entries.get(_storage_key_for_context(view, context))
+        if entry is None or not _entry_matches_read_context(entry, context):
             return None
         return entry
 
@@ -161,23 +159,19 @@ class ServiceViewStore:
         self._assert_write_authorized(context, view)
         if self._started:
             await self.wait_current()
-        pointer = context.contract
-        storage_key = _storage_key(view.key, pointer)
-        value = _fenced_payload(
-            payload,
-            view_key=view.key,
-            context=context,
-        )
+        storage_key = _storage_key(view.key, context.contract)
+        value = _fenced_payload(payload, view_key=view.key, context=context)
         entry = (
-            await self._bucket.put(storage_key, value, ttl=ttl)
+            await self._exact.put(storage_key, value, ttl=ttl)
             if revision is None
-            else await self._bucket.update(
+            else await self._exact.update(
                 storage_key,
                 value,
                 revision=revision,
                 ttl=ttl,
             )
         )
+        await self._observe_write(storage_key, entry.revision)
         service_entry = _service_view_entry_from_kv(entry)
         logger.debug(
             "Service view write bucket=%s key=%s revision=%s service=%s "
@@ -190,17 +184,6 @@ class ServiceViewStore:
             context.service_session_id,
             "put" if revision is None else "update",
             _payload_hash(payload),
-        )
-        await self._apply_service_change(
-            ServiceViewChange(
-                "put",
-                self.bucket,
-                view.key,
-                entry.revision,
-                service_entry,
-                storage_key,
-            ),
-            view_generation=_bucket_generation_cached(self._bucket),
         )
         return service_entry
 
@@ -215,14 +198,10 @@ class ServiceViewStore:
         self._assert_write_authorized(context, view)
         if self._started:
             await self.wait_current()
-        pointer = context.contract
-        storage_key = _storage_key(view.key, pointer)
-        value = _fenced_payload(
-            payload,
-            view_key=view.key,
-            context=context,
-        )
-        entry = await self._bucket.create(storage_key, value, ttl=ttl)
+        storage_key = _storage_key(view.key, context.contract)
+        value = _fenced_payload(payload, view_key=view.key, context=context)
+        entry = await self._exact.create(storage_key, value, ttl=ttl)
+        await self._observe_write(storage_key, entry.revision)
         service_entry = _service_view_entry_from_kv(entry)
         logger.debug(
             "Service view write bucket=%s key=%s revision=%s service=%s "
@@ -234,17 +213,6 @@ class ServiceViewStore:
             context.service_namespace,
             context.service_session_id,
             _payload_hash(payload),
-        )
-        await self._apply_service_change(
-            ServiceViewChange(
-                "put",
-                self.bucket,
-                view.key,
-                entry.revision,
-                service_entry,
-                storage_key,
-            ),
-            view_generation=_bucket_generation_cached(self._bucket),
         )
         return service_entry
 
@@ -275,213 +243,185 @@ class ServiceViewStore:
         self._assert_write_authorized(context, view)
         if self._started:
             await self.wait_current()
-        pointer = context.contract
-        storage_key = _storage_key(view.key, pointer)
-        marker_revision = await self._bucket.delete(storage_key, revision=revision)
+        storage_key = _storage_key(view.key, context.contract)
+        marker_revision = await self._exact.delete(storage_key, revision=revision)
         if marker_revision is None:
             return
+        await self._observe_write(storage_key, marker_revision)
         logger.debug(
             "Service view write bucket=%s key=%s revision=%s operation=delete",
             self.bucket,
             storage_key,
             marker_revision,
         )
-        await self._apply_service_change(
-            ServiceViewChange(
-                "delete",
-                self.bucket,
-                view.key,
-                marker_revision,
-                storage_key=storage_key,
-            ),
-            view_generation=_bucket_generation_cached(self._bucket),
-        )
+
+    async def _observe_write(self, key: str, revision: int) -> None:
+        if not self._started:
+            return
+        await self._bucket.wait_for_revision(key, revision)
+        while self._observed_revision.get(key, 0) < revision:
+            if self._closed:
+                raise KvUnavailable(
+                    "Service view closed before observing "
+                    f"revision {revision} for {key!r}"
+                )
+            async with self._revision_condition:
+                if self._observed_revision.get(key, 0) >= revision:
+                    return
+                await self._revision_condition.wait()
 
     @asynccontextmanager
     async def watch(
         self,
         context: ServiceViewReadContext,
         view: ServiceViewRef,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
+    ) -> AsyncIterator[
+        AsyncIterator[ServiceViewWatchSnapshot | ServiceViewWatchChange]
+    ]:
         self._assert_read_authorized(context, view)
         await self.wait_current()
-        send, receive = anyio.create_memory_object_stream[ServiceViewChange](
-            max_buffer_size=self._buffer_size
-        )
         fence = _read_fence(context)
         storage_key = _storage_key_for_context(view, context)
-        async with self._lock:
-            current = self._entries.get(storage_key)
-            self._subscribers[send] = _ServiceViewSubscriber(
-                key=view.key,
-                storage_key=storage_key,
-                fence=fence,
-                visible=current is not None and _entry_matches_fence(current, fence),
+        async with self._state.subscribe(
+            lambda version, current: self._watch_snapshot_locked(
+                storage_key,
+                fence,
+                version,
+                current,
             )
-        try:
-            async with send, receive:
-                yield receive
-        finally:
-            async with self._lock:
-                self._subscribers.pop(send, None)
+        ) as subscription:
+
+            async def stream() -> AsyncIterator[
+                ServiceViewWatchSnapshot | ServiceViewWatchChange
+            ]:
+                initial = subscription.initial
+                last_entry = initial.entry
+                last_current = initial.current
+                yield initial
+                async for wakeup in subscription:
+                    if (
+                        not wakeup.resnapshot_required
+                        and storage_key not in wakeup.changed
+                        and wakeup.current == last_current
+                    ):
+                        continue
+                    try:
+                        snapshot = await self._state.capture(
+                            lambda version, current: self._watch_snapshot_locked(
+                                storage_key,
+                                fence,
+                                version,
+                                current,
+                            )
+                        )
+                    except anyio.ClosedResourceError:
+                        return
+                    if (
+                        not wakeup.resnapshot_required
+                        and snapshot.entry == last_entry
+                        and snapshot.current == last_current
+                    ):
+                        continue
+                    last_entry = snapshot.entry
+                    last_current = snapshot.current
+                    yield ServiceViewWatchChange(
+                        version=snapshot.version,
+                        current=snapshot.current,
+                        entry=snapshot.entry,
+                        resnapshot_required=wakeup.resnapshot_required,
+                    )
+
+            yield stream()
+
+    def _watch_snapshot_locked(
+        self,
+        storage_key: str,
+        fence: _ServiceViewLeaseFence,
+        version: int,
+        current: bool,
+    ) -> ServiceViewWatchSnapshot:
+        entry = self._entries.get(storage_key)
+        if entry is not None and not _entry_matches_fence(entry, fence):
+            entry = None
+        return ServiceViewWatchSnapshot(
+            version=version,
+            current=current,
+            entry=entry,
+        )
 
     async def _event_loop(self) -> None:
-        await self._bucket.wait_current()
-        async with self._bucket.subscribe() as changes:
-            await self._rebuild_from_bucket()
-            self._ready.set()
-            async for change in changes:
-                await self._apply_kv_change(change)
-
-    async def _rebuild_from_bucket(self) -> None:
-        entries: dict[str, ServiceViewEntry] = {}
-        revisions: dict[str, int] = {}
-        bucket_generation = _bucket_generation_cached(self._bucket)
-        for entry in self._bucket.items_cached():
-            revisions[entry.key] = entry.revision
-            try:
-                service_entry = _service_view_entry_from_kv(entry)
-            except ValueError:
-                continue
-            entries[entry.key] = service_entry
-        async with self._lock:
-            self._entries = entries
-            self._revision_by_key = revisions
-            self._bucket_generation = bucket_generation
-
-    async def _apply_kv_change(self, change: KvChange) -> None:
-        if await self._rebuild_if_generation_gap(change):
+        try:
+            async with self._bucket.subscribe() as changes:
+                async for item in changes:
+                    if isinstance(item, KvMaterializedSnapshot):
+                        await self._install_snapshot(item)
+                    else:
+                        await self._consume_change(item)
+        except anyio.ClosedResourceError:
             return
-        if change.operation == "put" and change.entry is not None:
-            try:
-                entry = _service_view_entry_from_kv(change.entry)
-            except ValueError:
-                entry = None
-            await self._apply_service_change(
-                ServiceViewChange(
-                    "put",
-                    self.bucket,
-                    entry.key
-                    if entry is not None
-                    else _logical_key_from_storage_key(change.key),
-                    change.revision,
-                    entry,
-                    change.key,
-                ),
-                view_generation=change.view_generation,
+
+    async def _consume_change(self, change: KvMaterializedChange) -> None:
+        if change.resnapshot_required:
+            await self._install_snapshot(await self._bucket.snapshot())
+            return
+        parsed = {
+            key: _parse_service_view_entry(self._bucket.get_cached(key))
+            for key in change.changed_keys
+        }
+        async with self._state.lock:
+            for key, entry in parsed.items():
+                if entry is None:
+                    self._entries.pop(key, None)
+                else:
+                    self._entries[key] = entry
+                revision = self._bucket.revision_cached(key)
+                if revision is not None:
+                    self._observed_revision[key] = revision
+            current_changed = self._state.current != change.current
+            if change.changed_keys or current_changed:
+                self._state.publish_locked(
+                    change.changed_keys,
+                    current=change.current,
+                )
+            if change.current:
+                self._ready.set()
+        await self._notify_revisions()
+
+    async def _install_snapshot(self, snapshot: KvMaterializedSnapshot) -> None:
+        entries = {
+            entry.storage_key: entry
+            for raw in snapshot.entries
+            if (entry := _parse_service_view_entry(raw)) is not None
+        }
+        async with self._state.lock:
+            previous_keys = set(self._entries)
+            changed = frozenset(
+                key
+                for key in previous_keys | entries.keys()
+                if self._entries.get(key) != entries.get(key)
             )
-            return
-        await self._apply_service_change(
-            ServiceViewChange(
-                change.operation,
-                self.bucket,
-                _logical_key_from_storage_key(change.key),
-                change.revision,
-                storage_key=change.key,
-            ),
-            view_generation=change.view_generation,
-        )
-
-    async def _rebuild_if_generation_gap(self, change: KvChange) -> bool:
-        if change.view_generation is None:
-            return False
-        async with self._lock:
-            gap = change.view_generation > self._bucket_generation + 1
-        if not gap:
-            return False
-        await self._rebuild_from_bucket()
-        return True
-
-    async def _apply_service_change(
-        self,
-        change: ServiceViewChange,
-        *,
-        view_generation: int | None = None,
-    ) -> None:
-        async with self._lock:
-            if not _change_generation_is_next(
-                view_generation,
-                current_generation=self._bucket_generation,
-            ):
-                logger.debug(
-                    "Service view stale change ignored bucket=%s key=%s "
-                    "operation=%s revision=%s view_generation=%s "
-                    "current_generation=%s reason=generation",
-                    change.bucket,
-                    change.key,
-                    change.operation,
-                    change.revision,
-                    view_generation,
-                    self._bucket_generation,
+            self._entries = entries
+            self._observed_revision = {
+                raw.key: raw.revision for raw in snapshot.entries
+            }
+            for key in previous_keys - self._observed_revision.keys():
+                revision = self._bucket.revision_cached(key)
+                if revision is not None:
+                    self._observed_revision[key] = revision
+            current_changed = self._state.current != snapshot.current
+            if changed or current_changed or not self._ready.is_set():
+                self._state.publish_locked(
+                    changed,
+                    current=snapshot.current,
+                    resnapshot_required=len(changed) > 256,
                 )
-                return
-            storage_key = _change_storage_key(change)
-            current_revision = self._revision_by_key.get(storage_key, 0)
-            if change.revision <= current_revision:
-                self._advance_bucket_generation_locked(view_generation)
-                logger.debug(
-                    "Service view stale change ignored bucket=%s key=%s "
-                    "operation=%s revision=%s current_revision=%s "
-                    "view_generation=%s reason=revision",
-                    change.bucket,
-                    change.key,
-                    change.operation,
-                    change.revision,
-                    current_revision,
-                    view_generation,
-                )
-                return
-            self._revision_by_key[storage_key] = change.revision
-            if change.operation == "put" and change.entry is not None:
-                self._entries[storage_key] = change.entry
-            else:
-                self._entries.pop(storage_key, None)
-            self._advance_bucket_generation_locked(view_generation)
-            deliveries: list[
-                tuple[
-                    anyio.abc.ObjectSendStream[ServiceViewChange],
-                    ServiceViewChange,
-                ]
-            ] = []
-            for subscriber, state in self._subscribers.items():
-                if state.storage_key != storage_key:
-                    continue
-                delivery = _subscriber_delivery(change, state)
-                if delivery is not None:
-                    deliveries.append((subscriber, delivery))
-        delivered_count = 0
-        for subscriber, delivery in deliveries:
-            try:
-                subscriber.send_nowait(delivery)
-                delivered_count += 1
-            except anyio.WouldBlock:
-                continue
-            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                async with self._lock:
-                    self._subscribers.pop(subscriber, None)
-        entry = change.entry
-        logger.debug(
-            "Service view change applied bucket=%s key=%s operation=%s "
-            "revision=%s storage_key=%s service=%s namespace=%s session=%s "
-            "contract=%s generation=%s payload_hash=%s delivery_count=%s",
-            change.bucket,
-            change.key,
-            change.operation,
-            change.revision,
-            _change_storage_key(change),
-            entry.service_id if entry is not None else None,
-            entry.service_namespace if entry is not None else None,
-            entry.service_session_id if entry is not None else None,
-            entry.contract.contract_id if entry is not None else None,
-            entry.contract.generation if entry is not None else None,
-            _payload_hash(entry.value) if entry is not None else None,
-            delivered_count,
-        )
+            if snapshot.current:
+                self._ready.set()
+        await self._notify_revisions()
 
-    def _advance_bucket_generation_locked(self, view_generation: int | None) -> None:
-        if view_generation is None:
-            view_generation = _bucket_generation_cached(self._bucket)
-        self._bucket_generation = max(self._bucket_generation, view_generation)
+    async def _notify_revisions(self) -> None:
+        async with self._revision_condition:
+            self._revision_condition.notify_all()
 
     def _assert_read_authorized(
         self,
@@ -531,6 +471,7 @@ class ServiceViewStore:
         )
 
 
+
 class ManagedServiceViewAccess:
     """Lease-bound retained-view access for one service-use contract."""
 
@@ -552,7 +493,9 @@ class ManagedServiceViewAccess:
     async def watch(
         self,
         view: ServiceViewRef,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ServiceViewChange]]:
+    ) -> AsyncIterator[
+        AsyncIterator[ServiceViewWatchSnapshot | ServiceViewWatchChange]
+    ]:
         async with self._store.watch(self._require_read_context(), view) as changes:
             yield changes
 
@@ -690,6 +633,15 @@ def _service_view_entry_from_kv(entry: KvEntry) -> ServiceViewEntry:
     )
 
 
+def _parse_service_view_entry(entry: KvEntry | None) -> ServiceViewEntry | None:
+    if entry is None:
+        return None
+    try:
+        return _service_view_entry_from_kv(entry)
+    except (TypeError, ValueError):
+        return None
+
+
 def _required_value(value: Mapping[str, Any], key: str) -> str:
     item = value.get(key)
     if not isinstance(item, str) or not item:
@@ -731,31 +683,6 @@ def _entry_matches_fence(
     )
 
 
-def _subscriber_delivery(
-    change: ServiceViewChange,
-    state: _ServiceViewSubscriber,
-) -> ServiceViewChange | None:
-    if change.operation == "put":
-        if change.entry is not None and _entry_matches_fence(change.entry, state.fence):
-            state.visible = True
-            return change
-        if state.visible:
-            state.visible = False
-            return ServiceViewChange(
-                "delete",
-                change.bucket,
-                change.key,
-                change.revision,
-                storage_key=change.storage_key,
-            )
-        return None
-
-    if state.visible:
-        state.visible = False
-        return change
-    return None
-
-
 def _storage_key_for_context(
     view: ServiceViewRef,
     context: ServiceViewReadContext | ServiceViewWriteContext,
@@ -770,32 +697,8 @@ def _storage_key(logical_key: str, contract: ContractPointer) -> str:
     )
 
 
-def _logical_key_from_storage_key(storage_key: str) -> str:
-    return storage_key.rsplit(".contract.", 1)[0]
-
-
-def _change_storage_key(change: ServiceViewChange) -> str:
-    return change.storage_key or change.key
-
-
 def _contract_pointer_from_handle(value: Any) -> ContractPointer:
     return ContractPointer(contractId=value.contract_id, generation=value.generation)
-
-
-def _change_generation_is_next(
-    view_generation: int | None,
-    *,
-    current_generation: int,
-) -> bool:
-    if view_generation is None:
-        return True
-    if view_generation <= current_generation:
-        return False
-    return view_generation == current_generation + 1
-
-
-def _bucket_generation_cached(bucket: Any) -> int:
-    return int(getattr(bucket, "generation", 0))
 
 
 def _is_materialized_bucket(value: Any) -> bool:
@@ -803,25 +706,23 @@ def _is_materialized_bucket(value: Any) -> bool:
         hasattr(value, name)
         for name in (
             "start",
-            "wait_ready",
             "is_current",
             "wait_current",
-            "get_exact",
+            "exact_bucket",
             "get_cached",
             "items_cached",
             "revision_cached",
+            "snapshot",
             "subscribe",
-            "put",
-            "create",
-            "update",
-            "delete",
+            "wait_for_revision",
         )
     )
 
 
 __all__ = [
     "ManagedServiceViewAccess",
-    "ServiceViewChange",
     "ServiceViewEntry",
     "ServiceViewStore",
+    "ServiceViewWatchChange",
+    "ServiceViewWatchSnapshot",
 ]

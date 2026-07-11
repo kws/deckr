@@ -1034,6 +1034,21 @@ export class ManagedServiceViewAccess {
     }
     const storageKey = serviceViewStorageKey(view, context.contract);
     for await (const change of this.state.watch(storageKey)) {
+      if (change.operation === "resnapshot") {
+        const current = await this.state.get(storageKey);
+        const entry = current === null
+          ? undefined
+          : serviceViewEntryForRead(current, view, context) ?? undefined;
+        yield {
+          operation: entry === undefined ? "delete" : "put",
+          storeName: view.storeName,
+          key: view.key,
+          storageKey,
+          revision: current?.revision ?? 0,
+          ...(entry === undefined ? {} : { entry }),
+        };
+        continue;
+      }
       const entry = change.entry === undefined
         ? undefined
         : serviceViewEntryForRead(change.entry, view, context) ?? undefined;

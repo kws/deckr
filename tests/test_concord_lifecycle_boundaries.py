@@ -54,8 +54,8 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
         ): 1,
         (
             Path("deckr/src/deckr/testing/concord.py"),
-            41,
-            "_runtime_concord",
+            68,
+            "ConcordRuntimeHarness.__init__",
             "Concord",
             "construct",
         ): 1,
@@ -94,7 +94,7 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
                 "deckr-action-provider-runtime-python/"
                 "src/deckr/action_provider_runtime/runtime.py"
             ),
-            376,
+            375,
             "PythonActionProvider._cancel_stale_service_use_contracts",
             "self._concord",
             "contracts",
@@ -104,7 +104,7 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
                 "deckr-action-provider-runtime-python/"
                 "src/deckr/action_provider_runtime/runtime.py"
             ),
-            381,
+            380,
             "PythonActionProvider._cancel_stale_service_use_contracts",
             "self._concord",
             "contract_record",
@@ -114,7 +114,7 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
                 "deckr-action-provider-runtime-python/"
                 "src/deckr/action_provider_runtime/runtime.py"
             ),
-            389,
+            388,
             "PythonActionProvider._cancel_stale_service_use_contracts",
             "self._concord",
             "validate",
@@ -124,7 +124,7 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
                 "deckr-action-provider-runtime-python/"
                 "src/deckr/action_provider_runtime/runtime.py"
             ),
-            404,
+            403,
             "PythonActionProvider._cancel_stale_service_use_contracts",
             "self._concord",
             "cancel",
@@ -184,7 +184,7 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
         ): 1,
         (
             Path("deckr/src/deckr/hardware/runtime.py"),
-            607,
+            627,
             "HardwareManagerRuntime._cancel_claims_for_device",
             "self._claim_manager",
             "cancel",
@@ -194,7 +194,7 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
                 "deckr-action-provider-runtime-python/"
                 "src/deckr/action_provider_runtime/runtime.py"
             ),
-            332,
+            331,
             "PythonActionProvider._start_action_runtime_service",
             "self._service_use_manager",
             "start",
@@ -204,7 +204,7 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
                 "deckr-action-provider-runtime-python/"
                 "src/deckr/action_provider_runtime/runtime.py"
             ),
-            771,
+            760,
             "PythonActionProvider._withdraw_action_runtime_service",
             "participant",
             "cancel",
@@ -218,21 +218,21 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
         ): 1,
         (
             Path("deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py"),
-            955,
+            962,
             "OpenHabServiceComponent._cancel_subscription_contract",
             "participant",
             "cancel",
         ): 1,
         (
             Path("deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"),
-            250,
+            251,
             "SonosServiceComponent.start",
             "self._service_participant",
             "start",
         ): 1,
         (
             Path("deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"),
-            1406,
+            1441,
             "SonosServiceComponent._cancel_subscription_contract",
             "participant",
             "cancel",
@@ -250,6 +250,7 @@ def test_production_code_uses_managed_lifecycle_routes() -> None:
         if relative in {
             Path("deckr/src/deckr/beacon.py"),
             Path("deckr/src/deckr/_concord/_maintenance.py"),
+            Path("deckr/src/deckr/_concord/_view.py"),
             Path("deckr/src/deckr/concord.py"),
         }:
             continue

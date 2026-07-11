@@ -15,7 +15,7 @@ from deckr.components._defs import (
     RunContext,
     RunningComponent,
 )
-from deckr.core.util.anyio import SubscribableQueue
+from deckr.core.util.anyio import CoalescedStateBroadcaster
 
 # State ordering for "min_state" / "or higher" semantics.
 # FAILED = -1 so it never satisfies "wait for RUNNING" (can't distinguish
@@ -133,8 +133,10 @@ class ComponentManager(Component):
         self._event_send, self._event_receive = anyio.create_memory_object_stream(
             max_buffer_size=10000
         )
-        self._subscribers = SubscribableQueue[ComponentLifecycleEvent]()
-        self._status_subscribers = SubscribableQueue[ComponentStatus]()
+        self._lifecycle_state = CoalescedStateBroadcaster[str](current=True)
+        self._lifecycle_by_name: dict[str, ComponentLifecycleEvent] = {}
+        self._status_state = CoalescedStateBroadcaster[str](current=True)
+        self._status_by_name: dict[str, ComponentStatus] = {}
         self._tg: anyio.TaskGroup | None = None
         self._run_finished = anyio.Event()
 
@@ -179,6 +181,8 @@ class ComponentManager(Component):
             await self._event_send.aclose()
             if tg is not None:
                 await self._run_finished.wait()
+            await self._lifecycle_state.aclose()
+            await self._status_state.aclose()
 
     async def add_component(self, component: Component) -> None:
         """Add a component to the runtime registry.
@@ -381,14 +385,11 @@ class ComponentManager(Component):
                                 status = None
                         if status is not None:
                             await self._push_status(status)
-                        try:
-                            await self._subscribers.push(
-                                ComponentLifecycleEvent(
-                                    component, ComponentLifecycleEventType.STARTED
-                                )
+                        await self._push_lifecycle(
+                            ComponentLifecycleEvent(
+                                component, ComponentLifecycleEventType.STARTED
                             )
-                        except SubscribableQueue.SubscriberBufferFullError:
-                            pass
+                        )
 
                     def current_stop_timeout() -> float | None:
                         if running_component is None:
@@ -540,10 +541,7 @@ class ComponentManager(Component):
                     }:
                         await self._stop_component(event.component.name)
 
-                    try:
-                        await self._subscribers.push(event)
-                    except SubscribableQueue.SubscriberBufferFullError:
-                        pass
+                    await self._push_lifecycle(event)
 
                 except Exception as e:
                     # Log but don't crash the event loop
@@ -601,12 +599,49 @@ class ComponentManager(Component):
                 logger.error(f"Error stopping component '{name}' during shutdown: {e}")
 
     async def subscribe(self) -> AsyncIterator[ComponentLifecycleEvent]:
-        async for event in self._subscribers.subscribe():
-            yield event
+        async with self._lifecycle_state.subscribe(
+            lambda _version, _current: tuple(
+                self._lifecycle_by_name[name]
+                for name in sorted(self._lifecycle_by_name)
+            )
+        ) as subscription:
+            for event in subscription.initial:
+                yield event
+            async for wakeup in subscription:
+                try:
+                    events = await self._lifecycle_state.capture(
+                        lambda _version, _current, wakeup=wakeup: tuple(
+                            self._lifecycle_by_name[name]
+                            for name in sorted(self._lifecycle_by_name)
+                            if wakeup.resnapshot_required or name in wakeup.changed
+                        )
+                    )
+                except anyio.ClosedResourceError:
+                    return
+                for event in events:
+                    yield event
 
     async def subscribe_status(self) -> AsyncIterator[ComponentStatus]:
-        async for status in self._status_subscribers.subscribe():
-            yield status
+        async with self._status_state.subscribe(
+            lambda _version, _current: tuple(
+                self._status_by_name[name] for name in sorted(self._status_by_name)
+            )
+        ) as subscription:
+            for status in subscription.initial:
+                yield status
+            async for wakeup in subscription:
+                try:
+                    statuses = await self._status_state.capture(
+                        lambda _version, _current, wakeup=wakeup: tuple(
+                            self._status_by_name[name]
+                            for name in sorted(self._status_by_name)
+                            if wakeup.resnapshot_required or name in wakeup.changed
+                        )
+                    )
+                except anyio.ClosedResourceError:
+                    return
+                for status in statuses:
+                    yield status
 
     async def _report_component_readiness(
         self,
@@ -630,10 +665,15 @@ class ComponentManager(Component):
         await self._push_status(status)
 
     async def _push_status(self, status: ComponentStatus) -> None:
-        try:
-            await self._status_subscribers.push(status)
-        except SubscribableQueue.SubscriberBufferFullError:
-            pass
+        async with self._status_state.lock:
+            self._status_by_name[status.runtime_name] = status
+            self._status_state.publish_locked((status.runtime_name,))
+
+    async def _push_lifecycle(self, event: ComponentLifecycleEvent) -> None:
+        name = event.component.name
+        async with self._lifecycle_state.lock:
+            self._lifecycle_by_name[name] = event
+            self._lifecycle_state.publish_locked((name,))
 
 
 def _normalize_status_reason(reason: str) -> str:

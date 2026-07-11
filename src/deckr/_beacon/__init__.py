@@ -1,0 +1,2 @@
+"""Internal Beacon runtime implementation."""
+

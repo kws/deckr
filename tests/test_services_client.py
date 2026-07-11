@@ -1070,16 +1070,14 @@ async def test_watch_view_refreshes_lease_before_delivering_changes() -> None:
     )
 
     async def changes():
+        yield SimpleNamespace(entry=SimpleNamespace(value=current_payload))
         yield SimpleNamespace(entry=SimpleNamespace(value=changed_payload))
 
     @asynccontextmanager
     async def watch(_context, _view):
         yield changes()
 
-    store = SimpleNamespace(
-        get=AsyncMock(return_value=SimpleNamespace(value=current_payload)),
-        watch=watch,
-    )
+    store = SimpleNamespace(watch=watch)
     services = _services(
         endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
         concord=SimpleNamespace(),
@@ -1109,18 +1107,19 @@ async def test_watch_view_does_not_emit_idle_duplicate_payloads() -> None:
         "volume": 12,
     }
 
+    observed_watch: list[tuple[object, ServiceViewRef]] = []
+
     async def changes():
+        yield SimpleNamespace(entry=SimpleNamespace(value=current_payload))
         await anyio.sleep_forever()
         yield None
 
     @asynccontextmanager
-    async def watch(_context, _view):
+    async def watch(context, watched_view):
+        observed_watch.append((context, watched_view))
         yield changes()
 
-    store = SimpleNamespace(
-        get=AsyncMock(return_value=SimpleNamespace(value=current_payload)),
-        watch=watch,
-    )
+    store = SimpleNamespace(watch=watch)
     services = _services(
         endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
         concord=SimpleNamespace(),
@@ -1135,9 +1134,9 @@ async def test_watch_view_does_not_emit_idle_duplicate_payloads() -> None:
     await stream.aclose()
 
     assert scope.cancel_called
-    read_context = store.get.await_args.args[0]
+    read_context, watched_view = observed_watch[0]
     assert read_context.reader is ServiceViewWriter.CONSUMER
-    assert store.get.await_args.args[1] == view
+    assert watched_view == view
     assert lease.refresh.await_count == 2
 
 

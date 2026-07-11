@@ -210,13 +210,13 @@ async def test_shared_resource_subscription_replacement_reapplies_after_reconnec
 
         session = await manager.open_session({"Kitchen"})
         await _next_state(session, ServiceSubscriptionState.READY)
-        await _next_state(session, ServiceSubscriptionState.RECONNECTING)
-        await _next_state(session, ServiceSubscriptionState.READY)
+        ready = await _next_payload(session, {"volume": 13})
 
         assert set_calls == [
             frozenset({"Kitchen"}),
             frozenset({"Kitchen"}),
         ]
+        assert ready.state is ServiceSubscriptionState.READY
 
         await session.aclose()
         await manager.aclose()
@@ -271,12 +271,9 @@ async def test_shared_resource_subscription_lease_monitor_reconnects_without_vie
 
         session = await manager.open_session({"Kitchen"})
         first_ready = await _next_state(session, ServiceSubscriptionState.READY)
-        reconnecting = await _next_state(session, ServiceSubscriptionState.RECONNECTING)
-        second_ready = await _next_state(session, ServiceSubscriptionState.READY)
+        second_ready = await _next_payload(session, {"volume": 13})
 
         assert first_ready.payload == {"volume": 12}
-        assert reconnecting.error is not None
-        assert reconnecting.error.code == "contract_cancelled"
         assert second_ready.payload == {"volume": 13}
         assert [lease.contract.generation for lease in leases] == [1, 2]
 
@@ -429,8 +426,6 @@ def test_shared_resource_subscription_constructor_validation() -> None:
             **kwargs,
             lease_monitor_interval_seconds=0,
         )
-    with pytest.raises(ValueError, match="subscriber_buffer_size"):
-        SharedResourceSubscriptionManager(**kwargs, subscriber_buffer_size=0)
     with pytest.raises(ValueError, match="ensure_resources or set_resources"):
         SharedResourceSubscriptionManager(
             **{
@@ -543,7 +538,6 @@ async def test_shared_resource_subscription_nonterminal_unavailable_does_not_rec
         manager = _manager(services, reconnect_delay_seconds=0)
 
         session = await manager.open_session({"Kitchen"})
-        await _next_state(session, ServiceSubscriptionState.READY)
         unavailable = await _next_state(session, ServiceSubscriptionState.UNAVAILABLE)
         await anyio.sleep(0)
 
@@ -555,7 +549,7 @@ async def test_shared_resource_subscription_nonterminal_unavailable_does_not_rec
         await manager.aclose()
         tg.cancel_scope.cancel()
 @pytest.mark.asyncio
-async def test_shared_resource_subscription_prunes_closed_but_not_full_subscribers() -> None:
+async def test_shared_resource_subscription_keeps_slow_subscribers_and_prunes_closed() -> None:
     services = SimpleNamespace(
         _task_group=SimpleNamespace(start_soon=lambda *args, **kwargs: None),
         descriptor=AsyncMock(return_value=_descriptor()),
@@ -564,7 +558,7 @@ async def test_shared_resource_subscription_prunes_closed_but_not_full_subscribe
         watch_view=lambda _lease, _view: None,
         use=lambda *args, **kwargs: None,
     )
-    manager = _manager(services, subscriber_buffer_size=1)
+    manager = _manager(services)
 
     full = await manager.open_session({"Kitchen"})
     await manager._emit(  # noqa: SLF001
@@ -576,7 +570,9 @@ async def test_shared_resource_subscription_prunes_closed_but_not_full_subscribe
         ),
     )
 
-    assert (await full.messages.receive()).state is ServiceSubscriptionState.PENDING
+    # The unread initial resource is resolved lazily, so a READY update racing
+    # the first read replaces the stale PENDING value.
+    assert (await full.messages.receive()).state is ServiceSubscriptionState.READY
     assert full._session_id in manager._subscribers  # noqa: SLF001
 
     closed = await manager.open_session({"Bedroom"})
@@ -596,6 +592,52 @@ async def test_shared_resource_subscription_prunes_closed_but_not_full_subscribe
     await closed.aclose()
 
 
+@pytest.mark.asyncio
+async def test_shared_resource_subscription_slow_session_resnapshots_after_overflow() -> (
+    None
+):
+    services = SimpleNamespace(
+        _task_group=SimpleNamespace(start_soon=lambda *args, **kwargs: None),
+        descriptor=AsyncMock(return_value=_descriptor()),
+        ensure_resources=AsyncMock(),
+        release_resources=AsyncMock(),
+        watch_view=lambda _lease, _view: None,
+        use=lambda *args, **kwargs: None,
+    )
+    manager = _manager(services)
+    resources = {f"zone-{index:03d}" for index in range(257)}
+    session = await manager.open_session(resources)
+
+    with anyio.fail_after(1):
+        initial = [await session.messages.receive() for _ in resources]
+    assert {message.resource for message in initial} == resources
+    assert all(
+        message.state is ServiceSubscriptionState.PENDING for message in initial
+    )
+
+    for index, resource in enumerate(sorted(resources)):
+        await manager._emit(  # noqa: SLF001
+            resource,
+            ServiceSubscriptionMessage(
+                resource=resource,
+                state=ServiceSubscriptionState.READY,
+                payload={"sequence": index},
+            ),
+        )
+
+    with anyio.fail_after(1):
+        converged = [await session.messages.receive() for _ in resources]
+    assert {message.resource for message in converged} == resources
+    assert all(
+        message.state is ServiceSubscriptionState.READY for message in converged
+    )
+    assert {message.payload["sequence"] for message in converged if message.payload} == set(
+        range(257)
+    )
+
+    await session.aclose()
+
+
 async def _next_state(
     session,
     state: ServiceSubscriptionState,
@@ -604,6 +646,17 @@ async def _next_state(
         while True:
             message = await session.messages.receive()
             if message.state is state:
+                return message
+
+
+async def _next_payload(
+    session,
+    payload: Mapping[str, Any],
+) -> ServiceSubscriptionMessage[str]:
+    with anyio.fail_after(1):
+        while True:
+            message = await session.messages.receive()
+            if message.payload == payload:
                 return message
 
 
@@ -619,7 +672,6 @@ def _manager(
     replacement: bool = False,
     reconnect_delay_seconds: float = 0.01,
     lease_monitor_interval_seconds: float = 1.0,
-    subscriber_buffer_size: int = 100,
 ) -> SharedResourceSubscriptionManager[str]:
     return SharedResourceSubscriptionManager(
         services,
@@ -636,7 +688,6 @@ def _manager(
         service_use_timeout_seconds=1.0,
         reconnect_delay_seconds=reconnect_delay_seconds,
         lease_monitor_interval_seconds=lease_monitor_interval_seconds,
-        subscriber_buffer_size=subscriber_buffer_size,
     )
 
 

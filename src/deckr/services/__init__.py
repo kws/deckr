@@ -56,9 +56,10 @@ from deckr.services.subscriptions import (
 )
 from deckr.services.views import (
     ManagedServiceViewAccess,
-    ServiceViewChange,
     ServiceViewEntry,
     ServiceViewStore,
+    ServiceViewWatchChange,
+    ServiceViewWatchSnapshot,
 )
 
 __all__ = [
@@ -87,7 +88,6 @@ __all__ = [
     "ServiceUnavailable",
     "ServiceUseAuthorizationError",
     "ServiceUseLease",
-    "ServiceViewChange",
     "ServiceViewEntry",
     "ServiceViewFamily",
     "ServiceViewFamilyDefinition",
@@ -96,6 +96,8 @@ __all__ = [
     "ServiceViewStore",
     "ServiceViewWriteContext",
     "ServiceViewWriter",
+    "ServiceViewWatchChange",
+    "ServiceViewWatchSnapshot",
     "SharedResourceSubscriptionManager",
     "UnsupportedServiceScope",
     "ResourceSubscriptionSession",

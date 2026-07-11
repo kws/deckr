@@ -33,7 +33,7 @@ Beacon and normal Concord use explicit KV bucket policies and materialized
 views. Production runtime code does not subscribe directly to Beacon or
 Concord authority state. Python runtime participants use the shared `Beacon`
 and `Concord` APIs; both own their materialized runtime views, semantic
-lifecycle events, leases, heartbeats, freshness checks, recovery
+lifecycle snapshots, bounded change wakeups, leases, heartbeats, freshness checks, recovery
 reconciliation, and lifecycle logging. Non-Python implementations must follow
 the same protocol semantics in [`beacon-concord.md`](beacon-concord.md).
 The optional Concord reaper is the maintenance exception. It receives the
@@ -68,6 +68,42 @@ claim/provider reconciliation on the fast advertisement-renewal cadence. Normal
 discovery uses materialized Beacon/Concord views plus watches. Exact full scans
 are reserved for startup, watch reconnect/cache rebuild, diagnostics,
 maintenance, and low-frequency repair.
+
+## Materialized State Watches
+
+Deckr state watches deliver current state, not an unbounded history of events.
+Every public state watch captures its registration and first immutable snapshot
+under the same state lock. The first item therefore contains one version, its
+`current` flag, and the complete filtered membership. A later wakeup carries a
+newer version and at most 256 changed identities. If more identities change
+before a subscriber reads, `resnapshot_required` is true and the changed set is
+empty; the subscriber rereads the complete current snapshot. A healthy slow
+subscriber is neither dropped nor allowed to block ingestion. Each broadcaster
+admits at most 256 simultaneous registrations and rejects the next registration
+explicitly.
+
+Raw NATS KV watch bootstrap has a typed `KvWatchBarrier`. The adapter captures
+the stream high-water revision before opening the broker watch, replays current
+subjects, and emits the barrier after that replay. `NatsKvMaterializedBucket`
+then installs the recovered snapshot atomically, applies observations newer than
+the barrier in revision order, and synthesizes removals for keys missing from a
+recovered snapshot. It marks the view stale when the NATS connection is not
+current and rebuilds after reconnection. Post-barrier absent-key revisions are
+bounded at 2,000; reaching that bound immediately reopens the watch so a fresh
+high-water snapshot can compact the tombstones.
+
+Exact/CAS stores and materialized sources are separate responsibilities. An
+exact create, update, or delete never mutates the materialized cache directly.
+When a started lifecycle operation requires read-your-write behavior, it waits
+for the broker watch to observe the committed revision. This preserves one
+ordered source of view truth while leaving exact writes independent of slow
+view readers.
+
+The same contract backs Beacon and Concord views, fenced service views,
+component lifecycle/status projections, logical service-subscription sessions,
+controller configuration, and Sonos zone state. Domain-facing APIs retain their
+own value types, but remain current-first and converge by resnapshot rather than
+dropping a state change.
 
 Endpoint sessions are local runtime and message-envelope identities. Lane
 publish/subscribe does not consult a KV record before delivery. Runtime evidence

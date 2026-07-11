@@ -4,11 +4,10 @@ import logging
 import random
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from time import monotonic
-from typing import Any, Literal
+from typing import Any
 
 import anyio
 
@@ -33,6 +32,7 @@ from deckr._concord._models import (
     CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
     ConcordConflict,
     ConcordConflictCode,
+    ConcordContractState,
     ConcordUnavailable,
     ConcordUnavailableCode,
     ContractHandle,
@@ -46,12 +46,6 @@ from deckr._concord._models import (
     TokenObservation,
 )
 from deckr._concord._models import (
-    contract_handle as _contract_handle,
-)
-from deckr._concord._models import (
-    participant_handle as _participant_handle,
-)
-from deckr._concord._models import (
     participant_handle_matches as _participant_handle_matches,
 )
 from deckr._concord._models import (
@@ -61,19 +55,14 @@ from deckr._concord._store import (
     ConcordKvStore as _ConcordKvStore,
 )
 from deckr._concord._validation import (
-    ConcordObservationState,
     ConcordSessionAssertions,
-    ContractObservation,
-    contract_observation_from_entry,
-    evaluate_contract_validity,
-    token_observation_from_entry,
 )
+from deckr._concord._view import ConcordView
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
 from deckr.contracts.models import DeckrModel, freeze_json
+from deckr.core.util.anyio import CoalescedStateBroadcaster
 from deckr.substrates.nats_kv import (
-    KvChange,
-    KvEntry,
     NatsKvMaterializedBucket,
 )
 
@@ -126,33 +115,6 @@ def _is_chattery_contract_profile(profile: str | None) -> bool:
     return profile is not None and profile.endswith(".service_use.v1")
 
 
-class ConcordEventType(StrEnum):
-    CONTRACT_PROPOSED = "contract_proposed"
-    CONTRACT_UPDATED = "contract_updated"
-    CONTRACT_VALID = "contract_valid"
-    CONTRACT_PENDING = "contract_pending"
-    CONTRACT_INVALID = "contract_invalid"
-    CONTRACT_CANCELLED = "contract_cancelled"
-    CONTRACT_DELETED = "contract_deleted"
-    TOKEN_ATTACHED = "token_attached"
-    TOKEN_REFRESHED = "token_refreshed"
-    TOKEN_EXPIRED = "token_expired"
-    TOKEN_WITHDRAWN = "token_withdrawn"
-
-
-class ConcordManagedContractEventType(StrEnum):
-    VALID = "valid"
-    PENDING = "pending"
-    INVALID = "invalid"
-    CANCELLED = "cancelled"
-    RELEASED = "released"
-
-
-class _ConcordNotificationSource(StrEnum):
-    CONTRACT = "contract"
-    TOKEN = "token"
-
-
 def _now_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -169,31 +131,6 @@ def _concord_token_refresh_delay(
 
 
 @dataclass(frozen=True, slots=True)
-class ConcordEvent:
-    event_type: ConcordEventType
-    contract: ContractHandle | None = None
-    record: ContractRecord | None = None
-    validity: ContractValidity | None = None
-    token: ParticipantHandle | None = None
-    profile: str | None = None
-    participant: EndpointAddress | None = None
-    reason: str | None = None
-    change: KvChange | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _ConcordContractNotification:
-    source: _ConcordNotificationSource
-    operation: Literal["put", "delete", "expire"]
-    contract_id: str
-    generation: int
-    contract: ContractHandle | None = None
-    participant: EndpointAddress | None = None
-    profile: str | None = None
-    change: KvChange | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class ConcordManagedContract:
     contract: ContractHandle
     record: ContractRecord
@@ -202,13 +139,35 @@ class ConcordManagedContract:
 
 
 @dataclass(frozen=True, slots=True)
-class ConcordManagedContractEvent:
-    event_type: ConcordManagedContractEventType
-    contract: ContractHandle
-    record: ContractRecord | None = None
-    validity: ContractValidity | None = None
-    token: ParticipantHandle | None = None
-    reason: str | None = None
+class ConcordWatchSnapshot:
+    version: int
+    current: bool
+    contracts: tuple[ConcordContractState, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConcordWatchChange:
+    version: int
+    current: bool
+    contracts: tuple[ConcordContractState, ...]
+    changed_pointers: frozenset[ContractPointer]
+    resnapshot_required: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConcordParticipantSnapshot:
+    version: int
+    current: bool
+    contracts: tuple[ConcordManagedContract, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConcordParticipantChange:
+    version: int
+    current: bool
+    contracts: tuple[ConcordManagedContract, ...]
+    changed_pointers: frozenset[ContractPointer]
+    resnapshot_required: bool
 
 
 class ConcordParticipantLease:
@@ -477,15 +436,6 @@ class ConcordParticipantLease:
                 )
 
 
-@dataclass(slots=True, eq=False)
-class _ConcordSubscriber:
-    send: anyio.abc.ObjectSendStream[ConcordEvent]
-    profile: str | None
-    participant: EndpointAddress | None
-    replay_pending: bool = False
-    pending_events: list[ConcordEvent] = field(default_factory=list)
-
-
 class Concord:
     """Runtime-facing Concord API with participant leases and semantic events."""
 
@@ -493,42 +443,21 @@ class Concord:
         self,
         contract_bucket: NatsKvMaterializedBucket | Any,
         token_bucket: NatsKvMaterializedBucket | Any,
-        *,
-        buffer_size: int = 100,
     ) -> None:
         self._coordinator = _ConcordKvStore(
             contract_bucket,
             token_bucket,
         )
-        self._buffer_size = buffer_size
-        self._ready = anyio.Event()
+        self._view = ConcordView(
+            self._coordinator.contract_source,
+            self._coordinator.token_source,
+        )
         self._started = False
         self._closed = False
         self._task_group: anyio.abc.TaskGroup | None = None
         self._agreement_lock = anyio.Lock()
         self._lock = anyio.Lock()
-        self._subscribers: set[_ConcordSubscriber] = set()
         self._participant_leases: set[ConcordParticipantLease] = set()
-        self._contract_entries_by_key: dict[str, KvEntry] = {}
-        self._invalid_contracts_by_key: dict[str, tuple[KvEntry, str]] = {}
-        self._contract_records_by_key: dict[str, ContractRecord] = {}
-        self._contract_handles_by_key: dict[str, ContractHandle] = {}
-        self._contract_keys_by_pointer: dict[tuple[str, int], str] = {}
-        self._contract_keys_by_contract_id: dict[str, set[str]] = {}
-        self._contract_keys_by_profile: dict[str | None, set[str]] = {}
-        self._contract_keys_by_participant: dict[str, set[str]] = {}
-        self._contract_keys_by_state: dict[ContractState, set[str]] = {}
-        self._contract_revision_by_key: dict[str, int] = {}
-        self._token_entries_by_key: dict[str, KvEntry] = {}
-        self._invalid_tokens_by_key: dict[str, tuple[KvEntry, str]] = {}
-        self._token_records_by_key: dict[str, ParticipantTokenRecord] = {}
-        self._tokens_by_key: dict[str, ParticipantHandle] = {}
-        self._token_keys_by_contract: dict[tuple[str, int], set[str]] = {}
-        self._token_key_by_contract_participant: dict[tuple[str, int, str], str] = {}
-        self._token_revision_by_key: dict[str, int] = {}
-        self._contract_bucket_generation = 0
-        self._token_bucket_generation = 0
-        self._last_status_by_contract_key: dict[str, ContractValidityStatus] = {}
 
     @property
     def contract_bucket(self) -> str:
@@ -544,41 +473,33 @@ class Concord:
         self._coordinator.token_source.start(task_group)
         if not self._started:
             self._started = True
-            task_group.start_soon(self._event_loop)
+            task_group.start_soon(self._view.run)
         for lease in tuple(self._participant_leases):
             lease.start(task_group)
 
     async def wait_ready(self) -> None:
-        await self._ready.wait()
+        await self._view.wait_ready()
 
     def is_current(self) -> bool:
         return (
-            self._ready.is_set()
-            and self._state_views_current()
-            and self._state_cache_generations_current()
+            self._coordinator.contract_source.is_current()
+            and self._coordinator.token_source.is_current()
+            and self._view.is_current()
         )
 
     async def wait_current(self) -> None:
-        await self.wait_ready()
-        while True:
-            await self._coordinator.contract_source.wait_current()
-            await self._coordinator.token_source.wait_current()
-            if self._state_cache_generations_current():
-                return
-            await self._rebuild_from_buckets()
-            await anyio.sleep(0)
+        await self._view.wait_current()
 
     async def aclose(self) -> None:
         self._closed = True
         async with self._lock:
             leases = tuple(self._participant_leases)
             self._participant_leases.clear()
-            subscribers = tuple(self._subscribers)
-            self._subscribers.clear()
         for lease in leases:
             await lease.aclose()
-        for subscriber in subscribers:
-            await subscriber.send.aclose()
+        await self._view.aclose()
+        await self._coordinator.contract_source.aclose()
+        await self._coordinator.token_source.aclose()
 
     async def propose(
         self,
@@ -649,689 +570,6 @@ class Concord:
             log_label=log_label,
         )
 
-    async def _event_loop(self) -> None:
-        contract_bucket = self._coordinator.contract_source
-        token_bucket = self._coordinator.token_source
-        await contract_bucket.wait_current()
-        await token_bucket.wait_current()
-        async with (
-            contract_bucket.subscribe() as contract_changes,
-            token_bucket.subscribe() as token_changes,
-            anyio.create_task_group() as task_group,
-        ):
-            await self._rebuild_from_buckets()
-            self._ready.set()
-            task_group.start_soon(self._consume_contract_changes, contract_changes)
-            task_group.start_soon(self._consume_token_changes, token_changes)
-
-    async def _consume_contract_changes(
-        self,
-        changes: anyio.abc.ObjectReceiveStream[KvChange],
-    ) -> None:
-        async for change in changes:
-            await self._apply_contract_change(change)
-
-    async def _consume_token_changes(
-        self,
-        changes: anyio.abc.ObjectReceiveStream[KvChange],
-    ) -> None:
-        async for change in changes:
-            await self._apply_token_change(change)
-
-    async def _rebuild_from_buckets(self, *, publish_events: bool = False) -> None:
-        contract_entries = self._coordinator.contract_source.items_cached(
-            concord_contracts_prefix()
-        )
-        token_entries = self._coordinator.token_source.items_cached(
-            concord_contracts_prefix()
-        )
-        contract_generation = self._coordinator.contract_source.generation
-        token_generation = self._coordinator.token_source.generation
-        async with self._lock:
-            previous_contract_handles = dict(self._contract_handles_by_key)
-            previous_contract_records = dict(self._contract_records_by_key)
-            previous_tokens = dict(self._tokens_by_key)
-            previous_statuses = dict(self._last_status_by_contract_key)
-            self._clear_indexes_locked()
-            for entry in contract_entries:
-                self._index_contract_entry_locked(entry)
-            for entry in token_entries:
-                self._index_token_entry_locked(entry)
-            events = (
-                self._rebuild_events_locked(
-                    previous_contract_handles=previous_contract_handles,
-                    previous_contract_records=previous_contract_records,
-                    previous_tokens=previous_tokens,
-                    previous_statuses=previous_statuses,
-                )
-                if publish_events
-                else ()
-            )
-            self._last_status_by_contract_key = {
-                key: self._validate_from_cache_locked(handle).status
-                for key, handle in self._contract_handles_by_key.items()
-            }
-            self._contract_bucket_generation = contract_generation
-            self._token_bucket_generation = token_generation
-            deliveries = self._subscriber_deliveries_locked(events)
-        if events:
-            await self._publish_events(events, deliveries)
-
-    def _rebuild_events_locked(
-        self,
-        *,
-        previous_contract_handles: Mapping[str, ContractHandle],
-        previous_contract_records: Mapping[str, ContractRecord],
-        previous_tokens: Mapping[str, ParticipantHandle],
-        previous_statuses: Mapping[str, ContractValidityStatus],
-    ) -> tuple[ConcordEvent, ...]:
-        events: list[ConcordEvent] = []
-        status_emitted: set[str] = set()
-        current_contract_keys = set(self._contract_handles_by_key)
-        previous_contract_keys = set(previous_contract_handles)
-        for key in sorted(current_contract_keys):
-            handle = self._contract_handles_by_key[key]
-            record = self._contract_records_by_key.get(key)
-            previous = previous_contract_handles.get(key)
-            previous_record = previous_contract_records.get(key)
-            if previous is None or previous.revision != handle.revision:
-                event_type = (
-                    ConcordEventType.CONTRACT_PROPOSED
-                    if previous is None
-                    else ConcordEventType.CONTRACT_UPDATED
-                )
-                if record is not None and record.state == ContractState.CANCELLED:
-                    event_type = ConcordEventType.CONTRACT_CANCELLED
-                events.append(
-                    ConcordEvent(
-                        event_type,
-                        contract=handle,
-                        record=record,
-                        profile=handle.profile,
-                        reason=(
-                            record.cancel_reason
-                            if record is not None
-                            and record.state == ContractState.CANCELLED
-                            else None
-                        ),
-                        change=_rebuild_change(
-                            self.contract_bucket,
-                            key,
-                            handle.revision,
-                            "put",
-                            self._contract_entries_by_key.get(key),
-                        ),
-                    )
-                )
-            elif record != previous_record:
-                events.append(
-                    ConcordEvent(
-                        ConcordEventType.CONTRACT_UPDATED,
-                        contract=handle,
-                        record=record,
-                        profile=handle.profile,
-                        change=_rebuild_change(
-                            self.contract_bucket,
-                            key,
-                            handle.revision,
-                            "put",
-                            self._contract_entries_by_key.get(key),
-                        ),
-                    )
-                )
-            validity = self._validate_from_cache_locked(handle)
-            if previous_statuses.get(key) != validity.status:
-                events.append(
-                    ConcordEvent(
-                        _concord_event_type(validity),
-                        contract=handle,
-                        record=validity.contract,
-                        validity=validity,
-                        profile=handle.profile,
-                        reason=validity.reason,
-                    )
-                )
-                status_emitted.add(key)
-        for key in sorted(previous_contract_keys - current_contract_keys):
-            previous = previous_contract_handles[key]
-            events.append(
-                ConcordEvent(
-                    ConcordEventType.CONTRACT_DELETED,
-                    contract=previous,
-                    record=previous_contract_records.get(key),
-                    profile=previous.profile,
-                    reason="rebuild",
-                    change=_rebuild_change(
-                        self.contract_bucket,
-                        key,
-                        previous.revision + 1,
-                        "delete",
-                        None,
-                    ),
-                )
-            )
-
-        current_token_keys = set(self._tokens_by_key)
-        previous_token_keys = set(previous_tokens)
-        for key in sorted(current_token_keys):
-            token = self._tokens_by_key[key]
-            previous = previous_tokens.get(key)
-            if previous is not None and previous.revision == token.revision:
-                continue
-            contract_key = self._contract_keys_by_pointer.get(
-                (token.contract_id, token.generation)
-            )
-            contract = (
-                self._contract_handles_by_key.get(contract_key)
-                if contract_key is not None
-                else None
-            )
-            events.append(
-                ConcordEvent(
-                    ConcordEventType.TOKEN_ATTACHED
-                    if previous is None
-                    else ConcordEventType.TOKEN_REFRESHED,
-                    contract=contract,
-                    token=token,
-                    profile=contract.profile if contract is not None else None,
-                    participant=token.participant,
-                    change=_rebuild_change(
-                        self.token_bucket,
-                        key,
-                        token.revision,
-                        "put",
-                        self._token_entries_by_key.get(key),
-                    ),
-                )
-            )
-            if contract is not None and contract.key not in status_emitted:
-                validity = self._validate_from_cache_locked(contract)
-                if previous_statuses.get(contract.key) != validity.status:
-                    events.append(
-                        ConcordEvent(
-                            _concord_event_type(validity),
-                            contract=contract,
-                            record=validity.contract,
-                            validity=validity,
-                            profile=contract.profile,
-                            reason=validity.reason,
-                        )
-                    )
-                    status_emitted.add(contract.key)
-        for key in sorted(previous_token_keys - current_token_keys):
-            previous = previous_tokens[key]
-            contract_key = self._contract_keys_by_pointer.get(
-                (previous.contract_id, previous.generation)
-            )
-            contract = (
-                self._contract_handles_by_key.get(contract_key)
-                if contract_key is not None
-                else previous_contract_handles.get(
-                    concord_contract_key(
-                        contract_id=previous.contract_id,
-                        generation=previous.generation,
-                    )
-                )
-            )
-            events.append(
-                ConcordEvent(
-                    ConcordEventType.TOKEN_WITHDRAWN,
-                    contract=contract,
-                    token=previous,
-                    profile=contract.profile if contract is not None else None,
-                    participant=previous.participant,
-                    reason="rebuild",
-                    change=_rebuild_change(
-                        self.token_bucket,
-                        key,
-                        previous.revision + 1,
-                        "delete",
-                        None,
-                    ),
-                )
-            )
-            if contract is not None and contract.key not in status_emitted:
-                current = self._contract_handles_by_key.get(contract.key)
-                if current is None:
-                    continue
-                validity = self._validate_from_cache_locked(current)
-                if previous_statuses.get(current.key) != validity.status:
-                    events.append(
-                        ConcordEvent(
-                            _concord_event_type(validity),
-                            contract=current,
-                            record=validity.contract,
-                            validity=validity,
-                            profile=current.profile,
-                            reason=validity.reason,
-                        )
-                    )
-                    status_emitted.add(current.key)
-        return tuple(events)
-
-    def _state_views_current(self) -> bool:
-        return (
-            self._coordinator.contract_source.is_current()
-            and self._coordinator.token_source.is_current()
-        )
-
-    def _state_cache_generations_current(self) -> bool:
-        return (
-            self._contract_bucket_generation
-            == self._coordinator.contract_source.generation
-            and self._token_bucket_generation
-            == self._coordinator.token_source.generation
-        )
-
-    def _clear_indexes_locked(self) -> None:
-        self._contract_entries_by_key.clear()
-        self._invalid_contracts_by_key.clear()
-        self._contract_records_by_key.clear()
-        self._contract_handles_by_key.clear()
-        self._contract_keys_by_pointer.clear()
-        self._contract_keys_by_contract_id.clear()
-        self._contract_keys_by_profile.clear()
-        self._contract_keys_by_participant.clear()
-        self._contract_keys_by_state.clear()
-        self._contract_revision_by_key.clear()
-        self._token_entries_by_key.clear()
-        self._invalid_tokens_by_key.clear()
-        self._token_records_by_key.clear()
-        self._tokens_by_key.clear()
-        self._token_keys_by_contract.clear()
-        self._token_key_by_contract_participant.clear()
-        self._token_revision_by_key.clear()
-
-    async def _apply_contract_change(self, change: KvChange) -> None:
-        if change.operation == "put" and change.entry is None:
-            entry = self._coordinator.contract_source.get_cached(change.key)
-            if entry is None or entry.revision < change.revision:
-                await self._rebuild_from_buckets(publish_events=True)
-                return
-            change = KvChange(
-                change.bucket,
-                change.key,
-                entry.revision,
-                change.operation,
-                entry,
-                change.marker_reason,
-                change.view_generation,
-            )
-        if await self._rebuild_if_contract_generation_gap(change):
-            return
-        async with self._lock:
-            events = self._apply_contract_change_locked(change)
-            deliveries = self._subscriber_deliveries_locked(events)
-        await self._publish_events(events, deliveries)
-
-    async def _apply_token_change(self, change: KvChange) -> None:
-        if await self._rebuild_if_token_generation_gap(change):
-            return
-        async with self._lock:
-            events = self._apply_token_change_locked(change)
-            deliveries = self._subscriber_deliveries_locked(events)
-        await self._publish_events(events, deliveries)
-
-    async def _rebuild_if_contract_generation_gap(self, change: KvChange) -> bool:
-        if change.view_generation is None:
-            return False
-        async with self._lock:
-            gap = change.view_generation > self._contract_bucket_generation + 1
-        if not gap:
-            return False
-        await self._rebuild_from_buckets(publish_events=True)
-        return True
-
-    async def _rebuild_if_token_generation_gap(self, change: KvChange) -> bool:
-        if change.view_generation is None:
-            return False
-        async with self._lock:
-            gap = change.view_generation > self._token_bucket_generation + 1
-        if not gap:
-            return False
-        await self._rebuild_from_buckets(publish_events=True)
-        return True
-
-    def _apply_contract_change_locked(self, change: KvChange) -> tuple[ConcordEvent, ...]:
-        if not self._should_apply_contract_change_locked(change):
-            return ()
-        current_revision = self._contract_revision_by_key.get(change.key, 0)
-        if change.revision <= current_revision:
-            self._advance_contract_bucket_generation_locked(change)
-            return ()
-        previous = self._contract_handles_by_key.get(change.key)
-        previous_record = self._contract_records_by_key.get(change.key)
-        self._remove_contract_key_locked(change.key)
-        self._contract_revision_by_key[change.key] = change.revision
-        events: list[ConcordEvent] = []
-        if change.operation == "put" and change.entry is not None:
-            handle = self._index_contract_entry_locked(change.entry)
-            record = self._contract_records_by_key.get(change.key)
-            if handle is None or record is None:
-                if change.key not in self._invalid_contracts_by_key:
-                    self._advance_contract_bucket_generation_locked(change)
-                    return ()
-                parsed = parse_concord_contract_key(change.key)
-                contract_id, generation = parsed if parsed is not None else ("", 0)
-                events.append(
-                    ConcordEvent(
-                        ConcordEventType.CONTRACT_INVALID,
-                        reason=self._invalid_contracts_by_key[change.key][1],
-                        change=change,
-                    )
-                )
-                if contract_id and generation:
-                    self._last_status_by_contract_key.pop(change.key, None)
-                self._advance_contract_bucket_generation_locked(change)
-                return tuple(events)
-            event_type = (
-                ConcordEventType.CONTRACT_PROPOSED
-                if previous is None
-                else ConcordEventType.CONTRACT_UPDATED
-            )
-            if record.state == ContractState.CANCELLED:
-                event_type = ConcordEventType.CONTRACT_CANCELLED
-            events.append(
-                ConcordEvent(
-                    event_type,
-                    contract=handle,
-                    record=record,
-                    profile=handle.profile,
-                    reason=record.cancel_reason if record.state == ContractState.CANCELLED else None,
-                    change=change,
-                )
-            )
-            status_event = self._status_event_locked(handle, change=change)
-            if status_event is not None:
-                events.append(status_event)
-            self._advance_contract_bucket_generation_locked(change)
-            return tuple(events)
-        if change.operation in {"delete", "expire"}:
-            if previous is None and parse_concord_contract_key(change.key) is None:
-                self._advance_contract_bucket_generation_locked(change)
-                return ()
-            self._last_status_by_contract_key.pop(change.key, None)
-            events.append(
-                ConcordEvent(
-                    ConcordEventType.CONTRACT_DELETED,
-                    contract=previous,
-                    record=previous_record,
-                    profile=previous.profile if previous is not None else None,
-                    reason=change.operation,
-                    change=change,
-                )
-            )
-        self._advance_contract_bucket_generation_locked(change)
-        return tuple(events)
-
-    def _apply_token_change_locked(self, change: KvChange) -> tuple[ConcordEvent, ...]:
-        if not self._should_apply_token_change_locked(change):
-            return ()
-        current_revision = self._token_revision_by_key.get(change.key, 0)
-        if change.revision <= current_revision:
-            self._advance_token_bucket_generation_locked(change)
-            return ()
-        previous = self._tokens_by_key.get(change.key)
-        parsed = parse_concord_participant_token_key(change.key)
-        contract_key: str | None = None
-        contract: ContractHandle | None = None
-        if parsed is not None:
-            contract_id, generation, participant = parsed
-            contract_key = self._contract_keys_by_pointer.get((contract_id, generation))
-            if contract_key is not None:
-                contract = self._contract_handles_by_key.get(contract_key)
-        else:
-            participant = None
-        self._remove_token_key_locked(change.key)
-        self._token_revision_by_key[change.key] = change.revision
-        events: list[ConcordEvent] = []
-        if change.operation == "put" and change.entry is not None:
-            token = self._index_token_entry_locked(change.entry)
-            if token is None:
-                events.append(
-                    ConcordEvent(
-                        ConcordEventType.CONTRACT_INVALID,
-                        contract=contract,
-                        profile=contract.profile if contract is not None else None,
-                        reason=self._invalid_tokens_by_key[change.key][1],
-                        change=change,
-                    )
-                )
-            else:
-                contract_key = self._contract_keys_by_pointer.get(
-                    (token.contract_id, token.generation)
-                )
-                contract = (
-                    self._contract_handles_by_key.get(contract_key)
-                    if contract_key is not None
-                    else None
-                )
-                events.append(
-                    ConcordEvent(
-                        ConcordEventType.TOKEN_ATTACHED
-                        if previous is None
-                        else ConcordEventType.TOKEN_REFRESHED,
-                        contract=contract,
-                        token=token,
-                        profile=contract.profile if contract is not None else None,
-                        participant=token.participant,
-                        change=change,
-                    )
-                )
-        elif change.operation in {"delete", "expire"}:
-            events.append(
-                ConcordEvent(
-                    ConcordEventType.TOKEN_EXPIRED
-                    if change.operation == "expire"
-                    else ConcordEventType.TOKEN_WITHDRAWN,
-                    contract=contract,
-                    token=previous,
-                    profile=contract.profile if contract is not None else None,
-                    participant=(
-                        previous.participant
-                        if previous is not None
-                        else participant
-                    ),
-                    reason=change.operation,
-                    change=change,
-                )
-            )
-        if contract is not None:
-            status_event = self._status_event_locked(contract, change=change)
-            if status_event is not None:
-                events.append(status_event)
-        self._advance_token_bucket_generation_locked(change)
-        return tuple(events)
-
-    def _should_apply_contract_change_locked(self, change: KvChange) -> bool:
-        return _change_is_next_generation(
-            change,
-            current_generation=self._contract_bucket_generation,
-        )
-
-    def _should_apply_token_change_locked(self, change: KvChange) -> bool:
-        return _change_is_next_generation(
-            change,
-            current_generation=self._token_bucket_generation,
-        )
-
-    def _advance_contract_bucket_generation_locked(self, change: KvChange) -> None:
-        generation = _change_generation(
-            change,
-            self._coordinator.contract_source,
-        )
-        self._contract_bucket_generation = max(
-            self._contract_bucket_generation,
-            generation,
-        )
-
-    def _advance_token_bucket_generation_locked(self, change: KvChange) -> None:
-        generation = _change_generation(
-            change,
-            self._coordinator.token_source,
-        )
-        self._token_bucket_generation = max(self._token_bucket_generation, generation)
-
-    def _index_contract_entry_locked(self, entry: KvEntry) -> ContractHandle | None:
-        parsed = parse_concord_contract_key(entry.key)
-        if parsed is None:
-            return None
-        self._contract_entries_by_key[entry.key] = entry
-        self._contract_revision_by_key[entry.key] = entry.revision
-        contract_id, generation = parsed
-        try:
-            record = ContractRecord.model_validate(entry.value)
-        except ValueError as exc:
-            self._invalid_contracts_by_key[entry.key] = (entry, str(exc))
-            return None
-        if record.contract_id != contract_id or record.generation != generation:
-            self._invalid_contracts_by_key[entry.key] = (
-                entry,
-                "contract key and record identity differ",
-            )
-            return None
-        handle = _contract_handle(entry.key, record, entry.revision)
-        self._contract_records_by_key[entry.key] = record
-        self._contract_handles_by_key[entry.key] = handle
-        self._contract_keys_by_pointer[(record.contract_id, record.generation)] = entry.key
-        self._contract_keys_by_contract_id.setdefault(record.contract_id, set()).add(
-            entry.key
-        )
-        self._contract_keys_by_profile.setdefault(record.profile, set()).add(entry.key)
-        self._contract_keys_by_state.setdefault(record.state, set()).add(entry.key)
-        for participant in record.participants:
-            self._contract_keys_by_participant.setdefault(str(participant), set()).add(
-                entry.key
-            )
-        return handle
-
-    def _remove_contract_key_locked(self, key: str) -> None:
-        record = self._contract_records_by_key.pop(key, None)
-        self._contract_entries_by_key.pop(key, None)
-        self._invalid_contracts_by_key.pop(key, None)
-        self._contract_handles_by_key.pop(key, None)
-        if record is None:
-            return
-        self._contract_keys_by_pointer.pop((record.contract_id, record.generation), None)
-        _discard_index_key(self._contract_keys_by_contract_id, record.contract_id, key)
-        _discard_index_key(self._contract_keys_by_profile, record.profile, key)
-        _discard_index_key(self._contract_keys_by_state, record.state, key)
-        for participant in record.participants:
-            _discard_index_key(
-                self._contract_keys_by_participant,
-                str(participant),
-                key,
-            )
-
-    def _index_token_entry_locked(self, entry: KvEntry) -> ParticipantHandle | None:
-        self._token_entries_by_key[entry.key] = entry
-        self._token_revision_by_key[entry.key] = entry.revision
-        parsed = parse_concord_participant_token_key(entry.key)
-        if parsed is None:
-            self._invalid_tokens_by_key[entry.key] = (
-                entry,
-                "token key is not a Concord participant token key",
-            )
-            return None
-        contract_id, generation, participant = parsed
-        try:
-            record = ParticipantTokenRecord.model_validate(entry.value)
-        except ValueError as exc:
-            self._invalid_tokens_by_key[entry.key] = (entry, str(exc))
-            return None
-        if (
-            record.contract_id != contract_id
-            or record.generation != generation
-            or record.participant != participant
-        ):
-            self._invalid_tokens_by_key[entry.key] = (
-                entry,
-                "token key and record identity differ",
-            )
-            return None
-        token = _participant_handle(entry.key, record, entry.revision)
-        self._token_records_by_key[entry.key] = record
-        self._tokens_by_key[entry.key] = token
-        self._token_keys_by_contract.setdefault((contract_id, generation), set()).add(
-            entry.key
-        )
-        self._token_key_by_contract_participant[
-            (contract_id, generation, str(participant))
-        ] = entry.key
-        return token
-
-    def _remove_token_key_locked(self, key: str) -> None:
-        record = self._token_records_by_key.pop(key, None)
-        self._token_entries_by_key.pop(key, None)
-        self._invalid_tokens_by_key.pop(key, None)
-        self._tokens_by_key.pop(key, None)
-        if record is None:
-            return
-        _discard_index_key(
-            self._token_keys_by_contract,
-            (record.contract_id, record.generation),
-            key,
-        )
-        self._token_key_by_contract_participant.pop(
-            (record.contract_id, record.generation, str(record.participant)),
-            None,
-        )
-
-    def _status_event_locked(
-        self,
-        contract: ContractHandle,
-        *,
-        change: KvChange | None,
-    ) -> ConcordEvent | None:
-        validity = self._validate_from_cache_locked(contract)
-        previous = self._last_status_by_contract_key.get(contract.key)
-        self._last_status_by_contract_key[contract.key] = validity.status
-        if previous == validity.status:
-            return None
-        return ConcordEvent(
-            _concord_event_type(validity),
-            contract=contract,
-            record=validity.contract,
-            validity=validity,
-            profile=contract.profile,
-            reason=validity.reason,
-            change=change,
-        )
-
-    def _subscriber_deliveries_locked(
-        self,
-        events: tuple[ConcordEvent, ...],
-    ) -> tuple[tuple[_ConcordSubscriber, ConcordEvent], ...]:
-        deliveries: list[tuple[_ConcordSubscriber, ConcordEvent]] = []
-        for event in events:
-            for subscriber in tuple(self._subscribers):
-                if not _event_matches_subscriber(subscriber, event):
-                    continue
-                if subscriber.replay_pending:
-                    subscriber.pending_events.append(event)
-                    continue
-                deliveries.append((subscriber, event))
-        return tuple(deliveries)
-
-    async def _publish_events(
-        self,
-        events: tuple[ConcordEvent, ...],
-        deliveries: tuple[tuple[_ConcordSubscriber, ConcordEvent], ...],
-    ) -> None:
-        for event in events:
-            _log_concord_event(event)
-        for subscriber, event in deliveries:
-            try:
-                subscriber.send.send_nowait(event)
-            except anyio.WouldBlock:
-                logger.warning(
-                    "Concord watcher buffer full profile=%s event=%s",
-                    subscriber.profile,
-                    event.event_type.value,
-                )
-            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                async with self._lock:
-                    self._subscribers.discard(subscriber)
 
     def _validate_from_cache_locked(
         self,
@@ -1339,64 +577,7 @@ class Concord:
         *,
         current_sessions: Mapping[str, str] | ConcordSessionAssertions | None = None,
     ) -> ContractValidity:
-        pointer = ContractPointer(
-            contractId=contract.contract_id,
-            generation=contract.generation,
-        )
-        key = concord_contract_key(
-            contract_id=pointer.contract_id,
-            generation=pointer.generation,
-        )
-        observation = contract_observation_from_entry(
-            key,
-            self._contract_entries_by_key.get(key),
-        )
-        participants = (
-            observation.record.participants
-            if observation.record is not None
-            else contract.participants
-        )
-        token_observations = tuple(
-            token_observation_from_entry(
-                token_key,
-                participant,
-                self._token_entries_by_key.get(token_key),
-            )
-            for participant in sorted(participants, key=str)
-            for token_key in (
-                concord_participant_token_key(
-                    contract_id=pointer.contract_id,
-                    generation=pointer.generation,
-                    participant=participant,
-                ),
-            )
-        )
-        sources_current = (
-            self._coordinator.contract_source.is_current()
-            and self._coordinator.token_source.is_current()
-            and self._contract_bucket_generation
-            == self._coordinator.contract_source.generation
-            and self._token_bucket_generation == self._coordinator.token_source.generation
-        )
-        if self._started and not sources_current:
-            observation = ContractObservation(
-                observation.key,
-                observation.revision,
-                ConcordObservationState.UNAVAILABLE,
-                record=observation.record,
-                diagnostic="Concord materialized contract or token source is stale",
-            )
-        return evaluate_contract_validity(
-            expected_key=contract.key,
-            expected_pointer=pointer,
-            contract=observation,
-            tokens=token_observations,
-            session_assertions=(
-                current_sessions
-                if isinstance(current_sessions, ConcordSessionAssertions)
-                else ConcordSessionAssertions.from_mapping(current_sessions)
-            ),
-        )
+        return self._view.validate(contract, current_sessions=current_sessions)
 
     async def _select_or_create_agreement_contract(
         self,
@@ -1629,17 +810,8 @@ class Concord:
             created_by=created_by,
             supersedes=supersedes,
         )
-        entry = self._coordinator.contract_source.get_cached(contract.key)
-        if entry is not None:
-            await self._apply_contract_change(
-                KvChange(
-                    self.contract_bucket,
-                    contract.key,
-                    entry.revision,
-                    "put",
-                    entry,
-                )
-            )
+        if self._started:
+            await self._view.wait_contract_revision(contract.key, contract.revision)
         logger.log(
             _contract_lifecycle_log_level(contract.profile),
             "%s Concord contract opened profile=%s contract=%s generation=%s "
@@ -1665,15 +837,7 @@ class Concord:
             if isinstance(pointer, ContractPointer)
             else ContractPointer.model_validate(pointer)
         )
-        async with self._lock:
-            key = self._contract_keys_by_pointer.get(
-                (parsed.contract_id, parsed.generation)
-            )
-            return (
-                self._contract_handles_by_key.get(key)
-                if key is not None
-                else None
-            )
+        return self._view.get_contract(parsed)
 
     async def contract_record(self, contract: ContractHandle) -> ContractRecord | None:
         if self._started:
@@ -1765,16 +929,7 @@ class Concord:
         )
 
     async def _contract_record(self, contract: ContractHandle) -> ContractRecord | None:
-        async with self._lock:
-            record = self._contract_records_by_key.get(contract.key)
-            if record is None:
-                return None
-            if (
-                record.contract_id != contract.contract_id
-                or record.generation != contract.generation
-            ):
-                return None
-            return record
+        return self._view.record(contract)
 
     async def _contracts_filtered(
         self,
@@ -1796,23 +951,12 @@ class Concord:
             if participant is not None
             else None
         )
-        async with self._lock:
-            keys: set[str] = set(self._contract_handles_by_key)
-            if profile is not None:
-                keys &= set(self._contract_keys_by_profile.get(profile, ()))
-            if contract_id is not None:
-                keys &= set(self._contract_keys_by_contract_id.get(contract_id, ()))
-            if parsed_participant is not None:
-                keys &= set(
-                    self._contract_keys_by_participant.get(str(parsed_participant), ())
-                )
-            if state is not None:
-                keys &= set(self._contract_keys_by_state.get(state, ()))
-            return tuple(
-                self._contract_handles_by_key[key]
-                for key in sorted(keys)
-                if key in self._contract_handles_by_key
-            )
+        return self._view.contracts(
+            profile,
+            contract_id=contract_id,
+            participant=parsed_participant,
+            state=state,
+        )
 
     async def _attach(
         self,
@@ -1833,26 +977,15 @@ class Concord:
             contract.key
         )
         if contract_entry is not None:
-            await self._apply_contract_change(
-                KvChange(
-                    self.contract_bucket,
+            if self._started:
+                await self._view.wait_contract_revision(
                     contract.key,
                     contract_entry.revision,
-                    "put",
-                    contract_entry,
                 )
-            )
         token_entry = self._coordinator.token_source.get_cached(token.key)
         if token_entry is not None:
-            await self._apply_token_change(
-                KvChange(
-                    self.token_bucket,
-                    token.key,
-                    token_entry.revision,
-                    "put",
-                    token_entry,
-                )
-            )
+            if self._started:
+                await self._view.wait_token_revision(token.key, token_entry.revision)
         logger.log(
             _contract_lifecycle_log_level(contract.profile),
             "%s Concord participant token attached profile=%s contract=%s "
@@ -1878,17 +1011,8 @@ class Concord:
         log_label: str = "Concord",
     ) -> ParticipantHandle:
         refreshed = await self._coordinator.refresh(handle)
-        token_entry = self._coordinator.token_source.get_cached(refreshed.key)
-        if token_entry is not None:
-            await self._apply_token_change(
-                KvChange(
-                    self.token_bucket,
-                    refreshed.key,
-                    token_entry.revision,
-                    "put",
-                    token_entry,
-                )
-            )
+        if self._started:
+            await self._view.wait_token_revision(refreshed.key, refreshed.revision)
         logger.debug(
             "%s Concord participant token heartbeat contract=%s generation=%s "
             "participant=%s session=%s token=%s refresh=%s revision=%s ttl=%s",
@@ -1916,14 +1040,8 @@ class Concord:
         marker_revision = self._coordinator.token_source.revision_cached(
             handle.key
         ) or (handle.revision + 1)
-        await self._apply_token_change(
-            KvChange(
-                self.token_bucket,
-                handle.key,
-                marker_revision,
-                "delete",
-            )
-        )
+        if self._started:
+            await self._view.wait_token_revision(handle.key, marker_revision)
         logger.debug(
             "%s Concord participant token withdrawn contract=%s generation=%s "
             "participant=%s session=%s token=%s revision=%s",
@@ -1959,15 +1077,11 @@ class Concord:
         if cancelled:
             entry = self._coordinator.contract_source.get_cached(contract.key)
             if entry is not None:
-                await self._apply_contract_change(
-                    KvChange(
-                        self.contract_bucket,
+                if self._started:
+                    await self._view.wait_contract_revision(
                         contract.key,
                         entry.revision,
-                        "put",
-                        entry,
                     )
-                )
             logger.log(
                 _contract_terminal_log_level(contract.profile),
                 "%s Concord contract cancelled profile=%s contract=%s generation=%s "
@@ -1990,11 +1104,10 @@ class Concord:
         log_label: str = "Concord",
         log_invalid: bool = True,
     ) -> ContractValidity:
-        async with self._lock:
-            validity = self._validate_from_cache_locked(
-                contract,
-                current_sessions=current_sessions,
-            )
+        validity = self._view.validate(
+            contract,
+            current_sessions=current_sessions,
+        )
         if log_invalid and validity.status in {
             ContractValidityStatus.MISSING_TOKEN,
             ContractValidityStatus.INVALID_TOKEN,
@@ -2045,8 +1158,7 @@ class Concord:
         profile: str | None = None,
         *,
         participant: str | EndpointAddress | None = None,
-        replay_current: bool = True,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[ConcordEvent]]:
+    ) -> AsyncIterator[AsyncIterator[ConcordWatchSnapshot | ConcordWatchChange]]:
         if self._started:
             await self.wait_current()
         parsed_participant = (
@@ -2054,168 +1166,54 @@ class Concord:
             if participant is not None
             else None
         )
-        send, receive = anyio.create_memory_object_stream[ConcordEvent](
-            max_buffer_size=self._buffer_size
-        )
-        subscriber = _ConcordSubscriber(
-            send,
+        async with self._view.subscribe(
             profile,
-            parsed_participant,
-            replay_pending=replay_current,
-        )
-        initial: tuple[ConcordEvent, ...] = ()
-        async with self._lock:
-            self._subscribers.add(subscriber)
-            if replay_current:
-                initial_events: list[ConcordEvent] = []
-                for contract in self._contract_handles_by_key.values():
-                    validity = self._validate_from_cache_locked(contract)
-                    event = ConcordEvent(
-                        _concord_event_type(validity),
-                        contract=contract,
-                        record=self._contract_records_by_key.get(contract.key),
-                        validity=validity,
-                        profile=contract.profile,
-                    )
-                    if _event_matches_subscriber(subscriber, event):
-                        initial_events.append(event)
-                initial = tuple(initial_events)
-        try:
-            async with send, receive:
-                for event in initial:
-                    await send.send(event)
-                if replay_current:
-                    await self._finish_subscriber_replay(subscriber)
-                yield receive
-        finally:
-            async with self._lock:
-                self._subscribers.discard(subscriber)
-
-    @asynccontextmanager
-    async def watch_contract_notifications_cached(
-        self,
-        profile: str | None = None,
-        *,
-        participant: str | EndpointAddress | None = None,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[_ConcordContractNotification]]:
-        if self._started:
-            await self.wait_current()
-        parsed_participant = (
-            parse_endpoint_address(participant)
-            if participant is not None
-            else None
-        )
-        known_profiles = await self._known_notification_profiles(
-            profile=profile,
             participant=parsed_participant,
-        )
-        known_lock = anyio.Lock()
-        send, receive = anyio.create_memory_object_stream[_ConcordContractNotification](
-            max_buffer_size=self._buffer_size
-        )
-        async with (
-            self._coordinator.contract_source.subscribe() as contract_changes,
-            self._coordinator.token_source.subscribe() as token_changes,
-            anyio.create_task_group() as task_group,
-            send,
-            receive,
-        ):
-            task_group.start_soon(
-                self._pump_contract_notifications,
-                contract_changes,
-                send,
-                profile,
-                parsed_participant,
-                known_profiles,
-                known_lock,
-            )
-            task_group.start_soon(
-                self._pump_token_notifications,
-                token_changes,
-                send,
-                profile,
-                parsed_participant,
-                known_profiles,
-                known_lock,
-            )
-            try:
-                yield receive
-            finally:
-                task_group.cancel_scope.cancel()
+        ) as subscription:
 
-    async def _known_notification_profiles(
-        self,
-        *,
-        profile: str | None,
-        participant: EndpointAddress | None,
-    ) -> dict[tuple[str, int], str | None]:
-        async with self._lock:
-            known: dict[tuple[str, int], str | None] = {}
-            for contract in self._contract_handles_by_key.values():
-                if not _contract_matches_notification_filter(
-                    contract,
-                    profile=profile,
-                    participant=participant,
-                ):
-                    continue
-                known[(contract.contract_id, contract.generation)] = contract.profile
-            return known
-
-    async def _pump_contract_notifications(
-        self,
-        changes: anyio.abc.ObjectReceiveStream[KvChange],
-        send: anyio.abc.ObjectSendStream[_ConcordContractNotification],
-        profile: str | None,
-        participant: EndpointAddress | None,
-        known_profiles: dict[tuple[str, int], str | None],
-        known_lock: anyio.Lock,
-    ) -> None:
-        async for change in changes:
-            async with known_lock:
-                notification = _contract_notification_from_change(
-                    change,
-                    profile_filter=profile,
-                    participant_filter=participant,
-                    known_profiles=known_profiles,
+            async def stream() -> AsyncIterator[
+                ConcordWatchSnapshot | ConcordWatchChange
+            ]:
+                known = {
+                    state.contract.pointer
+                    for state in subscription.initial.contracts
+                }
+                last_current = subscription.initial.current
+                yield ConcordWatchSnapshot(
+                    version=subscription.initial.version,
+                    current=last_current,
+                    contracts=subscription.initial.contracts,
                 )
-            if notification is None:
-                continue
-            await send.send(notification)
+                async for wakeup in subscription:
+                    try:
+                        snapshot = await self._view.snapshot(
+                            profile,
+                            participant=parsed_participant,
+                        )
+                    except anyio.ClosedResourceError:
+                        return
+                    current_pointers = {
+                        state.contract.pointer for state in snapshot.contracts
+                    }
+                    relevant = wakeup.changed & (known | current_pointers)
+                    if (
+                        not wakeup.resnapshot_required
+                        and not relevant
+                        and snapshot.current == last_current
+                    ):
+                        known = current_pointers
+                        continue
+                    known = current_pointers
+                    last_current = snapshot.current
+                    yield ConcordWatchChange(
+                        version=snapshot.version,
+                        current=snapshot.current,
+                        contracts=snapshot.contracts,
+                        changed_pointers=frozenset(relevant),
+                        resnapshot_required=wakeup.resnapshot_required,
+                    )
 
-    async def _pump_token_notifications(
-        self,
-        changes: anyio.abc.ObjectReceiveStream[KvChange],
-        send: anyio.abc.ObjectSendStream[_ConcordContractNotification],
-        profile: str | None,
-        participant: EndpointAddress | None,
-        known_profiles: dict[tuple[str, int], str | None],
-        known_lock: anyio.Lock,
-    ) -> None:
-        async for change in changes:
-            async with known_lock:
-                notification = _token_notification_from_change(
-                    change,
-                    profile_filter=profile,
-                    participant_filter=participant,
-                    known_profiles=known_profiles,
-                )
-            if notification is None:
-                continue
-            await send.send(notification)
-
-    async def _finish_subscriber_replay(
-        self,
-        subscriber: _ConcordSubscriber,
-    ) -> None:
-        while True:
-            async with self._lock:
-                pending = tuple(subscriber.pending_events)
-                subscriber.pending_events.clear()
-                if not pending:
-                    subscriber.replay_pending = False
-                    return
-            for event in pending:
-                await subscriber.send.send(event)
+            yield stream()
 
 
 ConcordContractPredicate = Callable[
@@ -2410,11 +1408,12 @@ class ConcordParticipant:
         self._managed: dict[str, ConcordManagedContract] = {}
         self._leases: dict[str, ConcordParticipantLease] = {}
         self._last_status: dict[str, ContractValidityStatus] = {}
-        self._subscribers: set[anyio.abc.ObjectSendStream[ConcordManagedContractEvent]] = (
-            set()
+        self._state = CoalescedStateBroadcaster[ContractPointer](
+            current=False,
         )
-        self._lock = anyio.Lock()
+        self._lock = self._state.lock
         self._start_soon: Callable[..., object] | None = None
+        self._ready = anyio.Event()
         self._started = False
         self._closed = False
 
@@ -2437,16 +1436,46 @@ class ConcordParticipant:
         start_soon(self.reconcile_loop)
 
     @asynccontextmanager
-    async def watch(self) -> Any:
-        send, receive = anyio.create_memory_object_stream[
-            ConcordManagedContractEvent
-        ](100)
-        self._subscribers.add(send)
-        async with send, receive:
-            try:
-                yield receive
-            finally:
-                self._subscribers.discard(send)
+    async def watch(
+        self,
+    ) -> AsyncIterator[
+        AsyncIterator[ConcordParticipantSnapshot | ConcordParticipantChange]
+    ]:
+        if self._started:
+            await self._ready.wait()
+        async with self._state.subscribe(self._participant_snapshot_locked) as subscription:
+
+            async def stream() -> AsyncIterator[
+                ConcordParticipantSnapshot | ConcordParticipantChange
+            ]:
+                yield subscription.initial
+                async for wakeup in subscription:
+                    try:
+                        snapshot = await self._state.capture(
+                            self._participant_snapshot_locked
+                        )
+                    except anyio.ClosedResourceError:
+                        return
+                    yield ConcordParticipantChange(
+                        version=snapshot.version,
+                        current=snapshot.current,
+                        contracts=snapshot.contracts,
+                        changed_pointers=wakeup.changed,
+                        resnapshot_required=wakeup.resnapshot_required,
+                    )
+
+            yield stream()
+
+    def _participant_snapshot_locked(
+        self,
+        version: int,
+        current: bool,
+    ) -> ConcordParticipantSnapshot:
+        return ConcordParticipantSnapshot(
+            version=version,
+            current=current,
+            contracts=self.managed_contracts,
+        )
 
     async def aclose(self) -> None:
         self._closed = True
@@ -2456,6 +1485,8 @@ class ConcordParticipant:
             self._leases.clear()
             self._managed.clear()
             self._last_status.clear()
+            self._state.publish_locked((), current=False)
+        await self._state.aclose()
 
     async def cancel(
         self,
@@ -2500,16 +1531,41 @@ class ConcordParticipant:
     async def watch_loop(self) -> None:
         while not self._closed:
             try:
-                async with self._concord.watch_contract_notifications_cached(
+                async with self._concord._view.subscribe(  # noqa: SLF001
                     self.profile,
                     participant=self.participant,
-                ) as stream:
+                    state=ContractState.OPEN,
+                ) as subscription:
                     await self.reconcile(reason="contract watch warmup")
-                    async for notification in stream:
+                    await self._state.publish(
+                        (
+                            managed.contract.pointer
+                            for managed in self.managed_contracts
+                        ),
+                        current=subscription.initial.current,
+                        resnapshot_required=True,
+                    )
+                    self._ready.set()
+                    async for wakeup in subscription:
                         if self._closed:
                             return
                         try:
-                            await self.reconcile_notification(notification)
+                            if wakeup.resnapshot_required:
+                                await self.reconcile(reason="contract view resnapshot")
+                                changed = {
+                                    managed.contract.pointer
+                                    for managed in self.managed_contracts
+                                }
+                            else:
+                                changed = self._relevant_changed_pointers(
+                                    wakeup.changed
+                                )
+                                await self._reconcile_pointers(changed)
+                            await self._state.publish(
+                                changed,
+                                current=wakeup.current,
+                                resnapshot_required=wakeup.resnapshot_required,
+                            )
                         except ConcordUnavailable:
                             logger.warning(
                                 "%s Concord participant manager unavailable; "
@@ -2525,6 +1581,9 @@ class ConcordParticipant:
 
     async def reconcile_loop(self) -> None:
         while not self._closed:
+            await anyio.sleep(self._reconcile_interval)
+            if self._closed:
+                return
             try:
                 await self.reconcile(reason="periodic reconcile")
             except ConcordUnavailable:
@@ -2536,96 +1595,70 @@ class ConcordParticipant:
                     self.participant,
                     exc_info=True,
                 )
-            await anyio.sleep(self._reconcile_interval)
 
-    async def reconcile_notification(
+    def _relevant_changed_pointers(
         self,
-        notification: _ConcordContractNotification,
-    ) -> tuple[ConcordManagedContract, ...]:
-        if self._concord._started:  # noqa: SLF001
-            await self._concord.wait_current()
+        pointers: frozenset[ContractPointer],
+    ) -> frozenset[ContractPointer]:
+        relevant: set[ContractPointer] = set()
+        managed_pointers = {
+            managed.contract.pointer for managed in self._managed.values()
+        }
+        lease_pointers = {lease.contract.pointer for lease in self._leases.values()}
+        for pointer in pointers:
+            if pointer in managed_pointers or pointer in lease_pointers:
+                relevant.add(pointer)
+                continue
+            contract = self._concord._view.get_contract(pointer)  # noqa: SLF001
+            if contract is None:
+                continue
+            if self.profile is not None and contract.profile != self.profile:
+                continue
+            if self.participant in contract.participants:
+                relevant.add(pointer)
+        return frozenset(relevant)
+
+    async def _reconcile_pointers(
+        self,
+        pointers: frozenset[ContractPointer],
+    ) -> None:
+        if not pointers:
+            return
         async with self._lock:
             if self._closed:
-                return ()
-            if notification.source == _ConcordNotificationSource.CONTRACT:
-                return await self._reconcile_contract_notification_locked(notification)
-            return await self._reconcile_token_notification_locked(notification)
+                return
+            if self._prepare_reconcile is not None:
+                await _maybe_await(self._prepare_reconcile())
+            for pointer in sorted(
+                pointers,
+                key=lambda item: (item.contract_id, item.generation),
+            ):
+                key = concord_contract_key(
+                    contract_id=pointer.contract_id,
+                    generation=pointer.generation,
+                )
+                contract = self._concord._view.get_contract(pointer)  # noqa: SLF001
+                if contract is None:
+                    await self._release_locked(
+                        key,
+                        reason=ContractValidityStatus.MISSING_CONTRACT.value,
+                        withdraw=False,
+                    )
+                    continue
+                managed = await self._reconcile_contract_locked(
+                    contract,
+                    reason="contract view change",
+                )
+                if managed is None:
+                    if key in self._managed or key in self._leases:
+                        await self._release_locked(
+                            key,
+                            reason="not_selected",
+                            withdraw=True,
+                        )
+                    continue
+                self._managed[key] = managed
 
-    async def _reconcile_contract_notification_locked(
-        self,
-        notification: _ConcordContractNotification,
-    ) -> tuple[ConcordManagedContract, ...]:
-        contract_key = concord_contract_key(
-            contract_id=notification.contract_id,
-            generation=notification.generation,
-        )
-        contract = notification.contract
-        if contract is None:
-            contract = await self._concord.get_contract(
-                ContractPointer(
-                    contractId=notification.contract_id,
-                    generation=notification.generation,
-                )
-            )
-        if contract is None:
-            await self._release_locked(
-                contract_key,
-                reason=ContractValidityStatus.MISSING_CONTRACT.value,
-                withdraw=False,
-            )
-            return self.managed_contracts
-        if self._prepare_reconcile is not None:
-            await _maybe_await(self._prepare_reconcile())
-        managed = await self._reconcile_contract_locked(
-            contract,
-            reason=_notification_reason(notification),
-        )
-        if managed is None:
-            if contract.key in self._managed or contract.key in self._leases:
-                await self._release_locked(
-                    contract.key,
-                    reason="not_selected",
-                    withdraw=True,
-                )
-            return self.managed_contracts
-        self._managed[contract.key] = managed
-        return self.managed_contracts
-
-    async def _reconcile_token_notification_locked(
-        self,
-        notification: _ConcordContractNotification,
-    ) -> tuple[ConcordManagedContract, ...]:
-        contract_key = concord_contract_key(
-            contract_id=notification.contract_id,
-            generation=notification.generation,
-        )
-        managed = self._managed.get(contract_key)
-        lease = self._leases.get(contract_key)
-        contract = (
-            managed.contract
-            if managed is not None
-            else lease.contract
-            if lease is not None
-            else None
-        )
-        if contract is None:
-            return self.managed_contracts
-        if self._prepare_reconcile is not None:
-            await _maybe_await(self._prepare_reconcile())
-        next_managed = await self._reconcile_contract_locked(
-            contract,
-            reason=_notification_reason(notification),
-        )
-        if next_managed is None:
-            if contract.key in self._managed or contract.key in self._leases:
-                await self._release_locked(
-                    contract.key,
-                    reason="not_selected",
-                    withdraw=True,
-                )
-            return self.managed_contracts
-        self._managed[contract.key] = next_managed
-        return self.managed_contracts
 
     async def reconcile(
         self,
@@ -2882,15 +1915,10 @@ class ConcordParticipant:
         self._last_status.pop(key, None)
         if managed is None:
             return
-        self._publish(
-            ConcordManagedContractEvent(
-                ConcordManagedContractEventType.RELEASED,
-                managed.contract,
-                record=managed.record,
-                validity=managed.validity,
-                token=managed.token,
-                reason=reason,
-            )
+        del reason
+        self._state.publish_locked(
+            (managed.contract.pointer,),
+            current=self._concord.is_current(),
         )
 
     async def _cancel_and_release_lost_participant_token_locked(
@@ -2983,25 +2011,11 @@ class ConcordParticipant:
         self._last_status[managed.contract.key] = status
         if previous == status:
             return
-        self._publish(
-            ConcordManagedContractEvent(
-                _managed_event_type(status),
-                managed.contract,
-                record=managed.record,
-                validity=managed.validity,
-                token=managed.token,
-                reason=reason,
-            )
+        del reason
+        self._state.publish_locked(
+            (managed.contract.pointer,),
+            current=self._concord.is_current(),
         )
-
-    def _publish(self, event: ConcordManagedContractEvent) -> None:
-        for subscriber in tuple(self._subscribers):
-            try:
-                subscriber.send_nowait(event)
-            except anyio.WouldBlock:
-                continue
-            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                self._subscribers.discard(subscriber)
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -3009,178 +2023,6 @@ async def _maybe_await(value: Any) -> Any:
         return await value
     return value
 
-
-def _discard_index_key(index: dict[Any, set[str]], value: Any, key: str) -> None:
-    keys = index.get(value)
-    if keys is None:
-        return
-    keys.discard(key)
-    if not keys:
-        index.pop(value, None)
-
-
-def _change_is_next_generation(
-    change: KvChange,
-    *,
-    current_generation: int,
-) -> bool:
-    if change.view_generation is None:
-        return True
-    if change.view_generation <= current_generation:
-        return False
-    return change.view_generation == current_generation + 1
-
-
-def _change_generation(change: KvChange, bucket: Any) -> int:
-    if change.view_generation is not None:
-        return change.view_generation
-    return int(getattr(bucket, "generation", 0))
-
-
-def _rebuild_change(
-    bucket: str,
-    key: str,
-    revision: int,
-    operation: Literal["put", "delete", "expire"],
-    entry: KvEntry | None,
-) -> KvChange:
-    return KvChange(
-        bucket,
-        key,
-        revision,
-        operation,
-        entry,
-        marker_reason="rebuild",
-    )
-
-
-def _contract_matches_notification_filter(
-    contract: ContractHandle,
-    *,
-    profile: str | None,
-    participant: EndpointAddress | None,
-) -> bool:
-    if profile is not None and contract.profile != profile:
-        return False
-    return not (participant is not None and participant not in contract.participants)
-
-
-def _contract_notification_from_change(
-    change: KvChange,
-    *,
-    profile_filter: str | None,
-    participant_filter: EndpointAddress | None,
-    known_profiles: dict[tuple[str, int], str | None],
-) -> _ConcordContractNotification | None:
-    parsed = parse_concord_contract_key(change.key)
-    if parsed is None:
-        return None
-    contract_id, generation = parsed
-    pointer = (contract_id, generation)
-    was_known = pointer in known_profiles
-    known_profile = known_profiles.get(pointer)
-    contract = _contract_handle_from_change(change)
-    if contract is not None:
-        if _contract_matches_notification_filter(
-            contract,
-            profile=profile_filter,
-            participant=participant_filter,
-        ):
-            known_profiles[pointer] = contract.profile
-            profile = contract.profile
-            profile_known = True
-        else:
-            known_profiles.pop(pointer, None)
-            if not was_known:
-                return None
-            profile = contract.profile
-            profile_known = True
-    else:
-        profile = known_profile
-        profile_known = pointer in known_profiles
-        if change.operation in {"delete", "expire"}:
-            known_profiles.pop(pointer, None)
-    if (
-        profile_filter is not None
-        and profile_known
-        and profile != profile_filter
-        and not was_known
-    ):
-        return None
-    if participant_filter is not None and not was_known and contract is None:
-        return None
-    return _ConcordContractNotification(
-        _ConcordNotificationSource.CONTRACT,
-        change.operation,
-        contract_id,
-        generation,
-        contract=contract,
-        profile=profile,
-        change=change,
-    )
-
-
-def _token_notification_from_change(
-    change: KvChange,
-    *,
-    profile_filter: str | None,
-    participant_filter: EndpointAddress | None,
-    known_profiles: Mapping[tuple[str, int], str | None],
-) -> _ConcordContractNotification | None:
-    parsed = parse_concord_participant_token_key(change.key)
-    if parsed is None:
-        return None
-    contract_id, generation, participant = parsed
-    pointer = (contract_id, generation)
-    profile_known = pointer in known_profiles
-    profile = known_profiles.get(pointer)
-    if participant_filter is not None and not profile_known:
-        return None
-    if profile_filter is not None and profile_known and profile != profile_filter:
-        return None
-    return _ConcordContractNotification(
-        _ConcordNotificationSource.TOKEN,
-        change.operation,
-        contract_id,
-        generation,
-        participant=participant,
-        profile=profile,
-        change=change,
-    )
-
-
-def _contract_handle_from_change(change: KvChange) -> ContractHandle | None:
-    if change.operation != "put" or change.entry is None:
-        return None
-    parsed = parse_concord_contract_key(change.entry.key)
-    if parsed is None:
-        return None
-    contract_id, generation = parsed
-    try:
-        record = ContractRecord.model_validate(change.entry.value)
-    except ValueError:
-        return None
-    if record.contract_id != contract_id or record.generation != generation:
-        return None
-    return _contract_handle(change.entry.key, record, change.entry.revision)
-
-
-def _event_matches_subscriber(
-    subscriber: _ConcordSubscriber,
-    event: ConcordEvent,
-) -> bool:
-    if subscriber.profile is not None and event.profile != subscriber.profile:
-        return False
-    if subscriber.participant is None:
-        return True
-    participant = str(subscriber.participant)
-    if event.participant is not None and str(event.participant) == participant:
-        return True
-    if event.contract is not None:
-        return participant in {str(item) for item in event.contract.participants}
-    if event.record is not None:
-        return participant in {str(item) for item in event.record.participants}
-    return False
 
 
 async def _agreement_current_sessions(
@@ -3245,23 +2087,6 @@ def _terminal_managed_status(status: ContractValidityStatus) -> bool:
     }
 
 
-def _notification_reason(notification: _ConcordContractNotification) -> str:
-    key = notification.change.key if notification.change is not None else "<snapshot>"
-    return f"{notification.source.value} watch {notification.operation} {key}"
-
-
-def _managed_event_type(
-    status: ContractValidityStatus,
-) -> ConcordManagedContractEventType:
-    if status == ContractValidityStatus.VALID:
-        return ConcordManagedContractEventType.VALID
-    if status == ContractValidityStatus.CANCELLED:
-        return ConcordManagedContractEventType.CANCELLED
-    if status == ContractValidityStatus.NOT_YET_FULFILLED:
-        return ConcordManagedContractEventType.PENDING
-    return ConcordManagedContractEventType.INVALID
-
-
 def _is_terminal_participant_conflict(exc: ConcordConflict) -> bool:
     return exc.code in {
         ConcordConflictCode.CONTRACT_MISSING,
@@ -3274,103 +2099,6 @@ def _is_terminal_participant_conflict(exc: ConcordConflict) -> bool:
         ConcordConflictCode.TOKEN_INVALID,
         ConcordConflictCode.TOKEN_IDENTITY_MISMATCH,
     }
-
-
-def _concord_event_type(validity: ContractValidity) -> ConcordEventType:
-    if validity.status == ContractValidityStatus.VALID:
-        return ConcordEventType.CONTRACT_VALID
-    if validity.status == ContractValidityStatus.CANCELLED:
-        return ConcordEventType.CONTRACT_CANCELLED
-    if validity.status in {
-        ContractValidityStatus.NOT_YET_FULFILLED,
-    }:
-        return ConcordEventType.CONTRACT_PENDING
-    return ConcordEventType.CONTRACT_INVALID
-
-
-def _log_concord_event(event: ConcordEvent) -> None:
-    contract = event.contract
-    if contract is None:
-        return
-    status = event.validity.status.value if event.validity is not None else None
-    if event.event_type == ConcordEventType.CONTRACT_VALID:
-        logger.log(
-            _contract_lifecycle_log_level(event.profile),
-            "Concord contract valid profile=%s contract=%s generation=%s revision=%s",
-            event.profile,
-            contract.contract_id,
-            contract.generation,
-            contract.revision,
-        )
-        return
-    if event.event_type == ConcordEventType.CONTRACT_CANCELLED:
-        logger.log(
-            _contract_terminal_log_level(event.profile),
-            "Concord contract cancelled profile=%s contract=%s generation=%s "
-            "status=%s reason=%s revision=%s",
-            event.profile,
-            contract.contract_id,
-            contract.generation,
-            status,
-            event.reason,
-            contract.revision,
-        )
-        return
-    if event.event_type == ConcordEventType.TOKEN_EXPIRED:
-        logger.log(
-            _contract_terminal_log_level(event.profile),
-            "Concord participant token expired profile=%s contract=%s generation=%s "
-            "participant=%s status=%s reason=%s revision=%s",
-            event.profile,
-            contract.contract_id,
-            contract.generation,
-            event.participant,
-            status,
-            event.reason,
-            contract.revision,
-        )
-        return
-    if event.event_type == ConcordEventType.TOKEN_ATTACHED:
-        logger.log(
-            _contract_lifecycle_log_level(event.profile),
-            "Concord participant token attached profile=%s contract=%s generation=%s "
-            "participant=%s revision=%s",
-            event.profile,
-            contract.contract_id,
-            contract.generation,
-            event.participant,
-            contract.revision,
-        )
-        return
-    if event.event_type == ConcordEventType.TOKEN_REFRESHED:
-        logger.log(
-            _token_refresh_log_level(),
-            "Concord participant token refreshed profile=%s contract=%s generation=%s "
-            "participant=%s revision=%s",
-            event.profile,
-            contract.contract_id,
-            contract.generation,
-            event.participant,
-            contract.revision,
-        )
-        return
-    if event.event_type == ConcordEventType.CONTRACT_PENDING:
-        level = _contract_pending_log_level(event.profile)
-    else:
-        event_status = event.validity.status if event.validity is not None else None
-        level = _contract_invalid_log_level(event.profile, event_status)
-    logger.log(
-        level,
-        "Concord contract %s profile=%s contract=%s generation=%s status=%s "
-        "reason=%s revision=%s",
-        event.event_type.value,
-        event.profile,
-        contract.contract_id,
-        contract.generation,
-        status,
-        event.reason,
-        contract.revision,
-    )
 
 
 __all__ = [
@@ -3393,14 +2121,15 @@ __all__ = [
     "ConcordAgreementSpec",
     "ConcordConflict",
     "ConcordConflictCode",
-    "ConcordEvent",
-    "ConcordEventType",
+    "ConcordContractState",
     "ConcordManagedContract",
-    "ConcordManagedContractEvent",
-    "ConcordManagedContractEventType",
     "ConcordParticipant",
+    "ConcordParticipantChange",
+    "ConcordParticipantSnapshot",
     "ConcordUnavailable",
     "ConcordUnavailableCode",
+    "ConcordWatchChange",
+    "ConcordWatchSnapshot",
     "ParticipantHandle",
     "ParticipantTokenRecord",
     "TokenObservation",

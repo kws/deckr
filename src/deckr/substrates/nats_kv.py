@@ -4,13 +4,17 @@ import json
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal
 
 import anyio
 
 from deckr.contracts.models import DeckrModel, freeze_json, thaw_json
+from deckr.core.util.anyio import (
+    CoalescedStateBroadcaster,
+    CoalescedStateSubscription,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,9 @@ NATS_MARKER_REASON_HEADER = "Nats-Marker-Reason"
 NATS_MARKER_MAX_AGE = "MaxAge"
 NATS_NANOSECONDS_PER_SECOND = 1_000_000_000
 NATS_SUBJECT_DELETE_MARKER_TTL_FIELD = "subject_delete_marker_ttl"
+NATS_WATCH_CLEANUP_TIMEOUT_SECONDS = 0.5
+NATS_WATCH_HEALTH_INTERVAL_SECONDS = 0.1
+NATS_WATCH_INACTIVE_THRESHOLD_SECONDS = 1.0
 
 
 class KvConflict(RuntimeError):
@@ -70,35 +77,73 @@ class KvChange:
     operation: Literal["put", "delete", "expire"]
     entry: KvEntry | None = None
     marker_reason: str | None = None
-    view_generation: int | None = None
 
 
-class _NatsKvWatchReceiveStream(anyio.abc.ObjectReceiveStream[KvChange | None]):
+@dataclass(frozen=True, slots=True)
+class KvWatchBarrier:
+    """Broker stream high-water captured before a raw KV watch was opened."""
+
+    revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class KvMaterializedSnapshot:
+    version: int
+    current: bool
+    entries: tuple[KvEntry, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class KvMaterializedChange:
+    version: int
+    current: bool
+    changed_keys: frozenset[str]
+    resnapshot_required: bool
+
+
+class _NatsKvWatchReceiveStream(
+    anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
+):
     def __init__(
         self,
         *,
         bucket: str,
         prefix: str,
         watcher: Any,
+        barrier: KvWatchBarrier,
+        connection: Any | None = None,
     ) -> None:
         self._bucket = bucket
         self._prefix = prefix
         self._watcher = watcher
+        self._barrier = barrier
+        self._connection = connection
         self._iterator = watcher.__aiter__()
         self._closed = False
 
-    async def receive(self) -> KvChange | None:
+    async def _next_entry(self) -> Any:
+        if self._connection is None:
+            return await self._iterator.__anext__()
+        while True:
+            if not bool(getattr(self._connection, "is_connected", True)):
+                raise KvUnavailable("NATS connection is not current")
+            with anyio.move_on_after(NATS_WATCH_HEALTH_INTERVAL_SECONDS) as scope:
+                entry = await self._iterator.__anext__()
+            if not scope.cancel_called:
+                return entry
+
+    async def receive(self) -> KvChange | KvWatchBarrier:
         if self._closed:
             raise anyio.ClosedResourceError
         try:
             while True:
                 try:
-                    entry = await self._iterator.__anext__()
+                    entry = await self._next_entry()
                 except StopAsyncIteration:
                     await self.aclose()
                     raise anyio.EndOfStream from None
                 if entry is None:
-                    return None
+                    return self._barrier
                 change = kv_change_from_raw(self._bucket, entry)
                 if change is None:
                     continue
@@ -127,13 +172,25 @@ class _NatsKvWatchReceiveStream(anyio.abc.ObjectReceiveStream[KvChange | None]):
         if self._closed:
             return
         self._closed = True
+        connection_current = self._connection is None or bool(
+            getattr(self._connection, "is_connected", True)
+        )
         try:
-            await self._watcher.stop()
+            with anyio.move_on_after(
+                NATS_WATCH_CLEANUP_TIMEOUT_SECONDS,
+                shield=True,
+            ):
+                await self._watcher.stop()
         finally:
-            await delete_ephemeral_consumer(
-                getattr(self._watcher, "_sub", None),
-                reason=f"KV watch prefix {self._prefix!r}",
-            )
+            if connection_current:
+                with anyio.move_on_after(
+                    NATS_WATCH_CLEANUP_TIMEOUT_SECONDS,
+                    shield=True,
+                ):
+                    await delete_ephemeral_consumer(
+                        getattr(self._watcher, "_sub", None),
+                        reason=f"KV watch prefix {self._prefix!r}",
+                    )
 
 
 class NatsJsonKvBucket:
@@ -305,21 +362,40 @@ class NatsJsonKvBucket:
     async def watch(
         self,
         prefix: str = "",
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | None]]:
+    ) -> AsyncIterator[
+        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
+    ]:
         kv = await self._available_kv()
         try:
-            watcher = await kv.watch(kv_watch_pattern(prefix), inactive_threshold=5 * 60)
+            high_water = await self._stream_high_water_revision(kv)
+            watcher = await kv.watch(
+                kv_watch_pattern(prefix),
+                inactive_threshold=NATS_WATCH_INACTIVE_THRESHOLD_SECONDS,
+            )
         except Exception as exc:
             raise KvUnavailable(f"Could not watch KV prefix {prefix!r}") from exc
         stream = _NatsKvWatchReceiveStream(
             bucket=self.bucket,
             prefix=prefix,
             watcher=watcher,
+            barrier=KvWatchBarrier(high_water),
+            connection=getattr(self._js, "_nc", None),
         )
         try:
             yield stream
         finally:
             await stream.aclose()
+
+    async def _stream_high_water_revision(self, kv: Any) -> int:
+        stream_name = getattr(kv, "_stream", f"KV_{self.bucket}")
+        info = await self._js.stream_info(stream_name)
+        state = getattr(info, "state", None)
+        value = getattr(state, "last_seq", None)
+        if value is None:
+            # Deterministic test stores expose their revision directly. Real
+            # JetStream stream info always supplies ``state.last_seq``.
+            value = getattr(kv, "_revision", 0)
+        return int(value)
 
     async def _ensure_kv(self):
         if self._kv is not None:
@@ -565,12 +641,49 @@ class NatsJsonKvBucket:
         )
 
 
-class NatsKvMaterializedBucket:
-    """Internal materialized view over one JSON KV bucket.
+MATERIALIZED_TOMBSTONE_LIMIT = 2_000
 
-    This is intentionally a protocol-runtime helper, not a public generic state
-    abstraction. It keeps one long-lived bucket watch and serves reads from an
-    in-memory revision-indexed cache.
+
+class _KvMaterializedWatch:
+    def __init__(
+        self,
+        subscription: CoalescedStateSubscription[
+            str,
+            KvMaterializedSnapshot,
+        ],
+    ) -> None:
+        self._subscription = subscription
+        self._initial: KvMaterializedSnapshot | None = subscription.initial
+
+    def __aiter__(self) -> _KvMaterializedWatch:
+        return self
+
+    async def __anext__(self) -> KvMaterializedSnapshot | KvMaterializedChange:
+        try:
+            return await self.receive()
+        except (anyio.ClosedResourceError, anyio.EndOfStream):
+            raise StopAsyncIteration from None
+
+    async def receive(self) -> KvMaterializedSnapshot | KvMaterializedChange:
+        if self._initial is not None:
+            initial = self._initial
+            self._initial = None
+            return initial
+        change = await self._subscription.receive()
+        return KvMaterializedChange(
+            version=change.version,
+            current=change.current,
+            changed_keys=change.changed,
+            resnapshot_required=change.resnapshot_required,
+        )
+
+
+class NatsKvMaterializedBucket:
+    """Read-only, current-state materialization of one JSON KV bucket.
+
+    The raw bucket remains the sole exact/CAS writer. This source installs each
+    broker recovery snapshot atomically at its typed high-water barrier and
+    emits only bounded coalesced wakeups afterward.
     """
 
     def __init__(
@@ -580,7 +693,6 @@ class NatsKvMaterializedBucket:
         bucket: str | NatsJsonKvBucket | Any | None = None,
         policy: KvBucketPolicy | None = None,
         key_prefix: str = "",
-        buffer_size: int = 100,
     ) -> None:
         if isinstance(bucket, str):
             if js is None:
@@ -589,44 +701,53 @@ class NatsKvMaterializedBucket:
                 bucket=bucket,
                 ttl_seconds=None,
             )
-            self._bucket = NatsJsonKvBucket(
-                js=js,
-                policy=resolved_policy,
-                buffer_size=buffer_size,
-            )
+            self._bucket = NatsJsonKvBucket(js=js, policy=resolved_policy)
         elif bucket is not None:
             self._bucket = bucket
         else:
             if js is None or policy is None:
                 raise ValueError("bucket or js+policy is required")
-            self._bucket = NatsJsonKvBucket(
-                js=js,
-                policy=policy,
-                buffer_size=buffer_size,
-            )
+            self._bucket = NatsJsonKvBucket(js=js, policy=policy)
         self.key_prefix = key_prefix
-        self._buffer_size = buffer_size
         self._ready = anyio.Event()
+        self._current_event = anyio.Event()
+        self._run_started = anyio.Event()
+        self._closed_event = anyio.Event()
+        self._revision_condition = anyio.Condition()
         self._status = KvViewStatus.STARTING
-        self._status_condition = anyio.Condition()
         self._started = False
+        self._closed = False
+        self._cancel_scope: anyio.CancelScope | None = None
         self._entries: dict[str, KvEntry] = {}
-        self._revision_by_key: dict[str, int] = {}
-        self._generation = 0
-        self._subscribers: set[anyio.abc.ObjectSendStream[KvChange]] = set()
-        self._lock = anyio.Lock()
+        self._tombstone_revision_by_key: dict[str, int] = {}
+        self._high_water_revision = 0
+        self._broadcaster = CoalescedStateBroadcaster[str](current=False)
 
     @property
     def bucket(self) -> str:
         return str(self._bucket.bucket)
 
     @property
+    def exact_bucket(self) -> Any:
+        """The separate exact/CAS store used by an owning runtime facade."""
+
+        return self._bucket
+
+    @property
     def status(self) -> KvViewStatus:
         return self._status
 
     @property
-    def generation(self) -> int:
-        return self._generation
+    def version(self) -> int:
+        return self._broadcaster.version
+
+    @property
+    def high_water_revision(self) -> int:
+        return self._high_water_revision
+
+    @property
+    def tombstone_count(self) -> int:
+        return len(self._tombstone_revision_by_key)
 
     async def ttl_seconds(self) -> float | None:
         ttl_seconds = getattr(self._bucket, "ttl_seconds", None)
@@ -640,8 +761,22 @@ class NatsKvMaterializedBucket:
     def start(self, task_group: anyio.abc.TaskGroup) -> None:
         if self._started:
             return
+        if self._closed:
+            raise RuntimeError("materialized KV source is closed")
         self._started = True
-        task_group.start_soon(self._watch_loop)
+        task_group.start_soon(self._run)
+
+    async def _run(self) -> None:
+        try:
+            with anyio.CancelScope() as cancel_scope:
+                self._cancel_scope = cancel_scope
+                self._run_started.set()
+                await self._watch_loop()
+        finally:
+            self._cancel_scope = None
+            await self._set_status(KvViewStatus.CLOSED)
+            await self._broadcaster.aclose()
+            self._closed_event.set()
 
     def is_ready(self) -> bool:
         return self._ready.is_set()
@@ -653,13 +788,35 @@ class NatsKvMaterializedBucket:
         await self._ready.wait()
 
     async def wait_current(self) -> None:
-        async with self._status_condition:
-            while self._status != KvViewStatus.READY:
-                if self._status == KvViewStatus.CLOSED:
-                    raise KvUnavailable(
-                        f"NATS KV materialized view is closed bucket={self.bucket!r}"
-                    )
-                await self._status_condition.wait()
+        while self._status != KvViewStatus.READY:
+            if self._status == KvViewStatus.CLOSED:
+                raise KvUnavailable(
+                    f"NATS KV materialized view is closed bucket={self.bucket!r}"
+                )
+            event = self._current_event
+            await event.wait()
+
+    async def wait_for_revision(self, key: str, revision: int) -> None:
+        """Wait until the broker watch has observed a committed exact revision."""
+
+        if not self._started:
+            return
+        while not self._revision_was_observed(key, revision):
+            if self._status == KvViewStatus.CLOSED:
+                raise KvUnavailable(
+                    f"NATS KV materialized view closed before observing {key!r} "
+                    f"revision {revision}"
+                )
+            async with self._revision_condition:
+                if self._revision_was_observed(key, revision):
+                    return
+                await self._revision_condition.wait()
+
+    def _revision_was_observed(self, key: str, revision: int) -> bool:
+        cached = self.revision_cached(key)
+        return (cached is not None and cached >= revision) or (
+            self._high_water_revision >= revision
+        )
 
     def get_cached(self, key: str) -> KvEntry | None:
         return self._entries.get(key)
@@ -672,102 +829,53 @@ class NatsKvMaterializedBucket:
         )
 
     def revision_cached(self, key: str) -> int | None:
-        return self._revision_by_key.get(key)
+        entry = self._entries.get(key)
+        if entry is not None:
+            return entry.revision
+        return self._tombstone_revision_by_key.get(key)
 
-    async def get_exact(self, key: str) -> KvEntry | None:
-        return await self._bucket.get(key)
-
-    async def items_exact(self, prefix: str = "") -> tuple[KvEntry, ...]:
-        return await self._bucket.items(prefix)
-
-    async def put(
-        self,
-        key: str,
-        value: Mapping[str, Any] | DeckrModel,
-        *,
-        ttl: float | None = None,
-    ) -> KvEntry:
-        entry = await self._bucket.put(key, value, ttl=ttl)
-        await self._apply_change(KvChange(self.bucket, key, entry.revision, "put", entry))
-        return entry
-
-    async def create(
-        self,
-        key: str,
-        value: Mapping[str, Any] | DeckrModel,
-        *,
-        ttl: float | None = None,
-    ) -> KvEntry:
-        entry = await self._bucket.create(key, value, ttl=ttl)
-        await self._apply_change(KvChange(self.bucket, key, entry.revision, "put", entry))
-        return entry
-
-    async def update(
-        self,
-        key: str,
-        value: Mapping[str, Any] | DeckrModel,
-        *,
-        revision: int,
-        ttl: float | None = None,
-    ) -> KvEntry:
-        entry = await self._bucket.update(key, value, revision=revision, ttl=ttl)
-        await self._apply_change(KvChange(self.bucket, key, entry.revision, "put", entry))
-        return entry
-
-    async def delete(self, key: str, *, revision: int | None = None) -> int | None:
-        previous_revision = self._revision_by_key.get(key, 0)
-        marker_revision = await self._bucket.delete(key, revision=revision)
-        if previous_revision == 0 and revision is None:
-            return None
-        if marker_revision is None:
-            return None
-        await self._apply_change(KvChange(self.bucket, key, marker_revision, "delete"))
-        return marker_revision
+    async def aclose(self) -> None:
+        if self._closed:
+            if self._started:
+                await self._closed_event.wait()
+            return
+        self._closed = True
+        if not self._started:
+            await self._set_status(KvViewStatus.CLOSED)
+            await self._broadcaster.aclose()
+            self._closed_event.set()
+            return
+        await self._run_started.wait()
+        cancel_scope = self._cancel_scope
+        if cancel_scope is not None:
+            cancel_scope.cancel()
+        await self._closed_event.wait()
 
     @asynccontextmanager
-    async def subscribe(
-        self,
-    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange]]:
-        send, receive = anyio.create_memory_object_stream[KvChange](
-            max_buffer_size=self._buffer_size
+    async def subscribe(self) -> AsyncIterator[_KvMaterializedWatch]:
+        async with self._broadcaster.subscribe(self._snapshot_locked) as subscription:
+            yield _KvMaterializedWatch(subscription)
+
+    def _snapshot_locked(self, version: int, current: bool) -> KvMaterializedSnapshot:
+        return KvMaterializedSnapshot(
+            version=version,
+            current=current,
+            entries=tuple(entry for _, entry in sorted(self._entries.items())),
         )
-        async with self._lock:
-            self._subscribers.add(send)
-        try:
-            async with send, receive:
-                yield receive
-        finally:
-            async with self._lock:
-                self._subscribers.discard(send)
+
+    async def snapshot(self) -> KvMaterializedSnapshot:
+        return await self._broadcaster.capture(self._snapshot_locked)
 
     async def _watch_loop(self) -> None:
         retry_seconds = 1.0
         while True:
-            try:
-                snapshot_revisions = self._snapshot_revisions()
-                async with self._bucket.watch(self.key_prefix) as changes:
-                    snapshot_keys: set[str] = set()
-                    snapshot_open = True
-                    async for change in changes:
-                        if change is None:
-                            if snapshot_open:
-                                await self._reconcile_snapshot(
-                                    snapshot_keys,
-                                    snapshot_revisions=snapshot_revisions,
-                                )
-                                snapshot_open = False
-                            await self._set_status(KvViewStatus.READY)
-                            continue
-                        if snapshot_open:
-                            snapshot_keys.add(change.key)
-                        await self._apply_change(change)
+            if self._ready.is_set():
                 await self._set_status(KvViewStatus.STALE)
+            try:
+                await self._consume_one_watch()
             except anyio.get_cancelled_exc_class():
-                with anyio.CancelScope(shield=True):
-                    await self._set_status(KvViewStatus.CLOSED)
                 raise
             except Exception:
-                await self._set_status(KvViewStatus.STALE)
                 logger.warning(
                     "NATS KV materialized watch failed bucket=%s prefix=%s",
                     self.bucket,
@@ -776,73 +884,176 @@ class NatsKvMaterializedBucket:
                 )
                 await anyio.sleep(retry_seconds)
 
+    async def _consume_one_watch(self) -> bool:
+        recovered: dict[str, KvChange] = {}
+        post_barrier: dict[str, KvChange] = {}
+        barrier_seen = False
+        async with self._bucket.watch(self.key_prefix) as changes:
+            async for item in changes:
+                if isinstance(item, KvWatchBarrier):
+                    if barrier_seen:
+                        continue
+                    barrier_seen = True
+                    compact = await self._install_recovered_snapshot(
+                        recovered,
+                        post_barrier,
+                        barrier=item,
+                    )
+                    if compact:
+                        return True
+                    continue
+                change = item
+                if self.key_prefix and not change.key.startswith(self.key_prefix):
+                    continue
+                if not barrier_seen:
+                    # The raw watch's typed high-water determines which changes
+                    # form the recovered snapshot. A change newer than that
+                    # barrier is classified when the barrier item arrives.
+                    recovered[change.key] = _newer_change(recovered.get(change.key), change)
+                    continue
+                if await self._apply_change(change):
+                    return True
+        return False
+
+    async def _install_recovered_snapshot(
+        self,
+        observed: Mapping[str, KvChange],
+        post_barrier: Mapping[str, KvChange],
+        *,
+        barrier: KvWatchBarrier,
+    ) -> bool:
+        # Raw NATS watches can include a change newer than the captured stream
+        # high-water in their initial replay. Split those changes before the
+        # atomic install, then apply them in stream-revision order.
+        snapshot_changes = {
+            key: change
+            for key, change in observed.items()
+            if change.revision <= barrier.revision
+        }
+        newer = {
+            key: change
+            for key, change in observed.items()
+            if change.revision > barrier.revision
+        }
+        for key, change in post_barrier.items():
+            newer[key] = _newer_change(newer.get(key), change)
+
+        entries: dict[str, KvEntry] = {}
+        for change in snapshot_changes.values():
+            if change.operation == "put" and change.entry is not None:
+                entries[change.key] = change.entry
+
+        tombstones: dict[str, int] = {}
+        for change in sorted(newer.values(), key=lambda item: item.revision):
+            current_entry = entries.get(change.key)
+            current_revision = current_entry.revision if current_entry is not None else 0
+            current_revision = max(current_revision, tombstones.get(change.key, 0))
+            if change.revision <= current_revision:
+                continue
+            if change.operation == "put" and change.entry is not None:
+                entries[change.key] = change.entry
+                tombstones.pop(change.key, None)
+            else:
+                entries.pop(change.key, None)
+                tombstones[change.key] = change.revision
+
+        for key in self._entries.keys() - entries.keys():
+            tombstones.setdefault(key, barrier.revision)
+
+        compact = len(tombstones) >= MATERIALIZED_TOMBSTONE_LIMIT
+        if len(tombstones) > MATERIALIZED_TOMBSTONE_LIMIT:
+            newest_tombstones = sorted(
+                tombstones.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:MATERIALIZED_TOMBSTONE_LIMIT]
+            tombstones = dict(newest_tombstones)
+
+        installed_high_water = max(
+            (barrier.revision, *(change.revision for change in newer.values()))
+        )
+
+        async with self._broadcaster.lock:
+            changed = _changed_entry_keys(self._entries, entries)
+            self._entries = entries
+            self._tombstone_revision_by_key = tombstones
+            self._high_water_revision = installed_high_water
+            self._status = KvViewStatus.READY
+            self._current_event.set()
+            self._ready.set()
+            self._broadcaster.publish_locked(
+                changed,
+                current=True,
+                resnapshot_required=len(changed) > 256,
+            )
+        await self._notify_revision_waiters()
+        return compact
+
+    async def _apply_change(self, change: KvChange) -> bool:
+        """Apply one ordered live broker observation.
+
+        Returns true when the bounded tombstone metadata reached its compaction
+        threshold and the watch should be reopened immediately.
+        """
+
+        if self.key_prefix and not change.key.startswith(self.key_prefix):
+            return False
+        async with self._broadcaster.lock:
+            current_revision = self.revision_cached(change.key) or 0
+            if change.revision <= current_revision:
+                return False
+            self._high_water_revision = max(self._high_water_revision, change.revision)
+            if change.operation == "put" and change.entry is not None:
+                self._entries[change.key] = change.entry
+                self._tombstone_revision_by_key.pop(change.key, None)
+            else:
+                self._entries.pop(change.key, None)
+                self._tombstone_revision_by_key[change.key] = change.revision
+            self._broadcaster.publish_locked((change.key,), current=self.is_current())
+            compact = (
+                len(self._tombstone_revision_by_key) >= MATERIALIZED_TOMBSTONE_LIMIT
+            )
+        await self._notify_revision_waiters()
+        return compact
+
     async def _set_status(self, status: KvViewStatus) -> None:
-        async with self._status_condition:
+        async with self._broadcaster.lock:
             if self._status == KvViewStatus.CLOSED and status != KvViewStatus.CLOSED:
                 return
-            if status == KvViewStatus.READY:
-                self._ready.set()
             if self._status == status:
                 return
             self._status = status
-            self._status_condition.notify_all()
-
-    def _snapshot_revisions(self) -> dict[str, int]:
-        return {
-            key: revision
-            for key, revision in self._revision_by_key.items()
-            if key.startswith(self.key_prefix)
-        }
-
-    async def _reconcile_snapshot(
-        self,
-        snapshot_keys: set[str],
-        *,
-        snapshot_revisions: Mapping[str, int],
-    ) -> None:
-        stale_changes: list[KvChange] = []
-        async with self._lock:
-            for key, baseline_revision in snapshot_revisions.items():
-                if key in snapshot_keys:
-                    continue
-                if key not in self._entries:
-                    continue
-                if self._revision_by_key.get(key, 0) != baseline_revision:
-                    continue
-                stale_changes.append(
-                    KvChange(
-                        self.bucket,
-                        key,
-                        baseline_revision + 1,
-                        "delete",
-                        marker_reason="watch_snapshot_absent",
-                    )
-                )
-        for change in stale_changes:
-            await self._apply_change(change)
-
-    async def _apply_change(self, change: KvChange) -> None:
-        if self.key_prefix and not change.key.startswith(self.key_prefix):
-            return
-        async with self._lock:
-            current_revision = self._revision_by_key.get(change.key, 0)
-            if change.revision <= current_revision:
-                return
-            self._revision_by_key[change.key] = change.revision
-            if change.operation == "put" and change.entry is not None:
-                self._entries[change.key] = change.entry
+            current = status == KvViewStatus.READY
+            if current:
+                self._current_event.set()
             else:
-                self._entries.pop(change.key, None)
-            self._generation += 1
-            view_generation = self._generation
-            delivered = replace(change, view_generation=view_generation)
-            subscribers = tuple(self._subscribers)
-        for subscriber in subscribers:
-            try:
-                await subscriber.send(delivered)
-            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                async with self._lock:
-                    self._subscribers.discard(subscriber)
+                self._current_event = anyio.Event()
+            if status == KvViewStatus.READY:
+                self._ready.set()
+            if status != KvViewStatus.CLOSED:
+                self._broadcaster.publish_locked((), current=current)
+        await self._notify_revision_waiters()
+
+    async def _notify_revision_waiters(self) -> None:
+        async with self._revision_condition:
+            self._revision_condition.notify_all()
+
+
+def _newer_change(previous: KvChange | None, change: KvChange) -> KvChange:
+    if previous is None or change.revision > previous.revision:
+        return change
+    return previous
+
+
+def _changed_entry_keys(
+    previous: Mapping[str, KvEntry],
+    current: Mapping[str, KvEntry],
+) -> frozenset[str]:
+    return frozenset(
+        key
+        for key in previous.keys() | current.keys()
+        if previous.get(key) != current.get(key)
+    )
 
 
 def kv_value(value: Mapping[str, Any] | DeckrModel) -> Mapping[str, Any]:
@@ -1133,8 +1344,12 @@ __all__ = [
     "KvChange",
     "KvConflict",
     "KvEntry",
+    "KvMaterializedChange",
+    "KvMaterializedSnapshot",
     "KvUnavailable",
     "KvViewStatus",
+    "KvWatchBarrier",
+    "MATERIALIZED_TOMBSTONE_LIMIT",
     "NatsKvMaterializedBucket",
     "NatsJsonKvBucket",
 ]

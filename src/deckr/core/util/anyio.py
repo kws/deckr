@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import heapq
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import (
@@ -17,6 +24,240 @@ logger = logging.getLogger(__name__)
 
 K = TypeVar("K")
 V = TypeVar("V")
+S = TypeVar("S")
+
+MAX_COALESCED_STATE_IDENTITIES = 256
+MAX_COALESCED_STATE_SUBSCRIPTIONS = 256
+
+
+class StateSubscriptionLimitExceeded(RuntimeError):
+    """Raised when a state broadcaster cannot admit another subscriber."""
+
+
+@dataclass(frozen=True, slots=True)
+class CoalescedStateChange(Generic[K]):
+    """Immutable current-state wakeup produced by a state broadcaster."""
+
+    version: int
+    current: bool
+    changed: frozenset[K]
+    resnapshot_required: bool
+
+
+@dataclass(slots=True, eq=False)
+class _StateRegistration(Generic[K]):
+    send: anyio.abc.ObjectSendStream[None]
+    receive: anyio.abc.ObjectReceiveStream[None]
+    version: int
+    current: bool
+    changed: set[K] = field(default_factory=set)
+    resnapshot_required: bool = False
+    notified: bool = False
+    closed: bool = False
+
+
+class CoalescedStateSubscription(Generic[K, S]):
+    """One admitted broadcaster registration and its atomic initial snapshot."""
+
+    def __init__(
+        self,
+        broadcaster: CoalescedStateBroadcaster[K],
+        registration: _StateRegistration[K],
+        initial: S,
+    ) -> None:
+        self._broadcaster = broadcaster
+        self._registration = registration
+        self.initial = initial
+
+    def __aiter__(self) -> CoalescedStateSubscription[K, S]:
+        return self
+
+    async def __anext__(self) -> CoalescedStateChange[K]:
+        try:
+            return await self.receive()
+        except (anyio.ClosedResourceError, anyio.EndOfStream):
+            raise StopAsyncIteration from None
+
+    async def receive(self) -> CoalescedStateChange[K]:
+        registration = self._registration
+        while True:
+            await registration.receive.receive()
+            async with self._broadcaster.lock:
+                if registration.closed:
+                    raise anyio.ClosedResourceError
+                # ``notified`` stays true until the pending state is consumed.
+                # A publisher racing between the stream receive and this lock
+                # therefore coalesces into this same immutable wakeup instead of
+                # leaving an empty token behind or losing the wakeup entirely.
+                registration.notified = False
+                change = CoalescedStateChange(
+                    version=registration.version,
+                    current=registration.current,
+                    changed=frozenset(registration.changed),
+                    resnapshot_required=registration.resnapshot_required,
+                )
+                registration.changed.clear()
+                registration.resnapshot_required = False
+                return change
+
+
+class CoalescedStateBroadcaster(Generic[K]):
+    """Bounded, non-blocking fanout for versioned current-state wakeups.
+
+    Owners use :attr:`lock` for both their in-memory state commit and
+    :meth:`publish_locked`. Subscriber registration and initial snapshot capture
+    use that same lock, making the first snapshot atomic with respect to state
+    changes. Later wakeups coalesce by identity and never await a reader.
+    """
+
+    def __init__(
+        self,
+        *,
+        current: bool = False,
+        max_changed: int = MAX_COALESCED_STATE_IDENTITIES,
+        max_subscriptions: int = MAX_COALESCED_STATE_SUBSCRIPTIONS,
+    ) -> None:
+        if max_changed <= 0:
+            raise ValueError("max_changed must be greater than zero")
+        if max_subscriptions <= 0:
+            raise ValueError("max_subscriptions must be greater than zero")
+        self.lock = anyio.Lock()
+        self._version = 0
+        self._current = current
+        self._max_changed = max_changed
+        self._max_subscriptions = max_subscriptions
+        self._registrations: set[_StateRegistration[K]] = set()
+        self._closed = False
+
+    @property
+    def version(self) -> int:
+        return self._version
+
+    @property
+    def current(self) -> bool:
+        return self._current
+
+    @property
+    def subscription_count(self) -> int:
+        return len(self._registrations)
+
+    async def publish(
+        self,
+        changed: Iterable[K] = (),
+        *,
+        current: bool | None = None,
+        resnapshot_required: bool = False,
+    ) -> CoalescedStateChange[K]:
+        identities = frozenset(changed)
+        async with self.lock:
+            return self.publish_locked(
+                identities,
+                current=current,
+                resnapshot_required=resnapshot_required,
+            )
+
+    def publish_locked(
+        self,
+        changed: Iterable[K] = (),
+        *,
+        current: bool | None = None,
+        resnapshot_required: bool = False,
+    ) -> CoalescedStateChange[K]:
+        """Commit one view version while the broadcaster lock is held."""
+
+        if self._closed:
+            raise anyio.ClosedResourceError
+        identities = frozenset(changed)
+        if len(identities) > self._max_changed:
+            identities = frozenset()
+            resnapshot_required = True
+        if current is not None:
+            self._current = current
+        self._version += 1
+        change = CoalescedStateChange(
+            version=self._version,
+            current=self._current,
+            changed=identities,
+            resnapshot_required=resnapshot_required,
+        )
+        for registration in tuple(self._registrations):
+            if registration.closed:
+                self._registrations.discard(registration)
+                continue
+            registration.version = change.version
+            registration.current = change.current
+            if change.resnapshot_required:
+                registration.changed.clear()
+                registration.resnapshot_required = True
+            elif not registration.resnapshot_required:
+                registration.changed.update(change.changed)
+                if len(registration.changed) > self._max_changed:
+                    registration.changed.clear()
+                    registration.resnapshot_required = True
+            if registration.notified:
+                continue
+            try:
+                registration.send.send_nowait(None)
+                registration.notified = True
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                registration.closed = True
+                self._registrations.discard(registration)
+        return change
+
+    async def capture(self, snapshot: Callable[[int, bool], S]) -> S:
+        """Capture owner state and broadcaster metadata under the state lock."""
+
+        async with self.lock:
+            if self._closed:
+                raise anyio.ClosedResourceError
+            return snapshot(self._version, self._current)
+
+    @asynccontextmanager
+    async def subscribe(
+        self,
+        snapshot: Callable[[int, bool], S],
+    ) -> AsyncIterator[CoalescedStateSubscription[K, S]]:
+        send, receive = anyio.create_memory_object_stream[None](max_buffer_size=1)
+        async with self.lock:
+            if self._closed:
+                await send.aclose()
+                await receive.aclose()
+                raise anyio.ClosedResourceError
+            if len(self._registrations) >= self._max_subscriptions:
+                await send.aclose()
+                await receive.aclose()
+                raise StateSubscriptionLimitExceeded(
+                    "state broadcaster supports at most "
+                    f"{self._max_subscriptions} simultaneous subscriptions"
+                )
+            registration = _StateRegistration(
+                send=send,
+                receive=receive,
+                version=self._version,
+                current=self._current,
+            )
+            self._registrations.add(registration)
+            initial = snapshot(self._version, self._current)
+        subscription = CoalescedStateSubscription(self, registration, initial)
+        try:
+            async with send, receive:
+                yield subscription
+        finally:
+            async with self.lock:
+                registration.closed = True
+                self._registrations.discard(registration)
+
+    async def aclose(self) -> None:
+        async with self.lock:
+            if self._closed:
+                return
+            self._closed = True
+            registrations = tuple(self._registrations)
+            self._registrations.clear()
+            for registration in registrations:
+                registration.closed = True
+        for registration in registrations:
+            await registration.send.aclose()
 
 
 class ConcurrentModificationError(RuntimeError):
@@ -286,114 +527,6 @@ class ScheduledQueue(Generic[T]):
     async def qsize(self) -> int:
         async with self._cv:
             return len(self._heap)
-
-
-class SubscribableQueue(Generic[T]):
-    """A FIFO queue that distributes events to multiple subscribers.
-
-    When an event is pushed, it is distributed to all active subscribers
-    without blocking. If a subscriber's buffer is full, that subscriber
-    is skipped. If all subscribers are full, a RuntimeError is raised.
-
-    Subscribers are automatically cleaned up when they close.
-    """
-
-    class SubscriberBufferFullError(RuntimeError):
-        pass
-
-    def __init__(
-        self, *, maxsize: int = 100, fail_on_undelivered: bool = False
-    ) -> None:
-        """Initialize a SubscribableQueue.
-
-        Args:
-            maxsize: Maximum buffer size for each subscriber's queue.
-                    0 means unbounded. Default is 0.
-        """
-        self._lock = anyio.Lock()
-        self._subscribers: dict[
-            anyio.abc.ObjectSendStream[T], anyio.abc.ObjectReceiveStream[T]
-        ] = {}
-        self._maxsize = maxsize
-        self._fail_on_undelivered = fail_on_undelivered
-
-    async def push(self, event: T) -> None:
-        """Push an event to all subscribers.
-
-        The event is delivered to all active subscribers without blocking.
-        If a subscriber's buffer is full, that subscriber is skipped.
-        If all subscribers are full or there are no subscribers, a SubscriberBufferFullError is raised.
-
-        Args:
-            event: The event to push
-
-        Raises:
-            RuntimeError: If all subscribers are full or there are no subscribers
-        """
-        # Snapshot subscribers and clean up closed ones under lock
-        async with self._lock:
-            # Snapshot subscribers for sending outside the lock
-            subscribers = list(self._subscribers.items())
-
-        # Try to send to all active subscribers (outside lock - send_nowait is thread-safe)
-        delivered = False
-        to_remove = []
-        for send_stream, _ in subscribers:
-            try:
-                # Try to send without blocking
-                send_stream.send_nowait(event)
-                delivered = True
-            except anyio.WouldBlock:
-                # Subscriber buffer is full, skip it
-                pass
-            except anyio.ClosedResourceError:
-                # Subscriber closed, mark for removal
-                to_remove.append(send_stream)
-            except anyio.BrokenResourceError:
-                # Subscriber broken, mark for removal
-                to_remove.append(send_stream)
-
-        # Update state under lock
-        if to_remove:
-            async with self._lock:
-                for send_stream in to_remove:
-                    self._subscribers.pop(send_stream, None)
-
-        # If we couldn't deliver to any subscriber, fail
-        if self._fail_on_undelivered and not delivered and len(subscribers) > 0:
-            raise self.SubscriberBufferFullError()
-
-    async def subscribe(
-        self, filter: Callable[[T], bool] | None = None
-    ) -> AsyncIterator[T]:
-        """Subscribe to events from the queue.
-
-        Returns an async iterator that yields events as they are pushed.
-        When the iterator is closed, the subscription is automatically removed.
-
-        Args:
-            filter: A function that filters events. If None, all events are yielded.
-
-        Yields:
-            Events pushed to the queue
-        """
-        send_stream, recv_stream = anyio.create_memory_object_stream[T](
-            max_buffer_size=self._maxsize
-        )
-
-        async with self._lock:
-            self._subscribers[send_stream] = recv_stream
-
-        try:
-            async with recv_stream:
-                async for event in recv_stream:
-                    if filter is None or filter(event):
-                        yield event
-        finally:
-            # Clean up when subscriber closes
-            async with self._lock:
-                self._subscribers.pop(send_stream, None)
-            await send_stream.aclose()
 
 
 @dataclass

@@ -24,7 +24,12 @@ import {
   type ParticipantHandle,
 } from "../src/concord.ts";
 import { controllerAddress, serviceAddress } from "../src/endpoint.ts";
-import { ServiceUnavailable, StateConflict, ValidationError } from "../src/errors.ts";
+import {
+  ServiceUnavailable,
+  StateConflict,
+  StateUnavailable,
+  ValidationError,
+} from "../src/errors.ts";
 import type { JsonObject, JsonValue } from "../src/json.ts";
 import { buildMessage, entitySubject } from "../src/lanes.ts";
 import {
@@ -56,7 +61,11 @@ import {
   type ServiceViewRef,
   type ServiceViewWriteContext,
 } from "../src/services.ts";
-import { MemoryStateStore } from "../src/state.ts";
+import {
+  MAX_MEMORY_WATCH_CHANGED_KEYS,
+  MAX_MEMORY_WATCHERS,
+  MemoryStateStore,
+} from "../src/state.ts";
 
 const TEST_SERVICE_PROTOCOL: ServiceProtocol = {
   namespace: "dev.deckr.test.service",
@@ -327,6 +336,32 @@ test("Beacon and Concord use the canonical shared-store TTLs", () => {
   assert.equal(BEACON_ADVERTISEMENT_STORE_POLICY.brokerTtlSeconds, 300);
   assert.equal(DEFAULT_CONCORD_TOKEN_TTL_SECONDS, 120);
   assert.equal(CONCORD_TOKEN_STORE_POLICY.brokerTtlSeconds, 120);
+});
+
+test("memory state watches coalesce by key and resnapshot on overflow", async () => {
+  const state = new MemoryStateStore();
+  const iterator = state.watch()[Symbol.asyncIterator]();
+
+  for (let index = 0; index <= MAX_MEMORY_WATCH_CHANGED_KEYS; index += 1) {
+    await state.put(`key.${index}`, { index });
+  }
+
+  assert.deepEqual(await iterator.next(), {
+    done: false,
+    value: { operation: "resnapshot" },
+  });
+  await iterator.return?.();
+});
+
+test("memory state rejects a 257th watcher explicitly", async () => {
+  const state = new MemoryStateStore();
+  const iterators = Array.from(
+    { length: MAX_MEMORY_WATCHERS },
+    () => state.watch()[Symbol.asyncIterator](),
+  );
+
+  assert.throws(() => state.watch(), StateUnavailable);
+  await Promise.all(iterators.map((iterator) => iterator.return?.()));
 });
 
 test("Beacon advertises, refreshes, validates, and withdraws candidates", async () => {

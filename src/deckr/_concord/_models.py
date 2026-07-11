@@ -394,6 +394,15 @@ class ContractValidity:
         return self.status == ContractValidityStatus.VALID
 
 
+@dataclass(frozen=True, slots=True)
+class ConcordContractState:
+    """One cached contract record and its materialized validity."""
+
+    contract: ContractHandle
+    record: ContractRecord
+    validity: ContractValidity
+
+
 def contract_handle(key: str, record: ContractRecord, revision: int) -> ContractHandle:
     return ContractHandle(
         key=key,
