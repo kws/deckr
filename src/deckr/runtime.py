@@ -3,8 +3,18 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import TracebackType
+from typing import TYPE_CHECKING
 
 import anyio
+
+if TYPE_CHECKING:
+    from deckr.hardware import DeviceDescriptor, HardwareManagerContext
+    from deckr.services import (
+        DeckrServices,
+        ServiceBackendStatus,
+        ServiceProtocol,
+        ServiceProvider,
+    )
 
 from deckr._authority_buckets import (
     RESERVED_AUTHORITY_BUCKET_POLICIES,
@@ -129,7 +139,7 @@ class Deckr:
     async def services(
         self,
         endpoint: EndpointSession,
-    ) -> AsyncIterator[object]:
+    ) -> AsyncIterator[DeckrServices]:
         self.lane(SERVICES_LANE)
         if self._task_group is None:
             raise RuntimeError("Deckr runtime is not running")
@@ -149,6 +159,65 @@ class Deckr:
             yield services
         finally:
             await services.aclose()
+
+    def service_provider(
+        self,
+        endpoint: EndpointSession,
+        protocol: ServiceProtocol,
+        *,
+        service_id: str,
+        backend_status: ServiceBackendStatus | str | None = None,
+        diagnostics: Mapping[str, object] | None = None,
+        labels: Mapping[str, str] | None = None,
+    ) -> ServiceProvider:
+        """Return the canonical provider-owned service lifecycle context."""
+
+        if self._beacon is None or self._concord is None:
+            raise RuntimeError("Deckr runtime does not provide service support")
+        from deckr.services import ServiceBackendStatus, ServiceProvider
+
+        return ServiceProvider(
+            endpoint=endpoint,
+            beacon=self._beacon,
+            concord=self._concord,
+            protocol=protocol,
+            service_id=service_id,
+            backend_status=(
+                ServiceBackendStatus.AVAILABLE
+                if backend_status is None
+                else ServiceBackendStatus(backend_status)
+            ),
+            diagnostics=diagnostics,
+            labels=labels,
+        )
+
+    def hardware_manager(
+        self,
+        endpoint: EndpointSession,
+        *,
+        manager_id: str,
+        devices: Mapping[str, DeviceDescriptor] | None = None,
+        labels: Mapping[str, str] | None = None,
+        command_handler=None,
+        reset_handler=None,
+    ) -> HardwareManagerContext:
+        """Own hardware claim bootstrap, discovery, subscriptions, and cleanup."""
+
+        if self._task_group is None or self._beacon is None or self._concord is None:
+            raise RuntimeError("Deckr runtime does not provide hardware support")
+        from deckr.hardware import HardwareManagerContext, HardwareManagerRuntime
+
+        runtime = HardwareManagerRuntime(
+            endpoint=endpoint,
+            beacon=self._beacon,
+            concord=self._concord,
+            manager_id=manager_id,
+            initial_devices=devices,
+            labels=labels,
+            command_handler=command_handler,
+            reset_handler=reset_handler,
+        )
+        return HardwareManagerContext(runtime)
 
     async def __aenter__(self) -> Deckr:
         if self._task_group is not None:

@@ -22,6 +22,7 @@ from deckr.concord import (
     ConcordAgreementLease,
     ConcordConflict,
     ConcordConflictCode,
+    ConcordLifecyclePhase,
     ConcordManagedContract,
     ConcordParticipant,
     ContractHandle,
@@ -63,6 +64,9 @@ _SERVICE_USE_LOSS_STATUSES = frozenset(
 _SERVICE_USE_LOSS_CODES = frozenset(
     {
         "contract_not_managed",
+        "contract_local_authority_lost",
+        "contract_unavailable",
+        "service_use_closed",
         "service_use_conflict",
         *{f"contract_{status}" for status in _SERVICE_USE_LOSS_STATUSES},
     }
@@ -455,44 +459,46 @@ class ServiceUseLease:
     descriptor: ServiceDescriptor
     consumer_endpoint: EndpointAddress
     consumer_session_id: str
-    _had_valid_authority: bool = False
 
     def __post_init__(self) -> None:
         self.consumer_session_id = _require_text(
             self.consumer_session_id,
             field_name="consumer session id",
         )
-        self._had_valid_authority = _agreement_had_valid_authority(self.agreement)
 
     @property
     def contract(self) -> ContractHandle:
         return self.agreement.contract
 
     async def refresh(self) -> None:
-        had_valid_authority = (
-            self._had_valid_authority
-            or _agreement_had_valid_authority(self.agreement)
-        )
-        validity = self.agreement.state.validity
+        state = self.agreement.state
+        validity = state.validity
         if validity is None:
             raise ServiceUnavailable(
                 "contract_starting",
                 "Service-use agreement has not reached current state",
             )
-        if validity.valid:
-            self._had_valid_authority = True
+        if state.valid:
             return
         if (
-            validity.status == ContractValidityStatus.UNAVAILABLE
-            and had_valid_authority
+            state.phase == ConcordLifecyclePhase.UNAVAILABLE
+            or validity.status == ContractValidityStatus.UNAVAILABLE
+            or not state.current
         ):
-            return
+            code = "contract_unavailable"
+        elif validity.status != ContractValidityStatus.VALID:
+            code = f"contract_{validity.status.value}"
+        else:
+            code = "contract_local_authority_lost"
         raise ServiceUnavailable(
-            f"contract_{validity.status.value}",
-            "Service-use contract is not valid",
+            code,
+            "Service-use agreement has no current local authority",
             {
                 "status": validity.status.value,
                 "reason": validity.reason,
+                "phase": state.phase.value,
+                "current": state.current,
+                "localAuthority": state.local_authority,
                 "contractId": self.contract.contract_id,
                 "generation": self.contract.generation,
                 "profile": self.contract.profile,
@@ -500,10 +506,6 @@ class ServiceUseLease:
                 "serviceSessionId": self.descriptor.session_id,
             },
         )
-
-
-def _agreement_had_valid_authority(agreement: ConcordAgreementLease) -> bool:
-    return agreement.state.valid
 
 
 @dataclass(frozen=True, slots=True)
@@ -774,6 +776,13 @@ async def authorize_service_message(
         raise ServiceUseAuthorizationError(
             "contract_not_managed",
             "Service message contract is not managed by this participant",
+            {"contractId": pointer.contract_id, "generation": pointer.generation},
+        )
+
+    if not managed.local_authority:
+        raise ServiceUseAuthorizationError(
+            "contract_local_authority_lost",
+            "Service participant no longer holds local contract authority",
             {"contractId": pointer.contract_id, "generation": pointer.generation},
         )
 
@@ -1085,6 +1094,8 @@ def _service_view_context_from_contract(
     service_id = _require_text(service_id, field_name="service id")
     service_endpoint = service_address(service_id)
     validity = validity or managed.validity
+    if not managed.local_authority:
+        raise ValueError("managed service contract has no local authority")
     token = getattr(validity, "tokens", {}).get(str(service_endpoint))
     if token is None:
         raise ValueError("managed service contract requires a local participant token")

@@ -641,6 +641,9 @@ export class ServiceUseLeaseManager {
         localSessionId: this.endpoint.sessionId,
         terms: terms as unknown as JsonObject,
         supersedes,
+        participantSessions: {
+          [descriptor.endpoint]: descriptor.sessionId,
+        },
         currentSessions,
         refreshIntervalSeconds: this.refreshIntervalSeconds,
       } satisfies ConcordAgreementSpec);

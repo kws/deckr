@@ -642,6 +642,7 @@ async fn concord_token_bucket_must_be_ttl_bound() {
             profile: None,
             terms: None,
             created_by: Some(controller),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -668,6 +669,7 @@ async fn concord_token_attach_and_refresh_use_bucket_ttl() {
             profile: None,
             terms: None,
             created_by: Some(controller),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -706,6 +708,7 @@ async fn concord_attach_requires_exact_token_id_to_return_existing_token() {
             profile: None,
             terms: None,
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -748,6 +751,51 @@ async fn concord_attach_requires_exact_token_id_to_return_existing_token() {
 }
 
 #[tokio::test]
+async fn concord_freezes_participant_sessions_into_one_proposal() {
+    let contracts = MemoryStateStore::new();
+    let tokens = token_store();
+    let concord = ConcordCoordinator::new(contracts, tokens);
+    let controller = EndpointAddress::parse("controller:main").unwrap();
+    let service = EndpointAddress::parse("service:music").unwrap();
+    let participant_sessions = BTreeMap::from([
+        (
+            controller.as_str().to_string(),
+            "controller-session".to_string(),
+        ),
+        (
+            service.as_str().to_string(),
+            "service-session".to_string(),
+        ),
+    ]);
+    let contract = concord
+        .create_contract(CreateContractSpec {
+            participants: vec![controller, service.clone()],
+            contract_id: None,
+            generation: 1,
+            profile: None,
+            terms: None,
+            created_by: None,
+            participant_sessions: participant_sessions.clone(),
+            supersedes: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(concord
+        .attach(&contract, &service, "replacement-session", None)
+        .await
+        .is_err());
+    let token = concord
+        .attach(&contract, &service, "service-session", None)
+        .await
+        .unwrap();
+    let record = concord.contract_record(&contract).await.unwrap().unwrap();
+
+    assert_eq!(token.session_id, "service-session");
+    assert_eq!(record.participant_sessions, participant_sessions);
+}
+
+#[tokio::test]
 async fn concord_does_not_write_participant_profile_index_records() {
     let contracts = MemoryStateStore::new();
     let tokens = token_store();
@@ -769,6 +817,7 @@ async fn concord_does_not_write_participant_profile_index_records() {
                 "devices": []
             })),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -850,6 +899,7 @@ async fn concord_ignores_legacy_participant_profile_index_keys() {
                 "devices": []
             })),
             created_by: Some(controller),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -909,6 +959,7 @@ async fn materialized_concord_participant_profile_discovery_uses_cache() {
                 "devices": []
             })),
             created_by: Some(controller),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1016,6 +1067,7 @@ async fn concord_validation_distinguishes_pending_missing_and_lost_tokens() {
             profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
             terms: Some(terms),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1097,6 +1149,7 @@ async fn concord_participant_manager_does_not_resurrect_lost_authority() {
             profile: None,
             terms: None,
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1249,6 +1302,7 @@ async fn concord_participant_manager_discovers_from_filtered_contracts() {
                 "devices": []
             })),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1261,6 +1315,7 @@ async fn concord_participant_manager_discovers_from_filtered_contracts() {
             profile: Some("dev.deckr.profile.other.v1".to_string()),
             terms: None,
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1279,6 +1334,7 @@ async fn concord_participant_manager_discovers_from_filtered_contracts() {
                 "devices": []
             })),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1497,6 +1553,7 @@ async fn concord_participant_manager_reconcile_managed_does_not_discover_new_con
                 "devices": []
             })),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1580,6 +1637,7 @@ async fn concord_contract_notifications_include_contract_and_token_details() {
                 "devices": []
             })),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1647,6 +1705,7 @@ async fn concord_participant_manager_notification_discovers_new_contract() {
                 "devices": []
             })),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1697,6 +1756,7 @@ async fn materialized_concord_notification_reconcile_is_targeted() {
             profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
             terms: None,
             created_by: Some(controller_a.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1709,6 +1769,7 @@ async fn materialized_concord_notification_reconcile_is_targeted() {
             profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
             terms: None,
             created_by: Some(controller_b.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1857,6 +1918,7 @@ async fn concord_refresh_returns_latest_token_after_revision_race() {
                 "devices": []
             })),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -1920,6 +1982,7 @@ async fn managed_claim_context(
                 "devices": []
             })),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await

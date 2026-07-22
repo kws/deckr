@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Collection, Hashable, Mapping
+import random
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Hashable,
+    Mapping,
+)
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from enum import StrEnum
 from time import monotonic
+from types import MappingProxyType
 from typing import Any
 
 import anyio
@@ -18,7 +29,9 @@ from deckr.concord import (
     ConcordLifecyclePhase,
     ConcordManagedContract,
     ConcordParticipant,
+    ConcordUnavailable,
     ContractHandle,
+    ContractValidityStatus,
 )
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.messages import (
@@ -27,6 +40,7 @@ from deckr.contracts.messages import (
     EndpointTarget,
     entity_subject,
 )
+from deckr.core.util.anyio import CoalescedStateBroadcaster
 from deckr.lanes import EndpointSession
 from deckr.services.messages import (
     SERVICE_MESSAGE,
@@ -63,6 +77,502 @@ from deckr.substrates.nats_kv import KvBucketPolicy, KvUnavailable, NatsJsonKvBu
 logger = logging.getLogger(__name__)
 
 _DirectoryKey = tuple[str, str, str, str]
+_MAX_MATCHING_SERVICE_CANDIDATES = 64
+
+
+class ManagedServicePhase(StrEnum):
+    CONNECTING = "connecting"
+    READY = "ready"
+    RECONNECTING = "reconnecting"
+    UNAVAILABLE = "unavailable"
+    CLOSING = "closing"
+    CLOSED = "closed"
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedServiceFailure:
+    code: str
+    message: str
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "diagnostics",
+            MappingProxyType(dict(self.diagnostics)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedServiceState:
+    version: int
+    phase: ManagedServicePhase
+    descriptor: ServiceDescriptor | None
+    local_authority: bool
+    failure: ManagedServiceFailure | None = None
+
+
+ManagedServiceStatePredicate = Callable[[ManagedServiceState], bool]
+
+
+class ManagedService:
+    """Opaque capability whose state follows current Concord authority."""
+
+    def __init__(
+        self,
+        client: DeckrServices,
+        lease: ServiceUseLease | None = None,
+        *,
+        reconnect: bool = False,
+    ) -> None:
+        self._client = client
+        self._lease = lease
+        self._reconnect = reconnect
+        self._closed = False
+        self._close_callback: Callable[[], Awaitable[None]] | None = None
+        self._close_lock = anyio.Lock()
+        self._close_done = anyio.Event()
+        self._close_started = False
+        self._state_bus = CoalescedStateBroadcaster[str](current=lease is not None)
+        self._state = ManagedServiceState(
+            version=0,
+            phase=(
+                ManagedServicePhase.READY
+                if lease is not None
+                else ManagedServicePhase.CONNECTING
+            ),
+            descriptor=lease.descriptor if lease is not None else None,
+            local_authority=lease is not None,
+        )
+
+    @property
+    def state(self) -> ManagedServiceState:
+        return self._state
+
+    @property
+    def descriptor(self) -> ServiceDescriptor:
+        descriptor = self._state.descriptor
+        if descriptor is None:
+            raise ServiceUnavailable(
+                "service_connecting",
+                "Managed service has not selected a descriptor",
+            )
+        return descriptor
+
+    @asynccontextmanager
+    async def watch_state(
+        self,
+    ) -> AsyncIterator[AsyncIterator[ManagedServiceState]]:
+        async with self._state_bus.subscribe(
+            lambda _version, _current: self._state
+        ) as subscription:
+
+            async def stream() -> AsyncIterator[ManagedServiceState]:
+                yield subscription.initial
+                async for _change in subscription:
+                    try:
+                        yield await self._state_bus.capture(
+                            lambda _version, _current: self._state
+                        )
+                    except anyio.ClosedResourceError:
+                        return
+
+            yield stream()
+
+    async def wait_for_state(
+        self,
+        predicate: ManagedServiceStatePredicate,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ManagedServiceState:
+        async def wait() -> ManagedServiceState:
+            async with self._state_bus.subscribe(
+                lambda _version, _current: self._state
+            ) as subscription:
+                state = subscription.initial
+                if predicate(state):
+                    return state
+                async for _change in subscription:
+                    state = await self._state_bus.capture(
+                        lambda _version, _current: self._state
+                    )
+                    if predicate(state):
+                        return state
+                    if state.phase == ManagedServicePhase.CLOSED:
+                        raise anyio.ClosedResourceError
+            raise anyio.ClosedResourceError
+
+        if timeout_seconds is None:
+            return await wait()
+        with anyio.fail_after(timeout_seconds):
+            return await wait()
+
+    async def aclose(self) -> None:
+        """Close this managed capability and its current authority exactly once."""
+
+        with anyio.CancelScope(shield=True):
+            async with self._close_lock:
+                if self._close_started:
+                    first = False
+                else:
+                    first = True
+                    self._close_started = True
+            if not first:
+                await self._close_done.wait()
+                return
+            try:
+                callback = self._close_callback
+                if callback is None:
+                    await self._mark_closed()
+                else:
+                    await callback()
+            finally:
+                self._close_done.set()
+
+    async def send(
+        self,
+        name: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        event: Mapping[str, Any] | None = None,
+    ) -> Any:
+        lease = self._require_ready()
+        return await self._client._send(lease, name, params, event=event)
+
+    async def request(
+        self,
+        name: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ServiceMessageBody:
+        deadline: float | None = None
+        lease = self._lease
+        while True:
+            if lease is None or self._closed:
+                if deadline is None:
+                    deadline = _deadline(timeout_seconds)
+                lease = await self._wait_for_ready_lease(
+                    _remaining_timeout(deadline)
+                )
+            try:
+                # This is a local state check and contains no transport await.
+                # A failure therefore proves the request has not been
+                # published and is the one case that may wait for a successor.
+                await lease.refresh()
+            except ServiceUnavailable:
+                if not self._reconnect:
+                    raise
+                if deadline is None:
+                    deadline = _deadline(timeout_seconds)
+                lease = await self._wait_for_replacement_lease(
+                    lease,
+                    _remaining_timeout(deadline),
+                )
+                continue
+            request_timeout = (
+                timeout_seconds
+                if deadline is None
+                else _remaining_timeout(deadline)
+            )
+            break
+        return await self._client._request(
+            lease,
+            name,
+            params,
+            timeout_seconds=request_timeout,
+        )
+
+    async def create_view(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        lease = self._require_ready()
+        return await self._client._create_view(lease, view, payload, ttl=ttl)
+
+    async def put_view(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int | None = None,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        lease = self._require_ready()
+        return await self._client._put_view(
+            lease,
+            view,
+            payload,
+            revision=revision,
+            ttl=ttl,
+        )
+
+    async def update_view(
+        self,
+        view: ServiceViewRef,
+        payload: Mapping[str, Any],
+        *,
+        revision: int,
+        ttl: float | None = None,
+    ) -> ServiceViewEntry:
+        lease = self._require_ready()
+        return await self._client._update_view(
+            lease,
+            view,
+            payload,
+            revision=revision,
+            ttl=ttl,
+        )
+
+    async def delete_view(
+        self,
+        view: ServiceViewRef,
+        *,
+        revision: int | None = None,
+    ) -> None:
+        lease = self._require_ready()
+        await self._client._delete_view(lease, view, revision=revision)
+
+    async def read_view(self, view: ServiceViewRef) -> Mapping[str, Any] | None:
+        lease = await self._wait_for_ready_lease(None)
+        return await self._client._read_view(lease, view)
+
+    async def watch_view(
+        self,
+        view: ServiceViewRef,
+    ) -> AsyncIterator[Mapping[str, Any] | None]:
+        lease = await self._wait_for_ready_lease(None)
+        async for payload in self._client._watch_view(lease, view):
+            if self._lease is not lease:
+                raise ServiceUnavailable(
+                    "contract_local_authority_lost",
+                    "Service view watch lost its original Concord authority",
+                )
+            yield payload
+
+    async def authorize_inbound_message(
+        self,
+        message: DeckrMessage,
+        *,
+        name: str | None = None,
+    ) -> ServiceMessageBody:
+        lease = self._require_ready()
+        return await self._client._authorize_inbound_message(
+            lease,
+            message,
+            name=name,
+        )
+
+    def view_access(self, store_name: str) -> ManagedServiceViewAccess:
+        lease = self._require_ready()
+        return self._client._view_access(lease, store_name)
+
+    async def _refresh(self) -> None:
+        await self._require_ready().refresh()
+
+    async def _wait_for_authority_loss(self) -> ServiceUnavailable:
+        lease = self._require_ready()
+        try:
+            await lease.agreement.wait_for_state(lambda state: not state.valid)
+        except anyio.ClosedResourceError:
+            return ServiceUnavailable(
+                "service_use_closed",
+                "Managed service capability closed while waiting for authority",
+                {"serviceId": self.descriptor.service_id},
+            )
+        try:
+            await lease.refresh()
+        except ServiceUnavailable as exc:
+            return exc
+        return ServiceUnavailable(
+            "contract_local_authority_lost",
+            "Managed service capability lost local authority",
+            {"serviceId": self.descriptor.service_id},
+        )
+
+    def _authority_pointer(self) -> ContractPointer:
+        return _lease_pointer(self._require_ready())
+
+    async def _set_lease(
+        self,
+        lease: ServiceUseLease,
+    ) -> None:
+        async with self._state_bus.lock:
+            if self._closed:
+                raise anyio.ClosedResourceError
+            self._lease = lease
+            self._publish_locked(
+                ManagedServicePhase.READY,
+                descriptor=lease.descriptor,
+                local_authority=True,
+            )
+
+    async def _set_disconnected(
+        self,
+        lease: ServiceUseLease,
+        failure: ServiceUnavailable,
+    ) -> bool:
+        async with self._state_bus.lock:
+            if self._lease is not lease:
+                return False
+            self._lease = None
+            self._publish_locked(
+                ManagedServicePhase.RECONNECTING,
+                descriptor=lease.descriptor,
+                local_authority=False,
+                failure=_managed_failure(failure),
+            )
+            return True
+
+    async def _set_unavailable(self, failure: ServiceUnavailable) -> None:
+        async with self._state_bus.lock:
+            self._lease = None
+            self._publish_locked(
+                ManagedServicePhase.UNAVAILABLE,
+                descriptor=self._state.descriptor,
+                local_authority=False,
+                failure=_managed_failure(failure),
+            )
+
+    async def _mark_closed(self) -> None:
+        async with self._state_bus.lock:
+            if self._state.phase == ManagedServicePhase.CLOSED:
+                return
+            self._closed = True
+            self._lease = None
+            self._publish_locked(
+                ManagedServicePhase.CLOSING,
+                descriptor=self._state.descriptor,
+                local_authority=False,
+            )
+            self._publish_locked(
+                ManagedServicePhase.CLOSED,
+                descriptor=self._state.descriptor,
+                local_authority=False,
+            )
+        await self._state_bus.aclose()
+
+    def _require_ready(self) -> ServiceUseLease:
+        lease = self._lease
+        if self._closed or lease is None:
+            raise ServiceUnavailable(
+                (
+                    "service_use_closed"
+                    if self._closed
+                    else "service_reconnecting"
+                ),
+                (
+                    "Managed service capability is closed"
+                    if self._closed
+                    else "Managed service has no current Concord authority"
+                ),
+                (
+                    {"serviceId": self._state.descriptor.service_id}
+                    if self._state.descriptor is not None
+                    else None
+                ),
+            )
+        return lease
+
+    async def _wait_for_ready_lease(
+        self,
+        timeout_seconds: float | None,
+    ) -> ServiceUseLease:
+        if self._closed:
+            raise ServiceUnavailable(
+                "service_use_closed",
+                "Managed service capability is closed",
+            )
+        lease = self._lease
+        if lease is not None and not self._closed:
+            return lease
+        try:
+            state = await self.wait_for_state(
+                lambda current: current.phase
+                in {
+                    ManagedServicePhase.READY,
+                    ManagedServicePhase.UNAVAILABLE,
+                    ManagedServicePhase.CLOSING,
+                    ManagedServicePhase.CLOSED,
+                },
+                timeout_seconds=timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise ServiceUnavailable(
+                "service_reconnect_timeout",
+                "Timed out waiting for replacement Concord authority",
+            ) from exc
+        if state.phase != ManagedServicePhase.READY or self._lease is None:
+            failure = state.failure
+            raise ServiceUnavailable(
+                failure.code if failure is not None else "service_use_closed",
+                (
+                    failure.message
+                    if failure is not None
+                    else "Managed service capability is closed"
+                ),
+                failure.diagnostics if failure is not None else None,
+            )
+        return self._lease
+
+    async def _wait_for_replacement_lease(
+        self,
+        predecessor: ServiceUseLease,
+        timeout_seconds: float | None,
+    ) -> ServiceUseLease:
+        """Wait only when a request failed before it was published."""
+
+        try:
+            state = await self.wait_for_state(
+                lambda current: (
+                    self._lease is not predecessor
+                    and current.phase
+                    in {
+                        ManagedServicePhase.READY,
+                        ManagedServicePhase.UNAVAILABLE,
+                        ManagedServicePhase.CLOSING,
+                        ManagedServicePhase.CLOSED,
+                    }
+                ),
+                timeout_seconds=timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise ServiceUnavailable(
+                "service_reconnect_timeout",
+                "Timed out waiting for replacement Concord authority",
+            ) from exc
+        if state.phase != ManagedServicePhase.READY or self._lease is None:
+            failure = state.failure
+            raise ServiceUnavailable(
+                failure.code if failure is not None else "service_use_closed",
+                (
+                    failure.message
+                    if failure is not None
+                    else "Managed service capability is closed"
+                ),
+                failure.diagnostics if failure is not None else None,
+            )
+        return self._lease
+
+    def _publish_locked(
+        self,
+        phase: ManagedServicePhase,
+        *,
+        descriptor: ServiceDescriptor | None,
+        local_authority: bool,
+        failure: ManagedServiceFailure | None = None,
+    ) -> None:
+        self._state = ManagedServiceState(
+            version=self._state_bus.version + 1,
+            phase=phase,
+            descriptor=descriptor,
+            local_authority=local_authority,
+            failure=failure,
+        )
+        self._state_bus.publish_locked(("service",), current=local_authority)
 
 
 class DeckrServices:
@@ -124,7 +634,11 @@ class DeckrServices:
             if not directory.is_current():
                 raise KvUnavailable("service discovery is not current")
             return directory.resolve(predicate, select=select)
-        except KvUnavailable as exc:
+        except (
+            KvUnavailable,
+            anyio.BrokenResourceError,
+            anyio.ClosedResourceError,
+        ) as exc:
             raise ServiceUnavailable(
                 unavailable_code,
                 unavailable_message,
@@ -151,7 +665,11 @@ class DeckrServices:
                 select=select,
                 timeout=timeout_seconds,
             )
-        except KvUnavailable as exc:
+        except (
+            KvUnavailable,
+            anyio.BrokenResourceError,
+            anyio.ClosedResourceError,
+        ) as exc:
             raise ServiceUnavailable(
                 unavailable_code,
                 unavailable_message,
@@ -164,26 +682,72 @@ class DeckrServices:
         protocol: ServiceProtocol,
         *,
         predicate: Callable[[ServiceDescriptor], bool] | None = None,
-        select: Callable[[Collection[ServiceDescriptor]], ServiceDescriptor | None]
-        | None = None,
         timeout_seconds: float | None = None,
         diagnostics: Mapping[str, Any] | None = None,
-    ) -> AsyncIterator[ServiceUseLease]:
-        """Find a matching service and hold a scoped service-use lease."""
+    ) -> AsyncIterator[ManagedService]:
+        """Race matching endpoint sessions and reconnect after authority loss."""
 
-        deadline = _deadline(timeout_seconds)
-        descriptor = await self.wait_for_descriptor(
-            protocol,
-            predicate,
-            select=select,
-            timeout_seconds=_remaining_timeout(deadline),
-            diagnostics=diagnostics,
-        )
-        async with self.use(
-            descriptor,
-            timeout_seconds=_remaining_timeout(deadline),
-        ) as lease:
-            yield lease
+        service = ManagedService(self, reconnect=True)
+        started = anyio.Event()
+        done = anyio.Event()
+        runner_scope: anyio.CancelScope | None = None
+
+        async def run() -> None:
+            nonlocal runner_scope
+            try:
+                with anyio.CancelScope() as scope:
+                    runner_scope = scope
+                    started.set()
+                    await self._run_matching_service(
+                        service,
+                        protocol,
+                        predicate,
+                        diagnostics,
+                    )
+            finally:
+                done.set()
+
+        async def close() -> None:
+            await service._mark_closed()
+            if runner_scope is not None:
+                runner_scope.cancel()
+            with anyio.move_on_after(5, shield=True):
+                await done.wait()
+
+        service._close_callback = close  # noqa: SLF001
+        self._task_group.start_soon(run)
+        await started.wait()
+        try:
+            try:
+                state = await service.wait_for_state(
+                    lambda current: current.phase
+                    in {
+                        ManagedServicePhase.READY,
+                        ManagedServicePhase.UNAVAILABLE,
+                        ManagedServicePhase.CLOSED,
+                    },
+                    timeout_seconds=timeout_seconds,
+                )
+            except TimeoutError as exc:
+                raise ServiceUnavailable(
+                    "contract_timeout",
+                    "Timed out waiting for a matching service contract",
+                    diagnostics,
+                ) from exc
+            if state.phase != ManagedServicePhase.READY:
+                failure = state.failure
+                raise ServiceUnavailable(
+                    failure.code if failure is not None else "service_use_closed",
+                    (
+                        failure.message
+                        if failure is not None
+                        else "Managed service closed during setup"
+                    ),
+                    failure.diagnostics if failure is not None else diagnostics,
+                )
+            yield service
+        finally:
+            await service.aclose()
 
     @asynccontextmanager
     async def use(
@@ -191,7 +755,7 @@ class DeckrServices:
         descriptor: ServiceDescriptor,
         *,
         timeout_seconds: float | None = None,
-    ) -> AsyncIterator[ServiceUseLease]:
+    ) -> AsyncIterator[ManagedService]:
         """Open a scoped service-use contract and close it on context exit."""
 
         lease = await self._propose_service_use(
@@ -199,15 +763,195 @@ class DeckrServices:
             timeout_seconds=timeout_seconds,
         )
         self._active_service_use_leases[id(lease)] = lease
-        try:
-            yield lease
-        finally:
+        service = ManagedService(self, lease)
+
+        async def close() -> None:
+            await service._mark_closed()
             await self._close_active_service_use_lease(
                 lease,
                 reason="service_use_closed",
             )
 
-    async def send(
+        service._close_callback = close  # noqa: SLF001
+        try:
+            yield service
+        finally:
+            await service.aclose()
+
+    async def _run_matching_service(
+        self,
+        service: ManagedService,
+        protocol: ServiceProtocol,
+        predicate: Callable[[ServiceDescriptor], bool] | None,
+        diagnostics: Mapping[str, Any] | None,
+    ) -> None:
+        winner: ServiceUseLease | None = None
+        try:
+            while not service._closed:  # noqa: SLF001
+                try:
+                    winner = await self._race_service_candidates(
+                        protocol,
+                        predicate=predicate,
+                        diagnostics=diagnostics,
+                    )
+                except ServiceUnavailable as exc:
+                    await service._set_unavailable(exc)
+                    return
+                if service._closed:  # noqa: SLF001
+                    await self._close_active_service_use_lease(
+                        winner,
+                        reason="service_use_closed",
+                    )
+                    winner = None
+                    return
+                await service._set_lease(winner)
+                failure = await _wait_for_service_authority_loss(winner)
+                if not await service._set_disconnected(winner, failure):
+                    return
+                await self._close_active_service_use_lease(
+                    winner,
+                    reason="service_use_reconnecting",
+                )
+                winner = None
+        finally:
+            if winner is not None:
+                with anyio.CancelScope(shield=True):
+                    await self._close_active_service_use_lease(
+                        winner,
+                        reason="service_use_closed",
+                    )
+
+    async def _race_service_candidates(
+        self,
+        protocol: ServiceProtocol,
+        *,
+        predicate: Callable[[ServiceDescriptor], bool] | None,
+        diagnostics: Mapping[str, Any] | None,
+    ) -> ServiceUseLease:
+        directory = self.directory(protocol)
+        send, receive = anyio.create_memory_object_stream[
+            tuple[str, ServiceDescriptor | None, ServiceUseLease | None, BaseException | None]
+        ](_MAX_MATCHING_SERVICE_CANDIDATES + 1)
+        attempted: set[tuple[str, str]] = set()
+        successful: dict[tuple[str, str], ServiceUseLease] = {}
+        retry_wakeups: dict[tuple[str, str], anyio.Event] = {}
+        winner_identity: tuple[str, str] | None = None
+
+        async def attempt(
+            identity: tuple[str, str],
+            descriptor: ServiceDescriptor,
+        ) -> None:
+            delay = 0.1
+            while True:
+                try:
+                    lease = await self._propose_service_use(
+                        descriptor,
+                        timeout_seconds=None,
+                    )
+                except ServiceUnavailable as exc:
+                    if not _retryable_service_negotiation_failure(exc):
+                        await send.send(("failed", descriptor, None, exc))
+                        return
+                    wakeup = anyio.Event()
+                    retry_wakeups[identity] = wakeup
+                    with anyio.move_on_after(random.uniform(delay * 0.5, delay)):
+                        await wakeup.wait()
+                    delay = 0.1 if wakeup.is_set() else min(delay * 2, 5.0)
+                    continue
+                successful[identity] = lease
+                await send.send(("ready", descriptor, lease, None))
+                return
+
+        async def discover(task_group: anyio.abc.TaskGroup) -> None:
+            try:
+                async for descriptors in directory.watch_records():
+                    for descriptor in descriptors:
+                        if predicate is not None and not predicate(descriptor):
+                            continue
+                        identity = (str(descriptor.endpoint), descriptor.session_id)
+                        if identity in attempted:
+                            wakeup = retry_wakeups.get(identity)
+                            if wakeup is not None:
+                                wakeup.set()
+                            continue
+                        if len(attempted) >= _MAX_MATCHING_SERVICE_CANDIDATES:
+                            await send.send(
+                                (
+                                    "fatal",
+                                    None,
+                                    None,
+                                    ServiceUnavailable(
+                                        "service_candidate_limit_exceeded",
+                                        "More than 64 matching service candidates were admitted",
+                                        diagnostics,
+                                    ),
+                                )
+                            )
+                            return
+                        attempted.add(identity)
+                        task_group.start_soon(attempt, identity, descriptor)
+            except BaseException as exc:
+                if isinstance(exc, anyio.get_cancelled_exc_class()):
+                    raise
+                await send.send(("fatal", None, None, exc))
+            else:
+                await send.send(
+                    (
+                        "fatal",
+                        None,
+                        None,
+                        ServiceUnavailable(
+                            "beacon_unavailable",
+                            "Service discovery closed while negotiating",
+                            diagnostics,
+                        ),
+                    )
+                )
+
+        failure: BaseException | None = None
+        async with anyio.create_task_group() as attempts:
+            attempts.start_soon(discover, attempts)
+            async with receive:
+                async for status, descriptor, lease, error in receive:
+                    if status == "ready":
+                        assert descriptor is not None and lease is not None
+                        winner_identity = (
+                            str(descriptor.endpoint),
+                            descriptor.session_id,
+                        )
+                        attempts.cancel_scope.cancel()
+                        break
+                    if status == "fatal":
+                        failure = error
+                        attempts.cancel_scope.cancel()
+                        break
+
+        winner = (
+            successful.get(winner_identity)
+            if winner_identity is not None
+            else None
+        )
+        for identity, lease in successful.items():
+            self._active_service_use_leases[id(lease)] = lease
+            if identity != winner_identity:
+                await self._close_active_service_use_lease(
+                    lease,
+                    reason="service_use_race_lost",
+                )
+        if winner is not None:
+            return winner
+        if isinstance(failure, ServiceUnavailable):
+            raise failure
+        raise ServiceUnavailable(
+            "beacon_unavailable",
+            "Service discovery failed while negotiating",
+            {
+                **dict(diagnostics or {}),
+                "reason": str(failure) if failure is not None else None,
+            },
+        )
+
+    async def _send(
         self,
         lease: ServiceUseLease,
         name: str,
@@ -247,7 +991,7 @@ class DeckrServices:
             contract=_contract_pointer(lease),
         )
 
-    async def request(
+    async def _request(
         self,
         lease: ServiceUseLease,
         name: str,
@@ -310,7 +1054,7 @@ class DeckrServices:
             },
         )
 
-    async def create_view(
+    async def _create_view(
         self,
         lease: ServiceUseLease,
         view: ServiceViewRef,
@@ -328,7 +1072,7 @@ class DeckrServices:
             ttl=ttl,
         )
 
-    async def put_view(
+    async def _put_view(
         self,
         lease: ServiceUseLease,
         view: ServiceViewRef,
@@ -348,7 +1092,7 @@ class DeckrServices:
             ttl=ttl,
         )
 
-    async def update_view(
+    async def _update_view(
         self,
         lease: ServiceUseLease,
         view: ServiceViewRef,
@@ -368,7 +1112,7 @@ class DeckrServices:
             ttl=ttl,
         )
 
-    async def delete_view(
+    async def _delete_view(
         self,
         lease: ServiceUseLease,
         view: ServiceViewRef,
@@ -384,7 +1128,7 @@ class DeckrServices:
             revision=revision,
         )
 
-    async def read_view(
+    async def _read_view(
         self,
         lease: ServiceUseLease,
         view: ServiceViewRef,
@@ -405,7 +1149,7 @@ class DeckrServices:
             raise _service_view_unavailable(view) from exc
         return dict(entry.value) if entry is not None else None
 
-    async def watch_view(
+    async def _watch_view(
         self,
         lease: ServiceUseLease,
         view: ServiceViewRef,
@@ -435,7 +1179,7 @@ class DeckrServices:
         except KvUnavailable as exc:
             raise _service_view_unavailable(view) from exc
 
-    async def authorize_inbound_message(
+    async def _authorize_inbound_message(
         self,
         lease: ServiceUseLease,
         message: DeckrMessage,
@@ -453,18 +1197,7 @@ class DeckrServices:
             name=name,
         )
 
-    async def validate_inbound_message(
-        self,
-        lease: ServiceUseLease,
-        message: DeckrMessage,
-        *,
-        name: str | None = None,
-    ) -> ServiceMessageBody:
-        """Validate service-to-consumer traffic against the active lease."""
-
-        return await self.authorize_inbound_message(lease, message, name=name)
-
-    def view_access(
+    def _view_access(
         self,
         lease: ServiceUseLease,
         store_name: str,
@@ -513,7 +1246,7 @@ class DeckrServices:
             return
         try:
             await lease.agreement.cancel(reason)
-        except ConcordConflict:
+        except (ConcordConflict, ConcordUnavailable):
             pass
         finally:
             await lease.agreement.aclose()
@@ -535,7 +1268,7 @@ class DeckrServices:
                         participants=(self._endpoint.address, descriptor.endpoint),
                         profile=descriptor.use_profile,
                         terms=None,
-                        current_sessions={
+                        participant_sessions={
                             str(descriptor.endpoint): descriptor.session_id,
                         },
                     ),
@@ -547,20 +1280,53 @@ class DeckrServices:
                     exc,
                     agreement=None,
                 ) from exc
-            state = await agreement.wait_for_state(
-                lambda current: current.valid
-                or current.phase
-                in {
-                    ConcordLifecyclePhase.TERMINAL,
-                    ConcordLifecyclePhase.CLOSED,
-                }
-                or (
-                    current.validity is not None
-                    and service_use_negotiation_terminal_status(
-                        current.validity.status
+            except ConcordUnavailable as exc:
+                raise ServiceUnavailable(
+                    "contract_unavailable",
+                    "Concord authority is unavailable during service-use setup",
+                    {
+                        "reason": str(exc),
+                        "profile": descriptor.use_profile,
+                        "serviceId": descriptor.service_id,
+                        "serviceSessionId": descriptor.session_id,
+                    },
+                ) from exc
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+                raise ServiceUnavailable(
+                    "service_use_closed",
+                    "Concord authority closed during service-use setup",
+                    {
+                        "profile": descriptor.use_profile,
+                        "serviceId": descriptor.service_id,
+                        "serviceSessionId": descriptor.session_id,
+                    },
+                ) from exc
+            try:
+                state = await agreement.wait_for_state(
+                    lambda current: current.valid
+                    or current.phase
+                    in {
+                        ConcordLifecyclePhase.UNAVAILABLE,
+                        ConcordLifecyclePhase.TERMINAL,
+                        ConcordLifecyclePhase.CLOSED,
+                    }
+                    or (
+                        current.validity is not None
+                        and service_use_negotiation_terminal_status(
+                            current.validity.status
+                        )
                     )
                 )
-            )
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+                raise ServiceUnavailable(
+                    "service_use_closed",
+                    "Concord agreement closed during service-use setup",
+                    {
+                        "profile": descriptor.use_profile,
+                        "serviceId": descriptor.service_id,
+                        "serviceSessionId": descriptor.session_id,
+                    },
+                ) from exc
             validity = state.validity
             if state.valid and validity is not None:
                 return ServiceUseLease(
@@ -569,28 +1335,49 @@ class DeckrServices:
                     consumer_endpoint=self._endpoint.address,
                     consumer_session_id=self._endpoint.session_id,
                 )
+            contract = state.contract
             if validity is None:
-                await agreement.aclose()
                 raise ServiceUnavailable(
                     "service_use_conflict",
                     state.reason or "Service-use agreement could not acquire authority",
                     {
-                        "contractId": agreement.contract.contract_id,
-                        "generation": agreement.contract.generation,
+                        "contractId": (
+                            contract.contract_id if contract is not None else None
+                        ),
+                        "generation": (
+                            contract.generation if contract is not None else None
+                        ),
                         "profile": descriptor.use_profile,
                         "serviceId": descriptor.service_id,
                         "serviceSessionId": descriptor.session_id,
                     },
                 )
-            await agreement.aclose()
+            if (
+                state.phase == ConcordLifecyclePhase.UNAVAILABLE
+                or validity.status == ContractValidityStatus.UNAVAILABLE
+                or not state.current
+            ):
+                code = "contract_unavailable"
+                message = "Service-use authority became unavailable during setup"
+            elif validity.status != ContractValidityStatus.VALID:
+                code = f"contract_{validity.status.value}"
+                message = "Service-use contract became terminal during negotiation"
+            else:
+                code = "contract_local_authority_lost"
+                message = "Service-use agreement lost local authority during setup"
             raise ServiceUnavailable(
-                f"contract_{validity.status.value}",
-                "Service-use contract became terminal during negotiation",
+                code,
+                message,
                 {
                     "status": validity.status.value,
                     "reason": validity.reason,
-                    "contractId": agreement.contract.contract_id,
-                    "generation": agreement.contract.generation,
+                    "phase": state.phase.value,
+                    "current": state.current,
+                    "localAuthority": state.local_authority,
+                    "contractId": (
+                        contract.contract_id if contract is not None else None
+                    ),
+                    "generation": contract.generation if contract is not None else None,
                     "profile": descriptor.use_profile,
                     "serviceId": descriptor.service_id,
                     "serviceSessionId": descriptor.session_id,
@@ -606,14 +1393,15 @@ class DeckrServices:
             contract_id = None
             generation = None
             if agreement is not None:
-                contract_id = agreement.contract.contract_id
-                generation = agreement.contract.generation
-                try:
-                    await agreement.cancel("contract_timeout")
-                except ConcordConflict:
-                    pass
-                finally:
-                    await agreement.aclose()
+                contract = agreement.state.contract
+                if contract is not None:
+                    contract_id = contract.contract_id
+                    generation = contract.generation
+                    try:
+                        await agreement.cancel("contract_timeout")
+                    except ConcordConflict:
+                        pass
+                await agreement.aclose()
             raise ServiceUnavailable(
                 "contract_timeout",
                 "Timed out waiting for service-use contract to become valid",
@@ -625,6 +1413,11 @@ class DeckrServices:
                     "serviceSessionId": descriptor.session_id,
                 },
             ) from exc
+        except BaseException:
+            if agreement is not None:
+                with anyio.CancelScope(shield=True):
+                    await agreement.aclose()
+            raise
 
     def _view_store(self, store_name: str) -> ServiceViewStore:
         store = self._view_stores.get(store_name)
@@ -1062,6 +1855,43 @@ def _remaining_timeout(deadline: float | None) -> float | None:
     return max(0.0, deadline - monotonic())
 
 
+def _lease_pointer(lease: ServiceUseLease) -> ContractPointer:
+    return ContractPointer(
+        contractId=lease.contract.contract_id,
+        generation=lease.contract.generation,
+    )
+
+
+def _managed_failure(error: ServiceUnavailable) -> ManagedServiceFailure:
+    return ManagedServiceFailure(
+        code=error.code,
+        message=error.message,
+        diagnostics=error.diagnostics,
+    )
+
+
+async def _wait_for_service_authority_loss(
+    lease: ServiceUseLease,
+) -> ServiceUnavailable:
+    try:
+        await lease.agreement.wait_for_state(lambda state: not state.valid)
+    except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+        return ServiceUnavailable(
+            "service_use_closed",
+            "Managed service agreement closed while authoritative",
+            {"serviceId": lease.descriptor.service_id},
+        )
+    try:
+        await lease.refresh()
+    except ServiceUnavailable as exc:
+        return exc
+    return ServiceUnavailable(
+        "contract_local_authority_lost",
+        "Managed service capability lost local authority",
+        {"serviceId": lease.descriptor.service_id},
+    )
+
+
 def _message_definition(
     lease: ServiceUseLease,
     name: str,
@@ -1356,3 +2186,14 @@ def _service_use_conflict(
         "Service-use contract could not be established",
         diagnostics,
     )
+
+
+def _retryable_service_negotiation_failure(error: ServiceUnavailable) -> bool:
+    """Retry only a proposal whose transport/view authority was unavailable.
+
+    Contract rejection, session fencing, token loss, and malformed authority are
+    terminal for that exact candidate attempt.  Retrying those outcomes would
+    turn a deterministic rejection into an unbounded proposal loop.
+    """
+
+    return error.code == "contract_unavailable"

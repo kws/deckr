@@ -1,7 +1,14 @@
 """Shared service endpoint and message contracts."""
 
 from deckr.contracts.lanes import SERVICE_LANE_CONTRACT
-from deckr.services.client import DeckrServices, ManagedServiceContract
+from deckr.services.client import (
+    DeckrServices,
+    ManagedService,
+    ManagedServiceContract,
+    ManagedServiceFailure,
+    ManagedServicePhase,
+    ManagedServiceState,
+)
 from deckr.services.messages import (
     SERVICE_MESSAGE,
     ServiceError,
@@ -16,6 +23,7 @@ from deckr.services.messages import (
     service_message_schema,
     service_response_message,
 )
+from deckr.services.provider import ServiceProvider, ServiceProviderRequest
 from deckr.services.runtime import (
     AuthorizedServiceMessage,
     ServiceAdvertisementPayload,
@@ -28,7 +36,6 @@ from deckr.services.runtime import (
     ServiceProtocol,
     ServiceUnavailable,
     ServiceUseAuthorizationError,
-    ServiceUseLease,
     ServiceViewFamily,
     ServiceViewFamilyDefinition,
     ServiceViewReadContext,
@@ -68,6 +75,10 @@ __all__ = [
     "AuthorizedServiceMessage",
     "DeckrServices",
     "ManagedServiceContract",
+    "ManagedServiceFailure",
+    "ManagedServicePhase",
+    "ManagedService",
+    "ManagedServiceState",
     "ManagedServiceViewAccess",
     "ServiceAdvertisementPayload",
     "ServiceBackendStatus",
@@ -82,12 +93,13 @@ __all__ = [
     "ServiceMessageStatus",
     "ServiceOperationDefinition",
     "ServicePayloadSchema",
+    "ServiceProvider",
+    "ServiceProviderRequest",
     "ServiceProtocol",
     "ServiceSubscriptionMessage",
     "ServiceSubscriptionState",
     "ServiceUnavailable",
     "ServiceUseAuthorizationError",
-    "ServiceUseLease",
     "ServiceViewEntry",
     "ServiceViewFamily",
     "ServiceViewFamilyDefinition",

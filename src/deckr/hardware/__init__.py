@@ -94,8 +94,7 @@ from deckr.hardware.profiles import (
     hardware_payload_from_advertisement,
 )
 from deckr.hardware.runtime import (
-    DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS,
-    DEFAULT_HARDWARE_WATCH_RETRY_SECONDS,
+    HardwareManagerContext,
     HardwareManagerRuntime,
     LiveHardwareClaim,
 )
@@ -111,8 +110,6 @@ __all__ = [
     "CORE_CAPABILITY_TYPES_BY_FAMILY",
     "CONTROL_DESCRIPTOR_SCHEMA_ID",
     "DECKR_DEVICE_POWER",
-    "DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS",
-    "DEFAULT_HARDWARE_WATCH_RETRY_SECONDS",
     "DEVICE_POWER_COMMAND_SCHEMA_ID",
     "DECKR_INPUT_BUTTON",
     "DECKR_INPUT_ENCODER",
@@ -133,6 +130,7 @@ __all__ = [
     "HardwareClaimDevice",
     "HardwareClaimTerms",
     "HardwareManagerRuntime",
+    "HardwareManagerContext",
     "LiveHardwareClaim",
     "POWER_COMMAND_TYPES",
     "RASTER_COMMAND_TYPES",

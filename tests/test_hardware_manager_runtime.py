@@ -14,6 +14,7 @@ from deckr.concord import (
     CONCORD_CONTRACT_BUCKET_POLICY,
     CONCORD_TOKEN_BUCKET_POLICY,
     Concord,
+    ConcordLifecyclePhase,
     ContractValidityStatus,
 )
 from deckr.contracts.messages import controller_address, hardware_manager_address
@@ -247,6 +248,68 @@ async def _claim(
         terms=terms,
         created_by=controller_address(controller_id),
     )
+
+
+async def test_deckr_hardware_manager_context_owns_bootstrap_and_cleanup() -> None:
+    deckr = mock_deckr()
+    descriptor = _descriptor()
+
+    async with (
+        deckr,
+        deckr.endpoint(
+            hardware_manager_address("manager-main"),
+            session_id="manager-session",
+        ) as endpoint,
+    ):
+        async with deckr.hardware_manager(
+            endpoint,
+            manager_id="manager-main",
+            devices={descriptor.device_id: descriptor},
+        ) as runtime:
+            assert runtime.live_claims == ()
+            candidates = deckr.beacon.candidates(HARDWARE_FEATURE_ID)
+            assert len(candidates) == 1
+            assert candidates[0].advertisement.session_id == "manager-session"
+            advertised = HardwareBeaconPayload.model_validate(
+                candidates[0].advertisement.payload
+            )
+            assert tuple(advertised.devices) == (descriptor.device_id,)
+            await _wait_until(
+                lambda: bool(deckr._message_bus.subscriptions),  # noqa: SLF001
+                message="hardware command subscription did not start",
+            )
+            assert deckr._message_bus.subscriptions[-1].entered  # noqa: SLF001
+
+        assert not deckr.beacon.candidates(HARDWARE_FEATURE_ID)
+        assert deckr._message_bus.subscriptions[-1].exited  # noqa: SLF001
+
+
+async def test_hardware_manager_context_cleanup_is_cancellation_safe() -> None:
+    deckr = mock_deckr()
+    descriptor = _descriptor()
+
+    async with (
+        deckr,
+        deckr.endpoint(
+            hardware_manager_address("manager-main"),
+            session_id="manager-session",
+        ) as endpoint,
+    ):
+        manager = deckr.hardware_manager(
+            endpoint,
+            manager_id="manager-main",
+            devices={descriptor.device_id: descriptor},
+        )
+        runtime = await manager.__aenter__()
+        assert deckr.beacon.candidates(HARDWARE_FEATURE_ID)
+
+        with anyio.CancelScope() as cancel_scope:
+            cancel_scope.cancel()
+            await manager.aclose()
+
+        assert not deckr.beacon.candidates(HARDWARE_FEATURE_ID)
+        assert runtime._claim_manager.state.phase == ConcordLifecyclePhase.CLOSED  # noqa: SLF001
+        assert deckr._message_bus.subscriptions[-1].exited  # noqa: SLF001
 
 
 async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> None:

@@ -565,6 +565,39 @@ test("Concord attach requires exact token id to return an existing token", async
   );
 });
 
+test("Concord freezes participant sessions into one proposal", async () => {
+  const contracts = new MemoryStateStore({ policy: CONCORD_CONTRACT_STORE_POLICY });
+  const tokens = new MemoryStateStore({ policy: CONCORD_TOKEN_STORE_POLICY });
+  const concord = new ConcordService(new ConcordCoordinator(contracts, tokens));
+  const coordinator = concord.coordinatorForTesting();
+  const contract = await coordinator.createContract(
+    ["controller:main", "service:music"],
+    {
+      participantSessions: {
+        "controller:main": "controller-session",
+        "service:music": "service-session",
+      },
+    },
+  );
+
+  await assert.rejects(
+    () => coordinator.attach(contract, "service:music", "replacement-session"),
+    StateConflict,
+  );
+  const token = await coordinator.attach(
+    contract,
+    "service:music",
+    "service-session",
+  );
+  const record = await concord.contractRecord(contract);
+
+  assert.equal(token.sessionId, "service-session");
+  assert.deepEqual(record?.participantSessions, {
+    "controller:main": "controller-session",
+    "service:music": "service-session",
+  });
+});
+
 test("Concord participant lease cannot adopt without a local token handle", async () => {
   const contracts = new MemoryStateStore({ policy: CONCORD_CONTRACT_STORE_POLICY });
   const tokens = new MemoryStateStore({ policy: CONCORD_TOKEN_STORE_POLICY });

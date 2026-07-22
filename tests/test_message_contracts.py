@@ -4,7 +4,11 @@ import pytest
 from pydantic import ValidationError
 
 from deckr.actions import endpoints as action_endpoints
-from deckr.contracts.lanes import CORE_LANE_CONTRACTS
+from deckr.contracts.lanes import (
+    CORE_LANE_CONTRACTS,
+    ContractRequirement,
+    MessageContract,
+)
 from deckr.contracts.messages import (
     SERVICES_LANE,
     BroadcastTarget,
@@ -22,6 +26,30 @@ from deckr.lanes import message_is_deliverable, validate_message_for_contract
 from deckr.services import SERVICE_MESSAGE
 
 _CONTRACT = {"contractId": "contract-1", "generation": 1}
+
+
+def test_message_contract_policy_is_deeply_immutable() -> None:
+    broadcast_targets = {"controllers": "controller"}
+    requirements = {"command": ContractRequirement.REQUIRED}
+    contract = MessageContract(
+        lane="test",
+        broadcast_targets=broadcast_targets,
+        contract_requirements=requirements,
+    )
+
+    broadcast_targets["services"] = "service"
+    requirements["command"] = ContractRequirement.FORBIDDEN
+
+    assert dict(contract.broadcast_targets) == {"controllers": "controller"}
+    assert contract.contract_requirement_for("command") is ContractRequirement.REQUIRED
+    with pytest.raises(TypeError):
+        contract.broadcast_targets["services"] = "service"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        contract.contract_requirements["command"] = (  # type: ignore[index]
+            ContractRequirement.FORBIDDEN
+        )
+    with pytest.raises(TypeError):
+        CORE_LANE_CONTRACTS["test"] = contract  # type: ignore[index]
 
 
 @pytest.mark.parametrize(
@@ -112,7 +140,9 @@ def test_recipient_session_requires_direct_endpoint_recipient() -> None:
             messageType=SERVICE_MESSAGE,
             sender=controller_address("main"),
             senderSessionId="session-controller",
-            recipient=broadcast_target(scope="controllers", endpoint_family="controller"),
+            recipient=broadcast_target(
+                scope="controllers", endpoint_family="controller"
+            ),
             recipientSessionId="session-controller",
             subject=entity_subject(
                 "service",

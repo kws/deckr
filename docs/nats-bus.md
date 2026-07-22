@@ -212,17 +212,15 @@ schema: dev.deckr.beacon.advertisement.v1
 The runtime-facing Python API is `deckr.beacon.Beacon`.
 
 ```python
-beacon = deckr.beacon
-advertisement = await beacon.advertise(
-    BeaconAdvertisementSpec(
-        feature_id="dev.deckr.hardware",
-        endpoint="hardware_manager:mirabox-main",
-        session_id="manager-session",
-        payload=payload,
-    )
-)
-handle = advertisement.handle
-candidates = beacon.candidates("dev.deckr.hardware")
+async with deckr.endpoint("hardware_manager:mirabox-main") as endpoint:
+    async with deckr.beacon.advertise(
+        endpoint,
+        BeaconAdvertisementSpec(
+            feature_id="dev.deckr.hardware",
+            payload=payload,
+        ),
+    ):
+        candidates = deckr.beacon.candidates("dev.deckr.hardware")
 ```
 
 Beacon answers "which endpoints currently advertise this feature?" It does not
@@ -234,14 +232,15 @@ withdraw Beacon advertisements when they are not accepting new Concord
 negotiations; that affects only future discovery. The Python `Beacon` runtime
 keeps one materialized advertisement view so `candidates(...)`, `get(...)`, and
 feature watches avoid per-query full key scans.
-Managed `Beacon.advertise(...)` performs best-effort same
-feature/advertiser/endpoint startup cleanup by default, using revision-guarded
-deletes for stale advertisements left by crashed sessions or changed
-configuration. Real advertisement content changes still publish immediately;
-unchanged heartbeat refreshes follow the Beacon bucket TTL jitter cadence. If a
-running managed advertiser finds its own advertisement key missing, it republishes
-the advertisement instead of treating the missing TTL record as permanent
-failure.
+`Beacon.advertise(endpoint, spec)` is a synchronous factory for an async context
+manager. The endpoint supplies the advertiser identity and current session; the
+spec contains advertisement intent only. Entry performs best-effort same-feature
+and same-endpoint startup cleanup with revision-guarded deletes. Real content
+changes publish immediately, while unchanged heartbeat refreshes derive their
+50-75% jittered cadence exclusively from the observed Beacon bucket TTL. Exit
+owns bounded withdrawal and worker cleanup. If a running advertiser finds its
+own TTL record missing, it republishes its own opaque advertisement identity;
+this remains discovery state and never recreates Concord authority.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
 
@@ -338,7 +337,7 @@ async with deckr.endpoint("controller:main") as endpoint:
             participants=(endpoint.address, "hardware_manager:mirabox-main"),
             profile="dev.deckr.profile.hardware_claim.v1",
             terms=terms,
-            current_sessions={
+            participant_sessions={
                 "hardware_manager:mirabox-main": manager_session_id,
             },
         ),
@@ -476,8 +475,9 @@ profile and message contracts such as `ServiceProtocol`,
 message schemas, descriptor parsing, and service-view key helpers. For normal
 feature clients it also exposes the managed `DeckrServices` client. Services
 advertise descriptors through Beacon, negotiate termless service-use authority
-through Concord, and, when the host explicitly enables the optional `services`
-lane, carry service messages as ordinary lane traffic. A service
+through Concord and carry service messages as ordinary traffic on the core
+`services` lane. The runtime creates that lane by default; an explicit
+declaration is needed only when composing a component plan. A service
 keeps its own advertisement fresh, skips
 unchanged refresh writes when possible, best-effort withdraws on clean shutdown,
 and removes stale same-endpoint advertisements left by an earlier crashed
@@ -485,8 +485,8 @@ session or changed configuration.
 
 Service consumers should use `Deckr.services(endpoint)` and
 `DeckrServices.use_matching(...)`. The managed client owns the service protocol
-feature watch, descriptor parsing, local predicate/selector resolution,
-service-use negotiation, request authorization pointers, and fenced view
+feature watch, descriptor parsing, local predicate filtering, all-candidate
+negotiation races, successor recovery, request authorization, and fenced view
 reads/watches. Consumers must not scan Beacon KV, perform an exact NATS round
 trip for discovery, query Concord, duplicate service-specific Beacon indexing,
 classify Concord terminal statuses, or use Concord as a service catalog.
@@ -678,8 +678,8 @@ If a runtime cannot find hardware, actions, or services:
 1. Check the relevant Beacon feature id.
 2. Check the advertisement endpoint and session id.
 3. Check whether the advertisement bucket TTL is expiring records.
-4. For `services` lane traffic, check that the host registered the optional
-   service lane contract and lane name.
+4. For `services` lane traffic, check that a custom host retained the core
+   service lane contract and that component declarations match it.
 5. If a live agreement is expected, validate the Concord contract and every
    participant token; do not treat Beacon disappearance as withdrawal.
 6. For profile-specific behavior, validate hardware profiles with

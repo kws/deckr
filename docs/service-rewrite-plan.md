@@ -70,13 +70,13 @@ Known remaining work against this plan:
 - The explicit one-shot fallback policy for command scopes that should not be
   pooled still needs to be formalized.
 
-Deckr services already use the right authority model: Beacon discovers
-candidate services, Concord owns service-use authority, and service views are
-fenced by the live service-use contract. The current consumer API still exposes
-too much of that machinery to plugin authors. Simple subscribers such as a
-Sonos status display or an OpenHAB item key currently need to manage retry
-loops, lease-loss classification, release behavior, stale view handling, and
-successor lease negotiation themselves.
+Deckr services use the right authority model: Beacon discovers candidate
+services, Concord owns service-use authority, and service views are fenced by
+the live service-use contract. Generic one-service use now yields an opaque
+`ManagedService` capability with bound request/send/view operations. Domain
+resource sessions additionally own retained resource sets, successor
+negotiation, lease-loss classification, and state fanout so plugin authors do
+not reproduce those mechanics.
 
 This rewrite should move those concerns into the service client layer, with
 reusable lifecycle mechanics in `deckr.services` and domain-specific resource
@@ -148,8 +148,9 @@ async with sonos.zone_subscription_session(
 
 For ordinary feature code, this is a hard boundary: no service reads, service
 view watches, or service messages without a service session. A lower-level
-service-use lease also counts as a session for infrastructure code, but action
-code should normally see the domain session object, not Concord lease plumbing.
+managed service capability also counts as a session for infrastructure code,
+but action code should normally see the domain session object, not Concord lease
+plumbing.
 
 Resource-bound actions should open their session as soon as the action lifecycle
 identifies the resource set:

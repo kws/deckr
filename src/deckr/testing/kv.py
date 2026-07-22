@@ -321,4 +321,7 @@ class MemoryJsonKvBucket:
         change: KvChange,
     ) -> None:
         for watcher in watchers:
-            await watcher.send(change)
+            try:
+                await watcher.send(change)
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                continue

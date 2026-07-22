@@ -315,8 +315,15 @@ def evaluate_contract_validity(
                 reason=participant_key,
                 reason_code=ContractValidityReason.TOKEN_TERMS_HASH_MISMATCH,
             )
+        frozen_session = parsed_contract.participant_sessions.get(participant_key)
         asserted_session = assertions.get(participant)
-        if asserted_session is not None and token.session_id != asserted_session:
+        if (
+            frozen_session is not None
+            and token.session_id != frozen_session
+        ) or (
+            asserted_session is not None
+            and token.session_id != asserted_session
+        ):
             return ContractValidity(
                 ContractValidityStatus.SESSION_MISMATCH,
                 contract=parsed_contract,

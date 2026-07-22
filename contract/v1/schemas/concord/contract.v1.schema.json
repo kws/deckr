@@ -130,6 +130,14 @@
       "title": "Generation",
       "type": "integer"
     },
+    "participantSessions": {
+      "additionalProperties": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Participantsessions",
+      "type": "object"
+    },
     "participants": {
       "items": {
         "$ref": "#/$defs/EndpointAddress"

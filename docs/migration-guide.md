@@ -235,9 +235,9 @@ Existing bindings are controller-owned routing state; continued Beacon presence
 is not live authority after a service-use contract exists.
 
 Services should use package-owned feature ids, payload/use profiles, and
-explicit service-view buckets. Service messages are ordinary lane
-messages when the optional `services` lane is enabled. Protected service-view
-authority follows Concord service-use contracts, not continued Beacon presence.
+explicit service-view buckets. Service messages are ordinary messages on the
+core `services` lane. Protected service-view authority follows Concord
+service-use contracts, not continued Beacon presence.
 
 ## Test Rewrites
 

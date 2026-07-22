@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from uuid import UUID
 
 import anyio
 import pytest
@@ -17,6 +18,8 @@ from deckr.beacon import (
 from deckr.concord import (
     Concord,
     ConcordAgreementSpec,
+    ConcordConflict,
+    ConcordConflictCode,
     ConcordLifecyclePhase,
     ConcordParticipantPolicy,
     ConcordParticipantSelection,
@@ -73,9 +76,7 @@ class _RacingTokenBucket(MemoryJsonKvBucket):
             current = await self.get(key)
             assert current is not None
             token = ParticipantTokenRecord.model_validate(current.value)
-            bumped = token.model_copy(
-                update={"refresh_seq": token.refresh_seq + 1}
-            )
+            bumped = token.model_copy(update={"refresh_seq": token.refresh_seq + 1})
             await super().update(
                 key,
                 bumped,
@@ -123,6 +124,13 @@ class _UnavailableTokenDeleteBucket(MemoryJsonKvBucket):
     async def delete(self, key, *, revision=None):
         if ".participants." in key:
             raise KvUnavailable("token delete unavailable")
+        return await super().delete(key, revision=revision)
+
+
+class _ConflictingTokenDeleteBucket(MemoryJsonKvBucket):
+    async def delete(self, key, *, revision=None):
+        if ".participants." in key:
+            raise KvConflict("token changed before exact withdrawal")
         return await super().delete(key, revision=revision)
 
 
@@ -261,7 +269,9 @@ async def test_agreement_partial_attach_exhaustion_withdraws_exact_token() -> No
 
 
 @pytest.mark.asyncio
-async def test_unavailable_partial_cleanup_cancels_and_retains_handle_until_close() -> None:
+async def test_unavailable_partial_cleanup_cancels_and_retains_handle_until_close() -> (
+    None
+):
     contracts = _AdvancingAttachConflictBucket(conflicts=8)
     tokens = _UnavailableTokenDeleteBucket(
         bucket="tokens",
@@ -284,6 +294,38 @@ async def test_unavailable_partial_cleanup_cancels_and_retains_handle_until_clos
         assert record.state == ContractState.CANCELLED
 
         await agreement.aclose()
+        await agreement.aclose()
+
+        assert agreement.state.phase == ConcordLifecyclePhase.CLOSED
+        assert lease.owned_token is None
+
+
+@pytest.mark.asyncio
+async def test_conflicted_partial_cleanup_retains_handle_after_fallback_cancel() -> (
+    None
+):
+    contracts = _AdvancingAttachConflictBucket(conflicts=8)
+    tokens = _ConflictingTokenDeleteBucket(
+        bucket="tokens",
+        ttl_seconds=120,
+    )
+
+    async with _running_concord(contracts, tokens) as concord:
+        agreement = concord.propose(
+            _Endpoint(CONTROLLER, "controller-session"),
+            _agreement_spec(),
+        )
+        await agreement.__aenter__()
+        lease = agreement._lease  # noqa: SLF001
+        assert lease is not None
+        assert agreement.state.phase == ConcordLifecyclePhase.TERMINAL
+        assert not agreement.state.local_authority
+        assert lease.owned_token is not None
+        assert await tokens.get(lease.owned_token.key) is not None
+        record = await concord.contract_record(agreement.contract)
+        assert record is not None
+        assert record.state == ContractState.CANCELLED
+
         await agreement.aclose()
 
         assert agreement.state.phase == ConcordLifecyclePhase.CLOSED
@@ -335,6 +377,40 @@ async def test_agreement_state_watch_is_current_first_monotonic_and_times_out() 
         await agreement.aclose()
         assert agreement.state.phase == ConcordLifecyclePhase.CLOSED
         assert agreement.state.version > terminal.version
+        assert not agreement.state.current
+        assert not agreement.state.local_authority
+        assert not agreement.state.valid
+
+
+@pytest.mark.asyncio
+async def test_agreement_terminal_state_cannot_return_to_ready() -> None:
+    contracts = _AdvancingAttachConflictBucket(conflicts=8)
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+
+    async with _running_concord(contracts, tokens) as concord:
+        agreement = concord.propose(
+            _Endpoint(CONTROLLER, "controller-session"),
+            _agreement_spec(),
+        )
+        await agreement.__aenter__()
+        assert agreement.state.phase == ConcordLifecyclePhase.TERMINAL
+
+        entry = await contracts.get(agreement.contract.key)
+        assert entry is not None
+        updated = await contracts.update(
+            entry.key,
+            entry.value,
+            revision=entry.revision,
+        )
+        await concord._view.wait_contract_revision(  # noqa: SLF001
+            entry.key,
+            updated.revision,
+        )
+        await anyio.sleep(0)
+
+        assert agreement.state.phase == ConcordLifecyclePhase.TERMINAL
+        assert not agreement.state.valid
+        await agreement.aclose()
 
 
 @pytest.mark.asyncio
@@ -359,7 +435,7 @@ async def test_blocked_participant_selector_does_not_block_bounded_shutdown() ->
         assert concord._view._broadcaster.subscription_count == 1  # noqa: SLF001
 
         control["blocked"] = True
-        await _create_contract(concord, "blocked-selector")
+        contract = await _create_contract(concord, "blocked-selector")
         with anyio.fail_after(1):
             await selector_started.wait()
         with anyio.fail_after(1):
@@ -367,34 +443,149 @@ async def test_blocked_participant_selector_does_not_block_bounded_shutdown() ->
 
         assert participant.state.phase == ConcordLifecyclePhase.CLOSED
         assert concord._view._broadcaster.subscription_count == 0  # noqa: SLF001
+        with pytest.raises(anyio.ClosedResourceError):
+            await participant.cancel(contract)
 
 
 @pytest.mark.asyncio
-async def test_blocked_exact_store_does_not_stop_unrelated_pointer_or_shutdown() -> None:
+async def test_blocked_selector_does_not_hide_existing_pointer_loss() -> None:
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+    selector_started = anyio.Event()
+    selector_release = anyio.Event()
+    control = {"blocked": False}
+
+    async def selector(candidates) -> ConcordParticipantSelection:
+        if control["blocked"]:
+            selector_started.set()
+            await selector_release.wait()
+        return _accept_all(candidates)
+
+    async with (
+        _running_concord(contracts, tokens) as concord,
+        concord.participant(
+            _Endpoint(MANAGER, "manager-session"),
+            ConcordParticipantPolicy(profile=PROFILE, select=selector),
+        ) as participant,
+    ):
+        existing = await _create_contract(concord, "existing-pointer")
+        with anyio.fail_after(1):
+            await participant.wait_for_state(
+                lambda state: any(
+                    managed.contract.pointer == existing.pointer
+                    for managed in state.contracts
+                )
+            )
+
+        control["blocked"] = True
+        await _create_contract(concord, "blocks-selector")
+        with anyio.fail_after(1):
+            await selector_started.wait()
+
+        await concord.cancel(
+            existing,
+            participant=CONTROLLER,
+            reason="existing pointer cancelled",
+        )
+        with anyio.fail_after(1):
+            await participant.wait_for_state(
+                lambda state: all(
+                    managed.contract.pointer != existing.pointer
+                    for managed in state.contracts
+                )
+            )
+        selector_release.set()
+
+
+@pytest.mark.asyncio
+async def test_slow_participant_subscriber_cannot_block_public_state() -> None:
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+
+    async with (
+        _running_concord(contracts, tokens) as concord,
+        concord.participant(
+            _Endpoint(MANAGER, "manager-session"),
+            ConcordParticipantPolicy(profile=PROFILE, select=_accept_all),
+        ) as participant,
+        participant.watch_state() as unread,
+        participant.watch_state() as observed,
+    ):
+        await anext(unread)
+        await anext(observed)
+        contract = await _create_contract(concord, "subscriber-isolation")
+        with anyio.fail_after(1):
+            while True:
+                state = await anext(observed)
+                if any(
+                    managed.contract.pointer == contract.pointer
+                    for managed in state.contracts
+                ):
+                    break
+        assert participant.managed_contract(contract) is not None
+
+
+@pytest.mark.asyncio
+async def test_participant_rejects_malformed_selection_and_cleans_failed_entry() -> (
+    None
+):
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+
+    async with _running_concord(contracts, tokens) as concord:
+        participant = concord.participant(
+            _Endpoint(MANAGER, "manager-session"),
+            ConcordParticipantPolicy(profile=PROFILE, select=lambda _items: ()),
+        )
+
+        with pytest.raises(TypeError, match="ConcordParticipantSelection"):
+            await participant.__aenter__()
+
+        assert participant.state.phase == ConcordLifecyclePhase.CLOSED
+        assert concord._view._broadcaster.subscription_count == 0  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_participant_rejects_unknown_selection_and_cleans_failed_entry() -> None:
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+
+    async with _running_concord(contracts, tokens) as concord:
+        await _create_contract(concord, "known")
+        participant = concord.participant(
+            _Endpoint(MANAGER, "manager-session"),
+            ConcordParticipantPolicy(
+                profile=PROFILE,
+                select=lambda _items: ConcordParticipantSelection(
+                    {ContractPointer(contractId="unknown", generation=1)}
+                ),
+            ),
+        )
+
+        with pytest.raises(ValueError, match="unknown pointers"):
+            await participant.__aenter__()
+
+        assert participant.state.phase == ConcordLifecyclePhase.CLOSED
+        assert concord._view._broadcaster.subscription_count == 0  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_blocked_exact_store_does_not_stop_unrelated_pointer_or_shutdown() -> (
+    None
+):
     contracts = MemoryJsonKvBucket(bucket="contracts")
     tokens = _BlockingTokenCreateBucket("blocked-store")
 
     async with _running_concord(contracts, tokens) as concord:
-        blocked = await _create_contract(concord, "blocked-store")
-        free = await _create_contract(concord, "free-store")
         participant = concord.participant(
             _Endpoint(MANAGER, "manager-session"),
             ConcordParticipantPolicy(profile=PROFILE, select=_accept_all),
         )
-        enter_done = anyio.Event()
-        enter_errors: list[BaseException] = []
-
-        async def enter() -> None:
-            try:
-                await participant.__aenter__()
-            except BaseException as exc:
-                if not isinstance(exc, anyio.get_cancelled_exc_class()):
-                    enter_errors.append(exc)
-            finally:
-                enter_done.set()
+        await participant.__aenter__()
+        blocked = await _create_contract(concord, "blocked-store")
+        free = await _create_contract(concord, "free-store")
 
         async with anyio.create_task_group() as task_group:
-            task_group.start_soon(enter)
             with anyio.fail_after(1):
                 await tokens.blocked.wait()
                 free_token_key = concord_participant_token_key(
@@ -404,10 +595,11 @@ async def test_blocked_exact_store_does_not_stop_unrelated_pointer_or_shutdown()
                 )
                 while await tokens.get(free_token_key) is None:
                     await anyio.sleep(0)
+                while participant.managed_contract(free) is None:
+                    await anyio.sleep(0)
 
             with anyio.fail_after(1):
                 await participant.aclose()
-                await enter_done.wait()
             task_group.cancel_scope.cancel()
 
         blocked_token_key = concord_participant_token_key(
@@ -415,9 +607,107 @@ async def test_blocked_exact_store_does_not_stop_unrelated_pointer_or_shutdown()
             generation=blocked.generation,
             participant=MANAGER,
         )
-        assert not enter_errors
         assert await tokens.get(blocked_token_key) is None
         assert participant.state.phase == ConcordLifecyclePhase.CLOSED
+
+
+@pytest.mark.asyncio
+async def test_owner_bootstrap_runs_before_every_proposal_and_preserves_live_owners() -> (
+    None
+):
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+
+    async with _running_concord(contracts, tokens) as concord:
+        stale_before = await _create_contract(concord, "stale-before")
+        async with concord.propose(
+            _Endpoint(CONTROLLER, "controller-session"),
+            _agreement_spec(),
+        ) as first:
+            assert UUID(first.contract_id).version == 4
+            stale_record = await concord.contract_record(stale_before)
+            assert stale_record is not None
+            assert stale_record.state == ContractState.CANCELLED
+
+            stale_between = await _create_contract(concord, "stale-between")
+            async with concord.propose(
+                _Endpoint(CONTROLLER, "controller-session"),
+                _agreement_spec(),
+            ) as second:
+                assert UUID(second.contract_id).version == 4
+                assert second.contract_id != first.contract_id
+                first_record = await concord.contract_record(first.contract)
+                stale_record = await concord.contract_record(stale_between)
+                assert first_record is not None
+                assert first_record.state == ContractState.OPEN
+                assert stale_record is not None
+                assert stale_record.state == ContractState.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_owner_crash_replacement_cancels_stale_before_fresh_uuid() -> None:
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+    first = Concord(contracts, tokens)
+    first_tasks_cm = anyio.create_task_group()
+    first_tasks = await first_tasks_cm.__aenter__()
+    first.start(first_tasks)
+    await first.wait_current()
+    abandoned = first.propose(
+        _Endpoint(CONTROLLER, "controller-session"),
+        _agreement_spec(),
+    )
+    await abandoned.__aenter__()
+    abandoned_pointer = abandoned.contract.pointer
+    first_tasks.cancel_scope.cancel()
+    await first_tasks_cm.__aexit__(None, None, None)
+
+    async with (
+        _running_concord(contracts, tokens) as replacement,
+        replacement.propose(
+            _Endpoint(CONTROLLER, "controller-session"),
+            _agreement_spec(),
+        ) as fresh,
+    ):
+        abandoned_record = await replacement.contract_record(abandoned.contract)
+        assert abandoned_record is not None
+        assert abandoned_record.state == ContractState.CANCELLED
+        assert fresh.contract.pointer != abandoned_pointer
+        assert fresh.generation == 1
+
+
+@pytest.mark.asyncio
+async def test_participant_restart_before_token_commit_cancels_without_creation() -> None:
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = _BlockingTokenCreateBucket("crash-before-token")
+    first = Concord(contracts, tokens)
+    first_tasks_cm = anyio.create_task_group()
+    first_tasks = await first_tasks_cm.__aenter__()
+    first.start(first_tasks)
+    await first.wait_current()
+    participant = first.participant(
+        _Endpoint(MANAGER, "manager-session"),
+        ConcordParticipantPolicy(profile=PROFILE, select=_accept_all),
+    )
+    await participant.__aenter__()
+    contract = await _create_contract(first, "crash-before-token")
+    with anyio.fail_after(1):
+        await tokens.blocked.wait()
+    token_mutations = tokens.mutation_count
+    first_tasks.cancel_scope.cancel()
+    await first_tasks_cm.__aexit__(None, None, None)
+
+    async with (
+        _running_concord(contracts, tokens) as replacement,
+        replacement.participant(
+            _Endpoint(MANAGER, "manager-session"),
+            ConcordParticipantPolicy(profile=PROFILE, select=_accept_all),
+        ) as restarted,
+    ):
+        assert restarted.managed_contracts == ()
+        record = await replacement.contract_record(contract)
+        assert record is not None and record.state == ContractState.CANCELLED
+        assert tokens.mutation_count == token_mutations
 
 
 def _agreement_spec(
@@ -429,7 +719,7 @@ def _agreement_spec(
         participants=PARTICIPANTS,
         terms={"agreement": "test"},
         supersedes=supersedes,
-        current_sessions={
+        participant_sessions={
             str(CONTROLLER): "controller-session",
             str(MANAGER): "manager-session",
         },
@@ -447,16 +737,14 @@ async def test_beacon_heartbeat_uses_jittered_bucket_ttl(monkeypatch) -> None:
     monkeypatch.setattr(beacon_module.random, "uniform", sample)
     raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=1)
 
-    async with _running_beacon(raw) as beacon:
-        lease = await beacon.advertise(
-            BeaconAdvertisementSpec(
-                feature_id="dev.deckr.test.feature.v1",
-                endpoint=MANAGER,
-                session_id="manager-session",
-                advertisement_id="advertisement-1",
-            )
-        )
-        first = lease.handle
+    async with _running_beacon(raw) as beacon, beacon.advertise(
+        _Endpoint(MANAGER, "manager-session"),
+        BeaconAdvertisementSpec(
+            feature_id="dev.deckr.test.feature.v1",
+        ),
+    ) as lease:
+        first = lease._handle  # noqa: SLF001
+        assert first is not None
 
         with anyio.fail_after(1):
             while True:
@@ -483,16 +771,13 @@ async def test_beacon_manual_update_reschedules_heartbeat(monkeypatch) -> None:
     monkeypatch.setattr(beacon_module.random, "uniform", sample)
     raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=1)
 
-    async with _running_beacon(raw) as beacon:
-        lease = await beacon.advertise(
-            BeaconAdvertisementSpec(
-                feature_id="dev.deckr.test.feature.v1",
-                endpoint=MANAGER,
-                session_id="manager-session",
-                advertisement_id="advertisement-1",
-                payload={"state": "initial"},
-            )
-        )
+    async with _running_beacon(raw) as beacon, beacon.advertise(
+        _Endpoint(MANAGER, "manager-session"),
+        BeaconAdvertisementSpec(
+            feature_id="dev.deckr.test.feature.v1",
+            payload={"state": "initial"},
+        ),
+    ) as lease:
         clock[0] = 100.1
         await lease.update(payload={"state": "updated"})
 
@@ -505,24 +790,21 @@ async def test_beacon_manual_update_reschedules_heartbeat(monkeypatch) -> None:
 async def test_beacon_noop_updates_do_not_bypass_heartbeat_cadence() -> None:
     raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
 
-    async with _running_beacon(raw) as beacon:
-        lease = await beacon.advertise(
-            BeaconAdvertisementSpec(
-                feature_id="dev.deckr.test.feature.v1",
-                endpoint=MANAGER,
-                session_id="manager-session",
-                advertisement_id="advertisement-1",
-                payload={"state": "unchanged"},
-            )
-        )
-        initial_handle = lease.handle
+    async with _running_beacon(raw) as beacon, beacon.advertise(
+        _Endpoint(MANAGER, "manager-session"),
+        BeaconAdvertisementSpec(
+            feature_id="dev.deckr.test.feature.v1",
+            payload={"state": "unchanged"},
+        ),
+    ) as lease:
+        initial_handle = lease._handle  # noqa: SLF001
+        assert initial_handle is not None
         initial_revision = raw.revision
 
-        repeated = await lease.update()
-        same_payload = await lease.update(payload={"state": "unchanged"})
+        await lease.update()
+        await lease.update(payload={"state": "unchanged"})
 
-        assert repeated == initial_handle
-        assert same_payload == initial_handle
+        assert lease._handle == initial_handle  # noqa: SLF001
         assert raw.revision == initial_revision
 
 
@@ -530,21 +812,21 @@ async def test_beacon_noop_updates_do_not_bypass_heartbeat_cadence() -> None:
 async def test_beacon_lease_recreates_missing_advertisement_key() -> None:
     raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
 
-    async with _running_beacon(raw) as beacon:
-        lease = await beacon.advertise(
-            BeaconAdvertisementSpec(
-                feature_id="dev.deckr.test.feature.v1",
-                endpoint=MANAGER,
-                session_id="manager-session",
-                advertisement_id="advertisement-1",
-                hints={"load": "light"},
-            )
-        )
-        first = lease.handle
+    async with _running_beacon(raw) as beacon, beacon.advertise(
+        _Endpoint(MANAGER, "manager-session"),
+        BeaconAdvertisementSpec(
+            feature_id="dev.deckr.test.feature.v1",
+            hints={"load": "light"},
+        ),
+    ) as lease:
+        first = lease._handle  # noqa: SLF001
+        assert first is not None
         assert await raw.expire(first.key)
 
-        recovered = await lease.update(labels={"room": "lab"})
+        await lease.update(labels={"room": "lab"})
 
+        recovered = lease._handle  # noqa: SLF001
+        assert recovered is not None
         assert recovered.key == first.key
         entry = await raw.get(first.key)
         assert entry is not None
@@ -559,33 +841,37 @@ async def test_beacon_advertise_cleans_stale_same_endpoint_by_default() -> None:
     raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
 
     async with _running_beacon(raw) as beacon:
-        stale = await beacon.advertise(
+        stale = beacon.advertise(
+            _Endpoint(MANAGER, "old-session"),
             BeaconAdvertisementSpec(
                 feature_id="dev.deckr.test.feature.v1",
-                endpoint=MANAGER,
-                session_id="old-session",
-                advertisement_id="stale-advertisement",
-            )
+            ),
         )
-        fresh = await beacon.advertise(
+        await stale.__aenter__()
+        stale_handle = stale._handle  # noqa: SLF001
+        assert stale_handle is not None
+        fresh = beacon.advertise(
+            _Endpoint(MANAGER, "new-session"),
             BeaconAdvertisementSpec(
                 feature_id="dev.deckr.test.feature.v1",
-                endpoint=MANAGER,
-                session_id="new-session",
-                advertisement_id="fresh-advertisement",
-            )
+            ),
         )
+        await fresh.__aenter__()
+        fresh_handle = fresh._handle  # noqa: SLF001
+        assert fresh_handle is not None
 
-        assert await raw.get(stale.handle.key) is None
-        assert await raw.get(fresh.handle.key) is not None
+        assert stale.closed
+        assert await raw.get(stale_handle.key) is None
+        assert await raw.get(fresh_handle.key) is not None
         assert [
-            candidate.advertisement.advertisement_id
+            candidate.advertisement.session_id
             for candidate in beacon.candidates("dev.deckr.test.feature.v1")
-        ] == ["fresh-advertisement"]
+        ] == ["new-session"]
+        await fresh.aclose()
 
 
 @pytest.mark.asyncio
-async def test_concord_refresh_returns_latest_token_after_revision_race() -> None:
+async def test_concord_refresh_refuses_to_adopt_concurrent_revision() -> None:
     contracts = MemoryJsonKvBucket(bucket="contracts")
     tokens = _RacingTokenBucket()
     concord = Concord(contracts, tokens)
@@ -597,11 +883,14 @@ async def test_concord_refresh_returns_latest_token_after_revision_race() -> Non
         token_id="controller-token",
     )
 
-    refreshed = await concord._refresh_token(token)  # noqa: SLF001
+    with pytest.raises(ConcordConflict) as exc_info:
+        await concord._refresh_token(token)  # noqa: SLF001
 
     assert tokens.raced
-    assert refreshed.refresh_seq == 2
-    assert refreshed.revision != token.revision
+    assert exc_info.value.code == ConcordConflictCode.REVISION_CHANGED
+    current = await tokens.get(token.key)
+    assert current is not None
+    assert ParticipantTokenRecord.model_validate(current.value).refresh_seq == 2
 
 
 @pytest.mark.asyncio
@@ -659,7 +948,9 @@ async def test_concord_participant_lease_cancels_on_refresh_unavailable() -> Non
 
         assert lease.token is None
         assert lease.owned_token is not None
-        assert lease.state.phase == lease_module.ConcordParticipantLeasePhase.UNAVAILABLE
+        assert (
+            lease.state.phase == lease_module.ConcordParticipantLeasePhase.UNAVAILABLE
+        )
         entry = await contracts.get(contract.key)
         assert entry is not None
         assert ContractRecord.model_validate(entry.value).state == ContractState.OPEN
@@ -695,7 +986,9 @@ async def test_concord_participant_lease_closes_when_cancel_is_unavailable() -> 
 
 
 @pytest.mark.asyncio
-async def test_concord_participant_close_does_not_withdraw_changed_token_owner() -> None:
+async def test_concord_participant_close_does_not_withdraw_changed_token_owner() -> (
+    None
+):
     contracts = MemoryJsonKvBucket(bucket="contracts")
     tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
     async with _running_concord(contracts, tokens) as concord:
@@ -725,23 +1018,27 @@ async def test_concord_participant_close_does_not_withdraw_changed_token_owner()
 
 
 @pytest.mark.asyncio
-async def test_same_session_participant_restart_cancels_without_adopting_token() -> None:
+async def test_same_session_participant_restart_cancels_without_adopting_token() -> (
+    None
+):
     contracts = MemoryJsonKvBucket(bucket="contracts")
     tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
 
     async with _running_concord(contracts, tokens) as concord:
-        contract = await _create_contract(concord, "same-session-restart")
-        await concord._attach(  # noqa: SLF001
-            contract,
-            CONTROLLER,
-            "controller-session",
-            token_id="controller-token",
-        )
         policy = ConcordParticipantPolicy(profile=PROFILE, select=_accept_all)
         async with concord.participant(
             _Endpoint(MANAGER, "manager-session"), policy
         ) as original:
-            assert original.managed_contract(contract) is not None
+            contract = await _create_contract(concord, "same-session-restart")
+            await concord._attach(  # noqa: SLF001
+                contract,
+                CONTROLLER,
+                "controller-session",
+                token_id="controller-token",
+            )
+            with anyio.fail_after(1):
+                while original.managed_contract(contract) is None:
+                    await anyio.sleep(0)
             manager_token_key = concord_participant_token_key(
                 contract_id=contract.contract_id,
                 generation=contract.generation,
@@ -755,13 +1052,87 @@ async def test_same_session_participant_restart_cancels_without_adopting_token()
                 with anyio.fail_after(2):
                     while True:
                         record = await concord.contract_record(contract)
-                        if record is not None and record.state == ContractState.CANCELLED:
+                        if (
+                            record is not None
+                            and record.state == ContractState.CANCELLED
+                        ):
                             break
                         await anyio.sleep(0)
                 assert record.cancel_reason == (
                     "concord_managed_lost_participant_token"
                 )
-                assert await tokens.get(manager_token_key) is not None
+                manager_entry = await tokens.get(manager_token_key)
+                if manager_entry is not None:
+                    assert ParticipantTokenRecord.model_validate(
+                        manager_entry.value
+                    ).session_id == "manager-session"
+
+
+@pytest.mark.asyncio
+async def test_restarted_participant_accepts_one_fresh_successor_after_stale_cleanup() -> (
+    None
+):
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+    first = Concord(contracts, tokens)
+    first_tasks_cm = anyio.create_task_group()
+    first_tasks = await first_tasks_cm.__aenter__()
+    first.start(first_tasks)
+    await first.wait_current()
+    participant = first.participant(
+        _Endpoint(MANAGER, "manager-session"),
+        ConcordParticipantPolicy(profile=PROFILE, select=_accept_all),
+    )
+    await participant.__aenter__()
+    abandoned = first.propose(
+        _Endpoint(CONTROLLER, "controller-session"),
+        _agreement_spec(),
+    )
+    await abandoned.__aenter__()
+    await abandoned.wait_for_state(
+        lambda state: (
+            state.validity is not None
+            and state.validity.status == ContractValidityStatus.VALID
+        ),
+        timeout_seconds=1,
+    )
+    first_tasks.cancel_scope.cancel()
+    await first_tasks_cm.__aexit__(None, None, None)
+
+    async with (
+        _running_concord(contracts, tokens) as replacement,
+        replacement.participant(
+            _Endpoint(MANAGER, "manager-restarted"),
+            ConcordParticipantPolicy(profile=PROFILE, select=_accept_all),
+        ) as restarted,
+    ):
+        stale_record = await replacement.contract_record(abandoned.contract)
+        assert stale_record is not None
+        assert stale_record.state == ContractState.CANCELLED
+
+        fresh_spec = ConcordAgreementSpec(
+            profile=PROFILE,
+            participants=PARTICIPANTS,
+            terms={"agreement": "fresh-successor"},
+            supersedes=abandoned.contract.pointer,
+            participant_sessions={str(MANAGER): "manager-restarted"},
+        )
+        async with replacement.propose(
+            _Endpoint(CONTROLLER, "controller-session"),
+            fresh_spec,
+        ) as fresh:
+            ready = await fresh.wait_for_state(
+                lambda state: (
+                    state.validity is not None
+                    and state.validity.status == ContractValidityStatus.VALID
+                ),
+                timeout_seconds=1,
+            )
+            assert ready.local_authority
+            managed = restarted.managed_contract(fresh.contract)
+            assert managed is not None
+            assert managed.local_authority
+            assert fresh.contract_id != abandoned.contract_id
 
 
 @pytest.mark.asyncio
@@ -773,10 +1144,13 @@ async def test_participant_reacts_to_expiry_and_cancellation_without_repair() ->
     async with anyio.create_task_group() as task_group:
         concord.start(task_group)
         await concord.wait_current()
-        async with concord.participant(
-            _Endpoint(MANAGER, "manager-session"),
-            ConcordParticipantPolicy(profile=PROFILE, select=_accept_all),
-        ) as participant, participant.watch_state() as snapshots:
+        async with (
+            concord.participant(
+                _Endpoint(MANAGER, "manager-session"),
+                ConcordParticipantPolicy(profile=PROFILE, select=_accept_all),
+            ) as participant,
+            participant.watch_state() as snapshots,
+        ):
             assert (await anext(snapshots)).contracts == ()
             expired_contract = await _create_contract(concord, "expiry")
             controller_token = await concord._attach(  # noqa: SLF001
@@ -795,7 +1169,18 @@ async def test_participant_reacts_to_expiry_and_cancellation_without_repair() ->
             with anyio.fail_after(2):
                 while participant.managed_contract(expired_contract) is not None:
                     await anyio.sleep(0)
-            expired_record = await concord.contract_record(expired_contract)
+            # Public authority fails closed before best-effort remote cleanup.
+            # Observe cancellation independently rather than coupling the two
+            # state transitions to one scheduling turn.
+            with anyio.fail_after(2):
+                while True:
+                    expired_record = await concord.contract_record(expired_contract)
+                    if (
+                        expired_record is not None
+                        and expired_record.state == ContractState.CANCELLED
+                    ):
+                        break
+                    await anyio.sleep(0)
             assert expired_record is not None
             assert expired_record.state == ContractState.CANCELLED
             assert expired_record.cancel_reason == "concord_managed_missing_token"
@@ -850,10 +1235,13 @@ async def test_participant_overflow_resnapshots_without_repair_polling() -> None
     async with anyio.create_task_group() as task_group:
         concord.start(task_group)
         await concord.wait_current()
-        async with concord.participant(
-            _Endpoint(MANAGER, "manager-session"),
-            ConcordParticipantPolicy(profile=PROFILE, select=select_contracts),
-        ) as participant, participant.watch_state() as snapshots:
+        async with (
+            concord.participant(
+                _Endpoint(MANAGER, "manager-session"),
+                ConcordParticipantPolicy(profile=PROFILE, select=select_contracts),
+            ) as participant,
+            participant.watch_state() as snapshots,
+        ):
             assert (await anext(snapshots)).contracts == ()
             block_reconcile = True
             await _create_contract(concord, "overflow-000")
@@ -876,13 +1264,137 @@ async def test_participant_overflow_resnapshots_without_repair_polling() -> None
 
 
 @pytest.mark.asyncio
+async def test_participant_unresolved_policy_cleanup_is_publicly_unavailable() -> None:
+    contracts = _FailingUpdateBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+    accept = True
+
+    def select_contracts(candidates) -> ConcordParticipantSelection:
+        return ConcordParticipantSelection(
+            candidate.contract.pointer for candidate in candidates if accept
+        )
+
+    async with (
+        _running_concord(contracts, tokens) as concord,
+        concord.participant(
+            _Endpoint(MANAGER, "manager-session"),
+            ConcordParticipantPolicy(profile=PROFILE, select=select_contracts),
+        ) as participant,
+    ):
+        contract = await _create_contract(concord, "retained-policy-cleanup")
+        await concord._attach(  # noqa: SLF001
+            contract,
+            CONTROLLER,
+            "controller-session",
+            token_id="controller-token",
+        )
+        await participant.wait_for_state(
+            lambda state: any(
+                managed.contract.pointer == contract.pointer
+                and managed.local_authority
+                and managed.validity.valid
+                for managed in state.contracts
+            ),
+            timeout_seconds=2,
+        )
+
+        contracts.fail_updates = True
+        accept = False
+        await participant.notify_policy_changed()
+        unavailable = await participant.wait_for_state(
+            lambda state: state.phase == ConcordLifecyclePhase.UNAVAILABLE,
+            timeout_seconds=2,
+        )
+        assert unavailable.contracts == ()
+        assert unavailable.reason is not None
+
+        contracts.fail_updates = False
+        with anyio.fail_after(2):
+            while True:
+                record = await concord.contract_record(contract)
+                if record is not None and record.state == ContractState.CANCELLED:
+                    break
+                await anyio.sleep(0)
+        await participant.wait_for_state(
+            lambda state: state.phase == ConcordLifecyclePhase.READY,
+            timeout_seconds=2,
+        )
+
+
+@pytest.mark.asyncio
+async def test_participant_selector_failure_cancels_existing_authority() -> None:
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+    fail_selection = False
+
+    def select_contracts(candidates) -> ConcordParticipantSelection:
+        if fail_selection:
+            raise RuntimeError("policy snapshot is invalid")
+        return _accept_all(candidates)
+
+    async with (
+        _running_concord(contracts, tokens) as concord,
+        concord.participant(
+            _Endpoint(MANAGER, "manager-session"),
+            ConcordParticipantPolicy(profile=PROFILE, select=select_contracts),
+        ) as participant,
+    ):
+        contract = await _create_contract(concord, "selector-failure")
+        await concord._attach(  # noqa: SLF001
+            contract,
+            CONTROLLER,
+            "controller-session",
+            token_id="controller-token",
+        )
+        await participant.wait_for_state(
+            lambda state: any(
+                managed.contract.pointer == contract.pointer
+                and managed.local_authority
+                and managed.validity.valid
+                for managed in state.contracts
+            ),
+            timeout_seconds=2,
+        )
+
+        fail_selection = True
+        await participant.notify_policy_changed()
+        unavailable = await participant.wait_for_state(
+            lambda state: state.phase == ConcordLifecyclePhase.UNAVAILABLE
+            and state.reason == "policy snapshot is invalid",
+            timeout_seconds=2,
+        )
+        assert unavailable.contracts == ()
+
+        token_key = concord_participant_token_key(
+            contract_id=contract.contract_id,
+            generation=contract.generation,
+            participant=MANAGER,
+        )
+        with anyio.fail_after(2):
+            while True:
+                record = await concord.contract_record(contract)
+                if (
+                    record is not None
+                    and record.state == ContractState.CANCELLED
+                    and await tokens.get(token_key) is None
+                ):
+                    break
+                await anyio.sleep(0)
+
+        assert participant.managed_contract(contract) is None
+
+
+@pytest.mark.asyncio
 async def test_agreement_successor_uses_fresh_opaque_id_after_token_loss() -> None:
     contracts = MemoryJsonKvBucket(bucket="contracts")
     tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
 
-    async with _running_concord(contracts, tokens) as concord, concord.propose(
-        _Endpoint(CONTROLLER, "controller-session"), _agreement_spec()
-    ) as agreement:
+    async with (
+        _running_concord(contracts, tokens) as concord,
+        concord.propose(
+            _Endpoint(CONTROLLER, "controller-session"), _agreement_spec()
+        ) as agreement,
+    ):
         await concord._attach(  # noqa: SLF001
             agreement.contract,
             MANAGER,
@@ -928,9 +1440,12 @@ async def test_agreement_refresh_cancels_after_losing_local_token_handle() -> No
     contracts = MemoryJsonKvBucket(bucket="contracts")
     tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
 
-    async with _running_concord(contracts, tokens) as concord, concord.propose(
-        _Endpoint(CONTROLLER, "controller-session"), _agreement_spec()
-    ) as agreement:
+    async with (
+        _running_concord(contracts, tokens) as concord,
+        concord.propose(
+            _Endpoint(CONTROLLER, "controller-session"), _agreement_spec()
+        ) as agreement,
+    ):
         await concord._attach(  # noqa: SLF001
             agreement.contract,
             MANAGER,
@@ -957,9 +1472,42 @@ async def test_agreement_refresh_cancels_after_losing_local_token_handle() -> No
                 if record is not None and record.state == ContractState.CANCELLED:
                     break
                 await anyio.sleep(0)
-            assert record.cancel_reason == (
-                "concord_agreement_lost_participant_token"
+            assert record.cancel_reason == ("concord_agreement_lost_participant_token")
+
+
+@pytest.mark.asyncio
+async def test_agreement_peer_token_loss_relinquishes_local_authority() -> None:
+    contracts = MemoryJsonKvBucket(bucket="contracts")
+    tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
+
+    async with (
+        _running_concord(contracts, tokens) as concord,
+        concord.propose(
+            _Endpoint(CONTROLLER, "controller-session"), _agreement_spec()
+        ) as agreement,
+    ):
+        peer = await concord._attach(  # noqa: SLF001
+            agreement.contract,
+            MANAGER,
+            "manager-session",
+            token_id="manager-token",
         )
+        await agreement.wait_for_state(lambda state: state.valid)
+        await tokens.delete(peer.key, revision=peer.revision)
+
+        state = await agreement.wait_for_state(
+            lambda current: current.phase == ConcordLifecyclePhase.TERMINAL
+        )
+        assert state.validity is not None
+        assert state.validity.status == ContractValidityStatus.MISSING_TOKEN
+        assert not state.local_authority
+        assert not state.valid
+        with anyio.fail_after(2):
+            while True:
+                record = await concord.contract_record(agreement.contract)
+                if record is not None and record.state == ContractState.CANCELLED:
+                    break
+                await anyio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -967,9 +1515,12 @@ async def test_agreement_closes_when_lost_authority_cannot_be_cancelled() -> Non
     contracts = _FailingUpdateBucket(bucket="contracts")
     tokens = MemoryJsonKvBucket(bucket="tokens", ttl_seconds=120)
 
-    async with _running_concord(contracts, tokens) as concord, concord.propose(
-        _Endpoint(CONTROLLER, "controller-session"), _agreement_spec()
-    ) as agreement:
+    async with (
+        _running_concord(contracts, tokens) as concord,
+        concord.propose(
+            _Endpoint(CONTROLLER, "controller-session"), _agreement_spec()
+        ) as agreement,
+    ):
         await concord._attach(  # noqa: SLF001
             agreement.contract,
             MANAGER,

@@ -102,6 +102,47 @@ _APPROVED_AUTHORITY_STATE_BOUNDARIES: dict[_WatchBoundary, str] = {
         "self._state_bus",
         "subscribe",
     ): "Phase 4 participant coalesced state",
+    (
+        Path("deckr/src/deckr/services/client.py"),
+        "ManagedService.wait_for_state.wait",
+        "self._state_bus",
+        "subscribe",
+    ): "Phase 4 managed-service atomic state wait",
+    (
+        Path("deckr/src/deckr/services/client.py"),
+        "ManagedService.watch_state",
+        "self._state_bus",
+        "subscribe",
+    ): "Phase 4 managed-service coalesced state",
+    (
+        Path("deckr/src/deckr/services/provider.py"),
+        "ServiceProvider.watch_state",
+        "self._participant",
+        "watch_state",
+    ): "Phase 4 provider-owned participant state",
+    (
+        Path(
+            "deckr-action-provider-runtime-python/"
+            "src/deckr/action_provider_runtime/runtime.py"
+        ),
+        "PythonActionProvider._service_contract_event_loop",
+        "provider",
+        "watch_state",
+    ): "Phase 4 provider-owned participant authority",
+    (
+        Path(
+            "deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py"
+        ),
+        "OpenHabServiceComponent._service_contract_event_loop",
+        "provider",
+        "watch_state",
+    ): "Phase 4 provider-owned participant authority",
+    (
+        Path("deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"),
+        "SonosServiceComponent._service_contract_event_loop",
+        "provider",
+        "watch_state",
+    ): "Phase 4 provider-owned participant authority",
 }
 
 
@@ -155,9 +196,15 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
         ): 1,
         (
             Path("deckr/src/deckr/services/client.py"),
-            "DeckrServices.watch_view",
+            "DeckrServices._watch_view",
             "store",
             "watch",
+        ): 1,
+        (
+            Path("deckr/src/deckr/services/provider.py"),
+            "ServiceProvider._enter",
+            "self.endpoint",
+            "subscribe",
         ): 1,
         (
             Path("deckr/src/deckr/services/client.py"),
@@ -236,24 +283,6 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
             "SupervisedNatsSubstrate.subscribe",
             "self._connected_nats()",
             "subscribe",
-        ): 1,
-        (
-            Path(
-                "deckr-action-provider-runtime-python/"
-                "src/deckr/action_provider_runtime/_runtime_dispatch.py"
-            ),
-            "_RuntimeMessageDispatchMixin._message_subscription_loop",
-            "endpoint",
-            "subscribe",
-        ): 1,
-        (
-            Path(
-                "deckr-action-provider-runtime-python/"
-                "src/deckr/action_provider_runtime/runtime.py"
-            ),
-            "PythonActionProvider._service_contract_event_loop",
-            "participant",
-            "watch_state",
         ): 1,
         (
             Path("deckr-controller/src/deckr/controller/_controller_service.py"),
@@ -380,22 +409,6 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
             "subscribe",
         ): 1,
         (
-            Path(
-                "deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py"
-            ),
-            "OpenHabServiceComponent._message_loop",
-            "self._endpoint",
-            "subscribe",
-        ): 1,
-        (
-            Path(
-                "deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py"
-            ),
-            "OpenHabServiceComponent._service_contract_event_loop",
-            "participant",
-            "watch_state",
-        ): 1,
-        (
             Path("deckr-plugin-sonos/src/deckr/plugins/sonos/_soco_remote.py"),
             "SoCoSonosRemoteZone._subscribe",
             "self._events",
@@ -417,25 +430,9 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
             Path(
                 "deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"
             ),
-            "SonosServiceComponent._message_loop",
-            "self._endpoint",
-            "subscribe",
-        ): 1,
-        (
-            Path(
-                "deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"
-            ),
             "SonosServiceComponent._zone_event_snapshots",
             "self._zone_events",
             "subscribe",
-        ): 1,
-        (
-            Path(
-                "deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"
-            ),
-            "SonosServiceComponent._service_contract_event_loop",
-            "participant",
-            "watch_state",
         ): 1,
     }
 )

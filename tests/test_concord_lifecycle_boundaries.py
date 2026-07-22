@@ -39,7 +39,7 @@ _DIRECT_LIFECYCLE_CONSTRUCTORS = {
     "ConcordParticipantLease",
 }
 
-_CallSite = tuple[Path, int, str, str, str]
+_CallSite = tuple[Path, str, str, str]
 
 # These are the core-owned construction/startup points. They are implementation
 # boundaries, not exceptions available to component implementors.
@@ -47,35 +47,30 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
     {
         (
             Path("deckr/src/deckr/runtime.py"),
-            166,
             "Deckr.__aenter__",
             "Beacon",
             "construct",
         ): 1,
         (
             Path("deckr/src/deckr/testing/concord.py"),
-            68,
             "ConcordRuntimeHarness.__init__",
             "Concord",
             "construct",
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            168,
             "Deckr.__aenter__",
             "Concord",
             "construct",
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            167,
             "Deckr.__aenter__",
             "self._beacon",
             "start",
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            172,
             "Deckr.__aenter__",
             "self._concord",
             "start",
@@ -89,34 +84,15 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
 _APPROVED_MANAGED_CANCEL_CALLS: Counter[_CallSite] = Counter(
     {
         (
+            Path("deckr/src/deckr/services/provider.py"),
+            "ServiceProvider.cancel_authorized",
+            "self._participant",
+            "cancel",
+        ): 1,
+        (
             Path("deckr/src/deckr/hardware/runtime.py"),
-            619,
             "HardwareManagerRuntime._cancel_claims_for_device",
             "self._claim_manager",
-            "cancel",
-        ): 1,
-        (
-            Path(
-                "deckr-action-provider-runtime-python/"
-                "src/deckr/action_provider_runtime/runtime.py"
-            ),
-            685,
-            "PythonActionProvider._withdraw_action_runtime_service",
-            "participant",
-            "cancel",
-        ): 1,
-        (
-            Path("deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py"),
-            949,
-            "OpenHabServiceComponent._cancel_subscription_contract",
-            "participant",
-            "cancel",
-        ): 1,
-        (
-            Path("deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"),
-            1428,
-            "SonosServiceComponent._cancel_subscription_contract",
-            "participant",
             "cancel",
         ): 1,
     }
@@ -134,8 +110,9 @@ def test_production_code_uses_managed_lifecycle_routes() -> None:
             Path("deckr/src/deckr/_concord/_agreement.py"),
             Path("deckr/src/deckr/_concord/_lease.py"),
             Path("deckr/src/deckr/_concord/_maintenance.py"),
-            Path("deckr/src/deckr/_concord/_participant.py"),
-            Path("deckr/src/deckr/_concord/_view.py"),
+                Path("deckr/src/deckr/_concord/_participant.py"),
+                Path("deckr/src/deckr/_concord/_store.py"),
+                Path("deckr/src/deckr/_concord/_view.py"),
             Path("deckr/src/deckr/concord.py"),
         }:
             continue
@@ -162,7 +139,7 @@ def test_production_code_uses_managed_lifecycle_routes() -> None:
     )
 
 
-def test_lifecycle_guard_tracks_typed_and_assigned_aliases_by_line() -> None:
+def test_lifecycle_guard_tracks_typed_and_assigned_aliases_by_scope() -> None:
     tree = ast.parse(
         """
 async def direct(runtime: Concord) -> None:
@@ -189,28 +166,24 @@ class Owner:
         {
             (
                 Path("deckr-example/src/example.py"),
-                3,
                 "direct",
                 "runtime",
                 "cancel",
             ): 1,
             (
                 Path("deckr-example/src/example.py"),
-                7,
                 "assigned",
                 "runtime",
                 "validate_exact",
             ): 1,
             (
                 Path("deckr-example/src/example.py"),
-                10,
                 "untyped",
                 "runtime",
                 "cancel",
             ): 1,
             (
                 Path("deckr-example/src/example.py"),
-                16,
                 "Owner.start",
                 "self.runtime",
                 "start",
@@ -450,7 +423,7 @@ class _LifecycleCallVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         constructor = _lifecycle_constructor_name(node)
         if constructor is not None:
-            self._record(constructor, "construct", node.lineno)
+            self._record(constructor, "construct")
 
         if isinstance(node.func, ast.Attribute):
             operation = node.func.attr
@@ -472,7 +445,7 @@ class _LifecycleCallVisitor(ast.NodeVisitor):
                 )
                 or ((is_concord or is_beacon) and operation == "start")
             ):
-                self._record(receiver, operation, node.lineno)
+                self._record(receiver, operation)
         self.generic_visit(node)
 
     def _visit_callable(
@@ -502,9 +475,9 @@ class _LifecycleCallVisitor(ast.NodeVisitor):
         self._lifecycle_aliases.pop()
         self._scope.pop()
 
-    def _record(self, receiver: str, operation: str, lineno: int) -> None:
+    def _record(self, receiver: str, operation: str) -> None:
         scope = ".".join(self._scope) if self._scope else "<module>"
-        self.calls[(self._path, lineno, scope, receiver, operation)] += 1
+        self.calls[(self._path, scope, receiver, operation)] += 1
 
     def _lifecycle_kind(self, node: ast.AST) -> str | None:
         name = _receiver_name(node)
@@ -571,8 +544,8 @@ def _format_callsite_diff(
 
 def _format_callsites(calls: Counter[_CallSite]) -> list[str]:
     return [
-        f"  {path}:{lineno}:{scope}: {receiver}.{operation}() x{count}"
-        for (path, lineno, scope, receiver, operation), count in sorted(calls.items())
+        f"  {path}:{scope}: {receiver}.{operation}() x{count}"
+        for (path, scope, receiver, operation), count in sorted(calls.items())
     ]
 
 

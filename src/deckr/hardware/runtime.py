@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -11,7 +10,6 @@ import anyio
 
 import deckr.hardware.messages as hw_messages
 from deckr.beacon import (
-    AdvertisementHandle,
     Beacon,
     BeaconAdvertisementLease,
     BeaconAdvertisementSpec,
@@ -36,6 +34,7 @@ from deckr.contracts.messages import (
     EntitySubject,
 )
 from deckr.contracts.models import JsonObject, thaw_json
+from deckr.core.util.anyio import OwnedTaskGroup
 from deckr.hardware.descriptors import DeviceDescriptor, DeviceRef
 from deckr.hardware.profiles import (
     HARDWARE_CLAIM_PROFILE_ID,
@@ -48,9 +47,6 @@ from deckr.hardware.profiles import (
 from deckr.substrates.nats_kv import KvConflict, KvUnavailable
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS = 5.0
-DEFAULT_HARDWARE_WATCH_RETRY_SECONDS = 1.0
 
 _HardwareCommandHandler = Callable[[DeckrMessage], Awaitable[bool | None]]
 _HardwareResetHandler = Callable[[str], Awaitable[None]]
@@ -89,6 +85,62 @@ class _HardwareEndpoint(Protocol):
     ) -> AbstractAsyncContextManager[anyio.abc.ObjectReceiveStream[DeckrMessage]]: ...
 
 
+class HardwareManagerContext:
+    """Context-owned hardware manager lifecycle and worker group."""
+
+    def __init__(
+        self,
+        runtime: HardwareManagerRuntime,
+    ) -> None:
+        self.runtime = runtime
+        self._tasks = OwnedTaskGroup(
+            runtime.concord._task_group,  # noqa: SLF001
+            not_started_message=(
+                "Deckr must be started before entering hardware manager contexts"
+            ),
+        )
+        self._entered = False
+        self._close_started = False
+        self._close_lock = anyio.Lock()
+        self._close_done = anyio.Event()
+
+    async def __aenter__(self) -> HardwareManagerRuntime:
+        if self._entered:
+            raise RuntimeError("hardware manager contexts cannot be re-entered")
+        self._entered = True
+        task_group = await self._tasks.start()
+        try:
+            await self.runtime.start(task_group)
+        except BaseException:
+            await self.aclose()
+            raise
+        return self.runtime
+
+    async def __aexit__(self, *_exc: object) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        with anyio.CancelScope(shield=True):
+            async with self._close_lock:
+                if self._close_started:
+                    first = False
+                else:
+                    first = True
+                    self._close_started = True
+        if not first:
+            with anyio.CancelScope(shield=True):
+                await self._close_done.wait()
+            return
+        try:
+            with anyio.CancelScope(shield=True):
+                self._tasks.cancel()
+                await self._tasks.aclose()
+                await self.runtime.stop()
+        finally:
+            with anyio.CancelScope(shield=True):
+                self._close_done.set()
+
+
 @dataclass(frozen=True, slots=True)
 class LiveHardwareClaim:
     contract: ContractHandle
@@ -121,17 +173,12 @@ class HardwareManagerRuntime:
     beacon: Beacon
     concord: Concord
     manager_id: str
+    initial_devices: Mapping[str, DeviceDescriptor] | None = None
     labels: Mapping[str, str] | None = None
     command_handler: _HardwareCommandHandler | None = None
     reset_handler: _HardwareResetHandler | None = None
-    advertisement_refresh_seconds: float = (
-        DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS
-    )
-    watch_retry_seconds: float = DEFAULT_HARDWARE_WATCH_RETRY_SECONDS
     _devices: dict[str, DeviceDescriptor] = field(init=False, default_factory=dict)
-    _advertisement: AdvertisementHandle | None = field(init=False, default=None)
     _advertiser: BeaconAdvertisementLease | None = field(init=False, default=None)
-    _advertisement_id: str = field(init=False, default="")
     _advertised_payload: JsonObject | None = field(init=False, default=None)
     _advertisement_dirty: bool = field(init=False, default=True)
     _claims: dict[str, LiveHardwareClaim] = field(init=False, default_factory=dict)
@@ -152,11 +199,7 @@ class HardwareManagerRuntime:
             )
         if self.endpoint.address.endpoint_id != self.manager_id:
             raise ValueError("manager_id must match hardware_manager endpoint id")
-        if self.advertisement_refresh_seconds <= 0:
-            raise ValueError("advertisement_refresh_seconds must be greater than zero")
-        if self.watch_retry_seconds <= 0:
-            raise ValueError("watch_retry_seconds must be greater than zero")
-        self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
+        self._devices = dict(self.initial_devices or {})
         self._claim_manager = self.concord.participant(
             self.endpoint,
             ConcordParticipantPolicy(
@@ -211,22 +254,27 @@ class HardwareManagerRuntime:
     async def start(self, task_group: anyio.abc.TaskGroup) -> None:
         self._closed = False
         self._task_group = task_group
-        await self._claim_manager.__aenter__()
-        await self._reconcile_claims(
-            reason="participant bootstrap",
-            managed=self._claim_manager.state.contracts,
-        )
-        await self._publish_advertisement()
-        if self._advertiser is not None:
-            self._advertiser.start(task_group)
-        task_group.start_soon(self._command_subscription_loop)
-        task_group.start_soon(self._contract_event_loop)
+        try:
+            await self.concord._bootstrap_owner(self.endpoint)  # noqa: SLF001
+            await self._claim_manager.__aenter__()
+            await self._reconcile_claims(
+                reason="participant bootstrap",
+                managed=self._claim_manager.state.contracts,
+            )
+            await self._publish_advertisement(required=True)
+            task_group.start_soon(self._command_subscription_loop)
+            task_group.start_soon(self._contract_event_loop)
+        except BaseException:
+            await self.stop()
+            raise
 
     async def stop(self) -> None:
         with anyio.CancelScope(shield=True):
             self._closed = True
-            await self._withdraw_advertisement()
-            await self._claim_manager.aclose()
+            with anyio.move_on_after(5):
+                async with anyio.create_task_group() as cleanup_group:
+                    cleanup_group.start_soon(self._withdraw_advertisement)
+                    cleanup_group.start_soon(self._claim_manager.aclose)
             async with self._lock:
                 self._claims.clear()
                 self._claims_by_device.clear()
@@ -367,7 +415,7 @@ class HardwareManagerRuntime:
             return None
         return claim
 
-    async def _publish_advertisement(self) -> None:
+    async def _publish_advertisement(self, *, required: bool = False) -> None:
         if self._closed:
             return
         async with self._advertisement_lock:
@@ -377,23 +425,18 @@ class HardwareManagerRuntime:
             payload_dict = payload.to_dict()
             try:
                 if self._advertiser is None or self._advertiser.closed:
-                    self._advertiser = await self.beacon.advertise(
+                    advertiser = self.beacon.advertise(
+                        self.endpoint,
                         BeaconAdvertisementSpec(
                             feature_id=HARDWARE_FEATURE_ID,
-                            endpoint=self.endpoint.address,
-                            session_id=self.endpoint.session_id,
-                            advertisement_id=self._advertisement_id,
                             labels=payload.labels,
                             payload=payload_dict,
-                            refresh_interval=self.advertisement_refresh_seconds,
-                            log_label="Hardware",
                         ),
                     )
-                    if self._task_group is not None:
-                        self._advertiser.start(self._task_group)
-                    self._advertisement = self._advertiser.handle
+                    await advertiser.__aenter__()
+                    self._advertiser = advertiser
                 else:
-                    self._advertisement = await self._advertiser.update(
+                    await self._advertiser.update(
                         labels=payload.labels,
                         payload=payload_dict,
                     )
@@ -404,16 +447,21 @@ class HardwareManagerRuntime:
                     "Hardware Beacon advertisement changed; creating a fresh one",
                     exc_info=True,
                 )
-                self._advertisement = None
+                advertiser = self._advertiser
                 self._advertiser = None
                 self._advertised_payload = None
-                self._advertisement_id = f"hardware-{self.manager_id}-{uuid.uuid4()}"
                 self._advertisement_dirty = True
+                if advertiser is not None:
+                    await advertiser.aclose()
+                if required:
+                    raise
             except KvUnavailable:
                 logger.warning(
                     "Hardware Beacon advertisements unavailable; retrying later"
                 )
                 self._advertisement_dirty = True
+                if required:
+                    raise
 
     async def _publish_advertisement_if_changed(self) -> None:
         if self._closed:
@@ -435,7 +483,6 @@ class HardwareManagerRuntime:
 
     async def _withdraw_advertisement(self) -> None:
         async with self._advertisement_lock:
-            self._advertisement = None
             self._advertised_payload = None
             self._advertisement_dirty = True
             if self._advertiser is not None:
@@ -444,11 +491,6 @@ class HardwareManagerRuntime:
                 except (KvConflict, KvUnavailable):
                     logger.debug("Could not withdraw hardware Beacon advertisement")
                 self._advertiser = None
-
-    async def _advertisement_refresh_loop(self) -> None:
-        while True:
-            await anyio.sleep(self.advertisement_refresh_seconds)
-            await self._publish_advertisement()
 
     async def _contract_event_loop(self) -> None:
         async with self._claim_manager.watch_state() as stream:
@@ -587,16 +629,10 @@ class HardwareManagerRuntime:
                 continue
             parsed[candidate.contract.key] = (candidate, terms)
 
-        ordered = [
-            parsed[key]
-            for key in sorted(self._claims)
-            if key in parsed
-        ]
+        ordered = [parsed[key] for key in sorted(self._claims) if key in parsed]
         existing = {candidate.contract.key for candidate, _terms in ordered}
         ordered.extend(
-            value
-            for key, value in sorted(parsed.items())
-            if key not in existing
+            value for key, value in sorted(parsed.items()) if key not in existing
         )
         selected: list[ContractPointer] = []
         selected_devices: set[str] = set()
@@ -611,7 +647,9 @@ class HardwareManagerRuntime:
     async def _cancel_claims_for_device(self, device_id: str, *, reason: str) -> None:
         async with self._lock:
             claims = [
-                claim for claim in self._claims.values() if device_id in claim.device_ids
+                claim
+                for claim in self._claims.values()
+                if device_id in claim.device_ids
             ]
             cancelled_claims: list[LiveHardwareClaim] = []
             for claim in claims:
@@ -740,8 +778,6 @@ class HardwareManagerRuntime:
 
 
 __all__ = [
-    "DEFAULT_HARDWARE_ADVERTISEMENT_REFRESH_SECONDS",
-    "DEFAULT_HARDWARE_WATCH_RETRY_SECONDS",
     "HardwareManagerRuntime",
     "LiveHardwareClaim",
 ]

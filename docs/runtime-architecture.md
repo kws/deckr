@@ -114,11 +114,14 @@ as incidental local variable names.
 
 The current core lane set includes:
 
-- `actions`
 - `hardware_messages`
+- `services`
 
-`services` is an optional service/profile-provided lane. `deckr` still owns the
-shared service wire contract, but runtimes must opt into that lane explicitly.
+The legacy `actions` lane is still implemented by the Python action stack while
+that traffic is migrated to the managed services contract. It is not part of
+`CORE_LANE_NAMES` and must be registered explicitly by a runtime that still
+hosts an action-lane component. Removing that transitional lane is Phase 8
+work; documentation must not describe it as a current core lane.
 
 The distributed message bus is NATS. This document owns the generic component
 and lane model. Beacon/Concord protocol semantics are specified in

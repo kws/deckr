@@ -1316,8 +1316,7 @@ pub mod runtime {
         }
 
         fn state_with_device() -> HardwareManagerState {
-            let mut state =
-                HardwareManagerState::new("manager-main", "manager-session").unwrap();
+            let mut state = HardwareManagerState::new("manager-main", "manager-session").unwrap();
             state
                 .set_device(DeviceDescriptor {
                     device_id: "deck".to_string(),
@@ -1348,10 +1347,7 @@ pub mod runtime {
             state
         }
 
-        fn assert_unauthorized_refresh(
-            decision: HardwareCommandDecision,
-            expected_refresh: bool,
-        ) {
+        fn assert_unauthorized_refresh(decision: HardwareCommandDecision, expected_refresh: bool) {
             match decision {
                 HardwareCommandDecision::Rejected {
                     reason,

@@ -33,7 +33,9 @@ from deckr.lanes import EndpointSession, Lane, LaneRegistry
 from deckr.substrates.nats_kv import KvBucketPolicy
 
 if TYPE_CHECKING:
+    from deckr.hardware import DeviceDescriptor, HardwareManagerContext
     from deckr.runtime import Deckr
+    from deckr.services import ServiceBackendStatus, ServiceProtocol, ServiceProvider
 
 COMPONENT_ENTRYPOINT_GROUP = "deckr.components"
 COMPONENT_INSTANCE_SOURCE_ENTRYPOINT_GROUP = "deckr.component_instance_sources"
@@ -156,6 +158,62 @@ class ComponentContext:
         if self.concord is None:
             raise RuntimeError("Deckr component context does not provide Concord")
         return self.concord
+
+    def service_provider(
+        self,
+        endpoint: EndpointSession,
+        protocol: ServiceProtocol,
+        *,
+        service_id: str,
+        backend_status: ServiceBackendStatus | str | None = None,
+        diagnostics: Mapping[str, object] | None = None,
+        labels: Mapping[str, str] | None = None,
+    ) -> ServiceProvider:
+        """Return the canonical provider lifecycle for this component."""
+
+        from deckr.services import ServiceBackendStatus, ServiceProvider
+
+        return ServiceProvider(
+            endpoint=endpoint,
+            beacon=self.require_beacon(),
+            concord=self.require_concord(),
+            protocol=protocol,
+            service_id=service_id,
+            backend_status=(
+                ServiceBackendStatus.AVAILABLE
+                if backend_status is None
+                else ServiceBackendStatus(backend_status)
+            ),
+            diagnostics=diagnostics,
+            labels=labels,
+        )
+
+    def hardware_manager(
+        self,
+        endpoint: EndpointSession,
+        *,
+        manager_id: str,
+        devices: Mapping[str, DeviceDescriptor] | None = None,
+        labels: Mapping[str, str] | None = None,
+        command_handler=None,
+        reset_handler=None,
+    ) -> HardwareManagerContext:
+        """Return the canonical hardware lifecycle for this component."""
+
+        from deckr.hardware import HardwareManagerContext, HardwareManagerRuntime
+
+        return HardwareManagerContext(
+            HardwareManagerRuntime(
+                endpoint=endpoint,
+                beacon=self.require_beacon(),
+                concord=self.require_concord(),
+                manager_id=manager_id,
+                initial_devices=devices,
+                labels=labels,
+                command_handler=command_handler,
+                reset_handler=reset_handler,
+            )
+        )
 
     def kv_bucket(self, policy: KvBucketPolicy) -> Any:
         if policy.bucket in RESERVED_AUTHORITY_BUCKET_POLICIES:

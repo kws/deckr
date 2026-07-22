@@ -13,7 +13,7 @@ from time import monotonic
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
 import anyio
-from pydantic import Field, field_serializer, field_validator, model_validator
+from pydantic import Field, field_serializer, field_validator
 
 from deckr._authority_buckets import (
     BEACON_ADVERTISEMENT_STORE_POLICY,
@@ -45,6 +45,45 @@ class _BeaconAdvertisementMissing(KvConflict):
     pass
 
 
+class _BeaconAdvertisementOwnerChanged(KvConflict):
+    pass
+
+
+class _BeaconTaskGroup:
+    def __init__(self, parent: anyio.abc.TaskGroup | None) -> None:
+        self._parent = parent
+        self._group: anyio.abc.TaskGroup | None = None
+        self._done = anyio.Event()
+
+    async def start(self) -> anyio.abc.TaskGroup:
+        if self._parent is None:
+            raise RuntimeError("Beacon must be started before entering its contexts")
+        self._group = await self._parent.start(self._run)
+        return self._group
+
+    async def aclose(self) -> None:
+        if self._group is None:
+            return
+        self._group.cancel_scope.cancel()
+        with anyio.move_on_after(5, shield=True):
+            await self._done.wait()
+        self._group = None
+
+    async def _run(
+        self,
+        *,
+        task_status: anyio.abc.TaskStatus[anyio.abc.TaskGroup] = (
+            anyio.TASK_STATUS_IGNORED
+        ),
+    ) -> None:
+        try:
+            async with anyio.create_task_group() as group:
+                task_status.started(group)
+                await anyio.sleep_forever()
+        finally:
+            self._done.set()
+
+
 class CandidateStatus(StrEnum):
     CANDIDATE = "candidate"
     MISSING = "missing"
@@ -61,13 +100,21 @@ class AdvertisementSelector(Protocol):
 AdvertisementFilter = Callable[["AdvertisementRecord"], bool] | AdvertisementSelector
 
 T = TypeVar("T")
+_UNSET = object()
+
+
+class BeaconEndpointSession(Protocol):
+    address: EndpointAddress
+    session_id: str
 
 
 def _require_text(value: str, *, field_name: str) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{field_name} must be a string")
     if value.strip() != value:
-        raise ValueError(f"{field_name} must not contain leading or trailing whitespace")
+        raise ValueError(
+            f"{field_name} must not contain leading or trailing whitespace"
+        )
     if not value:
         raise ValueError(f"{field_name} must not be empty")
     return value
@@ -79,14 +126,11 @@ def _now_utc() -> datetime:
 
 def _beacon_refresh_interval(
     *,
-    requested: float | None,
     ttl_seconds: int | float,
 ) -> float:
     ttl = float(ttl_seconds)
     upper = ttl * 0.75
     lower = ttl * 0.5
-    if requested is not None:
-        lower = min(max(float(requested), lower), upper)
     return random.uniform(lower, upper)
 
 
@@ -97,8 +141,7 @@ def _beacon_ttl_seconds(value: float | int | None, *, bucket: str) -> int:
     rounded = int(ttl)
     if ttl <= 0 or abs(ttl - rounded) > 0.001:
         raise KvUnavailable(
-            f"Beacon advertisement bucket {bucket!r} TTL must be positive "
-            "whole seconds"
+            f"Beacon advertisement bucket {bucket!r} TTL must be positive whole seconds"
         )
     return rounded
 
@@ -122,9 +165,7 @@ def parse_beacon_advertisement_key(key: str) -> tuple[str, str] | None:
 
 
 def beacon_feature_prefix(feature_id: str) -> str:
-    return ".".join(
-        ("advertisements", "by_feature", encode_key_token(feature_id), "")
-    )
+    return ".".join(("advertisements", "by_feature", encode_key_token(feature_id), ""))
 
 
 class BeaconProtocol(DeckrModel):
@@ -179,7 +220,9 @@ class AdvertisementRecord(DeckrModel):
     @field_validator("operations")
     @classmethod
     def _validate_operations(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(_require_text(item, field_name="Beacon operation") for item in value)
+        return tuple(
+            _require_text(item, field_name="Beacon operation") for item in value
+        )
 
     @field_validator("labels", mode="after")
     @classmethod
@@ -224,22 +267,12 @@ class AdvertisementRecord(DeckrModel):
             return None
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
-    @model_validator(mode="after")
-    def _validate_keyable_identity(self) -> AdvertisementRecord:
-        expected = beacon_advertisement_key(
-            feature_id=self.feature_id,
-            advertisement_id=self.advertisement_id,
-        )
-        if not expected:
-            raise ValueError("Beacon advertisement identity is not keyable")
-        return self
-
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
 
 
 @dataclass(frozen=True, slots=True)
-class AdvertisementHandle:
+class _AdvertisementHandle:
     key: str
     advertisement_id: str
     feature_id: str
@@ -288,50 +321,42 @@ class BeaconAdvertisementSpec:
     """Input specification for a core-owned Beacon advertisement lifecycle."""
 
     feature_id: str
-    endpoint: str | EndpointAddress
-    session_id: str
-    advertiser: str | EndpointAddress | None = None
-    advertisement_id: str | None = None
     protocol: Mapping[str, str] | BeaconProtocol | None = None
     operations: Sequence[str] = ()
     labels: Mapping[str, str] | None = None
     hints: Mapping[str, Any] | None = None
     payload: Mapping[str, Any] | None = None
-    refresh_interval: float | None = None
-    log_label: str = "Beacon"
 
     def __post_init__(self) -> None:
         feature_id = _require_text(self.feature_id, field_name="Beacon feature id")
-        endpoint = parse_endpoint_address(self.endpoint)
-        session_id = _require_text(self.session_id, field_name="Beacon session id")
-        advertiser = (
-            parse_endpoint_address(self.advertiser)
-            if self.advertiser is not None
-            else endpoint
-        )
-        if self.refresh_interval is not None and self.refresh_interval <= 0:
-            raise ValueError("refresh_interval must be greater than zero")
         operations = tuple(
             _require_text(item, field_name="Beacon operation")
             for item in self.operations
         )
-        advertisement_id = (
-            _require_text(
-                self.advertisement_id,
-                field_name="Beacon advertisement id",
-            )
-            if self.advertisement_id is not None
-            else None
-        )
         object.__setattr__(self, "feature_id", feature_id)
-        object.__setattr__(self, "endpoint", endpoint)
-        object.__setattr__(self, "session_id", session_id)
-        object.__setattr__(self, "advertiser", advertiser)
-        object.__setattr__(self, "advertisement_id", advertisement_id)
         object.__setattr__(self, "operations", operations)
-        object.__setattr__(self, "labels", None if self.labels is None else dict(self.labels))
-        object.__setattr__(self, "hints", None if self.hints is None else dict(self.hints))
-        object.__setattr__(self, "payload", None if self.payload is None else dict(self.payload))
+        object.__setattr__(
+            self,
+            "protocol",
+            self.protocol
+            if isinstance(self.protocol, BeaconProtocol) or self.protocol is None
+            else freeze_json(self.protocol),
+        )
+        object.__setattr__(
+            self,
+            "labels",
+            None if self.labels is None else freeze_json(self.labels),
+        )
+        object.__setattr__(
+            self,
+            "hints",
+            None if self.hints is None else freeze_json(self.hints),
+        )
+        object.__setattr__(
+            self,
+            "payload",
+            None if self.payload is None else freeze_json(self.payload),
+        )
 
 
 class Beacon:
@@ -342,7 +367,9 @@ class Beacon:
         bucket: NatsKvMaterializedBucket | Any,
     ) -> None:
         self._bucket = (
-            bucket if _is_materialized_bucket(bucket) else NatsKvMaterializedBucket(bucket=bucket)
+            bucket
+            if _is_materialized_bucket(bucket)
+            else NatsKvMaterializedBucket(bucket=bucket)
         )
         self._exact = self._bucket.exact_bucket
         self._view = BeaconView[Candidate](
@@ -371,8 +398,6 @@ class Beacon:
         if not self._started:
             self._started = True
             task_group.start_soon(self._view.run)
-        for lease in tuple(self._leases):
-            lease.start(task_group)
 
     async def wait_ready(self) -> None:
         await self._view.wait_ready()
@@ -384,45 +409,26 @@ class Beacon:
         await self._view.wait_current()
 
     async def aclose(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         async with self._lock:
             leases = tuple(self._leases)
             self._leases.clear()
-        for lease in leases:
-            await lease.aclose()
+        with anyio.move_on_after(5, shield=True):
+            async with anyio.create_task_group() as cleanup_group:
+                for lease in leases:
+                    cleanup_group.start_soon(lease.aclose)
         await self._view.aclose()
 
-    async def advertise(
+    def advertise(
         self,
+        endpoint: BeaconEndpointSession,
         spec: BeaconAdvertisementSpec,
-        *,
-        cleanup_stale_same_endpoint: bool = True,
     ) -> BeaconAdvertisementLease:
         if self._closed:
             raise KvUnavailable("Beacon is closed")
-        if self._started:
-            await self.wait_current()
-        if cleanup_stale_same_endpoint:
-            await self.remove_stale_advertisements(spec)
-        lease = BeaconAdvertisementLease(self, spec)
-        handle = await lease._publish_initial()
-        logger.log(
-            _beacon_lifecycle_log_level(handle.feature_id),
-            "%s Beacon advertisement announced feature=%s endpoint=%s "
-            "session=%s advertisement=%s refresh=%s revision=%s",
-            spec.log_label,
-            handle.feature_id,
-            handle.endpoint,
-            handle.session_id,
-            handle.advertisement_id,
-            handle.refresh_seq,
-            handle.revision,
-        )
-        async with self._lock:
-            self._leases.add(lease)
-        if self._task_group is not None:
-            lease.start(self._task_group)
-        return lease
+        return BeaconAdvertisementLease(self, endpoint, spec)
 
     def candidates(
         self,
@@ -478,7 +484,10 @@ class Beacon:
             return CandidateStatus.MISSING
         if current_sessions is not None:
             current_session = current_sessions.get(str(advertisement.advertiser))
-            if current_session is not None and advertisement.session_id != current_session:
+            if (
+                current_session is not None
+                and advertisement.session_id != current_session
+            ):
                 return CandidateStatus.SESSION_MISMATCH
         return CandidateStatus.CANDIDATE
 
@@ -495,7 +504,9 @@ class Beacon:
             await self.wait_current()
         async with self._view.subscribe(feature_id) as subscription:
 
-            async def stream() -> AsyncIterator[BeaconWatchSnapshot | BeaconWatchChange]:
+            async def stream() -> AsyncIterator[
+                BeaconWatchSnapshot | BeaconWatchChange
+            ]:
                 initial_candidates = _filter_candidates(
                     subscription.initial.candidates,
                     selector,
@@ -536,25 +547,26 @@ class Beacon:
 
     async def remove_stale_advertisements(
         self,
+        endpoint: BeaconEndpointSession,
         spec: BeaconAdvertisementSpec,
     ) -> int:
         if self._started:
             await self.wait_current()
+        async with self._lock:
+            local_stale = tuple(
+                lease
+                for lease in self._leases
+                if lease.feature_id == spec.feature_id
+                and lease.endpoint == endpoint.address
+            )
+        for lease in local_stale:
+            await lease.aclose()
         removed = 0
         for candidate in self._view.candidates_for_endpoint(
-            (spec.feature_id, str(spec.advertiser), str(spec.endpoint))
+            (spec.feature_id, str(endpoint.address), str(endpoint.address))
         ):
-            if _advertisement_matches_spec_config(candidate.advertisement, spec):
-                continue
-            try:
-                await self._delete_candidate(candidate)
-                removed += 1
-            except (KvConflict, KvUnavailable):
-                logger.debug(
-                    "Could not remove stale Beacon advertisement key=%s",
-                    candidate.key,
-                    exc_info=True,
-                )
+            await self._delete_candidate(candidate)
+            removed += 1
         return removed
 
     async def _event_loop(self) -> None:
@@ -566,27 +578,42 @@ class Beacon:
 
     async def _create_advertisement(
         self,
+        endpoint: BeaconEndpointSession,
         spec: BeaconAdvertisementSpec,
         *,
         advertisement_id: str,
-    ) -> AdvertisementHandle:
+        protocol: Mapping[str, str] | BeaconProtocol | None,
+        operations: Sequence[str],
+        labels: Mapping[str, str],
+        hints: Mapping[str, Any],
+        payload: Mapping[str, Any] | None,
+    ) -> _AdvertisementHandle:
         ttl_seconds = await self._ttl_seconds()
         record = _record_from_spec(
             spec,
+            endpoint=endpoint,
             advertisement_id=advertisement_id,
             ttl_seconds=ttl_seconds,
+            protocol=protocol,
+            operations=operations,
+            labels=labels,
+            hints=hints,
+            payload=payload,
         )
         key = beacon_advertisement_key(
             feature_id=record.feature_id,
             advertisement_id=record.advertisement_id,
         )
-        entry = await self._exact.create(key, record, ttl=ttl_seconds)
-        await self._observe_write(key, entry.revision)
+        try:
+            entry = await self._exact.create(key, record, ttl=ttl_seconds)
+            await self._observe_write(key, entry.revision)
+        except KvUnavailable:
+            entry = await self._recover_advertisement_write(key, record)
         return _advertisement_handle(key, record, entry.revision)
 
     async def _refresh_advertisement(
         self,
-        handle: AdvertisementHandle,
+        handle: _AdvertisementHandle,
         *,
         protocol: Mapping[str, str] | BeaconProtocol | None,
         operations: Sequence[str],
@@ -594,7 +621,7 @@ class Beacon:
         hints: Mapping[str, Any],
         payload: Mapping[str, Any] | None,
         force_refresh: bool,
-    ) -> AdvertisementHandle:
+    ) -> _AdvertisementHandle:
         ttl_seconds = await self._ttl_seconds()
         current = self._view.get(handle.key)
         if current is None:
@@ -622,12 +649,19 @@ class Beacon:
         if refreshed is record:
             return handle
         try:
-            entry = await self._exact.update(
-                handle.key,
-                refreshed,
-                revision=current.revision,
-                ttl=ttl_seconds,
-            )
+            try:
+                entry = await self._exact.update(
+                    handle.key,
+                    refreshed,
+                    revision=current.revision,
+                    ttl=ttl_seconds,
+                )
+                await self._observe_write(handle.key, entry.revision)
+            except KvUnavailable:
+                entry = await self._recover_advertisement_write(
+                    handle.key,
+                    refreshed,
+                )
         except KvConflict as exc:
             exact = await _exact_get(self._exact, handle.key)
             if exact is None:
@@ -650,13 +684,19 @@ class Beacon:
                 ttl_seconds=ttl_seconds,
                 force_refresh=True,
             )
-            entry = await self._exact.update(
-                handle.key,
-                refreshed,
-                revision=exact_candidate.revision,
-                ttl=ttl_seconds,
-            )
-        await self._observe_write(handle.key, entry.revision)
+            try:
+                entry = await self._exact.update(
+                    handle.key,
+                    refreshed,
+                    revision=exact_candidate.revision,
+                    ttl=ttl_seconds,
+                )
+                await self._observe_write(handle.key, entry.revision)
+            except KvUnavailable:
+                entry = await self._recover_advertisement_write(
+                    handle.key,
+                    refreshed,
+                )
         return _advertisement_handle(handle.key, refreshed, entry.revision)
 
     async def _ttl_seconds(self) -> int:
@@ -668,7 +708,7 @@ class Beacon:
                 value = await value
         return _beacon_ttl_seconds(value, bucket=self.bucket)
 
-    async def _withdraw_advertisement(self, handle: AdvertisementHandle) -> bool:
+    async def _withdraw_advertisement(self, handle: _AdvertisementHandle) -> bool:
         current = await _exact_get(self._exact, handle.key)
         if current is None:
             return False
@@ -677,21 +717,117 @@ class Beacon:
             raise KvConflict(f"Beacon advertisement {handle.key!r} is invalid")
         if not _advertisement_matches_handle(candidate.advertisement, handle):
             raise KvConflict(f"Beacon advertisement {handle.key!r} changed owner")
-        marker_revision = await self._exact.delete(
-            handle.key,
-            revision=current.revision,
-        )
-        if marker_revision is not None:
-            await self._observe_write(handle.key, marker_revision)
+        try:
+            marker_revision = await self._exact.delete(
+                handle.key,
+                revision=current.revision,
+            )
+            if marker_revision is not None:
+                await self._observe_write(handle.key, marker_revision)
+        except KvUnavailable:
+            recovered = await _exact_get(self._exact, handle.key)
+            if recovered is not None:
+                raise
         return True
 
-    async def _delete_candidate(self, candidate: Candidate) -> None:
-        marker_revision = await self._exact.delete(
-            candidate.key,
-            revision=candidate.revision,
+    async def _withdraw_advertisement_identity(
+        self,
+        *,
+        feature_id: str,
+        advertisement_id: str,
+        endpoint: EndpointAddress,
+        session_id: str,
+    ) -> bool:
+        key = beacon_advertisement_key(
+            feature_id=feature_id,
+            advertisement_id=advertisement_id,
         )
-        if marker_revision is not None:
-            await self._observe_write(candidate.key, marker_revision)
+        entry = await _exact_get(self._exact, key)
+        if entry is None:
+            return False
+        candidate, _reason = _candidate_from_entry(entry)
+        if candidate is None:
+            raise KvConflict(f"Beacon advertisement {key!r} is invalid")
+        record = candidate.advertisement
+        if (
+            record.feature_id != feature_id
+            or record.advertisement_id != advertisement_id
+            or record.advertiser != endpoint
+            or record.endpoint != endpoint
+            or record.session_id != session_id
+        ):
+            raise KvConflict(f"Beacon advertisement {key!r} changed owner")
+        try:
+            marker_revision = await self._exact.delete(
+                key,
+                revision=entry.revision,
+            )
+            if marker_revision is not None:
+                await self._observe_write(key, marker_revision)
+        except KvUnavailable:
+            recovered = await _exact_get(self._exact, key)
+            if recovered is not None:
+                raise
+        return True
+
+    async def _recover_advertisement_write(
+        self,
+        key: str,
+        expected: AdvertisementRecord,
+    ) -> KvEntry:
+        entry = await _exact_get(self._exact, key)
+        if entry is None:
+            raise KvUnavailable(
+                f"Beacon advertisement write outcome for {key!r} is unresolved"
+            )
+        candidate, _reason = _candidate_from_entry(entry)
+        if candidate is None or candidate.advertisement != expected:
+            raise KvConflict(
+                f"Beacon advertisement write outcome for {key!r} conflicts"
+            )
+        await self._observe_write(key, entry.revision)
+        return entry
+
+    async def _delete_candidate(self, candidate: Candidate) -> None:
+        delay = 0.1
+        last_revision: int | None = None
+        while True:
+            try:
+                exact = await _exact_get(self._exact, candidate.key)
+                if exact is None:
+                    return
+                current, _reason = _candidate_from_entry(exact)
+                if current is None or not _advertisement_matches_handle(
+                    current.advertisement,
+                    _advertisement_handle(
+                        candidate.key,
+                        candidate.advertisement,
+                        candidate.revision,
+                    ),
+                ):
+                    raise _BeaconAdvertisementOwnerChanged(
+                        f"Beacon advertisement {candidate.key!r} changed owner"
+                    )
+                if last_revision is not None and exact.revision != last_revision:
+                    delay = 0.1
+                last_revision = exact.revision
+                marker_revision = await self._exact.delete(
+                    candidate.key,
+                    revision=exact.revision,
+                )
+                if marker_revision is not None:
+                    await self._observe_write(candidate.key, marker_revision)
+                return
+            except KvUnavailable:
+                recovered = await _exact_get(self._exact, candidate.key)
+                if recovered is None:
+                    return
+            except _BeaconAdvertisementOwnerChanged:
+                raise
+            except KvConflict:
+                pass
+            await anyio.sleep(random.uniform(delay * 0.5, delay))
+            delay = min(delay * 2, 5.0)
 
     async def _observe_write(self, key: str, revision: int) -> None:
         await self._bucket.wait_for_revision(key, revision)
@@ -717,7 +853,9 @@ class BeaconDirectory(Generic[T]):
         self._beacon = beacon
         self.feature_id = _require_text(feature_id, field_name="Beacon feature id")
         self._parser = parser
-        self._log_label = _require_text(log_label, field_name="Beacon directory log label")
+        self._log_label = _require_text(
+            log_label, field_name="Beacon directory log label"
+        )
         self._ready = anyio.Event()
         self._changed = anyio.Event()
         self._closed = False
@@ -738,7 +876,11 @@ class BeaconDirectory(Generic[T]):
         start_soon(self._event_loop)
 
     async def wait_ready(self) -> None:
+        if self._closed:
+            raise anyio.ClosedResourceError
         await self._ready.wait()
+        if self._closed:
+            raise anyio.ClosedResourceError
 
     async def watch_records(self) -> AsyncIterator[tuple[T, ...]]:
         """Yield current parsed records and subsequent current snapshots."""
@@ -749,9 +891,7 @@ class BeaconDirectory(Generic[T]):
                 if self._closed:
                     return
                 current = (
-                    self._ready.is_set()
-                    and self._current
-                    and self._beacon.is_current()
+                    self._ready.is_set() and self._current and self._beacon.is_current()
                 )
                 version = self._version
                 if current and version != last_version:
@@ -827,6 +967,8 @@ class BeaconDirectory(Generic[T]):
             await self.wait_ready()
             while True:
                 with self._lock:
+                    if self._closed:
+                        raise anyio.ClosedResourceError
                     current = (
                         self._ready.is_set()
                         and self._current
@@ -854,6 +996,7 @@ class BeaconDirectory(Generic[T]):
         self._closed = True
         if self._cancel_scope is not None:
             self._cancel_scope.cancel()
+        self._ready.set()
         self._notify_changed()
 
     async def _event_loop(self) -> None:
@@ -934,8 +1077,8 @@ class BeaconDirectory(Generic[T]):
     def _records_locked(self) -> tuple[T, ...]:
         return tuple(
             record
-            for key in sorted(self._records_by_key)
-            for record in self._records_by_key[key]
+            for records in self._records_by_key.values()
+            for record in records
         )
 
     def _resolve_locked(
@@ -965,61 +1108,114 @@ class BeaconDirectory(Generic[T]):
 class BeaconAdvertisementLease:
     """Core-owned Beacon advertisement lease with heartbeat refreshes."""
 
-    def __init__(self, beacon: Beacon, spec: BeaconAdvertisementSpec) -> None:
+    def __init__(
+        self,
+        beacon: Beacon,
+        endpoint: BeaconEndpointSession,
+        spec: BeaconAdvertisementSpec,
+    ) -> None:
         self._beacon = beacon
         self.spec = spec
         self.feature_id = spec.feature_id
-        self.endpoint = spec.endpoint
-        self.session_id = spec.session_id
-        self.advertiser = spec.advertiser
-        self._advertisement_id = spec.advertisement_id or str(uuid.uuid4())
+        self.endpoint = parse_endpoint_address(endpoint.address)
+        self.session_id = _require_text(
+            endpoint.session_id,
+            field_name="Beacon endpoint session id",
+        )
+        self._advertisement_id = str(uuid.uuid4())
         self._protocol = spec.protocol
         self._operations = tuple(spec.operations)
         self._labels = dict(spec.labels or {})
         self._hints = dict(spec.hints or {})
         self._payload = dict(spec.payload) if spec.payload is not None else None
-        self._requested_refresh_interval = spec.refresh_interval
         self._refresh_interval: float | None = None
-        self._log_label = spec.log_label
-        self._handle: AdvertisementHandle | None = None
+        self._handle: _AdvertisementHandle | None = None
         self._last_refresh_at: float | None = None
         self._lock = anyio.Lock()
-        self._started = False
+        self._tasks: _BeaconTaskGroup | None = None
+        self._task_group: anyio.abc.TaskGroup | None = None
+        self._entered = False
         self._closed = False
+        self._close_started = False
+        self._close_lock = anyio.Lock()
+        self._close_done = anyio.Event()
+        self._enter_cancel_scope: anyio.CancelScope | None = None
+        self._enter_task_id: int | None = None
+        self._enter_done = anyio.Event()
 
     @property
     def closed(self) -> bool:
         return self._closed
 
     @property
-    def handle(self) -> AdvertisementHandle:
-        if self._handle is None:
-            raise RuntimeError("Beacon advertisement has not been published")
-        return self._handle
+    def address(self) -> EndpointAddress:
+        return self.endpoint
 
-    def start(self, task_group: anyio.abc.TaskGroup) -> None:
-        if self._closed or self._started:
-            return
-        self._started = True
-        task_group.start_soon(self._heartbeat_loop)
+    async def __aenter__(self) -> BeaconAdvertisementLease:
+        if self._entered:
+            raise RuntimeError("Beacon advertisement contexts cannot be re-entered")
+        self._entered = True
+        with anyio.CancelScope() as scope:
+            self._enter_cancel_scope = scope
+            self._enter_task_id = anyio.get_current_task().id
+            try:
+                return await self._enter()
+            except BaseException:
+                if not self._close_started:
+                    await self.aclose()
+                raise
+            finally:
+                self._enter_cancel_scope = None
+                self._enter_done.set()
+        raise anyio.ClosedResourceError
 
-    def start_soon(self, start_soon: Callable[..., object] | None = None) -> None:
-        if start_soon is None or self._closed or self._started:
-            return
-        self._started = True
-        start_soon(self._heartbeat_loop)
+    async def _enter(self) -> BeaconAdvertisementLease:
+        if self._beacon._started:  # noqa: SLF001
+            await self._beacon.wait_current()
+        if self._closed:
+            raise anyio.ClosedResourceError
+        await self._beacon.remove_stale_advertisements(self, self.spec)
+        if self._closed:
+            raise anyio.ClosedResourceError
+        handle = await self._publish_initial()
+        if self._closed:
+            raise anyio.ClosedResourceError
+        async with self._beacon._lock:  # noqa: SLF001
+            if self._beacon._closed:  # noqa: SLF001
+                raise KvUnavailable("Beacon is closed")
+            self._beacon._leases.add(self)  # noqa: SLF001
+        self._tasks = _BeaconTaskGroup(self._beacon._task_group)  # noqa: SLF001
+        self._task_group = await self._tasks.start()
+        self._task_group.start_soon(self._heartbeat_loop)
+        logger.log(
+            _beacon_lifecycle_log_level(handle.feature_id),
+            "Beacon advertisement announced feature=%s endpoint=%s "
+            "session=%s advertisement=%s refresh=%s revision=%s",
+            handle.feature_id,
+            handle.endpoint,
+            handle.session_id,
+            handle.advertisement_id,
+            handle.refresh_seq,
+            handle.revision,
+        )
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        await self.aclose()
 
     async def update(
         self,
         *,
-        payload: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | None | object = _UNSET,
         labels: Mapping[str, str] | None = None,
         hints: Mapping[str, Any] | None = None,
         operations: Sequence[str] | None = None,
-    ) -> AdvertisementHandle:
+    ) -> None:
         async with self._lock:
-            if payload is not None:
-                self._payload = dict(payload)
+            if payload is not _UNSET:
+                if payload is not None and not isinstance(payload, Mapping):
+                    raise TypeError("Beacon payload must be a mapping or None")
+                self._payload = dict(payload) if payload is not None else None
             if labels is not None:
                 self._labels = dict(labels)
             if hints is not None:
@@ -1029,61 +1225,103 @@ class BeaconAdvertisementLease:
                     _require_text(item, field_name="Beacon operation")
                     for item in operations
                 )
-            return await self._publish_locked(force_refresh=False)
-
-    async def withdraw(self) -> bool:
-        async with self._lock:
-            handle = self._handle
-            self._handle = None
-            self._closed = True
-        try:
-            return (
-                False
-                if handle is None
-                else await self._beacon._withdraw_advertisement(handle)
-            )
-        finally:
-            await self._beacon._forget_lease(self)
+            await self._publish_locked(force_refresh=False)
 
     async def aclose(self) -> None:
-        try:
-            await self.withdraw()
-        except (KvConflict, KvUnavailable):
-            logger.debug(
-                "Could not withdraw Beacon advertisement feature=%s "
-                "endpoint=%s session=%s advertisement=%s",
-                self.feature_id,
-                self.endpoint,
-                self.session_id,
-                self._advertisement_id,
-                exc_info=True,
-            )
+        with anyio.CancelScope(shield=True):
+            async with self._close_lock:
+                if self._close_started:
+                    first = False
+                else:
+                    first = True
+                    self._close_started = True
+                    self._closed = True
+                    enter_scope = self._enter_cancel_scope
+                    if enter_scope is not None:
+                        enter_scope.cancel()
+                    wait_for_enter = (
+                        enter_scope is not None
+                        and self._enter_task_id != anyio.get_current_task().id
+                    )
+            if not first:
+                await self._close_done.wait()
+                return
+            try:
+                with anyio.move_on_after(5):
+                    if wait_for_enter:
+                        await self._enter_done.wait()
+                    task_group = self._task_group
+                    tasks = self._tasks
+                    self._task_group = None
+                    self._tasks = None
+                    if task_group is not None:
+                        task_group.cancel_scope.cancel()
+                    if tasks is not None:
+                        await tasks.aclose()
+                    async with self._lock:
+                        handle = self._handle
+                        self._handle = None
+                    try:
+                        if handle is not None:
+                            await self._beacon._withdraw_advertisement(handle)
+                        else:
+                            await self._beacon._withdraw_advertisement_identity(
+                                feature_id=self.feature_id,
+                                advertisement_id=self._advertisement_id,
+                                endpoint=self.endpoint,
+                                session_id=self.session_id,
+                            )
+                    except (KvConflict, KvUnavailable):
+                        logger.debug(
+                            "Could not withdraw Beacon advertisement feature=%s "
+                            "endpoint=%s session=%s advertisement=%s",
+                            self.feature_id,
+                            self.endpoint,
+                            self.session_id,
+                            self._advertisement_id,
+                            exc_info=True,
+                        )
+            finally:
+                try:
+                    await self._beacon._forget_lease(self)
+                finally:
+                    self._close_done.set()
 
-    async def _publish_initial(self) -> AdvertisementHandle:
+    async def _publish_initial(self) -> _AdvertisementHandle:
         async with self._lock:
             return await self._publish_locked(force_refresh=True)
 
     async def _heartbeat_loop(self) -> None:
+        retry_delay: float | None = None
         while not self._closed:
-            await anyio.sleep(await self._next_heartbeat_delay())
+            delay = (
+                await self._next_heartbeat_delay()
+                if retry_delay is None
+                else random.uniform(retry_delay * 0.5, retry_delay)
+            )
+            await anyio.sleep(delay)
             if self._closed:
                 return
             try:
                 async with self._lock:
                     await self._publish_locked(force_refresh=True)
             except (KvConflict, KvUnavailable):
+                retry_delay = (
+                    0.1 if retry_delay is None else min(retry_delay * 2, 5.0)
+                )
                 logger.warning(
-                    "%s Beacon advertisement heartbeat failed feature=%s "
+                    "Beacon advertisement heartbeat failed feature=%s "
                     "endpoint=%s session=%s advertisement=%s",
-                    self._log_label,
                     self.feature_id,
                     self.endpoint,
                     self.session_id,
                     self._advertisement_id,
                     exc_info=True,
                 )
+            else:
+                retry_delay = None
 
-    async def _publish_locked(self, *, force_refresh: bool) -> AdvertisementHandle:
+    async def _publish_locked(self, *, force_refresh: bool) -> _AdvertisementHandle:
         if self._closed:
             raise KvConflict("Beacon advertisement is closed")
         if self._handle is None:
@@ -1107,9 +1345,8 @@ class BeaconAdvertisementLease:
             )
         except _BeaconAdvertisementMissing:
             logger.warning(
-                "%s Beacon advertisement missing; recreating feature=%s "
+                "Beacon advertisement missing; recreating feature=%s "
                 "endpoint=%s session=%s advertisement=%s key=%s",
-                self._log_label,
                 self.feature_id,
                 self.endpoint,
                 self.session_id,
@@ -1123,9 +1360,8 @@ class BeaconAdvertisementLease:
             return self._handle
         if refreshed.revision != old_revision:
             logger.debug(
-                "%s Beacon advertisement heartbeat feature=%s endpoint=%s "
+                "Beacon advertisement heartbeat feature=%s endpoint=%s "
                 "session=%s advertisement=%s refresh=%s revision=%s",
-                self._log_label,
                 refreshed.feature_id,
                 refreshed.endpoint,
                 refreshed.session_id,
@@ -1154,27 +1390,20 @@ class BeaconAdvertisementLease:
         elapsed = monotonic() - self._last_refresh_at
         return max(0.0, self._refresh_interval - elapsed)
 
-    async def _create_advertisement_from_current_state(self) -> AdvertisementHandle:
+    async def _create_advertisement_from_current_state(self) -> _AdvertisementHandle:
         return await self._beacon._create_advertisement(
-            BeaconAdvertisementSpec(
-                feature_id=self.feature_id,
-                endpoint=self.endpoint,
-                session_id=self.session_id,
-                advertiser=self.advertiser,
-                protocol=self._protocol,
-                operations=self._operations,
-                labels=self._labels,
-                hints=self._hints,
-                payload=self._payload,
-                refresh_interval=self._requested_refresh_interval,
-                log_label=self._log_label,
-            ),
+            self,
+            self.spec,
             advertisement_id=self._advertisement_id,
+            protocol=self._protocol,
+            operations=self._operations,
+            labels=self._labels,
+            hints=self._hints,
+            payload=self._payload,
         )
 
     async def _next_refresh_interval(self) -> float:
         return _beacon_refresh_interval(
-            requested=self._requested_refresh_interval,
             ttl_seconds=await self._beacon._ttl_seconds(),  # noqa: SLF001
         )
 
@@ -1218,23 +1447,29 @@ def _filter_candidates(
 def _record_from_spec(
     spec: BeaconAdvertisementSpec,
     *,
+    endpoint: BeaconEndpointSession,
     advertisement_id: str,
     ttl_seconds: int,
+    protocol: Mapping[str, str] | BeaconProtocol | None,
+    operations: Sequence[str],
+    labels: Mapping[str, str],
+    hints: Mapping[str, Any],
+    payload: Mapping[str, Any] | None,
 ) -> AdvertisementRecord:
     now = _now_utc()
     return AdvertisementRecord(
         advertisementId=advertisement_id,
         featureId=spec.feature_id,
-        advertiser=spec.advertiser,
-        endpoint=spec.endpoint,
-        sessionId=spec.session_id,
+        advertiser=endpoint.address,
+        endpoint=endpoint.address,
+        sessionId=endpoint.session_id,
         refreshSeq=1,
         ttlSeconds=ttl_seconds,
-        protocol=spec.protocol,
-        operations=tuple(spec.operations),
-        labels=spec.labels or {},
-        hints=spec.hints or {},
-        payload=spec.payload,
+        protocol=protocol,
+        operations=tuple(operations),
+        labels=labels,
+        hints=hints,
+        payload=payload,
         createdAt=now,
         updatedAt=now,
     )
@@ -1282,8 +1517,8 @@ def _advertisement_handle(
     key: str,
     record: AdvertisementRecord,
     revision: int,
-) -> AdvertisementHandle:
-    return AdvertisementHandle(
+) -> _AdvertisementHandle:
+    return _AdvertisementHandle(
         key=key,
         advertisement_id=record.advertisement_id,
         feature_id=record.feature_id,
@@ -1297,7 +1532,7 @@ def _advertisement_handle(
 
 def _advertisement_matches_handle(
     record: AdvertisementRecord,
-    handle: AdvertisementHandle,
+    handle: _AdvertisementHandle,
 ) -> bool:
     return (
         record.advertisement_id == handle.advertisement_id
@@ -1305,24 +1540,6 @@ def _advertisement_matches_handle(
         and record.advertiser == handle.advertiser
         and record.endpoint == handle.endpoint
         and record.session_id == handle.session_id
-    )
-
-
-def _advertisement_matches_spec_config(
-    record: AdvertisementRecord,
-    spec: BeaconAdvertisementSpec,
-) -> bool:
-    return (
-        record.feature_id == spec.feature_id
-        and record.advertiser == spec.advertiser
-        and record.endpoint == spec.endpoint
-        and record.session_id == spec.session_id
-        and record.protocol == spec.protocol
-        and record.operations == tuple(spec.operations)
-        and record.labels == freeze_json(spec.labels or {})
-        and record.hints == freeze_json(spec.hints or {})
-        and record.payload
-        == (freeze_json(spec.payload) if spec.payload is not None else None)
     )
 
 
@@ -1385,12 +1602,12 @@ __all__ = [
     "BEACON_ADVERTISEMENT_STORE_POLICY",
     "DEFAULT_BEACON_ADVERTISEMENT_STORE_NAME",
     "DEFAULT_BEACON_TTL_SECONDS",
-    "AdvertisementHandle",
     "AdvertisementRecord",
     "Beacon",
     "BeaconAdvertisementLease",
     "BeaconAdvertisementSpec",
     "BeaconDirectory",
+    "BeaconEndpointSession",
     "BeaconProtocol",
     "BeaconWatchChange",
     "BeaconWatchSnapshot",

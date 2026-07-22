@@ -8,7 +8,7 @@ controller-specific policy.
 That includes:
 
 - the `Component` runtime abstraction
-- named event lanes such as `actions` and `hardware_messages`
+- core message lanes such as `hardware_messages` and `services`
 - core Deckr message specifications and identity rules
 - shared runtime utilities such as component lifecycle support and lane/substrate
   helpers
@@ -98,6 +98,8 @@ Run the default validation suite:
 uv run ruff check .
 uv run lint-imports
 uv run pytest
+uv run pytest --cov-branch --cov-report=json:coverage.json
+uv run python scripts/check_lifecycle_branch_coverage.py coverage.json
 ```
 
 Focused protocol tests should import `MemoryJsonKvBucket`,
@@ -178,11 +180,12 @@ managed Beacon discovery, `Deckr.concord` for managed agreement state, and
 `Deckr.kv_bucket(...)` for explicit NATS KV buckets. Service consumers use the
 managed `Deckr.services(endpoint)` context and `DeckrServices.use_matching(...)`
 from `deckr.services`; that managed client owns service discovery, service-use
-negotiation, request authority, and protected view reads/watches. Consumers must
-not scan Beacon KV, duplicate descriptor parsing loops, classify Concord
-terminal statuses, or query Concord as a catalog. Direct Beacon/Concord
-primitives and direct `ServiceViewStore` construction are for core runtime,
-service infrastructure, hardware infrastructure, and conformance tests.
+candidate races and successor negotiation, request authority, and protected
+view reads/watches. Consumers must not scan Beacon KV, duplicate descriptor
+parsing loops, classify Concord terminal statuses, or query Concord as a
+catalog. Direct Beacon/Concord primitives and direct `ServiceViewStore`
+construction are for core runtime, service infrastructure, hardware
+infrastructure, and conformance tests.
 The optional
 `deckr[supervised-nats]` extra also installs the first-party
 `deckr-nats-server-bin` binary package so embedded hosts and the `deckr` launcher

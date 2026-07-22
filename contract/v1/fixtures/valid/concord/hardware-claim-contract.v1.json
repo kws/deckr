@@ -6,6 +6,10 @@
   "createdAt": "2026-04-29T10:00:00Z",
   "createdBy": "controller:controller-main",
   "generation": 1,
+  "participantSessions": {
+    "controller:controller-main": "controller-session",
+    "hardware_manager:mirabox-main": "manager-session"
+  },
   "participants": [
     "controller:controller-main",
     "hardware_manager:mirabox-main"

@@ -121,9 +121,9 @@ An advertisement record must have:
 Create an advertisement with a unique advertisement id using `create`. Refresh
 it by exact-read, owner-check, incrementing `refreshSeq`, and revision-guarded
 `update`. Withdraw it by exact-read, owner-check, and revision-guarded delete.
-Runtimes own advertisement leases and treat `refreshInterval` as a requested
-cadence. Beacon derives `ttlSeconds` from the Beacon KV bucket TTL instead of
-per-advertisement configuration; the default Beacon bucket TTL is 300 seconds.
+Runtimes own advertisement contexts and all heartbeat scheduling. Beacon derives
+`ttlSeconds` and cadence from the Beacon KV bucket TTL; neither is caller
+configuration. The default Beacon bucket TTL is 300 seconds.
 Managed heartbeat refresh writes are scheduled with jitter
 between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`, so the default cadence is
 150-225 seconds. Real payload, label, hint, protocol, or operation changes
@@ -191,12 +191,21 @@ A contract record must have:
 - a non-empty, unique, lexicographically sorted `participants` list
 - a unique, lexicographically sorted `attachedParticipants` list whose entries
   are a subset of `participants`
+- optional `participantSessions`, whose keys are named participants and whose
+  values are non-empty endpoint-session ids
 - `state` as `open` or `cancelled`
 - optional `profile`, `terms`, `termsHash`, diagnostics, and `supersedes`
 
 If `terms` is present, `termsHash` must be present and must equal the canonical
 JSON hash of `terms`. If both `profile` and `terms.profile` are present, they
 must match. `supersedes` is diagnostic and does not affect validity.
+`participantSessions` is immutable addressing for this proposal, not a
+persistent service identity. The proposal owner derives its own entry from the
+supplied endpoint. Managed consumers include the selected peer session, and
+managed service and hardware proposals include every known participant session.
+A participant whose current session differs must reject and best-effort cancel
+the contract before creating a token. Later Beacon changes never rewrite or
+invalidate an accepted contract's frozen session fence.
 
 A participant token record must have:
 
@@ -256,11 +265,18 @@ failure or changed token ownership must not delete another participant's token.
 Once a participant has successfully attached a token for a contract generation,
 loss of that token means loss of authority for that generation. The participant
 must not silently recreate a token for the same contract generation. It should
-cancel when possible or negotiate a successor contract using a new generation or
-new contract id.
+cancel when possible and negotiate a successor with a fresh opaque contract id
+and generation 1. Contract ids are never reused; `supersedes` remains diagnostic.
 If local lease state is lost while a same-session token still exists in KV, the
 participant must treat the old contract as stale local authority: best-effort
 cancel it when possible and negotiate a successor rather than adopting the token.
+
+Before a local endpoint creates another proposal, its owner-bootstrap gate
+cancels every open contract created by that endpoint that is not registered as
+current in-process ownership. This includes pending, partial, attached,
+same-session, and previous-session records. Proposal commit, provider readiness,
+hardware-manager readiness, and Beacon publication remain blocked until exact
+cleanup is confirmed. Bootstrap never adopts an old token or contract.
 
 A missing token for a participant that is not yet in `attachedParticipants`
 means the contract is not yet fulfilled. A missing token for a participant that
@@ -333,7 +349,8 @@ bootstrap and private workers; context exit cancels and joins those workers,
 performs shielded best-effort remote cleanup within five seconds, publishes a
 closed state, and wakes subscribers. A proposal creates exactly one fresh opaque
 contract. It never loops to create a successor; the caller negotiates a new
-proposal when recovery requires one.
+proposal when recovery requires one. Higher-level managed contexts own that
+successor policy so ordinary clients do not implement proposal loops.
 
 `ConcordAgreementSpec` contains agreement intent only: profile, participants,
 terms, supersedes, optional static current-session assertions, and creator. The
@@ -558,14 +575,24 @@ such as Sonos zones, OpenHAB items, or package-owned view schemas.
 
 Ordinary service consumers use the managed `deckr.services.DeckrServices`
 client. That client owns service candidate discovery through Beacon, descriptor
-parsing, local predicate/selector resolution, service-use negotiation through
-Concord, request contract pointers, and fenced service-view access. A service
+parsing, local predicate filtering, service-use candidate races and successor
+negotiation through Concord, request authorization, and fenced service-view
+access. A service
 protocol feature watch is per feature id, not per service id; the service id and
 concrete view key prefixes come from each validated descriptor. Consumers must
 not raw-scan Beacon KV, scan all Beacon candidates and parse service descriptors
 ad hoc, classify Concord terminal statuses, or query Concord to discover
 available services. Discovery output is only a candidate for a new service-use
 negotiation.
+
+`DeckrServices.use_matching(...)` admits at most 64 unique matching
+endpoint/session candidates and races all admitted candidates, including later
+arrivals while negotiation remains pending. Each attempt has a fresh opaque
+contract id. The first valid agreement wins only after losing attempts have
+relinquished local authority. Winner loss publishes `reconnecting` and starts a
+fresh race; published commands are never replayed across contracts. Beacon
+withdrawal or replacement after acceptance has no lifecycle effect on the
+winner. `use(descriptor)` remains the exact-candidate operation.
 
 Service-use Concord contract ids are opaque runtime ids. Service-use contracts
 carry the service-use profile but no service-specific `terms`; `terms` and
@@ -590,6 +617,13 @@ payload. Delete and expire events for entries that were never visible to that
 watcher are not delivered. A service may withdraw its Beacon advertisement when
 it cannot accept new service-use contracts; already-held service-use contracts
 remain governed only by Concord validity and participant tokens.
+
+Service providers use `Deckr.service_provider(...)`; hardware managers use
+`Deckr.hardware_manager(...)`. These contexts own owner bootstrap, participant
+selection, private workers, authorization, advertisement-after-bootstrap
+ordering, and bounded cleanup. Application code supplies protocol intent,
+backend/device behavior, and domain policy—not token refresh, reconciliation,
+contract retry, task-group, or raw-pointer plumbing.
 
 ## Contract Artifacts And Conformance
 

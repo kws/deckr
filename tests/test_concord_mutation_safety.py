@@ -7,13 +7,13 @@ from typing import Any
 import pytest
 
 from deckr._concord._lease import ConcordParticipantLease
+from deckr._concord._models import ParticipantHandle
 from deckr.concord import (
     CONCORD_CONTRACT_SCHEMA_ID,
     CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
     ConcordConflict,
     ConcordConflictCode,
     ContractHandle,
-    ParticipantHandle,
     ParticipantTokenRecord,
     concord_contract_key,
     concord_participant_token_key,

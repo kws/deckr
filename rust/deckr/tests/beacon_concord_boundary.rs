@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use deckr::beacon::{find_candidates, BeaconAdvertiser, DEFAULT_BEACON_TTL_SECONDS};
 use deckr::concord::{
     ConcordCoordinator, ContractState, ContractValidityStatus, CreateContractSpec,
@@ -62,6 +64,7 @@ async fn withdrawing_beacon_advertisement_leaves_concord_contract_open() {
             profile: None,
             terms: None,
             created_by: Some(advertiser_endpoint.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await
@@ -107,6 +110,7 @@ async fn cancelling_concord_contract_leaves_beacon_advertisement_available() {
             profile: None,
             terms: None,
             created_by: Some(advertiser_endpoint.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await

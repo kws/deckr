@@ -102,6 +102,8 @@ pub struct ContractRecord {
     pub terms: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<EndpointAddress>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub participant_sessions: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -155,6 +157,15 @@ impl ContractRecord {
             return Err(Error::Invalid(
                 "attachedParticipants must be a subset of participants".to_string(),
             ));
+        }
+        for (participant, session_id) in &self.participant_sessions {
+            let parsed = EndpointAddress::parse(participant)?;
+            if parsed.as_str() != participant || !participants.contains(&parsed) {
+                return Err(Error::Invalid(
+                    "participantSessions keys must be named participants".to_string(),
+                ));
+            }
+            require_text(session_id, "Concord participant session id")?;
         }
         if let Some(profile) = &self.profile {
             require_text(profile, "Concord contract field")?;
@@ -316,6 +327,7 @@ pub struct CreateContractSpec {
     pub profile: Option<String>,
     pub terms: Option<Value>,
     pub created_by: Option<EndpointAddress>,
+    pub participant_sessions: BTreeMap<String, String>,
     pub supersedes: Option<ContractPointer>,
 }
 
@@ -328,6 +340,7 @@ impl CreateContractSpec {
             profile: None,
             terms: None,
             created_by: None,
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         }
     }
@@ -673,6 +686,7 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
             terms_hash,
             terms: spec.terms,
             created_by: spec.created_by,
+            participant_sessions: spec.participant_sessions,
             created_at: Some(now()),
             cancelled_by: None,
             cancelled_at: None,
@@ -786,6 +800,13 @@ impl<C: StateStore, T: StateStore> ConcordCoordinator<C, T> {
             return Err(Error::Invalid(
                 "participant is not named by the Concord contract".to_string(),
             ));
+        }
+        if let Some(expected_session) = record.participant_sessions.get(participant.as_str()) {
+            if expected_session != session_id {
+                return Err(Error::StateConflict(
+                    "participant session does not match the contract session fence".to_string(),
+                ));
+            }
         }
         let token_key =
             make_concord_participant_token_key(&record.contract_id, record.generation, participant);
@@ -2240,6 +2261,11 @@ fn token_validity_status(
     }
     if contract.terms_hash.is_some() && token.terms_hash != contract.terms_hash {
         return Some(ContractValidityStatus::TermsHashMismatch);
+    }
+    if let Some(frozen_session) = contract.participant_sessions.get(participant.as_str()) {
+        if &token.session_id != frozen_session {
+            return Some(ContractValidityStatus::SessionMismatch);
+        }
     }
     if let Some(current_sessions) = current_sessions {
         if let Some(current_session) = current_sessions.get(participant.as_str()) {

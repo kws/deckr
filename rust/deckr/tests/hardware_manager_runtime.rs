@@ -327,6 +327,7 @@ async fn create_claim(
             profile: Some(HARDWARE_CLAIM_PROFILE_ID.to_string()),
             terms: Some(terms.to_value().unwrap()),
             created_by: Some(controller.clone()),
+            participant_sessions: BTreeMap::new(),
             supersedes: None,
         })
         .await

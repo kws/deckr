@@ -46,13 +46,16 @@ from deckr._concord._models import (
     ContractValidity,
     ContractValidityReason,
     ContractValidityStatus,
-    ParticipantHandle,
     ParticipantTokenRecord,
     TokenObservation,
 )
 from deckr._concord._models import (
+    ParticipantHandle as _ParticipantHandle,
+)
+from deckr._concord._models import (
     require_text as _require_text,
 )
+from deckr._concord._owner import ConcordOwnerBootstrap
 from deckr._concord._participant import (
     ConcordManagedContract,
     ConcordParticipant,
@@ -75,7 +78,6 @@ from deckr.substrates.nats_kv import (
     NatsKvMaterializedBucket,
 )
 
-CONCORD_REFRESH_UNAVAILABLE_CANCEL_REASON = "participant_token_refresh_unavailable"
 logger = logging.getLogger(__name__)
 
 
@@ -88,16 +90,6 @@ def _contract_lifecycle_log_level(profile: str | None) -> int:
 def _contract_terminal_log_level(profile: str | None) -> int:
     del profile
     return logging.INFO
-
-
-def _contract_pending_log_level(profile: str | None) -> int:
-    if _is_chattery_contract_profile(profile):
-        return logging.DEBUG
-    return logging.INFO
-
-
-def _token_refresh_log_level() -> int:
-    return logging.DEBUG
 
 
 def _contract_invalid_log_level(
@@ -152,6 +144,10 @@ class Concord:
             self._coordinator.contract_source,
             self._coordinator.token_source,
         )
+        self._owner_bootstrap = ConcordOwnerBootstrap(
+            self._coordinator,
+            self._view,
+        )
         self._started = False
         self._closed = False
         self._task_group: anyio.abc.TaskGroup | None = None
@@ -204,6 +200,7 @@ class Concord:
             endpoint,
             spec,
             self._task_group,
+            self._owner_bootstrap,
         )
 
     def participant(
@@ -221,6 +218,13 @@ class Concord:
             self._task_group,
         )
 
+    async def _bootstrap_owner(self, endpoint: ConcordEndpointSession) -> None:
+        """Gate managed owner readiness on stale local-contract cleanup."""
+
+        await self._owner_bootstrap.bootstrap(
+            endpoint.address,
+            endpoint.session_id,
+        )
 
     def _validate_from_cache_locked(
         self,
@@ -240,6 +244,7 @@ class Concord:
         terms: Mapping[str, Any] | DeckrModel | None = None,
         created_by: str | EndpointAddress | None = None,
         supersedes: ContractPointer | Mapping[str, Any] | None = None,
+        participant_sessions: Mapping[str | EndpointAddress, str] | None = None,
         log_label: str = "Concord",
     ) -> ContractHandle:
         contract = await self._coordinator.create_contract(
@@ -250,6 +255,7 @@ class Concord:
             terms=terms,
             created_by=created_by,
             supersedes=supersedes,
+            participant_sessions=participant_sessions,
         )
         if self._started:
             await self._view.wait_contract_revision(contract.key, contract.revision)
@@ -380,7 +386,7 @@ class Concord:
         *,
         token_id: str | None = None,
         log_label: str = "Concord",
-    ) -> ParticipantHandle:
+    ) -> _ParticipantHandle:
         token = await self._coordinator.attach(
             contract,
             participant,
@@ -420,10 +426,10 @@ class Concord:
 
     async def _refresh_token(
         self,
-        handle: ParticipantHandle,
+        handle: _ParticipantHandle,
         *,
         log_label: str = "Concord",
-    ) -> ParticipantHandle:
+    ) -> _ParticipantHandle:
         refreshed = await self._coordinator.refresh(handle)
         if self._started:
             await self._view.wait_token_revision(refreshed.key, refreshed.revision)
@@ -444,7 +450,7 @@ class Concord:
 
     async def _withdraw_token(
         self,
-        handle: ParticipantHandle,
+        handle: _ParticipantHandle,
         *,
         log_label: str = "Concord",
     ) -> bool:
@@ -471,8 +477,8 @@ class Concord:
 
     async def _validate_participant_token(
         self,
-        handle: ParticipantHandle,
-    ) -> ParticipantHandle:
+        handle: _ParticipantHandle,
+    ) -> _ParticipantHandle:
         return await self._coordinator.validate_participant_handle(handle)
 
     async def _cancel(
@@ -638,7 +644,6 @@ __all__ = [
     "ConcordUnavailableCode",
     "ConcordWatchChange",
     "ConcordWatchSnapshot",
-    "ParticipantHandle",
     "ParticipantTokenRecord",
     "TokenObservation",
     "canonical_json_bytes",

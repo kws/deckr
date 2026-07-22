@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 
 import anyio
@@ -77,18 +78,16 @@ class _RecoveringBeaconBucket(MemoryJsonKvBucket):
     async def watch(
         self,
         prefix: str = "",
-    ) -> AsyncIterator[
-        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
-    ]:
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]]:
         if self._pause_next_watch:
             self._pause_next_watch = False
             self._watch_paused.set()
             await self._resume_watch.wait()
         close_event = anyio.Event()
         self._close_events.append(close_event)
-        send, receive = anyio.create_memory_object_stream[
-            KvChange | KvWatchBarrier
-        ](max_buffer_size=self._buffer_size)
+        send, receive = anyio.create_memory_object_stream[KvChange | KvWatchBarrier](
+            max_buffer_size=self._buffer_size
+        )
         async with self._lock:
             self._watchers[send] = prefix
             snapshot: tuple[KvEntry, ...] = tuple(
@@ -134,15 +133,18 @@ async def _publish(
     advertisement_id: str,
     payload: Mapping[str, Any],
 ):
-    return await beacon.advertise(
+    lease = beacon.advertise(
+        SimpleNamespace(
+            address=f"service:{advertisement_id}",
+            session_id=f"session-{advertisement_id}",
+        ),
         BeaconAdvertisementSpec(
             feature_id=FEATURE_ID,
-            endpoint=f"service:{advertisement_id}",
-            session_id=f"session-{advertisement_id}",
-            advertisement_id=advertisement_id,
             payload=payload,
-        )
+        ),
     )
+    await lease.__aenter__()
+    return lease
 
 
 async def _eventually_records(
@@ -160,7 +162,9 @@ async def _eventually_records(
 
 
 @pytest.mark.asyncio
-async def test_beacon_directory_replays_cached_candidates_without_exact_scan(caplog) -> None:
+async def test_beacon_directory_replays_cached_candidates_without_exact_scan(
+    caplog,
+) -> None:
     raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
     beacon = Beacon(raw)
     counting = _CountingBeacon(beacon)
@@ -181,7 +185,7 @@ async def test_beacon_directory_replays_cached_candidates_without_exact_scan(cap
         directory.start(tg)
         await directory.wait_ready()
 
-        assert directory.records() == ("one", "two", "three")
+        assert directory.records() == ("two", "three", "one")
         assert counting.candidate_calls == 0
         assert counting.exact_candidate_calls == 0
         assert "Beacon directory parser rejected" in caplog.text
@@ -211,17 +215,21 @@ async def test_beacon_directory_tracks_update_withdraw_expire_and_invalid() -> N
         await first.update(payload={"value": "back"})
         await _eventually_records(directory, ("back",))
 
-        await raw.put(first.handle.key, {"invalid": "advertisement"})
+        first_handle = first._handle  # noqa: SLF001
+        assert first_handle is not None
+        await raw.put(first_handle.key, {"invalid": "advertisement"})
         await _eventually_records(directory, ())
 
         second = await _publish(beacon, "ad-2", {"value": "expire-me"})
         await _eventually_records(directory, ("expire-me",))
-        await raw.expire(second.handle.key)
+        second_handle = second._handle  # noqa: SLF001
+        assert second_handle is not None
+        await raw.expire(second_handle.key)
         await _eventually_records(directory, ())
 
         third = await _publish(beacon, "ad-3", {"value": "withdraw-me"})
         await _eventually_records(directory, ("withdraw-me",))
-        await third.withdraw()
+        await third.aclose()
         await _eventually_records(directory, ())
         tg.cancel_scope.cancel()
 
@@ -241,7 +249,9 @@ async def test_beacon_directory_wait_for_returns_later_match_and_times_out() -> 
             await _publish(beacon, "ad-1", {"value": "later"})
 
         tg.start_soon(publish_later)
-        assert await directory.wait_for(lambda item: item == "later", timeout=1) == "later"
+        assert (
+            await directory.wait_for(lambda item: item == "later", timeout=1) == "later"
+        )
         with pytest.raises(TimeoutError):
             await directory.wait_for(lambda item: item == "missing", timeout=0.01)
         tg.cancel_scope.cancel()

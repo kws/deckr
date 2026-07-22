@@ -179,36 +179,38 @@ async def test_beacon_lifecycle_invalid_replacement_and_selector_converge() -> N
             initial = await _receive(snapshots)
             assert initial.candidates == ()
 
-            lease = await beacon.advertise(
+            async with beacon.advertise(
+                _Endpoint(endpoint, "manager-session"),
                 BeaconAdvertisementSpec(
                     feature_id=HARDWARE_FEATURE_ID,
-                    endpoint=endpoint,
-                    session_id="manager-session",
-                    advertisement_id="advertisement-1",
                     labels={"room": "lab"},
                     payload={"ok": True},
+                ),
+            ) as lease:
+                await lease.update(labels={"room": "office"})
+                entered = await _receive(snapshots)
+                handle = lease._handle  # noqa: SLF001
+                assert handle is not None
+                assert [item.key for item in entered.candidates] == [handle.key]
+
+                candidate = entered.candidates[0]
+                await raw.put(
+                    handle.key,
+                    {
+                        "schema": "dev.deckr.beacon.advertisement.v1",
+                        "advertisementId": handle.advertisement_id,
+                    },
                 )
-            )
-            await lease.update(labels={"room": "office"})
-            entered = await _receive(snapshots)
-            assert [item.key for item in entered.candidates] == [lease.handle.key]
+                invalid = await _receive(snapshots)
+                assert invalid.candidates == ()
+                assert (
+                    await beacon.validate(candidate) == CandidateStatus.SCHEMA_INVALID
+                )
 
-            candidate = entered.candidates[0]
-            await raw.put(
-                lease.handle.key,
-                {
-                    "schema": "dev.deckr.beacon.advertisement.v1",
-                    "advertisementId": "advertisement-1",
-                },
-            )
-            invalid = await _receive(snapshots)
-            assert invalid.candidates == ()
-            assert await beacon.validate(candidate) == CandidateStatus.SCHEMA_INVALID
-
-            await raw.expire(lease.handle.key)
-            with anyio.fail_after(1):
-                while await beacon.validate(candidate) != CandidateStatus.MISSING:
-                    await anyio.sleep(0)
+                await raw.expire(handle.key)
+                with anyio.fail_after(1):
+                    while await beacon.validate(candidate) != CandidateStatus.MISSING:
+                        await anyio.sleep(0)
         task_group.cancel_scope.cancel()
 
 
@@ -220,32 +222,31 @@ async def test_beacon_reconnect_synthesizes_missing_key_removal() -> None:
     async with anyio.create_task_group() as task_group:
         beacon.start(task_group)
         await beacon.wait_current()
-        lease = await beacon.advertise(
+        async with beacon.advertise(
+            _Endpoint(
+                hardware_manager_address("manager-main"),
+                "manager-session",
+            ),
             BeaconAdvertisementSpec(
                 feature_id=HARDWARE_FEATURE_ID,
-                endpoint=hardware_manager_address("manager-main"),
-                session_id="manager-session",
-                advertisement_id="advertisement-1",
-            )
-        )
-        candidate = beacon.get(
-            feature_id=HARDWARE_FEATURE_ID,
-            advertisement_id="advertisement-1",
-        )
-        assert candidate is not None
+            ),
+        ) as lease:
+            candidate = beacon.candidates(HARDWARE_FEATURE_ID)[0]
+            handle = lease._handle  # noqa: SLF001
+            assert handle is not None
 
-        raw.pause_next_watch()
-        raw.close_current_watch()
-        await raw.wait_next_watch_paused()
-        await raw.remove_without_publish(lease.handle.key)
-        assert await beacon.validate(candidate) == CandidateStatus.UNAVAILABLE
+            raw.pause_next_watch()
+            raw.close_current_watch()
+            await raw.wait_next_watch_paused()
+            await raw.remove_without_publish(handle.key)
+            assert await beacon.validate(candidate) == CandidateStatus.UNAVAILABLE
 
-        raw.resume_next_watch()
-        await beacon.wait_current()
-        with anyio.fail_after(1):
-            while await beacon.validate(candidate) != CandidateStatus.MISSING:
-                await anyio.sleep(0)
-        assert beacon.candidates(HARDWARE_FEATURE_ID) == ()
+            raw.resume_next_watch()
+            await beacon.wait_current()
+            with anyio.fail_after(1):
+                while await beacon.validate(candidate) != CandidateStatus.MISSING:
+                    await anyio.sleep(0)
+            assert beacon.candidates(HARDWARE_FEATURE_ID) == ()
         task_group.cancel_scope.cancel()
 
 
@@ -346,7 +347,9 @@ async def test_concord_token_before_contract_bootstrap_is_atomic() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concord_filtered_snapshot_validates_only_selected_contract(monkeypatch) -> None:
+async def test_concord_filtered_snapshot_validates_only_selected_contract(
+    monkeypatch,
+) -> None:
     concord, _contracts, _tokens = _concord()
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
@@ -443,7 +446,7 @@ async def test_concord_watch_oversized_snapshot_and_overflow_converge() -> None:
 
 
 @pytest.mark.asyncio
-async def test_participant_watch_converges_before_repair_interval() -> None:
+async def test_participant_bootstrap_cancels_stale_then_watches_new_contracts() -> None:
     concord, contracts, tokens = _concord()
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
@@ -456,15 +459,23 @@ async def test_participant_watch_converges_before_repair_interval() -> None:
             contract_id="contract-1",
             profile=TEST_PROFILE,
         )
-        async with concord.participant(
-            _Endpoint(manager, "manager-session"),
-            ConcordParticipantPolicy(profile=TEST_PROFILE, select=_accept_all),
-        ) as participant, participant.watch_state() as snapshots:
+        async with (
+            concord.participant(
+                _Endpoint(manager, "manager-session"),
+                ConcordParticipantPolicy(profile=TEST_PROFILE, select=_accept_all),
+            ) as participant,
+            participant.watch_state() as snapshots,
+        ):
             initial = await _receive(snapshots)
             assert isinstance(initial, ConcordParticipantState)
-            assert len(initial.contracts) == 1
-            assert initial.contracts[0].validity.status == (
-                ContractValidityStatus.NOT_YET_FULFILLED
+            assert initial.contracts == ()
+            stale = await concord.contract_record(contract)
+            assert stale is not None and stale.state == ContractState.CANCELLED
+
+            contract = await concord._create_contract(
+                (controller, manager),
+                contract_id="contract-2",
+                profile=TEST_PROFILE,
             )
 
             await concord._attach(
@@ -485,7 +496,9 @@ async def test_participant_watch_converges_before_repair_interval() -> None:
 
 
 @pytest.mark.asyncio
-async def test_participant_discovers_post_subscription_contract_and_token_loss_without_repair() -> None:
+async def test_participant_discovers_post_subscription_contract_and_token_loss_without_repair() -> (
+    None
+):
     contracts = _RecoveringBucket(bucket="contracts")
     tokens = _RecoveringBucket(bucket="tokens", ttl_seconds=120)
     concord, _contracts, _tokens = _concord(contracts, tokens)
@@ -495,10 +508,13 @@ async def test_participant_discovers_post_subscription_contract_and_token_loss_w
     async with anyio.create_task_group() as task_group:
         concord.start(task_group)
         await concord.wait_current()
-        async with concord.participant(
-            _Endpoint(manager, "manager-session"),
-            ConcordParticipantPolicy(profile=TEST_PROFILE, select=_accept_all),
-        ) as participant, participant.watch_state() as snapshots:
+        async with (
+            concord.participant(
+                _Endpoint(manager, "manager-session"),
+                ConcordParticipantPolicy(profile=TEST_PROFILE, select=_accept_all),
+            ) as participant,
+            participant.watch_state() as snapshots,
+        ):
             initial = await _receive(snapshots)
             assert isinstance(initial, ConcordParticipantState)
             assert initial.contracts == ()
@@ -541,7 +557,9 @@ async def test_participant_discovers_post_subscription_contract_and_token_loss_w
 
 
 @pytest.mark.asyncio
-async def test_participant_filtered_view_ignores_unrelated_authority_without_repair() -> None:
+async def test_participant_filtered_view_ignores_unrelated_authority_without_repair() -> (
+    None
+):
     concord, _contracts, _tokens = _concord()
     controller = controller_address("controller-main")
     manager = hardware_manager_address("manager-main")
@@ -556,10 +574,13 @@ async def test_participant_filtered_view_ignores_unrelated_authority_without_rep
     async with anyio.create_task_group() as task_group:
         concord.start(task_group)
         await concord.wait_current()
-        async with concord.participant(
-            _Endpoint(manager, "manager-session"),
-            ConcordParticipantPolicy(profile=TEST_PROFILE, select=select_contracts),
-        ) as participant, participant.watch_state() as snapshots:
+        async with (
+            concord.participant(
+                _Endpoint(manager, "manager-session"),
+                ConcordParticipantPolicy(profile=TEST_PROFILE, select=select_contracts),
+            ) as participant,
+            participant.watch_state() as snapshots,
+        ):
             assert (await _receive(snapshots)).contracts == ()
 
             unrelated = await concord._create_contract(
@@ -657,18 +678,16 @@ class _RecoveringBucket(MemoryJsonKvBucket):
     async def watch(
         self,
         prefix: str = "",
-    ) -> AsyncIterator[
-        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
-    ]:
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]]:
         if self._pause_next_watch:
             self._pause_next_watch = False
             self._watch_paused.set()
             await self._resume_watch.wait()
         close_event = anyio.Event()
         self._close_events.append(close_event)
-        send, receive = anyio.create_memory_object_stream[
-            KvChange | KvWatchBarrier
-        ](max_buffer_size=self._buffer_size)
+        send, receive = anyio.create_memory_object_stream[KvChange | KvWatchBarrier](
+            max_buffer_size=self._buffer_size
+        )
         async with self._lock:
             self._watchers[send] = prefix
             snapshot: tuple[KvEntry, ...] = tuple(
@@ -755,7 +774,9 @@ def test_hardware_profile_payloads_and_claim_conflicts() -> None:
         ttlSeconds=300,
         payload=hardware_payload.to_dict(),
     )
-    assert hardware_payload_from_advertisement(hardware_advertisement) == hardware_payload
+    assert (
+        hardware_payload_from_advertisement(hardware_advertisement) == hardware_payload
+    )
 
     claim_terms = _hardware_claim_terms()
     conflicting = _hardware_claim_terms(claim_id="claim-2")

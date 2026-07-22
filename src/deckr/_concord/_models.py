@@ -5,9 +5,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, field_serializer, field_validator, model_validator
+from pydantic import (
+    Field,
+    StringConstraints,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from deckr._concord._keys import (
     canonical_json_hash,
@@ -15,7 +21,7 @@ from deckr._concord._keys import (
     concord_participant_token_key,
 )
 from deckr.contracts.authority import ContractPointer
-from deckr.contracts.messages import EndpointAddress
+from deckr.contracts.messages import EndpointAddress, parse_endpoint_address
 from deckr.contracts.models import DeckrModel, JsonObject, freeze_json, thaw_json
 
 CONCORD_CONTRACT_SCHEMA_ID = "dev.deckr.concord.contract.v1"
@@ -31,6 +37,7 @@ class ConcordConflictCode(StrEnum):
     CONTRACT_IDENTITY_MISMATCH = "contract_identity_mismatch"
     PARTICIPANT_NOT_NAMED = "participant_not_named"
     PARTICIPANT_ALREADY_ATTACHED = "participant_already_attached"
+    SESSION_MISMATCH = "session_mismatch"
     TOKEN_ALREADY_EXISTS = "token_already_exists"
     TOKEN_MISSING = "token_missing"
     TOKEN_INVALID = "token_invalid"
@@ -184,6 +191,13 @@ class ContractRecord(DeckrModel):
     terms_hash: str | None = Field(default=None, alias="termsHash")
     terms: JsonObject | None = None
     created_by: EndpointAddress | None = Field(default=None, alias="createdBy")
+    participant_sessions: Mapping[
+        str,
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)],
+    ] = Field(
+        default_factory=dict,
+        alias="participantSessions",
+    )
     created_at: datetime | None = Field(default=None, alias="createdAt")
     cancelled_by: EndpointAddress | Literal["concord:maintenance"] | None = Field(
         default=None,
@@ -255,6 +269,33 @@ class ContractRecord(DeckrModel):
     def _serialize_terms(self, value: Mapping[str, Any] | None) -> dict[str, Any] | None:
         return thaw_json(value) if value is not None else None
 
+    @field_validator("participant_sessions", mode="before")
+    @classmethod
+    def _thaw_participant_sessions(cls, value: Any) -> Any:
+        return thaw_json(value)
+
+    @field_validator("participant_sessions", mode="after")
+    @classmethod
+    def _freeze_participant_sessions(
+        cls,
+        value: Mapping[str, str],
+    ) -> Mapping[str, str]:
+        normalized = {
+            str(parse_endpoint_address(participant)): require_text(
+                session_id,
+                field_name="Concord participant session id",
+            )
+            for participant, session_id in value.items()
+        }
+        return freeze_json(dict(sorted(normalized.items())))
+
+    @field_serializer("participant_sessions")
+    def _serialize_participant_sessions(
+        self,
+        value: Mapping[str, str],
+    ) -> dict[str, str]:
+        return dict(value)
+
     @field_serializer("created_at", "cancelled_at")
     def _serialize_datetime(self, value: datetime | None) -> str | None:
         if value is None:
@@ -281,6 +322,8 @@ class ContractRecord(DeckrModel):
         attached = {str(item) for item in self.attached_participants}
         if not attached <= participants:
             raise ValueError("attachedParticipants must be a subset of participants")
+        if not set(self.participant_sessions) <= participants:
+            raise ValueError("participantSessions keys must be named participants")
         return self
 
     def to_dict(self) -> dict[str, Any]:

@@ -77,8 +77,10 @@ class ConcordParticipantLease:
         self.participant = parse_endpoint_address(participant)
         self.session_id = session_id
         self._token_id = str(uuid.uuid4())
+        self._token_create_started = False
         self._owned_token: ParticipantHandle | None = None
         self._authority_token: ParticipantHandle | None = None
+        self._authority_lost = False
         self._refresh_delay: float | None = None
         self._last_refresh_at: float | None = None
         self._on_change = on_change
@@ -90,6 +92,9 @@ class ConcordParticipantLease:
             local_authority=False,
         )
         self._closed = False
+        self._close_started = False
+        self._close_lock = anyio.Lock()
+        self._close_done = anyio.Event()
 
     @property
     def state(self) -> ConcordParticipantLeaseState:
@@ -107,9 +112,15 @@ class ConcordParticipantLease:
 
         return self._owned_token
 
+    def relinquish_local_authority(self) -> None:
+        """Fail closed immediately while retaining exact cleanup ownership."""
+
+        self._authority_lost = True
+        self._authority_token = None
+
     async def attach(self) -> ParticipantHandle:
         async with self._operation_lock:
-            if self._closed:
+            if self._closed or self._authority_lost:
                 raise ConcordConflict(
                     ConcordConflictCode.LEASE_CLOSED,
                     "Concord participant lease is closed",
@@ -132,6 +143,7 @@ class ConcordParticipantLease:
             async with self._view.subscribe(
                 contract_id=self.contract.contract_id,
             ) as subscription:
+                self._token_create_started = True
                 token = await self._store.prepare_attach(
                     self.contract,
                     self.participant,
@@ -139,8 +151,10 @@ class ConcordParticipantLease:
                     token_id=self._token_id,
                 )
                 self._owned_token = token
+                await self._abort_attach_if_inactive()
                 last_conflict: ConcordConflict | None = None
                 for attempt in range(MAX_ATTACHED_PARTICIPANT_CAS_ATTEMPTS):
+                    await self._abort_attach_if_inactive()
                     observed = self._view.get_contract(self.contract.pointer)
                     observed_revision = (
                         observed.revision
@@ -176,6 +190,7 @@ class ConcordParticipantLease:
                         revision,
                     )
                     await self._view.wait_token_revision(token.key, token.revision)
+                    await self._abort_attach_if_inactive()
                     self._authority_token = token
                     self._refresh_delay = concord_token_refresh_delay(
                         token.ttl_seconds
@@ -192,7 +207,7 @@ class ConcordParticipantLease:
                 raise ConcordConflict(
                     ConcordConflictCode.REVISION_CHANGED,
                     "Concord participant attachment exhausted the eight-attempt "
-                    "contract CAS budget; its token was withdrawn",
+                    "contract CAS budget; exact token cleanup was attempted",
                     key=self.contract.key,
                     expected_pointer=self.contract.pointer,
                 ) from last_conflict
@@ -201,7 +216,11 @@ class ConcordParticipantLease:
         """Refresh only the exact already-held token."""
 
         async with self._operation_lock:
-            if self._closed or self._authority_token is None:
+            if (
+                self._closed
+                or self._authority_lost
+                or self._authority_token is None
+            ):
                 raise ConcordConflict(
                     ConcordConflictCode.LEASE_CLOSED,
                     "Concord participant lease has no live local authority",
@@ -225,6 +244,18 @@ class ConcordParticipantLease:
                     reason=str(exc),
                 )
                 raise
+            if self._closed or self._authority_lost:
+                self._owned_token = refreshed
+                self._authority_token = None
+                try:
+                    await self._withdraw_retained_unlocked()
+                except (ConcordConflict, ConcordUnavailable):
+                    pass
+                raise ConcordConflict(
+                    ConcordConflictCode.LEASE_CLOSED,
+                    "Concord participant lease lost authority during refresh",
+                    key=self.contract.key,
+                )
             self._owned_token = refreshed
             self._authority_token = refreshed
             self._refresh_delay = concord_token_refresh_delay(refreshed.ttl_seconds)
@@ -234,15 +265,18 @@ class ConcordParticipantLease:
     async def fail_closed_unavailable(self, reason: str) -> None:
         """Stop using retained authority after its transport view goes stale."""
 
-        async with self._operation_lock:
-            if self._closed:
-                return
-            self._authority_token = None
-            await self._publish(
-                ConcordParticipantLeasePhase.UNAVAILABLE,
-                local_authority=False,
-                reason=reason,
-            )
+        if self._closed:
+            return
+        # Never wait behind an exact refresh. Transport staleness revokes local
+        # authority immediately; the in-flight operation can only retain a
+        # cleanup handle when it eventually returns.
+        self._authority_lost = True
+        self._authority_token = None
+        await self._publish(
+            ConcordParticipantLeasePhase.UNAVAILABLE,
+            local_authority=False,
+            reason=reason,
+        )
 
     async def heartbeat_loop(self) -> None:
         """Heartbeat an already-held token until authority is lost or closed."""
@@ -269,59 +303,113 @@ class ConcordParticipantLease:
         return max(0.0, delay - (monotonic() - self._last_refresh_at))
 
     async def aclose(self, *, withdraw: bool = True) -> None:
-        async with self._operation_lock:
-            if self._closed:
+        with anyio.CancelScope(shield=True):
+            async with self._close_lock:
+                if self._close_started:
+                    first = False
+                else:
+                    first = True
+                    self._close_started = True
+                    self._closed = True
+            if not first:
+                await self._close_done.wait()
                 return
-            self._closed = True
-            await self._publish(
-                ConcordParticipantLeasePhase.CLOSING,
-                local_authority=False,
-            )
-            self._authority_token = None
-            token = self._owned_token
-            if withdraw and token is not None:
-                with anyio.move_on_after(
-                    CONCORD_LIFECYCLE_CLEANUP_SECONDS,
-                    shield=True,
-                ):
-                    try:
-                        await self._store.withdraw(token)
-                    except (ConcordConflict, ConcordUnavailable):
-                        logger.debug(
-                            "Concord participant token cleanup failed "
-                            "contract=%s generation=%s participant=%s session=%s",
-                            token.contract_id,
-                            token.generation,
-                            token.participant,
-                            token.session_id,
-                            exc_info=True,
-                        )
+            try:
+                await self._publish(
+                    ConcordParticipantLeasePhase.CLOSING,
+                    local_authority=False,
+                )
+                self._authority_token = None
+                with anyio.move_on_after(CONCORD_LIFECYCLE_CLEANUP_SECONDS):
+                    async with self._operation_lock:
+                        if withdraw:
+                            try:
+                                await self._withdraw_retained_unlocked()
+                            except (ConcordConflict, ConcordUnavailable):
+                                logger.debug(
+                                    "Concord participant token cleanup failed "
+                                    "contract=%s generation=%s participant=%s session=%s",
+                                    self.contract.contract_id,
+                                    self.contract.generation,
+                                    self.participant,
+                                    self.session_id,
+                                    exc_info=True,
+                                )
+                        else:
+                            self._owned_token = None
+                            self._token_create_started = False
+                        self._owned_token = None
+                        self._token_create_started = False
+                        self._last_refresh_at = None
+                await self._publish(
+                    ConcordParticipantLeasePhase.CLOSED,
+                    local_authority=False,
+                )
+            finally:
+                self._close_done.set()
+
+    async def withdraw_retained(self) -> bool:
+        """Retry exact cleanup without permitting attachment or adoption."""
+
+        async with self._operation_lock:
+            return await self._withdraw_retained_unlocked()
+
+    async def _withdraw_retained_unlocked(self) -> bool:
+        token = self._owned_token
+        if token is not None:
+            await self._store.withdraw(token)
             self._owned_token = None
-            self._last_refresh_at = None
-            await self._publish(
-                ConcordParticipantLeasePhase.CLOSED,
-                local_authority=False,
+            self._token_create_started = False
+            return True
+        if self._token_create_started:
+            await self._store.withdraw_identity(
+                self.contract,
+                self.participant,
+                self.session_id,
+                self._token_id,
             )
+            self._token_create_started = False
+            return True
+        return False
 
     async def _terminal_after_attach_failure(self, error: BaseException) -> None:
         token = self._owned_token
+        assert token is not None
         self._authority_token = None
-        if token is not None:
+        try:
+            await self._store.withdraw(token)
+        except ConcordUnavailable as exc:
             try:
-                await self._store.withdraw(token)
+                await self._store.cancel(
+                    self.contract,
+                    self.participant,
+                    reason="concord_partial_attach_cleanup_unavailable",
+                )
+            except (ConcordConflict, ConcordUnavailable):
+                logger.debug(
+                    "Could not cancel Concord contract after unavailable "
+                    "partial-attach cleanup",
+                    exc_info=True,
+                )
+            await self._publish(
+                ConcordParticipantLeasePhase.UNAVAILABLE,
+                local_authority=False,
+                reason=str(exc),
+            )
+            raise
+        except ConcordConflict:
+            try:
+                await self._store.cancel(
+                    self.contract,
+                    self.participant,
+                    reason="concord_partial_attach_cleanup_failed",
+                )
             except ConcordUnavailable as exc:
-                try:
-                    await self._store.cancel(
-                        self.contract,
-                        self.participant,
-                        reason="concord_partial_attach_cleanup_unavailable",
-                    )
-                except (ConcordConflict, ConcordUnavailable):
-                    logger.debug(
-                        "Could not cancel Concord contract after unavailable "
-                        "partial-attach cleanup",
-                        exc_info=True,
-                    )
+                logger.debug(
+                    "Could not cancel unavailable Concord contract after "
+                    "partial attach",
+                    exc_info=True,
+                )
                 await self._publish(
                     ConcordParticipantLeasePhase.UNAVAILABLE,
                     local_authority=False,
@@ -329,37 +417,35 @@ class ConcordParticipantLease:
                 )
                 raise
             except ConcordConflict:
-                try:
-                    await self._store.cancel(
-                        self.contract,
-                        self.participant,
-                        reason="concord_partial_attach_cleanup_failed",
-                    )
-                except ConcordUnavailable as exc:
-                    logger.debug(
-                        "Could not cancel unavailable Concord contract after "
-                        "partial attach",
-                        exc_info=True,
-                    )
-                    await self._publish(
-                        ConcordParticipantLeasePhase.UNAVAILABLE,
-                        local_authority=False,
-                        reason=str(exc),
-                    )
-                    raise
-                except ConcordConflict:
-                    logger.debug(
-                        "Could not cancel Concord contract after partial attach",
-                        exc_info=True,
-                    )
-                else:
-                    self._owned_token = None
-            else:
-                self._owned_token = None
+                logger.debug(
+                    "Could not cancel Concord contract after partial attach",
+                    exc_info=True,
+                )
+            # Cancellation makes the contract terminal, but it does not
+            # prove that the exact partial token was removed. Retain the
+            # handle so bounded context shutdown can try the fenced
+            # withdrawal again.
+        else:
+            self._owned_token = None
         await self._publish(
             ConcordParticipantLeasePhase.TERMINAL,
             local_authority=False,
             reason=str(error),
+        )
+
+    async def _abort_attach_if_inactive(self) -> None:
+        if not self._closed and not self._authority_lost:
+            return
+        self._authority_token = None
+        try:
+            await self._withdraw_retained_unlocked()
+        except (ConcordConflict, ConcordUnavailable):
+            pass
+        raise ConcordConflict(
+            ConcordConflictCode.LEASE_CLOSED,
+            "Concord participant lease closed during attachment",
+            key=self.contract.key,
+            expected_pointer=self.contract.pointer,
         )
 
     async def _publish(
@@ -369,6 +455,13 @@ class ConcordParticipantLease:
         local_authority: bool,
         reason: str | None = None,
     ) -> None:
+        if self._state.phase == ConcordParticipantLeasePhase.CLOSED:
+            return
+        if self._closed and phase not in {
+            ConcordParticipantLeasePhase.CLOSING,
+            ConcordParticipantLeasePhase.CLOSED,
+        }:
+            return
         self._version += 1
         state = ConcordParticipantLeaseState(
             version=self._version,

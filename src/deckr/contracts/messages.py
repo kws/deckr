@@ -4,6 +4,7 @@ import re
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -27,13 +28,13 @@ DECKR_MESSAGE_PROTOCOL_VERSION = "1"
 HARDWARE_MESSAGES_SCHEMA_ID = "dev.deckr.message.hardware_messages.v1"
 ACTION_MESSAGES_SCHEMA_ID = "dev.deckr.message.actions.v1"
 SERVICE_MESSAGES_SCHEMA_ID = "dev.deckr.message.services.v1"
-CORE_LANE_SCHEMA_IDS = {
-    HARDWARE_MESSAGES_LANE: HARDWARE_MESSAGES_SCHEMA_ID,
-    SERVICES_LANE: SERVICE_MESSAGES_SCHEMA_ID,
-}
-MESSAGE_LANE_SCHEMA_IDS = {
-    **CORE_LANE_SCHEMA_IDS,
-}
+CORE_LANE_SCHEMA_IDS = MappingProxyType(
+    {
+        HARDWARE_MESSAGES_LANE: HARDWARE_MESSAGES_SCHEMA_ID,
+        SERVICES_LANE: SERVICE_MESSAGES_SCHEMA_ID,
+    }
+)
+MESSAGE_LANE_SCHEMA_IDS = MappingProxyType(dict(CORE_LANE_SCHEMA_IDS))
 
 CORE_ENDPOINT_FAMILIES = frozenset(
     {
@@ -78,9 +79,7 @@ def _require_endpoint_family(value: str, *, field_name: str) -> str:
 def _require_provider_instance_id(value: str, *, field_name: str) -> str:
     provider_instance_id = _require_identity_part(value, field_name=field_name)
     if not _PROVIDER_INSTANCE_ID_RE.fullmatch(provider_instance_id):
-        raise ValueError(
-            f"{field_name} must match [A-Za-z0-9][A-Za-z0-9._-]*"
-        )
+        raise ValueError(f"{field_name} must match [A-Za-z0-9][A-Za-z0-9._-]*")
     if "::" in provider_instance_id:
         raise ValueError(f"{field_name} must not contain '::'")
     return provider_instance_id

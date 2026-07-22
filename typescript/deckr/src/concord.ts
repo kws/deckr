@@ -118,6 +118,7 @@ export interface ContractRecord {
   termsHash?: string;
   terms?: JsonObject;
   createdBy?: string;
+  participantSessions: Record<string, string>;
   createdAt?: string;
   cancelledBy?: string;
   cancelledAt?: string;
@@ -289,6 +290,20 @@ export function validateContractRecord(value: unknown): ContractRecord {
       throw new ValidationError("attachedParticipants must be a subset of participants");
     }
   }
+  const participantSessions: Record<string, string> = {};
+  if (raw.participantSessions !== undefined && raw.participantSessions !== null) {
+    const sessions = requireJsonObject(raw.participantSessions, "participantSessions");
+    for (const [participant, session] of Object.entries(sessions)) {
+      const parsedParticipant = endpointAddress(participant);
+      if (parsedParticipant !== participant || !participantSet.has(parsedParticipant)) {
+        throw new ValidationError("participantSessions keys must be named participants");
+      }
+      participantSessions[parsedParticipant] = requireText(
+        session,
+        "participantSessions session",
+      );
+    }
+  }
   const state = raw.state === undefined ? ContractState.OPEN : requireText(raw.state, "state");
   if (state !== ContractState.OPEN && state !== ContractState.CANCELLED) {
     throw new ValidationError("Concord contract state must be open or cancelled");
@@ -299,6 +314,7 @@ export function validateContractRecord(value: unknown): ContractRecord {
     generation: requirePositiveInteger(raw.generation, "generation"),
     participants,
     attachedParticipants,
+    participantSessions,
     state,
   };
   setOptionalText(record, "profile", raw.profile, "profile");
@@ -427,6 +443,7 @@ export class ConcordCoordinator {
       terms?: JsonObject;
       createdBy?: string;
       supersedes?: ContractPointer;
+      participantSessions?: Record<string, string>;
     } = {},
   ): Promise<ContractHandle> {
     const parsedParticipants = participants.map(endpointAddress).sort();
@@ -448,6 +465,7 @@ export class ConcordCoordinator {
       terms,
       termsHash,
       createdBy: options.createdBy,
+      participantSessions: options.participantSessions ?? {},
       createdAt: now,
       supersedes: options.supersedes,
     });
@@ -551,6 +569,10 @@ export class ConcordCoordinator {
     const parsedParticipant = endpointAddress(participant);
     if (!record.participants.includes(parsedParticipant)) {
       throw new ValidationError("participant is not named by the Concord contract");
+    }
+    const expectedSession = record.participantSessions[parsedParticipant];
+    if (expectedSession !== undefined && expectedSession !== sessionId) {
+      throw new StateConflict("participant session does not match the contract session fence");
     }
     const key = concordParticipantTokenKey({
       contractId: record.contractId,
@@ -915,6 +937,7 @@ export interface ConcordAgreementSpec {
   localSessionId: string;
   terms?: JsonObject;
   supersedes?: ContractPointer;
+  participantSessions?: Record<string, string>;
   currentSessions?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
   refreshIntervalSeconds?: number;
   createdBy?: string;
@@ -1150,6 +1173,10 @@ export class ConcordService {
       terms: spec.terms,
       createdBy: spec.createdBy ?? spec.localParticipant,
       supersedes: spec.supersedes,
+      participantSessions: {
+        ...(spec.participantSessions ?? {}),
+        [spec.localParticipant]: spec.localSessionId,
+      },
     });
     return [contract, await this.validate(contract, { currentSessions: sessions })];
   }
@@ -1852,7 +1879,11 @@ function tokenValidityStatus(
     return ContractValidityStatus.TERMS_HASH_MISMATCH;
   }
   const currentSession = currentSessions?.[participant];
-  if (currentSession !== undefined && token.sessionId !== currentSession) {
+  const frozenSession = contract.participantSessions[participant];
+  if (
+    (frozenSession !== undefined && token.sessionId !== frozenSession) ||
+    (currentSession !== undefined && token.sessionId !== currentSession)
+  ) {
     return ContractValidityStatus.SESSION_MISMATCH;
   }
   return null;
@@ -1870,6 +1901,12 @@ function normalizeAgreementSpec(spec: ConcordAgreementSpec): ConcordAgreementSpe
     participants,
     localParticipant,
     localSessionId: requireText(spec.localSessionId, "Concord agreement session id"),
+    participantSessions: Object.fromEntries(
+      Object.entries(spec.participantSessions ?? {}).map(([participant, session]) => [
+        endpointAddress(participant),
+        requireText(session, "Concord participant session id"),
+      ]),
+    ),
     createdBy: spec.createdBy === undefined ? localParticipant : endpointAddress(spec.createdBy),
     terms: spec.terms === undefined ? undefined : cloneJson(spec.terms),
     supersedes: spec.supersedes === undefined ? undefined : validateContractPointer(spec.supersedes),

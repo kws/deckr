@@ -22,11 +22,11 @@ from deckr.core.util.anyio import (
     CoalescedStateBroadcaster,
     CoalescedStateSubscription,
 )
+from deckr.services.client import ManagedService
 from deckr.services.messages import ServiceError, ServiceMessageBody
 from deckr.services.runtime import (
     ServiceDescriptor,
     ServiceUnavailable,
-    ServiceUseLease,
     ServiceViewRef,
     service_message_ends_service_use,
     service_unavailable_ends_service_use,
@@ -35,6 +35,7 @@ from deckr.services.runtime import (
 logger = logging.getLogger(__name__)
 
 ResourceT = TypeVar("ResourceT", bound=Hashable)
+_RECONNECT_DELAY_SECONDS = 0.05
 
 
 class ServiceSubscriptionState(StrEnum):
@@ -188,11 +189,11 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         name: str,
         descriptor: Callable[[float | None], Awaitable[ServiceDescriptor]],
         ensure_resources: Callable[
-            [ServiceUseLease, frozenset[ResourceT]], Awaitable[None]
+            [ManagedService, frozenset[ResourceT]], Awaitable[None]
         ]
         | None,
         release_resources: Callable[
-            [ServiceUseLease, frozenset[ResourceT]], Awaitable[None]
+            [ManagedService, frozenset[ResourceT]], Awaitable[None]
         ]
         | None,
         view_for_resource: Callable[[ServiceDescriptor, ResourceT], ServiceViewRef],
@@ -201,17 +202,11 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             ServiceSubscriptionMessage[ResourceT],
         ],
         set_resources: Callable[
-            [ServiceUseLease, frozenset[ResourceT]], Awaitable[None]
+            [ManagedService, frozenset[ResourceT]], Awaitable[None]
         ]
         | None = None,
         service_use_timeout_seconds: float | None = None,
-        reconnect_delay_seconds: float = 0.05,
-        lease_monitor_interval_seconds: float = 1.0,
     ) -> None:
-        if reconnect_delay_seconds < 0:
-            raise ValueError("reconnect_delay_seconds must not be negative")
-        if lease_monitor_interval_seconds <= 0:
-            raise ValueError("lease_monitor_interval_seconds must be greater than zero")
         if set_resources is None and ensure_resources is None:
             raise ValueError("ensure_resources or set_resources is required")
         if set_resources is not None and (
@@ -230,8 +225,6 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         self._view_for_resource = view_for_resource
         self._message_from_view = message_from_view
         self._service_use_timeout_seconds = service_use_timeout_seconds
-        self._reconnect_delay_seconds = reconnect_delay_seconds
-        self._lease_monitor_interval_seconds = lease_monitor_interval_seconds
         self._state = CoalescedStateBroadcaster[ResourceT](current=True)
         self._lock = self._state.lock
         self._subscribers: dict[str, _LogicalSubscriber[ResourceT]] = {}
@@ -242,7 +235,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         self._next_session_id = 0
         self._runner_started = False
         self._runner_done: anyio.Event | None = None
-        self._active_lease: ServiceUseLease | None = None
+        self._active_lease: ManagedService | None = None
         self._active_lease_lost: ServiceUnavailable | None = None
 
     async def open_session(
@@ -386,8 +379,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         if lease is None:
             return None
         try:
-            reply = await self._services.request(
-                lease,
+            reply = await lease.request(
                 operation,
                 params,
                 timeout_seconds=timeout_seconds,
@@ -424,7 +416,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
         self,
         *,
         required_resource: ResourceT | None = None,
-    ) -> ServiceUseLease | None:
+    ) -> ManagedService | None:
         async with self._lock:
             if self._closed:
                 return None
@@ -550,7 +542,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
 
     async def _apply_retained_resources(
         self,
-        lease: ServiceUseLease,
+        lease: ManagedService,
         resources: frozenset[ResourceT],
     ) -> None:
         if self._set_resources is not None:
@@ -561,7 +553,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
 
     async def _apply_retained_resource_change(
         self,
-        lease: ServiceUseLease,
+        lease: ManagedService,
         *,
         previous: frozenset[ResourceT],
         updated: frozenset[ResourceT],
@@ -580,7 +572,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
 
     async def _clear_retained_resources(
         self,
-        lease: ServiceUseLease,
+        lease: ManagedService,
         resources: frozenset[ResourceT],
     ) -> None:
         if not resources:
@@ -593,7 +585,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
 
     async def _watch_until_change(
         self,
-        lease: ServiceUseLease,
+        lease: ManagedService,
         resources: frozenset[ResourceT],
         generation: int,
     ) -> None:
@@ -604,31 +596,18 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             await self._wait_for_change_after(generation)
             tg.cancel_scope.cancel()
 
-    async def _monitor_active_lease(self, lease: ServiceUseLease) -> None:
-        while True:
-            await anyio.sleep(self._lease_monitor_interval_seconds)
-            try:
-                await lease.refresh()
-            except ServiceUnavailable as exc:
-                if service_unavailable_ends_service_use(exc):
-                    await self._mark_active_lease_lost(lease, exc)
-                    return
-                logger.debug(
-                    "Service subscription lease monitor ignored nonterminal "
-                    "refresh failure manager=%s code=%s message=%s",
-                    self._name,
-                    exc.code,
-                    exc.message,
-                )
+    async def _monitor_active_lease(self, lease: ManagedService) -> None:
+        exc = await lease._wait_for_authority_loss()  # noqa: SLF001
+        await self._mark_active_lease_lost(lease, exc)
 
     async def _watch_resource(
         self,
-        lease: ServiceUseLease,
+        lease: ManagedService,
         resource: ResourceT,
     ) -> None:
         view = self._view_for_resource(lease.descriptor, resource)
         try:
-            async for payload in self._services.watch_view(lease, view):
+            async for payload in lease.watch_view(view):
                 await self._emit(resource, self._message_from_view(resource, payload))
         except ServiceUnavailable as exc:
             if service_unavailable_ends_service_use(exc):
@@ -659,7 +638,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
 
     async def _mark_active_lease_lost(
         self,
-        lease: ServiceUseLease,
+        lease: ManagedService,
         exc: ServiceUnavailable,
     ) -> None:
         async with self._lock:
@@ -695,9 +674,7 @@ class SharedResourceSubscriptionManager(Generic[ResourceT]):
             await event.wait()
 
     async def _sleep_until_change(self, generation: int) -> None:
-        if self._reconnect_delay_seconds <= 0:
-            return
-        with anyio.move_on_after(self._reconnect_delay_seconds):
+        with anyio.move_on_after(_RECONNECT_DELAY_SECONDS):
             await self._wait_for_change_after(generation)
 
     async def _snapshot_generation(self) -> int:

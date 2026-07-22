@@ -32,8 +32,14 @@ from collections.abc import Mapping
 
 from deckr.services import (
     ServiceBackendStatus,
+    ServiceExchangePattern,
+    ServiceMessageDefinition,
+    ServiceMessageDirection,
+    ServiceMessageIntent,
+    ServiceOperationDefinition,
     ServiceProtocol,
     ServiceViewFamilyDefinition,
+    ServiceViewWriter,
 )
 
 
@@ -42,10 +48,23 @@ EXAMPLE_PROTOCOL = ServiceProtocol(
     feature_id="org.example.presence",
     advertisement_profile="org.example.presence.advertisement.v1",
     use_profile="org.example.presence.service_use.v1",
-    operations=("presence.report",),
+    operations={
+        "presence.report": ServiceOperationDefinition(
+            description="Report the caller's current presence state",
+        ),
+    },
+    messages={
+        "presence.report": ServiceMessageDefinition(
+            operation="presence.report",
+            intent=ServiceMessageIntent.COMMAND,
+            exchangePattern=ServiceExchangePattern.REQUEST_REPLY,
+            direction=ServiceMessageDirection.CONSUMER_TO_SERVICE,
+        ),
+    },
     view_families={
         "status": ServiceViewFamilyDefinition(
             storeName="org_example_presence_status_v1",
+            writer=ServiceViewWriter.SERVICE,
         ),
     },
 )
@@ -77,13 +96,10 @@ Create the runtime with the `services` lane enabled, open the consumer endpoint,
 then ask the runtime for a managed service context bound to that endpoint.
 
 ```python
-from deckr.contracts.lanes import SERVICE_LANE_CONTRACT
-from deckr.contracts.messages import SERVICES_LANE
 from deckr.runtime import Deckr
 from deckr.services import (
     ServiceDescriptor,
     ServiceUnavailable,
-    newest_service_descriptor,
 )
 
 
@@ -96,20 +112,15 @@ def usable_presence_service(descriptor: ServiceDescriptor) -> bool:
 
 
 async def report_presence() -> None:
-    async with Deckr(
-        lane_contracts=(SERVICE_LANE_CONTRACT,),
-        lanes=(SERVICES_LANE,),
-    ) as deckr:
+    async with Deckr() as deckr:
         async with deckr.endpoint("action_provider:org.example.client") as endpoint:
             async with deckr.services(endpoint) as services:
                 async with services.use_matching(
                     EXAMPLE_PROTOCOL,
                     predicate=usable_presence_service,
-                    select=newest_service_descriptor,
                     timeout_seconds=30.0,
-                ) as lease:
-                    reply = await services.request(
-                        lease,
+                ) as service:
+                    reply = await service.request(
                         "presence.report",
                         {"state": "home"},
                         timeout_seconds=8.0,
@@ -123,12 +134,17 @@ async def report_presence() -> None:
 ```
 
 `use_matching(...)` owns discovery and service-use negotiation. The caller
-states matching policy and an optional selector. Predicates and selectors must
-be side-effect-free because the directory can evaluate them repeatedly while it
-waits for a current snapshot and future Beacon changes. The returned lease is
-valid only inside the context. If service-use authority is lost, the managed API
-raises `ServiceUnavailable` or a service-message response reports the
-service-domain error.
+states matching policy with a side-effect-free predicate. The managed context
+races every unique matching endpoint/session candidate, including candidates
+that arrive while negotiation is pending, and exposes the first valid agreement
+only after losing attempts have relinquished local authority. If that authority
+is later lost, it returns to `reconnecting` and races fresh proposals with fresh
+contract ids. Beacon withdrawal after a winner is accepted does not invalidate
+the agreement. The returned service capability is valid only inside the
+context. It exposes state, request, send, and fenced view operations without
+exposing its Concord agreement, participant token, or contract pointer. If
+service-use authority is lost, the managed API raises `ServiceUnavailable` or a
+service-message response reports the service-domain error.
 
 The managed directory always handles both startup cases: an advertisement can
 already exist before the consumer starts, or it can be created later. Internally
@@ -180,12 +196,12 @@ The first yielded snapshot represents the already-current Beacon state, so
 entries in that first `added` set are not special or stale. A later `added` or
 `updated` descriptor is a candidate for a new service-use negotiation. A
 `removed` descriptor should only remove discovery bookkeeping; it must not
-cancel or invalidate an already-held service-use lease. Existing lease authority
+cancel or invalidate an already-held service-use context. Existing authority
 continues to be governed by Concord validity and participant tokens.
 
 ## Reading And Watching Views
 
-Views are read through the same lease that authorized them. The client does not
+Views are read through the same capability that authorized them. The client does not
 need to inspect the contract pointer or the storage fence.
 
 ```python
@@ -200,26 +216,23 @@ def status_view(service_id: str, person_id: str) -> ServiceViewRef:
 
 
 async def watch_presence_status(person_id: str) -> None:
-    async with Deckr(
-        lane_contracts=(SERVICE_LANE_CONTRACT,),
-        lanes=(SERVICES_LANE,),
-    ) as deckr:
+    async with Deckr() as deckr:
         async with deckr.endpoint("action_provider:org.example.client") as endpoint:
             async with deckr.services(endpoint) as services:
                 async with services.use_matching(
                     EXAMPLE_PROTOCOL,
                     predicate=usable_presence_service,
                     timeout_seconds=30.0,
-                ) as lease:
-                    view = status_view(lease.descriptor.service_id, person_id)
-                    async for payload in services.watch_view(lease, view):
+                ) as service:
+                    view = status_view(service.descriptor.service_id, person_id)
+                    async for payload in service.watch_view(view):
                         await render_status(payload)
 ```
 
 `read_view(...)` returns one fenced payload or `None`. `None` is an ordinary
-absent-view value under the active service-use lease, not a signal that the
-lease should close. `watch_view(...)` yields the current payload first and then
-subsequent changes. The managed client refreshes the lease before delivering
+absent-view value under the active service-use capability, not a signal that the
+context should close. `watch_view(...)` yields the current payload first and then
+subsequent changes. The managed capability checks authority before delivering
 watched changes.
 
 ## Managed Subscriptions

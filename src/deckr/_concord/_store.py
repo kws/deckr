@@ -29,6 +29,7 @@ from deckr._concord._models import (
     contract_handle_has_canonical_identity,
     participant_handle,
     participant_handle_has_canonical_identity,
+    require_text,
     token_matches_handle,
 )
 from deckr._concord._ports import (
@@ -103,7 +104,7 @@ class _ExactKvAdapter:
         get_value = get_exact if get_exact is not None else self._bucket.get
         try:
             return await get_value(key)
-        except KvUnavailable as exc:
+        except (KvUnavailable, anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
             raise ConcordUnavailable(
                 ConcordUnavailableCode.STORE_UNAVAILABLE,
                 str(exc),
@@ -128,7 +129,7 @@ class _ExactKvAdapter:
                 str(exc),
                 key=key,
             ) from exc
-        except KvUnavailable as exc:
+        except (KvUnavailable, anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
             raise ConcordUnavailable(
                 ConcordUnavailableCode.STORE_UNAVAILABLE,
                 str(exc),
@@ -159,7 +160,7 @@ class _ExactKvAdapter:
                 str(exc),
                 key=key,
             ) from exc
-        except KvUnavailable as exc:
+        except (KvUnavailable, anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
             raise ConcordUnavailable(
                 ConcordUnavailableCode.STORE_UNAVAILABLE,
                 str(exc),
@@ -179,7 +180,7 @@ class _ExactKvAdapter:
                 str(exc),
                 key=key,
             ) from exc
-        except KvUnavailable as exc:
+        except (KvUnavailable, anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
             raise ConcordUnavailable(
                 ConcordUnavailableCode.STORE_UNAVAILABLE,
                 str(exc),
@@ -423,6 +424,7 @@ class ConcordKvStore:
         terms: Mapping[str, Any] | DeckrModel | None = None,
         created_by: str | EndpointAddress | None = None,
         supersedes: ContractPointer | Mapping[str, Any] | None = None,
+        participant_sessions: Mapping[str | EndpointAddress, str] | None = None,
     ) -> ContractHandle:
         parsed_participants = tuple(
             sorted((parse_endpoint_address(item) for item in participants), key=str)
@@ -443,6 +445,13 @@ class ConcordKvStore:
             termsHash=terms_hash,
             terms=dumped_terms,
             createdBy=parse_endpoint_address(created_by) if created_by is not None else None,
+            participantSessions={
+                str(parse_endpoint_address(participant)): require_text(
+                    session_id,
+                    field_name="Concord participant session id",
+                )
+                for participant, session_id in (participant_sessions or {}).items()
+            },
             createdAt=_now_utc(),
             supersedes=supersedes,
         )
@@ -450,7 +459,35 @@ class ConcordKvStore:
             contract_id=record.contract_id,
             generation=record.generation,
         )
-        entry = await self.contract_exact.create(key, record)
+        try:
+            entry = await self.contract_exact.create(key, record)
+        except ConcordUnavailable as exc:
+            recovered = await _recover_exact_entry_after_unavailable(
+                self.contract_exact,
+                key,
+                exc,
+            )
+            if recovered is None:
+                raise
+            recovered_record = _parse_contract_entry(
+                recovered,
+                key,
+                ContractPointer(
+                    contractId=record.contract_id,
+                    generation=record.generation,
+                ),
+            )
+            if recovered_record != record:
+                raise ConcordConflict(
+                    ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH,
+                    "Concord contract create outcome conflicts with the prepared record",
+                    key=key,
+                    expected_pointer=ContractPointer(
+                        contractId=record.contract_id,
+                        generation=record.generation,
+                    ),
+                ) from exc
+            entry = recovered
         _assert_entry_key(entry, key, token=False)
         return contract_handle(key, record, entry.revision)
 
@@ -460,6 +497,29 @@ class ConcordKvStore:
         if entry is None:
             return None
         return _parse_contract_entry(entry, contract.key, pointer)
+
+    async def cancel_pointer(
+        self,
+        pointer: ContractPointer,
+        participant: str | EndpointAddress,
+        *,
+        reason: str | None = None,
+    ) -> bool:
+        """Best-effort fenced cancellation when create acknowledgement was lost."""
+
+        key = concord_contract_key(
+            contract_id=pointer.contract_id,
+            generation=pointer.generation,
+        )
+        entry = await self.contract_exact.get_exact(key)
+        if entry is None:
+            return False
+        record = _parse_contract_entry(entry, key, pointer)
+        return await self.cancel(
+            contract_handle(key, record, entry.revision),
+            participant,
+            reason=reason,
+        )
 
     async def attach(
         self,
@@ -534,6 +594,14 @@ class ConcordKvStore:
                 key=contract.key,
                 expected_pointer=pointer,
             )
+        expected_session = record.participant_sessions.get(str(parsed_participant))
+        if expected_session is not None and expected_session != session_id:
+            raise ConcordConflict(
+                ConcordConflictCode.SESSION_MISMATCH,
+                "participant session does not match the contract session fence",
+                key=contract.key,
+                expected_pointer=pointer,
+            )
         key = concord_participant_token_key(
             contract_id=record.contract_id,
             generation=record.generation,
@@ -575,6 +643,29 @@ class ConcordKvStore:
         )
         try:
             entry = await self.token_exact.create(key, token, ttl=token.ttl_seconds)
+        except ConcordUnavailable as exc:
+            recovered = await _recover_exact_entry_after_unavailable(
+                self.token_exact,
+                key,
+                exc,
+            )
+            if recovered is None:
+                raise
+            recovered_token = _parse_token_entry(
+                recovered,
+                key=key,
+                contract_pointer=pointer,
+                participant=parsed_participant,
+            )
+            if recovered_token != token:
+                raise ConcordConflict(
+                    ConcordConflictCode.TOKEN_IDENTITY_MISMATCH,
+                    "Concord token create outcome conflicts with the prepared token",
+                    key=key,
+                    expected_pointer=pointer,
+                ) from exc
+            token = recovered_token
+            entry = recovered
         except ConcordConflict as exc:
             if exc.code != ConcordConflictCode.KEY_ALREADY_EXISTS:
                 raise
@@ -649,6 +740,22 @@ class ConcordKvStore:
                 updated,
                 revision=current.revision,
             )
+        except ConcordUnavailable as exc:
+            recovered = await _recover_exact_entry_after_unavailable(
+                self.contract_exact,
+                contract_key,
+                exc,
+            )
+            if recovered is None:
+                raise
+            recovered_record = _parse_contract_entry(
+                recovered,
+                contract_key,
+                pointer,
+            )
+            if recovered_record != updated:
+                raise
+            return recovered.revision
         except ConcordConflict as exc:
             if exc.code != ConcordConflictCode.REVISION_CHANGED:
                 raise
@@ -701,6 +808,18 @@ class ConcordKvStore:
                 revision=token_entry.revision,
                 ttl=refreshed.ttl_seconds,
             )
+        except ConcordUnavailable as exc:
+            recovered = await _recover_exact_entry_after_unavailable(
+                self.token_exact,
+                handle.key,
+                exc,
+            )
+            if recovered is None:
+                raise
+            latest = _parse_token_entry_for_handle(recovered, handle, pointer)
+            if latest != refreshed:
+                raise
+            return participant_handle(handle.key, latest, recovered.revision)
         except ConcordConflict as exc:
             if exc.code != ConcordConflictCode.REVISION_CHANGED:
                 raise
@@ -715,7 +834,12 @@ class ConcordKvStore:
             latest = _parse_token_entry_for_handle(latest_entry, handle, pointer)
             if latest.terms_hash != contract.terms_hash:
                 raise _token_identity_conflict(handle, pointer) from exc
-            return participant_handle(handle.key, latest, latest_entry.revision)
+            raise ConcordConflict(
+                ConcordConflictCode.REVISION_CHANGED,
+                "Concord participant token changed during exact refresh",
+                key=handle.key,
+                expected_pointer=pointer,
+            ) from exc
         _assert_entry_key(entry, handle.key, token=True, pointer=pointer)
         return participant_handle(handle.key, refreshed, entry.revision)
 
@@ -755,7 +879,65 @@ class ConcordKvStore:
         if token_entry is None:
             return False
         _parse_token_entry_for_handle(token_entry, handle, pointer)
-        await self.token_exact.delete(handle.key, revision=token_entry.revision)
+        try:
+            await self.token_exact.delete(handle.key, revision=token_entry.revision)
+        except ConcordUnavailable as exc:
+            recovered = await _recover_exact_entry_after_unavailable(
+                self.token_exact,
+                handle.key,
+                exc,
+            )
+            if recovered is not None:
+                _parse_token_entry_for_handle(recovered, handle, pointer)
+                raise
+        return True
+
+    async def withdraw_identity(
+        self,
+        contract: ContractHandle,
+        participant: str | EndpointAddress,
+        session_id: str,
+        token_id: str,
+    ) -> bool:
+        """Withdraw a prepared token whose create result could not be observed."""
+
+        pointer = _assert_contract_handle(contract)
+        parsed_participant = parse_endpoint_address(participant)
+        key = concord_participant_token_key(
+            contract_id=pointer.contract_id,
+            generation=pointer.generation,
+            participant=parsed_participant,
+        )
+        entry = await self.token_exact.get_exact(key)
+        if entry is None:
+            return False
+        token = _parse_token_entry(
+            entry,
+            key=key,
+            contract_pointer=pointer,
+            participant=parsed_participant,
+        )
+        if (
+            token.session_id != session_id
+            or token.token_id != token_id
+            or token.terms_hash != contract.terms_hash
+        ):
+            raise ConcordConflict(
+                ConcordConflictCode.TOKEN_IDENTITY_MISMATCH,
+                "prepared Concord token changed owner before cleanup",
+                key=key,
+                expected_pointer=pointer,
+            )
+        try:
+            await self.token_exact.delete(key, revision=entry.revision)
+        except ConcordUnavailable as exc:
+            recovered = await _recover_exact_entry_after_unavailable(
+                self.token_exact,
+                key,
+                exc,
+            )
+            if recovered is not None:
+                raise
         return True
 
     async def cancel(
@@ -790,11 +972,27 @@ class ConcordKvStore:
             }
         )
         _assert_contract_replacement_identity(record, cancelled, pointer, contract.key)
-        await self.contract_exact.update(
-            contract.key,
-            cancelled,
-            revision=current.revision,
-        )
+        try:
+            await self.contract_exact.update(
+                contract.key,
+                cancelled,
+                revision=current.revision,
+            )
+        except ConcordUnavailable as exc:
+            recovered = await _recover_exact_entry_after_unavailable(
+                self.contract_exact,
+                contract.key,
+                exc,
+            )
+            if recovered is None:
+                raise
+            recovered_record = _parse_contract_entry(
+                recovered,
+                contract.key,
+                pointer,
+            )
+            if recovered_record != cancelled:
+                raise
         return True
 
     async def validate_exact(
@@ -1070,6 +1268,19 @@ def _token_matches_attach_request(
         and token.token_id == token_id
         and token.terms_hash == record.terms_hash
     )
+
+
+async def _recover_exact_entry_after_unavailable(
+    store: ExactConcordKvPort,
+    key: str,
+    original: ConcordUnavailable,
+) -> KvEntry | None:
+    """Resolve a possibly committed mutation without allocating new identity."""
+
+    try:
+        return await store.get_exact(key)
+    except ConcordUnavailable as recovery_error:
+        raise original from recovery_error
 
 
 def _freeze_session_assertions(

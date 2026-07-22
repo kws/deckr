@@ -60,6 +60,18 @@ _PERMANENT_BOUNDED_BOUNDARIES: dict[_Boundary, int] = {
         "task_or_reply_route_map",
     ): 1,
     (
+        Path("deckr/src/deckr/_concord/_participant.py"),
+        "ConcordParticipant.__init__",
+        "self._cleanup_leases",
+        "task_or_reply_route_map",
+    ): 1,
+    (
+        Path("deckr/src/deckr/_concord/_participant.py"),
+        "ConcordParticipant.__init__",
+        "self._cleanup_wakeups",
+        "task_or_reply_route_map",
+    ): 1,
+    (
         Path("deckr/src/deckr/core/util/anyio.py"),
         "_CancellationSafeMutex.__init__",
         "self._scopes",
@@ -92,6 +104,12 @@ _PERMANENT_BOUNDED_BOUNDARIES: dict[_Boundary, int] = {
     (
         Path("deckr/src/deckr/substrates/nats.py"),
         "NatsSubstrate.request",
+        "send, receive",
+        "bounded_memory_stream",
+    ): 1,
+    (
+        Path("deckr/src/deckr/services/client.py"),
+        "DeckrServices._race_service_candidates",
         "send, receive",
         "bounded_memory_stream",
     ): 1,
@@ -249,6 +267,18 @@ _TEMPORARY_BOUNDARIES: dict[_Boundary, _TemporaryBoundary] = {
     ): _TemporaryBoundary(
         phase="Phase 5B",
         reason="cap managed service contracts under provider-lease ownership",
+    ),
+    (
+        Path(
+            "deckr-action-provider-runtime-python/"
+            "src/deckr/action_provider_runtime/runtime.py"
+        ),
+        "PythonActionProvider.__init__",
+        "self._managed_view_contexts_by_pointer",
+        "task_or_reply_route_map",
+    ): _TemporaryBoundary(
+        phase="Phase 5B",
+        reason="cap managed view contexts under provider-lease ownership",
     ),
     (
         Path("deckr-controller/src/deckr/controller/_actions/_service.py"),

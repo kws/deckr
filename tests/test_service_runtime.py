@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 
 import anyio
 import pytest
 
+from deckr._concord._models import ParticipantHandle
 from deckr.actions.endpoints import action_provider_address
 from deckr.beacon import Beacon, BeaconAdvertisementSpec, BeaconDirectory
 from deckr.concord import (
@@ -17,7 +19,6 @@ from deckr.concord import (
     ContractState,
     ContractValidity,
     ContractValidityStatus,
-    ParticipantHandle,
 )
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.keys import encode_key_token
@@ -99,16 +100,16 @@ async def _publish_service_advertisement(
     *,
     service_id: str = "openhab-home",
     session_id: str = "service-session",
-    advertisement_id: str = "ad-1",
     payload: Mapping[str, Any] | None = None,
     feature_id: str | None = None,
 ):
-    return await beacon.advertise(
+    lease = beacon.advertise(
+        SimpleNamespace(
+            address=service_address(service_id),
+            session_id=session_id,
+        ),
         BeaconAdvertisementSpec(
             feature_id=feature_id or protocol.feature_id,
-            endpoint=service_address(service_id),
-            session_id=session_id,
-            advertisement_id=advertisement_id,
             payload=(
                 dict(payload)
                 if payload is not None
@@ -118,8 +119,10 @@ async def _publish_service_advertisement(
                     backend_status=ServiceBackendStatus.AVAILABLE,
                 ).to_dict()
             ),
-        )
+        ),
     )
+    await lease.__aenter__()
+    return lease
 
 
 async def _descriptor(
@@ -191,7 +194,9 @@ def _contract_handle(
 
 
 def _contract_pointer(contract: ContractHandle) -> ContractPointer:
-    return ContractPointer(contractId=contract.contract_id, generation=contract.generation)
+    return ContractPointer(
+        contractId=contract.contract_id, generation=contract.generation
+    )
 
 
 def _service_view_storage_key(view: ServiceViewRef, contract: ContractHandle) -> str:
@@ -282,6 +287,7 @@ def _managed_contract(
     contract: ContractHandle,
     *,
     status: ContractValidityStatus = ContractValidityStatus.VALID,
+    local_authority: bool = True,
 ) -> ConcordManagedContract:
     record = _contract_record(contract)
     service_token = ParticipantHandle(
@@ -317,7 +323,7 @@ def _managed_contract(
                 str(consumer_token.participant): consumer_token,
             },
         ),
-        local_authority=True,
+        local_authority=local_authority,
     )
 
 
@@ -455,14 +461,9 @@ async def test_parse_service_descriptor_validates_profile_identity() -> None:
         await _publish_service_advertisement(
             beacon,
             protocol,
-            advertisement_id="ad-2",
             payload=payload,
         )
-        wrong_profile = [
-            item
-            for item in beacon.candidates(protocol.feature_id)
-            if item.advertisement.advertisement_id == "ad-2"
-        ][0]
+        wrong_profile = beacon.candidates(protocol.feature_id)[0]
         assert parse_service_descriptor(wrong_profile, protocol) is None
 
         payload = protocol.advertisement_payload(
@@ -474,14 +475,9 @@ async def test_parse_service_descriptor_validates_profile_identity() -> None:
         await _publish_service_advertisement(
             beacon,
             protocol,
-            advertisement_id="ad-3",
             payload=payload,
         )
-        wrong_namespace = [
-            item
-            for item in beacon.candidates(protocol.feature_id)
-            if item.advertisement.advertisement_id == "ad-3"
-        ][0]
+        wrong_namespace = beacon.candidates(protocol.feature_id)[0]
         assert parse_service_descriptor(wrong_namespace, protocol) is None
         task_group.cancel_scope.cancel()
 
@@ -513,7 +509,6 @@ async def test_service_descriptors_resolve_from_beacon_directory() -> None:
             protocol,
             service_id="openhab-backup",
             session_id="backup-session",
-            advertisement_id="ad-2",
         )
         await _eventually_descriptor_count(directory, 2)
 
@@ -533,15 +528,23 @@ async def test_service_descriptors_resolve_from_beacon_directory() -> None:
         assert descriptor is not None
         assert descriptor.service_id == "openhab-backup"
         assert descriptor.views["items"].key_prefix == "views.openhab-backup.items."
-        assert directory.resolve(lambda item: "missing" in item.supported_operations) is None
+        assert (
+            directory.resolve(lambda item: "missing" in item.supported_operations)
+            is None
+        )
         assert directory.resolve(lambda item: "missing" in item.views) is None
-        assert directory.resolve(lambda item: item.endpoint == service_address("missing")) is None
+        assert (
+            directory.resolve(lambda item: item.endpoint == service_address("missing"))
+            is None
+        )
         assert counting_beacon.exact_candidate_calls == 0
         task_group.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
-async def test_service_directory_tracks_beacon_events_without_stale_descriptors() -> None:
+async def test_service_directory_tracks_beacon_events_without_stale_descriptors() -> (
+    None
+):
     raw = MemoryJsonKvBucket(bucket="beacon", ttl_seconds=300)
     beacon = Beacon(raw)
     protocol = _protocol()
@@ -573,7 +576,7 @@ async def test_service_directory_tracks_beacon_events_without_stale_descriptors(
         await _eventually_descriptor_count(directory, 1)
         assert directory.records()[0].backend_status == ServiceBackendStatus.DEGRADED
 
-        await advertisement.withdraw()
+        await advertisement.aclose()
         await _eventually_descriptor_count(directory, 0)
 
         task_group.cancel_scope.cancel()
@@ -749,6 +752,29 @@ async def test_authorize_service_message_matches_exact_contract_pointer() -> Non
     assert result.view_write_context.consumer_session_id == "provider-session"
     assert participant.reconcile_calls == 0
     assert participant.validate_calls == []
+
+
+@pytest.mark.asyncio
+async def test_authorize_service_message_rejects_lost_local_authority() -> None:
+    protocol, lease, _view_ref = await _service_view_context()
+    managed = _managed_contract(lease.contract, local_authority=False)
+    participant = _FakeServiceParticipant((managed,))
+    request = _service_message(
+        lease.contract,
+        name="setItemScope",
+        namespace=protocol.namespace,
+    )
+
+    with pytest.raises(ServiceUseAuthorizationError) as exc_info:
+        await authorize_service_message(
+            participant,
+            request,
+            service_id="openhab-home",
+            protocol=protocol,
+            name="setItemScope",
+        )
+
+    assert exc_info.value.code == "contract_local_authority_lost"
 
 
 @pytest.mark.asyncio
@@ -1030,7 +1056,9 @@ async def test_service_view_store_ignores_old_fenced_entries() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_view_store_logs_exact_write_after_view_observation(caplog) -> None:
+async def test_service_view_store_logs_exact_write_after_view_observation(
+    caplog,
+) -> None:
     caplog.set_level(logging.DEBUG, logger="deckr.services.views")
     protocol, lease, view_ref = await _service_view_context()
     raw = MemoryJsonKvBucket(bucket=view_ref.store_name)
@@ -1057,7 +1085,9 @@ async def test_service_view_store_logs_exact_write_after_view_observation(caplog
 
 
 @pytest.mark.asyncio
-async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry() -> None:
+async def test_service_view_watch_hides_removals_for_never_visible_fenced_entry() -> (
+    None
+):
     protocol, lease, view_ref = await _service_view_context()
     other_lease = _FakeServiceUseLease(
         descriptor=lease.descriptor,
@@ -1250,20 +1280,20 @@ class _RecoveringServiceViewBucket:
     async def watch(
         self,
         prefix: str = "",
-    ) -> AsyncIterator[
-        anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]
-    ]:
+    ) -> AsyncIterator[anyio.abc.ObjectReceiveStream[KvChange | KvWatchBarrier]]:
         if self._pause_next_watch:
             self._pause_next_watch = False
             self._watch_paused.set()
             await self._resume_watch.wait()
         close_event = anyio.Event()
         self._close_events.append(close_event)
-        send, receive = anyio.create_memory_object_stream[
-            KvChange | KvWatchBarrier
-        ](100)
+        send, receive = anyio.create_memory_object_stream[KvChange | KvWatchBarrier](
+            100
+        )
         snapshot = tuple(
-            entry for key, entry in sorted(self._entries.items()) if key.startswith(prefix)
+            entry
+            for key, entry in sorted(self._entries.items())
+            if key.startswith(prefix)
         )
         barrier = KvWatchBarrier(self._revision)
 

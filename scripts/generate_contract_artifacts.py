@@ -399,6 +399,10 @@ def _fixtures() -> list[dict[str, Any]]:
         termsHash=canonical_json_hash(hardware_claim_terms),
         terms=hardware_claim_terms.to_dict(),
         createdBy=controller_address("controller-main"),
+        participantSessions={
+            str(controller_address("controller-main")): "controller-session",
+            str(hardware_manager_address("mirabox-main")): "manager-session",
+        },
         createdAt=FIXED_NOW,
     ).to_dict()
     hardware_claim_token = ParticipantTokenRecord(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from deckr._concord._lease import (
 )
 from deckr._concord._models import (
     ConcordConflict,
+    ConcordConflictCode,
     ConcordLifecyclePhase,
     ConcordUnavailable,
     ContractHandle,
@@ -118,7 +120,15 @@ class ConcordParticipant:
         self._leases: dict[str, ConcordParticipantLease] = {}
         self._selected: frozenset[ContractPointer] = frozenset()
         self._pointer_locks: dict[ContractPointer, anyio.Lock] = {}
+        self._pointer_running: set[ContractPointer] = set()
+        self._pointer_dirty: set[ContractPointer] = set()
+        self._retired_pointers: set[ContractPointer] = set()
+        self._cleanup_contracts: dict[ContractPointer, ContractHandle] = {}
+        self._cleanup_leases: dict[ContractPointer, ConcordParticipantLease] = {}
+        self._cleanup_running: set[ContractPointer] = set()
+        self._cleanup_wakeups: dict[ContractPointer, anyio.Event] = {}
         self._failures: dict[ContractPointer, tuple[ConcordLifecyclePhase, str]] = {}
+        self._policy_failure: str | None = None
         self._state_bus = CoalescedStateBroadcaster[ContractPointer](current=False)
         self._state = ConcordParticipantState(
             version=0,
@@ -128,9 +138,18 @@ class ConcordParticipant:
         )
         self._tasks = ConcordTaskGroup(task_group)
         self._task_group: anyio.abc.TaskGroup | None = None
-        self._selector_lock = anyio.Lock()
+        self._selector_pending_lock = anyio.Lock()
+        self._selector_pending: ConcordViewSnapshot | None = None
+        self._selector_waiters: list[anyio.Event] = []
+        self._selector_wakeup = anyio.Event()
         self._entered = False
         self._closed = False
+        self._close_started = False
+        self._close_lock = anyio.Lock()
+        self._close_done = anyio.Event()
+        self._enter_cancel_scope: anyio.CancelScope | None = None
+        self._enter_task_id: int | None = None
+        self._enter_done = anyio.Event()
 
     @property
     def state(self) -> ConcordParticipantState:
@@ -158,14 +177,29 @@ class ConcordParticipant:
         if self._entered:
             raise RuntimeError("Concord participant contexts cannot be re-entered")
         self._entered = True
-        try:
-            await self._view.wait_current()
-            self._task_group = await self._tasks.start()
-            await self._task_group.start(self._watch_loop)
-            return self
-        except BaseException:
-            await self.aclose()
-            raise
+        with anyio.CancelScope() as scope:
+            self._enter_cancel_scope = scope
+            self._enter_task_id = anyio.get_current_task().id
+            try:
+                return await self._enter()
+            except BaseException:
+                if not self._close_started:
+                    await self.aclose()
+                raise
+            finally:
+                self._enter_cancel_scope = None
+                self._enter_done.set()
+        raise anyio.ClosedResourceError
+
+    async def _enter(self) -> ConcordParticipant:
+        await self._view.wait_current()
+        if self._closed:
+            raise anyio.ClosedResourceError
+        self._task_group = await self._tasks.start()
+        await self._task_group.start(self._watch_loop)
+        if self._closed:
+            raise anyio.ClosedResourceError
+        return self
 
     async def __aexit__(self, *_exc: object) -> None:
         await self.aclose()
@@ -176,25 +210,48 @@ class ConcordParticipant:
         *,
         reason: str | None = None,
     ) -> bool:
+        if self._closed:
+            raise anyio.ClosedResourceError
         pointer = contract.pointer if isinstance(contract, ContractHandle) else contract
         managed = self.managed_contract(pointer)
         if managed is None:
             raise ValueError("Concord participant does not manage that contract")
-        return await self._store.cancel(
-            managed.contract,
-            self.participant,
-            reason=reason,
-        )
+        try:
+            return await self._store.cancel(
+                managed.contract,
+                self.participant,
+                reason=reason,
+            )
+        except (ConcordConflict, ConcordUnavailable) as exc:
+            async with self._state_bus.lock:
+                lease = self._leases.get(managed.contract.key)
+                if lease is not None:
+                    lease.relinquish_local_authority()
+                self._managed.pop(managed.contract.key, None)
+            await self._retain_cleanup(
+                managed.contract,
+                error=exc,
+                reason=reason or "concord_participant_cancel",
+                lease=lease,
+            )
+            await self._publish(
+                (pointer,),
+                phase=ConcordLifecyclePhase.UNAVAILABLE,
+                current=False,
+                reason=str(exc),
+            )
+            raise
 
     async def notify_policy_changed(self) -> None:
         if self._closed:
             raise anyio.ClosedResourceError
-        await self._apply_snapshot(
+        await self._queue_selector_snapshot(
             await self._view.snapshot(
                 self.profile,
                 participant=self.participant,
                 state=ContractState.OPEN,
-            )
+            ),
+            wait=True,
         )
 
     @asynccontextmanager
@@ -236,8 +293,6 @@ class ConcordParticipant:
                     )
                     if predicate(state):
                         return state
-                    if state.phase == ConcordLifecyclePhase.CLOSED:
-                        raise anyio.ClosedResourceError
             raise anyio.ClosedResourceError
 
         if timeout_seconds is None:
@@ -246,38 +301,90 @@ class ConcordParticipant:
             return await wait()
 
     async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        await self._publish(
-            (),
-            phase=ConcordLifecyclePhase.CLOSING,
-            current=False,
-        )
-        task_group = self._task_group
-        self._task_group = None
-        if task_group is not None:
-            await self._tasks.aclose()
+        with anyio.CancelScope(shield=True):
+            async with self._close_lock:
+                if self._close_started:
+                    first = False
+                else:
+                    first = True
+                    self._close_started = True
+                    self._closed = True
+                    enter_scope = self._enter_cancel_scope
+                    if enter_scope is not None:
+                        enter_scope.cancel()
+                    wait_for_enter = (
+                        enter_scope is not None
+                        and self._enter_task_id != anyio.get_current_task().id
+                    )
+            if not first:
+                await self._close_done.wait()
+                return
+            try:
+                self._tasks.cancel()
+                async with self._state_bus.lock:
+                    for lease in {
+                        *self._leases.values(),
+                        *self._cleanup_leases.values(),
+                    }:
+                        lease.relinquish_local_authority()
+                    self._managed.clear()
+                    self._selected = frozenset()
+                await self._publish(
+                    (),
+                    phase=ConcordLifecyclePhase.CLOSING,
+                    current=False,
+                )
+                with anyio.move_on_after(CONCORD_LIFECYCLE_CLEANUP_SECONDS):
+                    if wait_for_enter:
+                        await self._enter_done.wait()
+                    async with self._state_bus.lock:
+                        leases = tuple(
+                            {
+                                *self._leases.values(),
+                                *self._cleanup_leases.values(),
+                            }
+                        )
+                        cleanup_by_pointer = {
+                            lease.contract.pointer: lease.contract for lease in leases
+                        }
+                        cleanup_by_pointer.update(self._cleanup_contracts)
+                        cleanup_contracts = tuple(cleanup_by_pointer.values())
+                    self._task_group = None
+                    async with anyio.create_task_group() as cleanup_group:
+                        cleanup_group.start_soon(self._tasks.aclose)
+                        for lease in leases:
+                            cleanup_group.start_soon(lease.aclose)
+                        for contract in cleanup_contracts:
+                            cleanup_group.start_soon(self._close_contract, contract)
+                async with self._state_bus.lock:
+                    self._leases.clear()
+                    self._cleanup_leases.clear()
+                    self._managed.clear()
+                    self._selected = frozenset()
+                    self._failures.clear()
+                    self._cleanup_contracts.clear()
+                    self._cleanup_wakeups.clear()
+                await self._publish(
+                    (),
+                    phase=ConcordLifecyclePhase.CLOSED,
+                    current=False,
+                )
+                await self._state_bus.aclose()
+            finally:
+                self._close_done.set()
 
-        async with self._state_bus.lock:
-            leases = tuple(self._leases.values())
-            self._leases.clear()
-            self._managed.clear()
-            self._selected = frozenset()
-            self._failures.clear()
-        with anyio.move_on_after(
-            CONCORD_LIFECYCLE_CLEANUP_SECONDS,
-            shield=True,
-        ):
-            async with anyio.create_task_group() as cleanup_group:
-                for lease in leases:
-                    cleanup_group.start_soon(lease.aclose)
-        await self._publish(
-            (),
-            phase=ConcordLifecyclePhase.CLOSED,
-            current=False,
-        )
-        await self._state_bus.aclose()
+    async def _close_contract(self, contract: ContractHandle) -> None:
+        try:
+            await self._store.cancel(
+                contract,
+                self.participant,
+                reason="concord_participant_context_closed",
+            )
+        except (ConcordConflict, ConcordUnavailable):
+            logger.debug(
+                "Could not cancel retained Concord contract during close",
+                exc_info=True,
+            )
 
     async def _watch_loop(
         self,
@@ -289,18 +396,91 @@ class ConcordParticipant:
             participant=self.participant,
             state=ContractState.OPEN,
         ) as subscription:
+            self._retired_pointers.update(
+                item.contract.pointer for item in subscription.initial.contracts
+            )
             await self._apply_snapshot(subscription.initial, raise_policy=True)
+            self._tasks.group.start_soon(self._selector_worker)
             task_status.started()
-            async for _change in subscription:
+            async for change in subscription:
                 if self._closed:
                     return
-                await self._apply_snapshot(
-                    await self._view.snapshot(
-                        self.profile,
-                        participant=self.participant,
-                        state=ContractState.OPEN,
-                    )
+                snapshot = await self._view.snapshot(
+                    self.profile,
+                    participant=self.participant,
+                    state=ContractState.OPEN,
                 )
+                await self._schedule_tracked_pointer_changes(change, snapshot.current)
+                await self._queue_selector_snapshot(snapshot)
+
+    async def _schedule_tracked_pointer_changes(
+        self,
+        change: object,
+        current: bool,
+    ) -> None:
+        async with self._state_bus.lock:
+            tracked = {
+                *self._selected,
+                *(managed.contract.pointer for managed in self._managed.values()),
+                *(lease.contract.pointer for lease in self._leases.values()),
+                *self._cleanup_contracts,
+            }
+        changed = getattr(change, "changed", frozenset())
+        if getattr(change, "resnapshot_required", False) or not current:
+            relevant = tracked
+        else:
+            relevant = tracked.intersection(changed)
+        async with self._state_bus.lock:
+            wakeups = tuple(
+                self._cleanup_wakeups[pointer]
+                for pointer in relevant
+                if pointer in self._cleanup_wakeups
+            )
+        for wakeup in wakeups:
+            wakeup.set()
+        for pointer in sorted(
+            relevant,
+            key=lambda item: (item.contract_id, item.generation),
+        ):
+            await self._schedule_pointer(pointer, current)
+
+    async def _queue_selector_snapshot(
+        self,
+        snapshot: ConcordViewSnapshot,
+        *,
+        wait: bool = False,
+    ) -> None:
+        waiter = anyio.Event() if wait else None
+        async with self._selector_pending_lock:
+            if self._closed:
+                if wait:
+                    raise anyio.ClosedResourceError
+                return
+            self._selector_pending = snapshot
+            if waiter is not None:
+                self._selector_waiters.append(waiter)
+            self._selector_wakeup.set()
+        if waiter is not None:
+            await waiter.wait()
+
+    async def _selector_worker(self) -> None:
+        while not self._closed:
+            await self._selector_wakeup.wait()
+            async with self._selector_pending_lock:
+                snapshot = self._selector_pending
+                waiters = tuple(self._selector_waiters)
+                self._selector_pending = None
+                self._selector_waiters.clear()
+                self._selector_wakeup = anyio.Event()
+            if snapshot is None:
+                for waiter in waiters:
+                    waiter.set()
+                continue
+            try:
+                await self._apply_snapshot(snapshot)
+            finally:
+                for waiter in waiters:
+                    waiter.set()
 
     async def _apply_snapshot(
         self,
@@ -310,82 +490,125 @@ class ConcordParticipant:
     ) -> None:
         if self._closed:
             return
-        async with self._selector_lock:
-            async with self._state_bus.lock:
-                managed_keys = frozenset(self._managed)
-            candidates = tuple(
-                ConcordParticipantCandidate(
-                    contract=item.contract,
-                    record=item.record,
-                    validity=self._view.validate(
-                        item.contract,
-                        current_sessions=self._session_assertions(),
-                    ),
-                    managed=item.contract.key in managed_keys,
-                )
-                for item in snapshot.contracts
+        async with self._state_bus.lock:
+            managed_keys = frozenset(self._managed)
+        candidates = tuple(
+            ConcordParticipantCandidate(
+                contract=item.contract,
+                record=item.record,
+                validity=self._view.validate(
+                    item.contract,
+                    current_sessions=self._session_assertions(),
+                ),
+                managed=item.contract.key in managed_keys,
             )
-            try:
-                selected = self.policy.select(candidates)
-                if hasattr(selected, "__await__"):
-                    selected = await selected
-                if not isinstance(selected, ConcordParticipantSelection):
-                    raise TypeError(
-                        "Concord participant selector must return "
-                        "ConcordParticipantSelection"
-                    )
-                candidate_pointers = {
-                    candidate.contract.pointer for candidate in candidates
-                }
-                unknown = selected.accepted - candidate_pointers
-                if unknown:
-                    raise ValueError(
-                        "Concord participant selector returned unknown pointers: "
-                        f"{sorted((item.contract_id, item.generation) for item in unknown)}"
-                    )
-            except BaseException as exc:
-                if isinstance(exc, anyio.get_cancelled_exc_class()):
-                    raise
-                await self._fail_policy(str(exc))
-                if raise_policy:
-                    raise
-                return
+            for item in snapshot.contracts
+        )
+        try:
+            selected = self.policy.select(candidates)
+            if hasattr(selected, "__await__"):
+                selected = await selected
+            if not isinstance(selected, ConcordParticipantSelection):
+                raise TypeError(
+                    "Concord participant selector must return "
+                    "ConcordParticipantSelection"
+                )
+            candidate_pointers = {
+                candidate.contract.pointer for candidate in candidates
+            }
+            unknown = selected.accepted - candidate_pointers
+            if unknown:
+                raise ValueError(
+                    "Concord participant selector returned unknown pointers: "
+                    f"{sorted((item.contract_id, item.generation) for item in unknown)}"
+                )
+        except BaseException as exc:
+            if isinstance(exc, anyio.get_cancelled_exc_class()):
+                raise
+            await self._fail_policy(str(exc))
+            if raise_policy:
+                raise
+            return
 
-            async with self._state_bus.lock:
-                previous = self._selected
-                self._selected = selected.accepted
-                managed_pointers = {
-                    managed.contract.pointer for managed in self._managed.values()
-                }
-            pointers = candidate_pointers | previous | managed_pointers
+        async with self._state_bus.lock:
+            previous = self._selected
+            self._selected = selected.accepted
+            self._policy_failure = None
+            managed_pointers = {
+                managed.contract.pointer for managed in self._managed.values()
+            }
+        pointers = candidate_pointers | previous | managed_pointers
+        if raise_policy:
             async with anyio.create_task_group() as task_group:
                 for pointer in sorted(
                     pointers,
                     key=lambda item: (item.contract_id, item.generation),
                 ):
-                    task_group.start_soon(self._reconcile_pointer, pointer)
-            async with self._state_bus.lock:
-                retained_pointers = (
-                    candidate_pointers
-                    | self._selected
-                    | {
-                        managed.contract.pointer
-                        for managed in self._managed.values()
-                    }
-                    | set(self._failures)
-                )
-                self._pointer_locks = {
-                    pointer: lock
-                    for pointer, lock in self._pointer_locks.items()
-                    if pointer in retained_pointers
-                }
-            phase, reason = await self._aggregate_phase(snapshot.current)
-            await self._publish(
+                    task_group.start_soon(
+                        self._reconcile_and_publish,
+                        pointer,
+                        snapshot.current,
+                    )
+        else:
+            for pointer in sorted(
                 pointers,
-                phase=phase,
-                current=snapshot.current,
-                reason=reason,
-            )
+                key=lambda item: (item.contract_id, item.generation),
+            ):
+                await self._schedule_pointer(pointer, snapshot.current)
+        phase, reason = await self._aggregate_phase(snapshot.current)
+        await self._publish(
+            pointers,
+            phase=phase,
+            current=snapshot.current,
+            reason=reason,
+        )
+
+    async def _schedule_pointer(
+        self,
+        pointer: ContractPointer,
+        current: bool,
+    ) -> None:
+        async with self._state_bus.lock:
+            if pointer in self._pointer_running:
+                self._pointer_dirty.add(pointer)
+                return
+            self._pointer_running.add(pointer)
+            task_group = self._task_group
+        if task_group is not None:
+            task_group.start_soon(self._pointer_worker, pointer, current)
+
+    async def _pointer_worker(
+        self,
+        pointer: ContractPointer,
+        current: bool,
+    ) -> None:
+        try:
+            while not self._closed:
+                await self._reconcile_and_publish(pointer, current)
+                async with self._state_bus.lock:
+                    if pointer not in self._pointer_dirty:
+                        return
+                    self._pointer_dirty.discard(pointer)
+                current = self._view.is_current()
+        finally:
+            async with self._state_bus.lock:
+                self._pointer_running.discard(pointer)
+                self._pointer_dirty.discard(pointer)
+                self._pointer_locks.pop(pointer, None)
+
+    async def _reconcile_and_publish(
+        self,
+        pointer: ContractPointer,
+        current: bool,
+    ) -> None:
+        await self._reconcile_pointer(pointer)
+        phase, reason = await self._aggregate_phase(current)
+        await self._publish(
+            (pointer,),
+            phase=phase,
+            current=current and self._view.is_current(),
+            reason=reason,
+        )
 
     async def _reconcile_pointer(self, pointer: ContractPointer) -> None:
         lock = self._pointer_locks.setdefault(pointer, anyio.Lock())
@@ -398,21 +621,33 @@ class ConcordParticipant:
             )
             async with self._state_bus.lock:
                 selected = pointer in self._selected
-                managed_here = key in self._managed
-            if not selected:
-                await self._drop_pointer(
-                    key,
-                    cancel=managed_here,
-                    reason="concord_participant_policy_rejected",
-                )
-                return
             contract = self._view.get_contract(pointer)
             if contract is None:
-                await self._drop_pointer(key, cancel=False, reason="contract_missing")
+                await self._drop_pointer(key)
                 return
             record = self._view.record(contract)
             if record is None:
-                await self._drop_pointer(key, cancel=False, reason="contract_invalid")
+                await self._drop_pointer(key)
+                return
+            if not selected:
+                lease = await self._relinquish_pointer(key)
+                await self._cancel_or_retain(
+                    contract,
+                    reason="concord_participant_policy_rejected",
+                    lease=lease,
+                )
+                await self._drop_pointer(key)
+                return
+            expected_session = record.participant_sessions.get(str(self.participant))
+            if expected_session is not None and expected_session != self.session_id:
+                self._retired_pointers.add(pointer)
+                lease = await self._relinquish_pointer(key)
+                await self._cancel_or_retain(
+                    contract,
+                    reason="concord_managed_session_mismatch",
+                    lease=lease,
+                )
+                await self._drop_pointer(key)
                 return
             validity = self._view.validate(
                 contract,
@@ -430,29 +665,49 @@ class ConcordParticipant:
                     await lease.fail_closed_unavailable(
                         validity.reason or "Concord view is unavailable"
                     )
+                await self._publish(
+                    (pointer,),
+                    phase=ConcordLifecyclePhase.UNAVAILABLE,
+                    current=False,
+                    reason=validity.reason or "Concord view is unavailable",
+                )
+                await self._cancel_or_retain(
+                    contract,
+                    reason="concord_managed_view_unavailable",
+                    lease=lease,
+                )
                 return
             existing = validity.tokens.get(str(self.participant))
             if _terminal_status(validity.status):
+                await self._relinquish_pointer(key)
                 await self._cancel_terminal(contract, validity)
-                await self._drop_pointer(key, cancel=False, reason=validity.status.value)
+                await self._drop_pointer(key)
                 return
 
             async with self._state_bus.lock:
                 lease = self._leases.get(key)
             if existing is not None:
+                self._retired_pointers.add(pointer)
                 if (
                     lease is None
                     or lease.token is None
                     or not participant_handle_matches(lease.token, existing)
                 ):
-                    await self._cancel_lost_token(contract)
-                    await self._drop_pointer(
-                        key,
-                        cancel=False,
+                    lease = await self._relinquish_pointer(key)
+                    await self._cancel_or_retain(
+                        contract,
+                        reason=CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
+                        lease=lease,
+                    )
+                    await self._drop_pointer(key)
+                    return
+            if lease is None:
+                if pointer in self._retired_pointers:
+                    await self._cancel_or_retain(
+                        contract,
                         reason=CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
                     )
                     return
-            if lease is None:
                 lease = ConcordParticipantLease(
                     self._store,
                     self._view,
@@ -472,11 +727,16 @@ class ConcordParticipant:
                         )
                     return
                 except ConcordConflict as exc:
-                    await self._drop_pointer(key, cancel=False, reason=str(exc))
+                    if exc.code == ConcordConflictCode.SESSION_MISMATCH:
+                        await self._cancel_or_retain(
+                            contract,
+                            reason="concord_managed_session_mismatch",
+                            lease=lease,
+                        )
+                    await self._drop_pointer(key)
                     return
-                task_group = self._task_group
-                if task_group is not None:
-                    task_group.start_soon(self._heartbeat, key, lease)
+                self._retired_pointers.add(pointer)
+                self._tasks.group.start_soon(self._heartbeat, key, lease)
 
             validity = self._view.validate(
                 contract,
@@ -502,7 +762,6 @@ class ConcordParticipant:
             ConcordParticipantLeasePhase.UNAVAILABLE,
             ConcordParticipantLeasePhase.TERMINAL,
         }:
-            await self._cancel_lost_token(lease.contract)
             if lease.state.phase == ConcordParticipantLeasePhase.UNAVAILABLE:
                 reason = (
                     lease.state.reason
@@ -520,18 +779,45 @@ class ConcordParticipant:
                     current=False,
                     reason=reason,
                 )
+                await self._cancel_or_retain(
+                    lease.contract,
+                    reason=CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
+                    lease=lease,
+                )
                 return
-            await self._drop_pointer(
-                key,
-                cancel=False,
-                reason=lease.state.reason
-                or CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
+            await self._relinquish_pointer(key)
+            await self._cancel_or_retain(
+                lease.contract,
+                reason=CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
+                lease=lease,
             )
+            await self._drop_pointer(key)
             await self._publish(
                 (lease.contract.pointer,),
                 phase=ConcordLifecyclePhase.READY,
                 current=self._view.is_current(),
             )
+
+    async def _relinquish_pointer(
+        self,
+        key: str,
+    ) -> ConcordParticipantLease | None:
+        """Remove public authority before any pointer-scoped remote I/O."""
+
+        pointer = _pointer_from_key(key)
+        async with self._state_bus.lock:
+            lease = self._leases.get(key)
+            if lease is not None:
+                lease.relinquish_local_authority()
+            self._managed.pop(key, None)
+        phase, reason = await self._aggregate_phase(self._view.is_current())
+        await self._publish(
+            (pointer,),
+            phase=phase,
+            current=self._view.is_current(),
+            reason=reason,
+        )
+        return lease
 
     async def _cancel_terminal(
         self,
@@ -546,67 +832,184 @@ class ConcordParticipant:
             ContractValidityStatus.TERMS_HASH_MISMATCH,
         }:
             return
-        try:
-            await self._store.cancel(
-                contract,
-                self.participant,
-                reason=f"concord_managed_{validity.status.value}",
-            )
-        except (ConcordConflict, ConcordUnavailable):
-            logger.debug("Could not cancel terminal Concord contract", exc_info=True)
+        await self._cancel_or_retain(
+            contract,
+            reason=f"concord_managed_{validity.status.value}",
+        )
 
-    async def _cancel_lost_token(self, contract: ContractHandle) -> None:
-        try:
-            await self._store.cancel(
-                contract,
-                self.participant,
-                reason=CONCORD_MANAGED_LOST_PARTICIPANT_TOKEN_REASON,
-            )
-        except (ConcordConflict, ConcordUnavailable):
-            logger.debug(
-                "Could not cancel Concord contract after local token loss",
-                exc_info=True,
-            )
-
-    async def _drop_pointer(
-        self,
-        key: str,
-        *,
-        cancel: bool,
-        reason: str,
-    ) -> None:
+    async def _drop_pointer(self, key: str) -> None:
         pointer = _pointer_from_key(key)
         async with self._state_bus.lock:
-            managed = self._managed.pop(key, None)
+            self._managed.pop(key, None)
             lease = self._leases.pop(key, None)
-            self._failures.pop(pointer, None)
-        if cancel and managed is not None:
-            try:
-                await self._store.cancel(
-                    managed.contract,
-                    self.participant,
-                    reason=reason,
-                )
-            except (ConcordConflict, ConcordUnavailable):
-                logger.debug("Could not cancel released Concord contract", exc_info=True)
+            if pointer not in self._cleanup_contracts:
+                self._failures.pop(pointer, None)
+                current = self._view.get_contract(pointer)
+                if current is not None and current.state != ContractState.OPEN:
+                    self._retired_pointers.discard(pointer)
+        if lease is not None and pointer not in self._cleanup_leases:
+            await lease.aclose()
+
+    async def _cancel_or_retain(
+        self,
+        contract: ContractHandle,
+        *,
+        reason: str,
+        lease: ConcordParticipantLease | None = None,
+    ) -> bool:
+        try:
+            await self._store.cancel(
+                contract,
+                self.participant,
+                reason=reason,
+            )
+        except (ConcordConflict, ConcordUnavailable) as exc:
+            await self._retain_cleanup(
+                contract,
+                error=exc,
+                reason=reason,
+                lease=lease,
+            )
+            return False
+        return True
+
+    async def _retain_cleanup(
+        self,
+        contract: ContractHandle,
+        *,
+        error: ConcordConflict | ConcordUnavailable,
+        reason: str,
+        lease: ConcordParticipantLease | None,
+    ) -> None:
+        pointer = contract.pointer
+        async with self._state_bus.lock:
+            self._cleanup_contracts[pointer] = contract
+            self._cleanup_wakeups.setdefault(pointer, anyio.Event())
+            if lease is not None:
+                self._cleanup_leases[pointer] = lease
+            self._failures[pointer] = (
+                ConcordLifecyclePhase.UNAVAILABLE,
+                str(error),
+            )
+            start_retry = pointer not in self._cleanup_running
+            if start_retry:
+                self._cleanup_running.add(pointer)
+            task_group = self._task_group
         if lease is not None:
-            await lease.aclose(withdraw=not cancel)
+            lease.relinquish_local_authority()
+        if start_retry and task_group is not None:
+            task_group.start_soon(self._cleanup_retry_loop, pointer, reason)
+
+    async def _cleanup_retry_loop(
+        self,
+        pointer: ContractPointer,
+        reason: str,
+    ) -> None:
+        delay = 0.1
+        try:
+            while not self._closed:
+                async with self._state_bus.lock:
+                    contract = self._cleanup_contracts.get(pointer)
+                    lease = self._cleanup_leases.get(pointer)
+                if contract is None:
+                    return
+                token_clean = lease is None
+                if lease is not None:
+                    try:
+                        await lease.withdraw_retained()
+                    except (ConcordConflict, ConcordUnavailable):
+                        pass
+                    else:
+                        token_clean = True
+                try:
+                    await self._store.cancel(
+                        contract,
+                        self.participant,
+                        reason=reason,
+                    )
+                except ConcordConflict as exc:
+                    if exc.code != ConcordConflictCode.REVISION_CHANGED:
+                        async with self._state_bus.lock:
+                            self._failures[pointer] = (
+                                ConcordLifecyclePhase.TERMINAL,
+                                str(exc),
+                            )
+                        return
+                except ConcordUnavailable as exc:
+                    async with self._state_bus.lock:
+                        self._failures[pointer] = (
+                            ConcordLifecyclePhase.UNAVAILABLE,
+                            str(exc),
+                        )
+                else:
+                    if token_clean:
+                        async with self._state_bus.lock:
+                            self._cleanup_contracts.pop(pointer, None)
+                            self._cleanup_wakeups.pop(pointer, None)
+                            self._failures.pop(pointer, None)
+                            self._retired_pointers.discard(pointer)
+                            completed_lease = self._cleanup_leases.pop(pointer, None)
+                        if completed_lease is not None:
+                            await completed_lease.aclose(withdraw=False)
+                        await self._publish(
+                            (pointer,),
+                            phase=ConcordLifecyclePhase.READY,
+                            current=self._view.is_current(),
+                        )
+                        return
+                async with self._state_bus.lock:
+                    wakeup = self._cleanup_wakeups.setdefault(
+                        pointer,
+                        anyio.Event(),
+                    )
+                if wakeup.is_set():
+                    async with self._state_bus.lock:
+                        if self._cleanup_wakeups.get(pointer) is wakeup:
+                            self._cleanup_wakeups[pointer] = anyio.Event()
+                    delay = 0.1
+                    continue
+                with anyio.move_on_after(random.uniform(delay * 0.5, delay)):
+                    await wakeup.wait()
+                if wakeup.is_set():
+                    async with self._state_bus.lock:
+                        if self._cleanup_wakeups.get(pointer) is wakeup:
+                            self._cleanup_wakeups[pointer] = anyio.Event()
+                    delay = 0.1
+                else:
+                    delay = min(delay * 2, 5.0)
+        finally:
+            async with self._state_bus.lock:
+                self._cleanup_running.discard(pointer)
 
     async def _fail_policy(self, reason: str) -> None:
         async with self._state_bus.lock:
             leases = tuple(self._leases.values())
-            self._leases.clear()
+            pointers = {
+                *self._selected,
+                *(managed.contract.pointer for managed in self._managed.values()),
+                *(lease.contract.pointer for lease in leases),
+            }
+            self._policy_failure = reason
             self._managed.clear()
             self._selected = frozenset()
-            self._failures.clear()
-        for lease in leases:
-            await lease.aclose()
+            for lease in leases:
+                lease.relinquish_local_authority()
         await self._publish(
-            (),
+            pointers,
             phase=ConcordLifecyclePhase.UNAVAILABLE,
             current=False,
             reason=reason,
         )
+        # Policy execution happens in the one coalescing selector worker.  It
+        # must never perform remote cleanup itself: one blocked contract store
+        # would then prevent every other pointer from failing closed.  Emptying
+        # the selected set makes the existing pointer-scoped workers cancel and
+        # withdraw independently while retaining ambiguous cleanup ownership.
+        for pointer in sorted(
+            pointers,
+            key=lambda item: (item.contract_id, item.generation),
+        ):
+            await self._schedule_pointer(pointer, self._view.is_current())
 
     def _session_assertions(self) -> ConcordSessionAssertions:
         return ConcordSessionAssertions.from_mapping(
@@ -620,7 +1023,10 @@ class ConcordParticipant:
         if not current:
             return ConcordLifecyclePhase.UNAVAILABLE, "Concord view is unavailable"
         async with self._state_bus.lock:
+            policy_failure = self._policy_failure
             failures = tuple(self._failures.values())
+        if policy_failure is not None:
+            return ConcordLifecyclePhase.UNAVAILABLE, policy_failure
         if failures:
             phase, reason = failures[0]
             return phase, reason
