@@ -46,6 +46,17 @@ class ConcordUnavailableCode(StrEnum):
     TTL_INVALID = "ttl_invalid"
 
 
+class ConcordLifecyclePhase(StrEnum):
+    """Current phase of one owned Concord lifecycle context."""
+
+    STARTING = "starting"
+    READY = "ready"
+    UNAVAILABLE = "unavailable"
+    TERMINAL = "terminal"
+    CLOSING = "closing"
+    CLOSED = "closed"
+
+
 class ConcordConflict(RuntimeError):
     """A typed terminal conflict while reading or mutating Concord authority."""
 

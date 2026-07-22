@@ -15,7 +15,6 @@ from deckr.beacon import BEACON_ADVERTISEMENT_STORE_POLICY, Beacon
 from deckr.concord import (
     CONCORD_CONTRACT_BUCKET_POLICY,
     CONCORD_TOKEN_BUCKET_POLICY,
-    DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
     Concord,
 )
 from deckr.contracts.lanes import (
@@ -130,10 +129,6 @@ class Deckr:
     async def services(
         self,
         endpoint: EndpointSession,
-        *,
-        service_use_token_refresh_seconds: float = (
-            DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
-        ),
     ) -> AsyncIterator[object]:
         self.lane(SERVICES_LANE)
         if self._task_group is None:
@@ -149,7 +144,6 @@ class Deckr:
             concord=self._concord,
             task_group=self._task_group,
             kv_bucket_for=self.kv_bucket,
-            service_use_token_refresh_seconds=service_use_token_refresh_seconds,
         )
         try:
             yield services

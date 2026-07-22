@@ -331,47 +331,81 @@ agreements directly.
 
 ```python
 concord = deckr.concord
-agreement = await concord.propose(
-    ConcordAgreementSpec(
-        participants=("controller:main", "hardware_manager:mirabox-main"),
-        local_participant="controller:main",
-        local_session_id="controller-session",
-        profile="dev.deckr.profile.hardware_claim.v1",
-        terms=terms,
+async with deckr.endpoint("controller:main") as endpoint:
+    async with concord.propose(
+        endpoint,
+        ConcordAgreementSpec(
+            participants=(endpoint.address, "hardware_manager:mirabox-main"),
+            profile="dev.deckr.profile.hardware_claim.v1",
+            terms=terms,
+            current_sessions={
+                "hardware_manager:mirabox-main": manager_session_id,
+            },
+        ),
+    ) as agreement:
+        state = await agreement.wait_for_state(
+            lambda current: current.valid or current.phase.value == "terminal",
+            timeout_seconds=10,
+        )
+        if not state.valid:
+            raise RuntimeError(state.reason or "hardware claim was rejected")
+```
+
+The remote runtime accepts candidate contracts through its own endpoint-owned
+participant context and an immutable batch policy:
+
+```python
+def select_claims(candidates):
+    return ConcordParticipantSelection(
+        candidate.contract.pointer
+        for candidate in candidates
+        if candidate.validity.status.value == "not_yet_fulfilled"
     )
-)
-lease = await concord.attach(
-    agreement.contract,
-    participant="hardware_manager:mirabox-main",
-    session_id="manager-session",
-)
-validity = await concord.validate(agreement.contract)
-await lease.aclose()
+
+async with manager_deckr.endpoint("hardware_manager:mirabox-main") as endpoint:
+    policy = ConcordParticipantPolicy(
+        profile="dev.deckr.profile.hardware_claim.v1",
+        select=select_claims,
+    )
+    async with manager_deckr.concord.participant(endpoint, policy) as participant:
+        await participant.wait_for_state(lambda state: state.current)
 ```
 
 Tests use the shipped `deckr.testing` harness instead of constructing normal
-Concord runtime stores directly:
+Concord runtime stores directly. Test endpoints provide the same immutable
+address/session evidence as a real `EndpointSession`:
 
 ```python
+from dataclasses import dataclass
+
+import anyio
+
 from deckr.testing import ConcordRuntimeHarness
 
+@dataclass(frozen=True)
+class TestEndpoint:
+    address: EndpointAddress
+    session_id: str
+
 harness = ConcordRuntimeHarness()
-agreement = await harness.concord.propose(
-    ConcordAgreementSpec(
-        participants=("controller:main", "hardware_manager:mirabox-main"),
-        local_participant="controller:main",
-        local_session_id="controller-session",
-        profile="dev.deckr.profile.hardware_claim.v1",
-        terms=terms,
+async with anyio.create_task_group() as task_group:
+    harness.concord.start(task_group)
+    await harness.concord.wait_current()
+    endpoint = TestEndpoint(
+        address=parse_endpoint_address("controller:main"),
+        session_id="controller-session",
     )
-)
-lease = await harness.concord.attach(
-    agreement.contract,
-    participant="hardware_manager:mirabox-main",
-    session_id="manager-session",
-)
-validity = await harness.concord.validate(agreement.contract)
-await lease.aclose()
+    async with harness.concord.propose(
+        endpoint,
+        ConcordAgreementSpec(
+            participants=(endpoint.address, "hardware_manager:mirabox-main"),
+            profile="dev.deckr.profile.hardware_claim.v1",
+            terms=terms,
+        ),
+    ) as agreement:
+        assert agreement.state.local_authority
+        assert agreement.contract.contract_id
+    task_group.cancel_scope.cancel()
 ```
 
 Maintenance and reaper tests use the dedicated

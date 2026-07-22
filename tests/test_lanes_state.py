@@ -307,16 +307,15 @@ async def test_concord_cancellation_does_not_close_lane_subscription() -> None:
         controller.subscribe(SERVICES_LANE),
     ):
         subscription = deckr._message_bus.subscriptions[-1]
-        agreement = await deckr.concord.propose(
+        async with deckr.concord.propose(
+            controller,
             ConcordAgreementSpec(
                 profile="dev.deckr.test.profile.v1",
                 participants=(controller.address, service_address("media")),
-                local_participant=controller.address,
-                local_session_id=controller.session_id,
-            )
-        )
-        assert await agreement.cancel("test cancellation")
-        assert not subscription.exited
+            ),
+        ) as agreement:
+            assert await agreement.cancel("test cancellation")
+            assert not subscription.exited
 
 
 class _FakeLaneMsg:

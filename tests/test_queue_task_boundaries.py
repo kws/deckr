@@ -19,7 +19,7 @@ _STATE_STREAM_OWNERS = {
     (Path("deckr/src/deckr/beacon.py"), "_BeaconSubscriber"),
     (Path("deckr/src/deckr/concord.py"), "Concord"),
     (Path("deckr/src/deckr/concord.py"), "_ConcordSubscriber"),
-    (Path("deckr/src/deckr/concord.py"), "ConcordParticipant"),
+    (Path("deckr/src/deckr/_concord/_participant.py"), "ConcordParticipant"),
     (Path("deckr/src/deckr/services/views.py"), "ServiceViewStore"),
     (
         Path("deckr/src/deckr/services/subscriptions.py"),
@@ -47,6 +47,24 @@ class _TemporaryBoundary:
 # Keeping exact semantic call sites here makes accidental replacement with an
 # unbounded registry or queue visible in the same audit as temporary debt.
 _PERMANENT_BOUNDED_BOUNDARIES: dict[_Boundary, int] = {
+    (
+        Path("deckr/src/deckr/_concord/_participant.py"),
+        "ConcordParticipant.__init__",
+        "self._managed",
+        "task_or_reply_route_map",
+    ): 1,
+    (
+        Path("deckr/src/deckr/_concord/_participant.py"),
+        "ConcordParticipant.__init__",
+        "self._leases",
+        "task_or_reply_route_map",
+    ): 1,
+    (
+        Path("deckr/src/deckr/core/util/anyio.py"),
+        "_CancellationSafeMutex.__init__",
+        "self._scopes",
+        "task_or_reply_route_map",
+    ): 1,
     (
         Path("deckr/src/deckr/core/util/anyio.py"),
         "CoalescedStateBroadcaster.__init__",
@@ -114,24 +132,6 @@ _TEMPORARY_BOUNDARIES: dict[_Boundary, _TemporaryBoundary] = {
     ): _TemporaryBoundary(
         phase="Phase 5",
         reason="bound component lifecycle identities with component admission",
-    ),
-    (
-        Path("deckr/src/deckr/concord.py"),
-        "ConcordParticipant.__init__",
-        "self._managed",
-        "task_or_reply_route_map",
-    ): _TemporaryBoundary(
-        phase="Phase 4",
-        reason="move managed contracts under bounded pointer-scoped ownership",
-    ),
-    (
-        Path("deckr/src/deckr/concord.py"),
-        "ConcordParticipant.__init__",
-        "self._leases",
-        "task_or_reply_route_map",
-    ): _TemporaryBoundary(
-        phase="Phase 4",
-        reason="move participant leases under bounded contract ownership",
     ),
     (
         Path("deckr/src/deckr/services/client.py"),

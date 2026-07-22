@@ -328,11 +328,15 @@ broker = fresh_broker()
 controller = start_runtime(ImplA, "controller:main")
 manager = start_runtime(ImplB, "hardware_manager:n4")
 
-contract = controller.concord.propose(
-  participants = ["controller:main", "hardware_manager:n4"],
-  localParticipant = "controller:main",
-  localSessionId = "controller-session"
+endpoint = controller.endpoint(
+  address = "controller:main",
+  sessionId = "controller-session"
 )
+agreement = enter controller.concord.propose(
+  endpoint,
+  participants = ["controller:main", "hardware_manager:n4"]
+)
+contract = agreement.contract
 
 validity = manager.concord.validate_exact(contract)
 
@@ -780,15 +784,15 @@ broker = fresh_broker()
 runtime = start_runtime(ImplA, "hardware_manager:n4")
 
 ad = runtime.beacon.advertise(refreshInterval = 0.1)
-token = runtime.concord.attach_token(refreshInterval = 0.1)
+agreement = enter runtime.concord.propose(runtime.endpoint, agreementIntent)
 
 for duration long_enough_to_observe_two_refreshes:
   ad.refresh()
-  token.refresh()
   sleep(0.1)
 
 assert write_intervals(ad.key) are between 150 and 225 seconds
-assert write_intervals(token.key) are between 60 and 90 seconds
+assert write_intervals(agreement.participantTokenKey) are between 60 and 90 seconds
+assert runtime exposes no participant-token refresh control
 ```
 
 Pass criteria: Beacon derives `ttlSeconds` from the 300-second Beacon KV

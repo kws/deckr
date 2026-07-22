@@ -47,7 +47,7 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
     {
         (
             Path("deckr/src/deckr/runtime.py"),
-            172,
+            166,
             "Deckr.__aenter__",
             "Beacon",
             "construct",
@@ -61,21 +61,21 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            174,
+            168,
             "Deckr.__aenter__",
             "Concord",
             "construct",
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            173,
+            167,
             "Deckr.__aenter__",
             "self._beacon",
             "start",
         ): 1,
         (
             Path("deckr/src/deckr/runtime.py"),
-            178,
+            172,
             "Deckr.__aenter__",
             "self._concord",
             "start",
@@ -83,108 +83,14 @@ _APPROVED_CORE_LIFECYCLE_CALLS: Counter[_CallSite] = Counter(
     }
 )
 
-# Phase 0 freezes these known raw Concord call sites while their owners move to
-# managed recovery/agreement APIs. Keeping semantic call-site identities and
-# exact counts prevents this allowlist from granting a whole file an escape
-# hatch. A removed call must also be removed here.
-_TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
+# Capability-scoped cancellation is part of the managed participant context.
+# Exact call-site identities keep the broad ``cancel`` receiver-name audit from
+# granting an escape hatch to raw facade calls.
+_APPROVED_MANAGED_CANCEL_CALLS: Counter[_CallSite] = Counter(
     {
         (
-            Path(
-                "deckr-action-provider-runtime-python/"
-                "src/deckr/action_provider_runtime/runtime.py"
-            ),
-            375,
-            "PythonActionProvider._cancel_stale_service_use_contracts",
-            "self._concord",
-            "contracts",
-        ): 1,
-        (
-            Path(
-                "deckr-action-provider-runtime-python/"
-                "src/deckr/action_provider_runtime/runtime.py"
-            ),
-            380,
-            "PythonActionProvider._cancel_stale_service_use_contracts",
-            "self._concord",
-            "contract_record",
-        ): 1,
-        (
-            Path(
-                "deckr-action-provider-runtime-python/"
-                "src/deckr/action_provider_runtime/runtime.py"
-            ),
-            388,
-            "PythonActionProvider._cancel_stale_service_use_contracts",
-            "self._concord",
-            "validate",
-        ): 1,
-        (
-            Path(
-                "deckr-action-provider-runtime-python/"
-                "src/deckr/action_provider_runtime/runtime.py"
-            ),
-            403,
-            "PythonActionProvider._cancel_stale_service_use_contracts",
-            "self._concord",
-            "cancel",
-        ): 1,
-        (
-            Path("deckr-controller/src/deckr/controller/_hardware/_validity.py"),
-            40,
-            "validate_owned_claim",
-            "concord",
-            "validate",
-        ): 1,
-        (
-            Path("deckr-controller/src/deckr/controller/_hardware/_validity.py"),
-            49,
-            "validate_owned_claim",
-            "concord",
-            "validate",
-        ): 1,
-        (
-            Path("deckr-controller/src/deckr/controller/_hardware/_claims.py"),
-            315,
-            "HardwareClaimCoordinator._revoke_terminal_owned_claim",
-            "self._concord",
-            "validate_exact",
-        ): 1,
-        (
-            Path("deckr-controller-atc/src/deckr_controller_atc/controller.py"),
-            526,
-            "AtcRadarService._render_live_targets",
-            "concord",
-            "validate_exact",
-        ): 1,
-        # Phase 5 replaces provider-side authorization through the raw
-        # participant validator with the managed provider capability.
-        (
-            Path("deckr/src/deckr/services/runtime.py"),
-            804,
-            "authorize_service_message",
-            "participant",
-            "validate",
-        ): 1,
-        (
-            Path("deckr/src/deckr/services/client.py"),
-            833,
-            "ManagedServiceContract._context",
-            "self._participant",
-            "validate",
-        ): 1,
-        # Phase 5 moves these participant-manager lifecycle operations behind
-        # the managed hardware/provider owners.
-        (
             Path("deckr/src/deckr/hardware/runtime.py"),
-            220,
-            "HardwareManagerRuntime.start",
-            "self._claim_manager",
-            "start",
-        ): 1,
-        (
-            Path("deckr/src/deckr/hardware/runtime.py"),
-            627,
+            619,
             "HardwareManagerRuntime._cancel_claims_for_device",
             "self._claim_manager",
             "cancel",
@@ -194,45 +100,21 @@ _TEMPORARY_RAW_CONCORD_CALLS: Counter[_CallSite] = Counter(
                 "deckr-action-provider-runtime-python/"
                 "src/deckr/action_provider_runtime/runtime.py"
             ),
-            331,
-            "PythonActionProvider._start_action_runtime_service",
-            "self._service_use_manager",
-            "start",
-        ): 1,
-        (
-            Path(
-                "deckr-action-provider-runtime-python/"
-                "src/deckr/action_provider_runtime/runtime.py"
-            ),
-            760,
+            685,
             "PythonActionProvider._withdraw_action_runtime_service",
             "participant",
             "cancel",
         ): 1,
         (
             Path("deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py"),
-            205,
-            "OpenHabServiceComponent.start",
-            "self._service_participant",
-            "start",
-        ): 1,
-        (
-            Path("deckr-plugin-openhab/src/deckr/plugins/openhab/openhabservice.py"),
-            962,
+            949,
             "OpenHabServiceComponent._cancel_subscription_contract",
             "participant",
             "cancel",
         ): 1,
         (
             Path("deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"),
-            251,
-            "SonosServiceComponent.start",
-            "self._service_participant",
-            "start",
-        ): 1,
-        (
-            Path("deckr-plugin-sonos/src/deckr/plugins/sonos/sonosservice.py"),
-            1441,
+            1428,
             "SonosServiceComponent._cancel_subscription_contract",
             "participant",
             "cancel",
@@ -249,7 +131,10 @@ def test_production_code_uses_managed_lifecycle_routes() -> None:
         relative = path.relative_to(workspace)
         if relative in {
             Path("deckr/src/deckr/beacon.py"),
+            Path("deckr/src/deckr/_concord/_agreement.py"),
+            Path("deckr/src/deckr/_concord/_lease.py"),
             Path("deckr/src/deckr/_concord/_maintenance.py"),
+            Path("deckr/src/deckr/_concord/_participant.py"),
             Path("deckr/src/deckr/_concord/_view.py"),
             Path("deckr/src/deckr/concord.py"),
         }:
@@ -264,7 +149,7 @@ def test_production_code_uses_managed_lifecycle_routes() -> None:
         {
             callsite: count
             for callsite, count in (
-                _APPROVED_CORE_LIFECYCLE_CALLS + _TEMPORARY_RAW_CONCORD_CALLS
+                _APPROVED_CORE_LIFECYCLE_CALLS + _APPROVED_MANAGED_CANCEL_CALLS
             ).items()
             if callsite[0] in available_paths
         }

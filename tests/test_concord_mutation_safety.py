@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from deckr._concord._lease import ConcordParticipantLease
 from deckr.concord import (
     CONCORD_CONTRACT_SCHEMA_ID,
     CONCORD_PARTICIPANT_TOKEN_SCHEMA_ID,
@@ -616,7 +617,7 @@ async def test_attached_participant_cas_stops_after_eight_conflicts() -> None:
         generation=contract.generation,
         participant=CONTROLLER,
     )
-    assert await harness.token_entry(token_key) is not None
+    assert await harness.token_entry(token_key) is None
 
 
 @pytest.mark.asyncio
@@ -892,13 +893,21 @@ async def test_post_delete_rescan_fault_retains_marker_until_later_completion(
 async def test_participant_lease_refresh_normalizes_malformed_token_conflict() -> None:
     harness = ConcordRuntimeHarness()
     contract = await _create_contract(harness)
-    lease = harness.concord._participant_lease(  # noqa: SLF001
+    token = await harness.concord._attach(  # noqa: SLF001
+        contract,
+        CONTROLLER,
+        "controller-session",
+        token_id="controller-token",
+    )
+    lease = ConcordParticipantLease(
+        harness.concord._coordinator,  # noqa: SLF001
+        harness.concord._view,  # noqa: SLF001
         contract=contract,
         participant=CONTROLLER,
         session_id="controller-session",
-        token_id="controller-token",
     )
-    token = await lease.attach_or_refresh()
+    lease._owned_token = token  # noqa: SLF001
+    lease._authority_token = token  # noqa: SLF001
     await harness.seed_raw_token(
         token.key,
         {
@@ -909,13 +918,13 @@ async def test_participant_lease_refresh_normalizes_malformed_token_conflict() -
     before = _authority_state(harness)
 
     with pytest.raises(ConcordConflict) as raised:
-        await lease.attach_or_refresh()
+        await lease.refresh()
 
     assert raised.value.code == ConcordConflictCode.TOKEN_INVALID
     assert lease.token is None
     assert _authority_state(harness) == before
     with pytest.raises(ConcordConflict) as closed:
-        await lease.attach_or_refresh()
+        await lease.refresh()
     assert closed.value.code == ConcordConflictCode.LEASE_CLOSED
 
 
@@ -923,14 +932,21 @@ async def test_participant_lease_refresh_normalizes_malformed_token_conflict() -
 async def test_malformed_heartbeat_state_stays_within_lease_task_scope() -> None:
     harness = ConcordRuntimeHarness()
     contract = await _create_contract(harness)
-    lease = harness.concord._participant_lease(  # noqa: SLF001
+    token = await harness.concord._attach(  # noqa: SLF001
+        contract,
+        CONTROLLER,
+        "controller-session",
+        token_id="controller-token",
+    )
+    lease = ConcordParticipantLease(
+        harness.concord._coordinator,  # noqa: SLF001
+        harness.concord._view,  # noqa: SLF001
         contract=contract,
         participant=CONTROLLER,
         session_id="controller-session",
-        token_id="controller-token",
-        refresh_interval=0.01,
     )
-    token = await lease.attach_or_refresh()
+    lease._owned_token = token  # noqa: SLF001
+    lease._authority_token = token  # noqa: SLF001
     await harness.seed_raw_token(
         token.key,
         {
@@ -938,13 +954,13 @@ async def test_malformed_heartbeat_state_stays_within_lease_task_scope() -> None
             "contractId": token.contract_id,
         },
     )
-    lease._refresh_interval = 0  # noqa: SLF001
+    lease._refresh_delay = 0  # noqa: SLF001
 
     await lease.heartbeat_loop()
 
     assert lease.token is None
     with pytest.raises(ConcordConflict) as closed:
-        await lease.attach_or_refresh()
+        await lease.refresh()
     assert closed.value.code == ConcordConflictCode.LEASE_CLOSED
 
 

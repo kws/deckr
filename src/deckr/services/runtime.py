@@ -473,26 +473,12 @@ class ServiceUseLease:
             self._had_valid_authority
             or _agreement_had_valid_authority(self.agreement)
         )
-        try:
-            validity = await self.agreement.refresh()
-        except ConcordConflict as exc:
-            status = (
-                terminal_concord_conflict_status(exc)
-                or ContractValidityStatus.INVALID_TOKEN
-            )
+        validity = self.agreement.state.validity
+        if validity is None:
             raise ServiceUnavailable(
-                f"contract_{status.value}",
-                "Service-use contract could not be refreshed",
-                {
-                    "status": status.value,
-                    "reason": str(exc),
-                    "contractId": self.contract.contract_id,
-                    "generation": self.contract.generation,
-                    "profile": self.contract.profile,
-                    "serviceId": self.descriptor.service_id,
-                    "serviceSessionId": self.descriptor.session_id,
-                },
-            ) from exc
+                "contract_starting",
+                "Service-use agreement has not reached current state",
+            )
         if validity.valid:
             self._had_valid_authority = True
             return
@@ -517,11 +503,7 @@ class ServiceUseLease:
 
 
 def _agreement_had_valid_authority(agreement: ConcordAgreementLease) -> bool:
-    valid = getattr(agreement, "valid", None)
-    if valid is not None:
-        return bool(valid)
-    validity = getattr(agreement, "validity", None)
-    return bool(getattr(validity, "valid", False))
+    return agreement.state.valid
 
 
 @dataclass(frozen=True, slots=True)
@@ -789,24 +771,13 @@ async def authorize_service_message(
         pointer,
     )
     if managed is None:
-        await participant.reconcile(reason="service message authorization")
-        managed = _managed_contract_for_pointer(
-            participant.managed_contracts,
-            pointer,
-        )
-    if managed is None:
         raise ServiceUseAuthorizationError(
             "contract_not_managed",
             "Service message contract is not managed by this participant",
             {"contractId": pointer.contract_id, "generation": pointer.generation},
         )
 
-    validity = await participant.validate(
-        managed.contract,
-        current_sessions={
-            str(message.sender): message.sender_session_id,
-        },
-    )
+    validity = managed.validity
     if not validity.valid or validity.contract is None:
         raise ServiceUseAuthorizationError(
             f"contract_{validity.status.value}",
@@ -816,6 +787,28 @@ async def authorize_service_message(
                 "generation": pointer.generation,
                 "status": validity.status.value,
                 "reason": validity.reason,
+            },
+        )
+    if message.sender not in validity.contract.participants:
+        raise ServiceUseAuthorizationError(
+            "scope_mismatch",
+            "Service message sender is not named by the managed contract",
+            {
+                "contractId": pointer.contract_id,
+                "generation": pointer.generation,
+                "sender": str(message.sender),
+            },
+        )
+    sender_token = validity.tokens.get(str(message.sender))
+    if sender_token is None or sender_token.session_id != message.sender_session_id:
+        raise ServiceUseAuthorizationError(
+            "contract_session_mismatch",
+            "Service message sender session does not match the managed contract",
+            {
+                "contractId": pointer.contract_id,
+                "generation": pointer.generation,
+                "sender": str(message.sender),
+                "senderSessionId": message.sender_session_id,
             },
         )
 
@@ -1092,7 +1085,7 @@ def _service_view_context_from_contract(
     service_id = _require_text(service_id, field_name="service id")
     service_endpoint = service_address(service_id)
     validity = validity or managed.validity
-    token = getattr(validity, "tokens", {}).get(str(service_endpoint)) or managed.token
+    token = getattr(validity, "tokens", {}).get(str(service_endpoint))
     if token is None:
         raise ValueError("managed service contract requires a local participant token")
     if token.participant != service_endpoint:

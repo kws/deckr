@@ -12,6 +12,7 @@ from deckr.actions.endpoints import action_provider_address
 from deckr.concord import (
     ConcordConflict,
     ConcordConflictCode,
+    ConcordLifecyclePhase,
     ConcordManagedContract,
     ContractHandle,
     ContractRecord,
@@ -215,7 +216,7 @@ def _managed_service_contract(
             },
             reason=None if status == ContractValidityStatus.VALID else status.value,
         ),
-        token=service_token,
+        local_authority=True,
     )
 
 
@@ -276,6 +277,48 @@ def _contract() -> SimpleNamespace:
         generation=1,
         profile="dev.deckr.demo.use.v1",
     )
+
+
+def _agreement(
+    validity: ContractValidity | None = None,
+    *,
+    enter_error: BaseException | None = None,
+    wait_forever: bool = False,
+) -> SimpleNamespace:
+    validity = validity or ContractValidity(ContractValidityStatus.VALID)
+    state = SimpleNamespace(
+        validity=validity,
+        valid=validity.valid,
+        phase=(
+            ConcordLifecyclePhase.READY
+            if validity.status
+            in {
+                ContractValidityStatus.VALID,
+                ContractValidityStatus.NOT_YET_FULFILLED,
+                ContractValidityStatus.UNAVAILABLE,
+            }
+            else ConcordLifecyclePhase.TERMINAL
+        ),
+        reason=validity.reason,
+    )
+    agreement = SimpleNamespace(
+        contract=_contract(),
+        state=state,
+        cancel=AsyncMock(return_value=True),
+        aclose=AsyncMock(),
+    )
+    agreement.__aenter__ = AsyncMock(
+        side_effect=enter_error,
+        return_value=agreement,
+    )
+
+    async def wait_for_state(_predicate):
+        if wait_forever:
+            await anyio.sleep_forever()
+        return state
+
+    agreement.wait_for_state = AsyncMock(side_effect=wait_for_state)
+    return agreement
 
 
 def _lease(
@@ -384,13 +427,8 @@ async def test_read_view_translates_kv_unavailable() -> None:
 @pytest.mark.asyncio
 async def test_use_matching_resolves_descriptor_and_negotiates() -> None:
     protocol = _protocol()
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        refresh=AsyncMock(return_value=ContractValidity(ContractValidityStatus.VALID)),
-        cancel=AsyncMock(return_value=True),
-        aclose=AsyncMock(),
-    )
-    concord = SimpleNamespace(propose=AsyncMock(return_value=agreement))
+    agreement = _agreement()
+    concord = SimpleNamespace(propose=Mock(return_value=agreement))
     task_group = SimpleNamespace(start_soon=Mock())
     directory = SimpleNamespace(wait_for=AsyncMock(return_value=_descriptor()))
     services = _services(
@@ -409,23 +447,18 @@ async def test_use_matching_resolves_descriptor_and_negotiates() -> None:
 
     directory.wait_for.assert_awaited_once()
     assert directory.wait_for.await_args.kwargs["timeout"] <= 10.0
-    spec = concord.propose.await_args.args[0]
-    assert spec.local_participant == _CLIENT_ADDRESS
+    endpoint, spec = concord.propose.call_args.args
+    assert endpoint.address == _CLIENT_ADDRESS
     assert spec.terms is None
     agreement.cancel.assert_awaited_once_with("service_use_closed")
 
 
 @pytest.mark.asyncio
 async def test_aclose_closes_active_service_use_lease_once() -> None:
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        refresh=AsyncMock(return_value=ContractValidity(ContractValidityStatus.VALID)),
-        cancel=AsyncMock(return_value=True),
-        aclose=AsyncMock(),
-    )
+    agreement = _agreement()
     services = _services(
         endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
-        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+        concord=SimpleNamespace(propose=Mock(return_value=agreement)),
     )
     context = services.use(_descriptor())
 
@@ -445,17 +478,13 @@ async def test_aclose_closes_active_service_use_lease_once() -> None:
 
 @pytest.mark.asyncio
 async def test_use_explicit_timeout_cancels_pending_contract() -> None:
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        refresh=AsyncMock(
-            return_value=ContractValidity(ContractValidityStatus.NOT_YET_FULFILLED)
-        ),
-        cancel=AsyncMock(return_value=True),
-        aclose=AsyncMock(),
+    agreement = _agreement(
+        ContractValidity(ContractValidityStatus.NOT_YET_FULFILLED),
+        wait_forever=True,
     )
     services = _services(
         endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
-        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+        concord=SimpleNamespace(propose=Mock(return_value=agreement)),
     )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
@@ -472,15 +501,8 @@ async def test_use_explicit_timeout_cancels_pending_contract() -> None:
 
 @pytest.mark.asyncio
 async def test_use_explicit_timeout_covers_proposal_wait() -> None:
-    agreement = SimpleNamespace(cancel=AsyncMock(), aclose=AsyncMock())
-    wait_forever = anyio.Event()
-
-    async def propose(_spec, *, start_soon=None):
-        del start_soon
-        await wait_forever.wait()
-        return agreement
-
-    concord = SimpleNamespace(propose=AsyncMock(side_effect=propose))
+    agreement = _agreement(wait_forever=True)
+    concord = SimpleNamespace(propose=Mock(return_value=agreement))
     services = _services(
         endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
         concord=concord,
@@ -494,10 +516,10 @@ async def test_use_explicit_timeout_covers_proposal_wait() -> None:
             pass
 
     assert exc_info.value.code == "contract_timeout"
-    assert exc_info.value.diagnostics["contractId"] is None
-    concord.propose.assert_awaited_once()
-    agreement.cancel.assert_not_awaited()
-    agreement.aclose.assert_not_awaited()
+    assert exc_info.value.diagnostics["contractId"] == "contract-1"
+    concord.propose.assert_called_once()
+    agreement.cancel.assert_awaited_once_with("contract_timeout")
+    agreement.aclose.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -531,15 +553,12 @@ async def test_use_translates_terminal_protocol_conflict_during_negotiation(
     message: str,
     expected_code: str,
 ) -> None:
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        refresh=AsyncMock(side_effect=ConcordConflict(conflict_code, message)),
-        cancel=AsyncMock(return_value=True),
-        aclose=AsyncMock(),
+    agreement = _agreement(
+        enter_error=ConcordConflict(conflict_code, message),
     )
     services = _services(
         endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
-        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+        concord=SimpleNamespace(propose=Mock(return_value=agreement)),
     )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
@@ -551,26 +570,21 @@ async def test_use_translates_terminal_protocol_conflict_during_negotiation(
 
     assert exc_info.value.code == expected_code
     assert exc_info.value.diagnostics["reason"] == message
-    agreement.aclose.assert_awaited_once()
+    agreement.aclose.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_use_translates_unknown_protocol_conflict_to_service_use_conflict() -> None:
     message = "Concord participant is already attached"
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        refresh=AsyncMock(
-            side_effect=ConcordConflict(
-                ConcordConflictCode.PARTICIPANT_ALREADY_ATTACHED,
-                message,
-            )
+    agreement = _agreement(
+        enter_error=ConcordConflict(
+            ConcordConflictCode.PARTICIPANT_ALREADY_ATTACHED,
+            message,
         ),
-        cancel=AsyncMock(return_value=True),
-        aclose=AsyncMock(),
     )
     services = _services(
         endpoint=SimpleNamespace(address=_CLIENT_ADDRESS, session_id="client-session"),
-        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+        concord=SimpleNamespace(propose=Mock(return_value=agreement)),
     )
 
     with pytest.raises(ServiceUnavailable) as exc_info:
@@ -582,7 +596,7 @@ async def test_use_translates_unknown_protocol_conflict_to_service_use_conflict(
 
     assert exc_info.value.code == "service_use_conflict"
     assert exc_info.value.diagnostics["reason"] == message
-    agreement.aclose.assert_awaited_once()
+    agreement.aclose.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -603,10 +617,13 @@ async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
     expected_code: str,
     expected_status: str,
 ) -> None:
+    del conflict_code
     descriptor = _descriptor()
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        refresh=AsyncMock(side_effect=ConcordConflict(conflict_code, message)),
+    agreement = _agreement(
+        ContractValidity(
+            ContractValidityStatus.MISSING_TOKEN,
+            reason=message,
+        )
     )
     lease = ServiceUseLease(
         agreement=agreement,
@@ -626,13 +643,7 @@ async def test_service_use_lease_refresh_preserves_terminal_protocol_conflicts(
 @pytest.mark.asyncio
 async def test_service_use_lease_refresh_preserves_valid_lease_when_unavailable() -> None:
     descriptor = _descriptor()
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        valid=True,
-        refresh=AsyncMock(
-            return_value=ContractValidity(ContractValidityStatus.UNAVAILABLE)
-        ),
-    )
+    agreement = _agreement()
     lease = ServiceUseLease(
         agreement=agreement,
         descriptor=descriptor,
@@ -640,20 +651,15 @@ async def test_service_use_lease_refresh_preserves_valid_lease_when_unavailable(
         consumer_session_id="client-session",
     )
 
+    agreement.state.validity = ContractValidity(ContractValidityStatus.UNAVAILABLE)
+    agreement.state.valid = False
     await lease.refresh()
-
-    agreement.refresh.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_service_use_lease_refresh_raises_unavailable_without_valid_lease() -> None:
     descriptor = _descriptor()
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        refresh=AsyncMock(
-            return_value=ContractValidity(ContractValidityStatus.UNAVAILABLE)
-        ),
-    )
+    agreement = _agreement(ContractValidity(ContractValidityStatus.UNAVAILABLE))
     lease = ServiceUseLease(
         agreement=agreement,
         descriptor=descriptor,
@@ -670,12 +676,7 @@ async def test_service_use_lease_refresh_raises_unavailable_without_valid_lease(
 
 @pytest.mark.asyncio
 async def test_service_message_timeout_is_separate_from_service_use() -> None:
-    agreement = SimpleNamespace(
-        contract=_contract(),
-        refresh=AsyncMock(return_value=ContractValidity(ContractValidityStatus.VALID)),
-        cancel=AsyncMock(return_value=True),
-        aclose=AsyncMock(),
-    )
+    agreement = _agreement()
 
     async def request(**kwargs):
         return service_response_message(
@@ -703,7 +704,7 @@ async def test_service_message_timeout_is_separate_from_service_use() -> None:
     )
     services = _services(
         endpoint=endpoint,
-        concord=SimpleNamespace(propose=AsyncMock(return_value=agreement)),
+        concord=SimpleNamespace(propose=Mock(return_value=agreement)),
     )
 
     async with services.use(
@@ -756,9 +757,7 @@ async def test_managed_service_contract_sends_service_to_consumer_message() -> N
         "event": {"state": "ready"},
     }
     assert participant.reconcile_calls == 0
-    assert participant.validate_calls == [
-        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"})
-    ]
+    assert participant.validate_calls == []
 
 
 @pytest.mark.asyncio
@@ -802,9 +801,7 @@ async def test_managed_service_contract_request_validates_response_metadata() ->
 
     assert reply.status is ServiceMessageStatus.OK
     assert endpoint.request.await_args.kwargs["timeout"] == 3.0
-    assert participant.validate_calls == [
-        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"})
-    ]
+    assert participant.validate_calls == []
 
 
 @pytest.mark.asyncio
@@ -856,7 +853,7 @@ async def test_managed_service_contract_rejects_response_subject_mismatch() -> N
 
 
 @pytest.mark.asyncio
-async def test_managed_service_contract_reconciles_once_before_send() -> None:
+async def test_managed_service_contract_does_not_repair_missing_state_before_send() -> None:
     managed = _managed_service_contract()
     participant = _FakeManagedServiceParticipant((), after_reconcile=(managed,))
     endpoint = SimpleNamespace(
@@ -872,11 +869,12 @@ async def test_managed_service_contract_reconciles_once_before_send() -> None:
         service_id="demo-home",
     )
 
-    assert await channel.send("stateChanged") == "sent"
-    assert participant.reconcile_calls == 1
-    assert participant.validate_calls == [
-        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"})
-    ]
+    with pytest.raises(ServiceUnavailable) as exc_info:
+        await channel.send("stateChanged")
+    assert exc_info.value.code == "contract_not_managed"
+    assert participant.reconcile_calls == 0
+    assert participant.validate_calls == []
+    endpoint.send.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -900,7 +898,7 @@ async def test_managed_service_contract_fails_closed_when_contract_missing() -> 
         await channel.send("stateChanged")
 
     assert exc_info.value.code == "contract_not_managed"
-    assert participant.reconcile_calls == 1
+    assert participant.reconcile_calls == 0
     assert endpoint.send.await_count == 0
 
 
@@ -963,10 +961,7 @@ async def test_managed_service_view_access_validates_before_operations() -> None
     assert await access.read(view) is None
     await access.put(view, {"ok": True})
 
-    assert participant.validate_calls == [
-        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"}),
-        (managed.contract, {str(_CLIENT_ADDRESS): "client-session"}),
-    ]
+    assert participant.validate_calls == []
     assert store.get.await_args.args[0].reader is ServiceViewWriter.SERVICE
     assert store.put.await_args.kwargs["context"].writer is ServiceViewWriter.SERVICE
 

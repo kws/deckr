@@ -317,7 +317,7 @@ def _managed_contract(
                 str(consumer_token.participant): consumer_token,
             },
         ),
-        token=service_token,
+        local_authority=True,
     )
 
 
@@ -748,12 +748,7 @@ async def test_authorize_service_message_matches_exact_contract_pointer() -> Non
     assert result.view_write_context.writer == ServiceViewWriter.SERVICE
     assert result.view_write_context.consumer_session_id == "provider-session"
     assert participant.reconcile_calls == 0
-    assert participant.validate_calls == [
-        (
-            lease.contract,
-            {str(action_provider_address("provider-main")): "provider-session"},
-        )
-    ]
+    assert participant.validate_calls == []
 
 
 @pytest.mark.asyncio
@@ -778,7 +773,7 @@ async def test_authorize_service_message_rejects_unmanaged_contract_pointer() ->
         )
 
     assert exc_info.value.code == "contract_not_managed"
-    assert participant.reconcile_calls == 1
+    assert participant.reconcile_calls == 0
     assert participant.validate_calls == []
 
 
@@ -803,12 +798,7 @@ async def test_authorize_service_message_rejects_sender_not_named_by_contract() 
         )
 
     assert exc_info.value.code == "scope_mismatch"
-    assert participant.validate_calls == [
-        (
-            lease.contract,
-            {str(action_provider_address("other-provider")): "provider-session"},
-        )
-    ]
+    assert participant.validate_calls == []
 
 
 @pytest.mark.asyncio

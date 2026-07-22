@@ -469,8 +469,56 @@ class ConcordKvStore:
         *,
         token_id: str | None = None,
     ) -> ParticipantHandle:
+        token = await self.prepare_attach(
+            contract,
+            participant,
+            session_id,
+            token_id=token_id,
+        )
+        try:
+            for _attempt in range(MAX_ATTACHED_PARTICIPANT_CAS_ATTEMPTS):
+                try:
+                    await self.mark_participant_attached(
+                        contract,
+                        token.participant,
+                    )
+                except ConcordConflict as exc:
+                    if exc.code != ConcordConflictCode.REVISION_CHANGED:
+                        raise
+                    if _attempt + 1 == MAX_ATTACHED_PARTICIPANT_CAS_ATTEMPTS:
+                        raise
+                    continue
+                return token
+        except BaseException:
+            # The raw/conformance helper never abandons a token that was created
+            # before the attached-participant CAS completed. Managed lifecycle
+            # code uses ``prepare_attach`` directly so it can retain the same
+            # fenced handle while waiting for relevant view progress.
+            with anyio.CancelScope(shield=True):
+                try:
+                    await self.withdraw(token)
+                except (ConcordConflict, ConcordUnavailable):
+                    pass
+            raise
+        raise AssertionError("unreachable participant attach state")
+
+    async def prepare_attach(
+        self,
+        contract: ContractHandle,
+        participant: str | EndpointAddress,
+        session_id: str,
+        *,
+        token_id: str | None = None,
+    ) -> ParticipantHandle:
+        """Create or recover the caller-owned token before contract attachment.
+
+        Returning the exact handle transfers cleanup ownership to the caller.
+        The token is not Concord authority until ``mark_participant_attached``
+        succeeds and cached/exact validation observes the complete pair.
+        """
+
         pointer = _assert_contract_handle(contract)
-        current, record = await self._read_contract(pointer, contract.key)
+        _current, record = await self._read_contract(pointer, contract.key)
         if record.state == ContractState.CANCELLED:
             raise ConcordConflict(
                 ConcordConflictCode.CONTRACT_CANCELLED,
@@ -559,83 +607,62 @@ class ConcordKvStore:
                 ) from exc
             token = observed
             entry = token_entry
-            await self._mark_participant_attached(
-                pointer=pointer,
-                participant=parsed_participant,
-                allow_already_attached=False,
-            )
         else:
             _assert_entry_key(entry, key, token=True, pointer=pointer)
-            await self._mark_participant_attached(
-                pointer=pointer,
-                participant=parsed_participant,
-                allow_already_attached=True,
-            )
         return participant_handle(key, token, entry.revision)
 
-    async def _mark_participant_attached(
+    async def mark_participant_attached(
         self,
-        *,
-        pointer: ContractPointer,
+        contract: ContractHandle,
         participant: EndpointAddress,
-        allow_already_attached: bool,
-    ) -> None:
+    ) -> int:
+        """Perform one fenced attached-participant CAS attempt."""
+
+        pointer = _assert_contract_handle(contract)
         contract_key = concord_contract_key(
             contract_id=pointer.contract_id,
             generation=pointer.generation,
         )
-        last_conflict: ConcordConflict | None = None
-        for _attempt in range(MAX_ATTACHED_PARTICIPANT_CAS_ATTEMPTS):
-            current, record = await self._read_contract(pointer, contract_key)
-            if record.state == ContractState.CANCELLED:
-                raise ConcordConflict(
-                    ConcordConflictCode.CONTRACT_CANCELLED,
-                    f"Concord contract {contract_key!r} is cancelled",
-                    key=contract_key,
-                    expected_pointer=pointer,
-                )
-            if participant not in record.participants:
-                raise ConcordConflict(
-                    ConcordConflictCode.PARTICIPANT_NOT_NAMED,
-                    "participant is not named by the Concord contract",
-                    key=contract_key,
-                    expected_pointer=pointer,
-                )
-            if participant in record.attached_participants:
-                if allow_already_attached:
-                    return
-                raise ConcordConflict(
-                    ConcordConflictCode.PARTICIPANT_ALREADY_ATTACHED,
-                    "Concord participant is already attached",
-                    key=contract_key,
-                    expected_pointer=pointer,
-                )
-            attached = tuple(sorted((*record.attached_participants, participant), key=str))
-            updated = record.model_copy(update={"attached_participants": attached})
-            _assert_contract_replacement_identity(record, updated, pointer, contract_key)
-            try:
-                await self.contract_exact.update(
-                    contract_key,
-                    updated,
-                    revision=current.revision,
-                )
-            except ConcordConflict as exc:
-                if exc.code != ConcordConflictCode.REVISION_CHANGED:
-                    raise
-                last_conflict = exc
-                continue
-            return
-        message = (
-            "Concord contract attached-participant revision changed during all "
-            f"{MAX_ATTACHED_PARTICIPANT_CAS_ATTEMPTS} CAS attempts; final conflict: "
-            f"{last_conflict}"
-        )
-        raise ConcordConflict(
-            ConcordConflictCode.REVISION_CHANGED,
-            message,
-            key=contract_key,
-            expected_pointer=pointer,
-        ) from last_conflict
+        current, record = await self._read_contract(pointer, contract_key)
+        if record.state == ContractState.CANCELLED:
+            raise ConcordConflict(
+                ConcordConflictCode.CONTRACT_CANCELLED,
+                f"Concord contract {contract_key!r} is cancelled",
+                key=contract_key,
+                expected_pointer=pointer,
+            )
+        if participant not in record.participants:
+            raise ConcordConflict(
+                ConcordConflictCode.PARTICIPANT_NOT_NAMED,
+                "participant is not named by the Concord contract",
+                key=contract_key,
+                expected_pointer=pointer,
+            )
+        if participant in record.attached_participants:
+            return current.revision
+        attached = tuple(sorted((*record.attached_participants, participant), key=str))
+        updated = record.model_copy(update={"attached_participants": attached})
+        _assert_contract_replacement_identity(record, updated, pointer, contract_key)
+        try:
+            updated_entry = await self.contract_exact.update(
+                contract_key,
+                updated,
+                revision=current.revision,
+            )
+        except ConcordConflict as exc:
+            if exc.code != ConcordConflictCode.REVISION_CHANGED:
+                raise
+            message = (
+                "Concord contract attached-participant revision changed during "
+                f"the fenced CAS attempt: {exc}"
+            )
+            raise ConcordConflict(
+                ConcordConflictCode.REVISION_CHANGED,
+                message,
+                key=contract_key,
+                expected_pointer=pointer,
+            ) from exc
+        return updated_entry.revision
 
     async def refresh(self, handle: ParticipantHandle) -> ParticipantHandle:
         pointer = _assert_participant_handle(handle)

@@ -86,6 +86,8 @@ class ConcordView:
         self._token_current = False
         self._ready = anyio.Event()
         self._broadcaster = CoalescedStateBroadcaster[ContractPointer](current=False)
+        self._run_cancel_scope: anyio.CancelScope | None = None
+        self._run_done = anyio.Event()
         self._closed = False
 
     @property
@@ -109,14 +111,30 @@ class ConcordView:
             await anyio.sleep(0)
 
     async def run(self) -> None:
-        async with anyio.create_task_group() as task_group:
-            task_group.start_soon(self._contract_loop)
-            task_group.start_soon(self._token_loop)
+        if self._closed:
+            self._run_done.set()
+            return
+        try:
+            with anyio.CancelScope() as cancel_scope:
+                self._run_cancel_scope = cancel_scope
+                if self._closed:
+                    cancel_scope.cancel()
+                async with anyio.create_task_group() as task_group:
+                    task_group.start_soon(self._contract_loop)
+                    task_group.start_soon(self._token_loop)
+        finally:
+            self._run_cancel_scope = None
+            self._run_done.set()
 
     async def aclose(self) -> None:
         if self._closed:
             return
         self._closed = True
+        cancel_scope = self._run_cancel_scope
+        if cancel_scope is not None:
+            cancel_scope.cancel()
+            with anyio.move_on_after(5, shield=True):
+                await self._run_done.wait()
         await self._broadcaster.aclose()
         await self._notify_contract_revisions()
         await self._notify_token_revisions()

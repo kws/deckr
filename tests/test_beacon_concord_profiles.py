@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 import anyio
 import pytest
@@ -19,8 +20,9 @@ from deckr.beacon import (
 )
 from deckr.concord import (
     Concord,
-    ConcordParticipantChange,
-    ConcordParticipantSnapshot,
+    ConcordParticipantPolicy,
+    ConcordParticipantSelection,
+    ConcordParticipantState,
     ConcordWatchChange,
     ConcordWatchSnapshot,
     ContractRecord,
@@ -50,6 +52,18 @@ from deckr.substrates.nats_kv import (
 from deckr.testing import MemoryJsonKvBucket
 
 TEST_PROFILE = "dev.deckr.test.contract.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class _Endpoint:
+    address: object
+    session_id: str
+
+
+def _accept_all(candidates) -> ConcordParticipantSelection:
+    return ConcordParticipantSelection(
+        candidate.contract.pointer for candidate in candidates
+    )
 
 
 async def _receive(stream):
@@ -442,19 +456,12 @@ async def test_participant_watch_converges_before_repair_interval() -> None:
             contract_id="contract-1",
             profile=TEST_PROFILE,
         )
-        participant = concord.participant(
-            participant=manager,
-            session_id="manager-session",
-            profile=TEST_PROFILE,
-            accept_contract=lambda _contract, _record: True,
-            reconcile_interval=60,
-            cancel_terminal_statuses=(),
-        )
-        participant.start(task_group)
-
-        async with participant.watch() as snapshots:
+        async with concord.participant(
+            _Endpoint(manager, "manager-session"),
+            ConcordParticipantPolicy(profile=TEST_PROFILE, select=_accept_all),
+        ) as participant, participant.watch_state() as snapshots:
             initial = await _receive(snapshots)
-            assert isinstance(initial, ConcordParticipantSnapshot)
+            assert isinstance(initial, ConcordParticipantState)
             assert len(initial.contracts) == 1
             assert initial.contracts[0].validity.status == (
                 ContractValidityStatus.NOT_YET_FULFILLED
@@ -470,12 +477,10 @@ async def test_participant_watch_converges_before_repair_interval() -> None:
                 snapshots,
                 ContractValidityStatus.VALID,
             )
-            assert isinstance(valid, ConcordParticipantChange)
-            assert valid.changed_pointers == {contract.pointer}
+            assert isinstance(valid, ConcordParticipantState)
 
         assert contracts.watch_count == 1
         assert tokens.watch_count == 1
-        await participant.aclose()
         task_group.cancel_scope.cancel()
 
 
@@ -490,19 +495,12 @@ async def test_participant_discovers_post_subscription_contract_and_token_loss_w
     async with anyio.create_task_group() as task_group:
         concord.start(task_group)
         await concord.wait_current()
-        participant = concord.participant(
-            participant=manager,
-            session_id="manager-session",
-            profile=TEST_PROFILE,
-            accept_contract=lambda _contract, _record: True,
-            reconcile_interval=3_600,
-            cancel_terminal_statuses=(),
-        )
-        participant.start(task_group)
-
-        async with participant.watch() as snapshots:
+        async with concord.participant(
+            _Endpoint(manager, "manager-session"),
+            ConcordParticipantPolicy(profile=TEST_PROFILE, select=_accept_all),
+        ) as participant, participant.watch_state() as snapshots:
             initial = await _receive(snapshots)
-            assert isinstance(initial, ConcordParticipantSnapshot)
+            assert isinstance(initial, ConcordParticipantState)
             assert initial.contracts == ()
 
             contract = await concord._create_contract(
@@ -539,7 +537,6 @@ async def test_participant_discovers_post_subscription_contract_and_token_loss_w
                     await anyio.sleep(0)
             assert await tokens.get(controller_token.key) is None
 
-        await participant.aclose()
         task_group.cancel_scope.cancel()
 
 
@@ -550,23 +547,19 @@ async def test_participant_filtered_view_ignores_unrelated_authority_without_rep
     manager = hardware_manager_address("manager-main")
     accepted: list[str] = []
 
-    def accept_contract(contract, _record) -> bool:
-        accepted.append(contract.contract_id)
-        return True
+    def select_contracts(candidates) -> ConcordParticipantSelection:
+        accepted.extend(candidate.contract.contract_id for candidate in candidates)
+        return ConcordParticipantSelection(
+            candidate.contract.pointer for candidate in candidates
+        )
 
     async with anyio.create_task_group() as task_group:
         concord.start(task_group)
         await concord.wait_current()
-        participant = concord.participant(
-            participant=manager,
-            session_id="manager-session",
-            profile=TEST_PROFILE,
-            accept_contract=accept_contract,
-            reconcile_interval=3_600,
-            cancel_terminal_statuses=(),
-        )
-        participant.start(task_group)
-        async with participant.watch() as snapshots:
+        async with concord.participant(
+            _Endpoint(manager, "manager-session"),
+            ConcordParticipantPolicy(profile=TEST_PROFILE, select=select_contracts),
+        ) as participant, participant.watch_state() as snapshots:
             assert (await _receive(snapshots)).contracts == ()
 
             unrelated = await concord._create_contract(
@@ -606,7 +599,6 @@ async def test_participant_filtered_view_ignores_unrelated_authority_without_rep
 
         assert set(accepted) == {"selected-1", "selected-2"}
         assert "unrelated" not in accepted
-        await participant.aclose()
         task_group.cancel_scope.cancel()
 
 

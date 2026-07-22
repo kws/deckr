@@ -7,8 +7,8 @@ from pathlib import Path
 _WatchBoundary = tuple[Path, str, str, str]
 
 
-# These are the authority-state subscriptions intentionally owned by the Phase 3
-# materialized views and their public facades. In particular, the source aliases
+# These are the authority-state subscriptions intentionally owned by the
+# materialized views and Phase 4 lifecycle contexts. In particular, source aliases
 # are explicit: renaming ``source`` must update this reviewed inventory rather
 # than silently evading a receiver-name pattern.
 _APPROVED_AUTHORITY_STATE_BOUNDARIES: dict[_WatchBoundary, str] = {
@@ -61,21 +61,52 @@ _APPROVED_AUTHORITY_STATE_BOUNDARIES: dict[_WatchBoundary, str] = {
         "subscribe",
     ): "Phase 3 Concord public watch facade",
     (
-        Path("deckr/src/deckr/concord.py"),
-        "ConcordParticipant.watch",
-        "self._state",
+        Path("deckr/src/deckr/_concord/_agreement.py"),
+        "ConcordAgreementLease._watch_loop",
+        "self._view",
         "subscribe",
-    ): "Phase 3 participant coalesced state",
+    ): "Phase 4 agreement filtered view source",
     (
-        Path("deckr/src/deckr/concord.py"),
-        "ConcordParticipant.watch_loop",
-        "self._concord._view",
+        Path("deckr/src/deckr/_concord/_agreement.py"),
+        "ConcordAgreementLease.wait_for_state.wait",
+        "self._state_bus",
         "subscribe",
-    ): "Phase 3 participant Concord view source",
+    ): "Phase 4 agreement atomic state wait",
+    (
+        Path("deckr/src/deckr/_concord/_agreement.py"),
+        "ConcordAgreementLease.watch_state",
+        "self._state_bus",
+        "subscribe",
+    ): "Phase 4 agreement coalesced state",
+    (
+        Path("deckr/src/deckr/_concord/_lease.py"),
+        "ConcordParticipantLease.attach",
+        "self._view",
+        "subscribe",
+    ): "Phase 4 partial-attach view-version retry source",
+    (
+        Path("deckr/src/deckr/_concord/_participant.py"),
+        "ConcordParticipant._watch_loop",
+        "self._view",
+        "subscribe",
+    ): "Phase 4 participant filtered view source",
+    (
+        Path("deckr/src/deckr/_concord/_participant.py"),
+        "ConcordParticipant.wait_for_state.wait",
+        "self._state_bus",
+        "subscribe",
+    ): "Phase 4 participant atomic state wait",
+    (
+        Path("deckr/src/deckr/_concord/_participant.py"),
+        "ConcordParticipant.watch_state",
+        "self._state_bus",
+        "subscribe",
+    ): "Phase 4 participant coalesced state",
 }
 
 
-# Every other production ``watch``/``subscribe`` call is still exact-inventoried.
+# Every other production ``watch``/``watch_state``/``subscribe`` call is still
+# exact-inventoried.
 # This deliberately includes transports and package-owned state: a new raw
 # authority alias cannot bypass the guard merely by choosing an unfamiliar name.
 _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
@@ -114,7 +145,7 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
             Path("deckr/src/deckr/hardware/runtime.py"),
             "HardwareManagerRuntime._contract_event_loop",
             "self._claim_manager",
-            "watch",
+            "watch_state",
         ): 1,
         (
             Path("deckr/src/deckr/lanes.py"),
@@ -222,7 +253,7 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
             ),
             "PythonActionProvider._service_contract_event_loop",
             "participant",
-            "watch",
+            "watch_state",
         ): 1,
         (
             Path("deckr-controller/src/deckr/controller/_controller_service.py"),
@@ -246,11 +277,17 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
         ): 1,
         (
             Path(
-                "deckr-controller/src/deckr/controller/_hardware/_service.py"
+                "deckr-controller/src/deckr/controller/_hardware/_claims.py"
             ),
-            "ControllerHardwareService._claim_event_loop",
-            "self._concord",
-            "watch",
+            "HardwareClaimCoordinator._agreement_state_loop",
+            "owned.agreement",
+            "watch_state",
+        ): 1,
+        (
+            Path("deckr-controller-atc/src/deckr_controller_atc/controller.py"),
+            "AtcRadarService._agreement_state_loop",
+            "agreement",
+            "watch_state",
         ): 1,
         (
             Path(
@@ -356,7 +393,7 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
             ),
             "OpenHabServiceComponent._service_contract_event_loop",
             "participant",
-            "watch",
+            "watch_state",
         ): 1,
         (
             Path("deckr-plugin-sonos/src/deckr/plugins/sonos/_soco_remote.py"),
@@ -398,7 +435,7 @@ _APPROVED_OTHER_WATCH_BOUNDARIES = Counter[_WatchBoundary](
             ),
             "SonosServiceComponent._service_contract_event_loop",
             "participant",
-            "watch",
+            "watch_state",
         ): 1,
     }
 )
@@ -476,6 +513,7 @@ class _WatchBoundaryVisitor(ast.NodeVisitor):
         if isinstance(node.func, ast.Attribute) and node.func.attr in {
             "subscribe",
             "watch",
+            "watch_state",
         }:
             scope = ".".join(self._scope) if self._scope else "<module>"
             self.boundaries[

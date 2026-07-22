@@ -12,6 +12,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from types import TracebackType
 from typing import (
     Generic,
     TypeVar,
@@ -32,6 +33,46 @@ MAX_COALESCED_STATE_SUBSCRIPTIONS = 256
 
 class StateSubscriptionLimitExceeded(RuntimeError):
     """Raised when a state broadcaster cannot admit another subscriber."""
+
+
+class _CancellationSafeMutex:
+    """A short critical-section mutex whose owner cannot be cancelled mid-handoff."""
+
+    def __init__(self) -> None:
+        self._semaphore = anyio.Semaphore(1)
+        self._scopes: dict[int, anyio.CancelScope] = {}
+
+    async def __aenter__(self) -> _CancellationSafeMutex:
+        task_id = anyio.get_current_task().id
+        scope = anyio.CancelScope(shield=True)
+        scope.__enter__()
+        try:
+            await self._semaphore.acquire()
+        except BaseException as exc:
+            scope.__exit__(type(exc), exc, exc.__traceback__)
+            raise
+        self._scopes[task_id] = scope
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        task_id = anyio.get_current_task().id
+        scope = self._scopes.pop(task_id)
+        self._semaphore.release()
+        return scope.__exit__(exc_type, exc, traceback)
+
+    async def acquire(self) -> None:
+        await self._semaphore.acquire()
+
+    def release(self) -> None:
+        self._semaphore.release()
+
+    def statistics(self) -> anyio.SemaphoreStatistics:
+        return self._semaphore.statistics()
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +162,7 @@ class CoalescedStateBroadcaster(Generic[K]):
             raise ValueError("max_changed must be greater than zero")
         if max_subscriptions <= 0:
             raise ValueError("max_subscriptions must be greater than zero")
-        self.lock = anyio.Lock()
+        self.lock = _CancellationSafeMutex()
         self._version = 0
         self._current = current
         self._max_changed = max_changed

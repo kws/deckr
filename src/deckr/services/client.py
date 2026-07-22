@@ -12,14 +12,13 @@ import anyio
 
 from deckr.beacon import Beacon, BeaconDirectory
 from deckr.concord import (
-    DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS,
     Concord,
     ConcordAgreementSpec,
     ConcordConflict,
+    ConcordLifecyclePhase,
     ConcordManagedContract,
     ConcordParticipant,
     ContractHandle,
-    ContractValidityStatus,
 )
 from deckr.contracts.authority import ContractPointer
 from deckr.contracts.messages import (
@@ -77,20 +76,12 @@ class DeckrServices:
         concord: Concord,
         task_group: anyio.abc.TaskGroup,
         kv_bucket_for: Callable[[KvBucketPolicy], NatsJsonKvBucket],
-        service_use_token_refresh_seconds: float = (
-            DEFAULT_CONCORD_TOKEN_REFRESH_SECONDS
-        ),
     ) -> None:
-        if service_use_token_refresh_seconds <= 0:
-            raise ValueError(
-                "service_use_token_refresh_seconds must be greater than zero"
-            )
         self._endpoint = endpoint
         self._beacon = beacon
         self._concord = concord
         self._task_group = task_group
         self._kv_bucket_for = kv_bucket_for
-        self._service_use_token_refresh_seconds = service_use_token_refresh_seconds
         self._directories: dict[_DirectoryKey, BeaconDirectory[ServiceDescriptor]] = {}
         self._view_stores: dict[str, ServiceViewStore] = {}
         self._active_service_use_leases: dict[int, ServiceUseLease] = {}
@@ -538,77 +529,73 @@ class DeckrServices:
         async def wait_for_valid() -> ServiceUseLease:
             nonlocal agreement
             try:
-                agreement = await self._concord.propose(
+                agreement = self._concord.propose(
+                    self._endpoint,
                     ConcordAgreementSpec(
                         participants=(self._endpoint.address, descriptor.endpoint),
-                        local_participant=self._endpoint.address,
-                        local_session_id=self._endpoint.session_id,
                         profile=descriptor.use_profile,
                         terms=None,
-                        refresh_interval=self._service_use_token_refresh_seconds,
-                        log_label=f"DeckrServices[{descriptor.namespace}]",
+                        current_sessions={
+                            str(descriptor.endpoint): descriptor.session_id,
+                        },
                     ),
-                    start_soon=self._task_group.start_soon,
                 )
+                await agreement.__aenter__()
             except ConcordConflict as exc:
                 raise _service_use_conflict(
                     descriptor,
                     exc,
                     agreement=None,
                 ) from exc
-            while True:
-                try:
-                    validity = await agreement.refresh()
-                except ConcordConflict as exc:
-                    status = terminal_concord_conflict_status(exc)
-                    if status is None:
-                        await agreement.aclose()
-                        raise _service_use_conflict(
-                            descriptor,
-                            exc,
-                            agreement=agreement,
-                        ) from exc
-                    await agreement.aclose()
-                    raise ServiceUnavailable(
-                        f"contract_{status.value}",
-                        "Service-use contract became terminal during negotiation",
-                        {
-                            "status": status.value,
-                            "reason": str(exc),
-                            "contractId": agreement.contract.contract_id,
-                            "generation": agreement.contract.generation,
-                            "profile": descriptor.use_profile,
-                            "serviceId": descriptor.service_id,
-                            "serviceSessionId": descriptor.session_id,
-                        },
-                    ) from exc
-                if validity.valid:
-                    return ServiceUseLease(
-                        agreement=agreement,
-                        descriptor=descriptor,
-                        consumer_endpoint=self._endpoint.address,
-                        consumer_session_id=self._endpoint.session_id,
+            state = await agreement.wait_for_state(
+                lambda current: current.valid
+                or current.phase
+                in {
+                    ConcordLifecyclePhase.TERMINAL,
+                    ConcordLifecyclePhase.CLOSED,
+                }
+                or (
+                    current.validity is not None
+                    and service_use_negotiation_terminal_status(
+                        current.validity.status
                     )
-                if service_use_negotiation_terminal_status(validity.status):
-                    await agreement.aclose()
-                    raise ServiceUnavailable(
-                        f"contract_{validity.status.value}",
-                        "Service-use contract became terminal during negotiation",
-                        {
-                            "status": validity.status.value,
-                            "reason": validity.reason,
-                            "contractId": agreement.contract.contract_id,
-                            "generation": agreement.contract.generation,
-                            "profile": descriptor.use_profile,
-                            "serviceId": descriptor.service_id,
-                            "serviceSessionId": descriptor.session_id,
-                        },
-                    )
-                await anyio.sleep(
-                    0.5
-                    if validity.status == ContractValidityStatus.UNAVAILABLE
-                    else 0.25
                 )
+            )
+            validity = state.validity
+            if state.valid and validity is not None:
+                return ServiceUseLease(
+                    agreement=agreement,
+                    descriptor=descriptor,
+                    consumer_endpoint=self._endpoint.address,
+                    consumer_session_id=self._endpoint.session_id,
+                )
+            if validity is None:
+                await agreement.aclose()
+                raise ServiceUnavailable(
+                    "service_use_conflict",
+                    state.reason or "Service-use agreement could not acquire authority",
+                    {
+                        "contractId": agreement.contract.contract_id,
+                        "generation": agreement.contract.generation,
+                        "profile": descriptor.use_profile,
+                        "serviceId": descriptor.service_id,
+                        "serviceSessionId": descriptor.session_id,
+                    },
+                )
+            await agreement.aclose()
+            raise ServiceUnavailable(
+                f"contract_{validity.status.value}",
+                "Service-use contract became terminal during negotiation",
+                {
+                    "status": validity.status.value,
+                    "reason": validity.reason,
+                    "contractId": agreement.contract.contract_id,
+                    "generation": agreement.contract.generation,
+                    "profile": descriptor.use_profile,
+                    "serviceId": descriptor.service_id,
+                    "serviceSessionId": descriptor.session_id,
+                },
+            )
 
         try:
             if timeout_seconds is None:
@@ -825,33 +812,7 @@ class ManagedServiceContract:
                 ),
             )
         managed = await self._managed_contract()
-        current_sessions = _managed_consumer_sessions(
-            managed,
-            service_endpoint=self._endpoint.address,
-        )
-        try:
-            validity = await self._participant.validate(
-                managed.contract,
-                current_sessions=current_sessions,
-            )
-        except ConcordConflict as exc:
-            status = (
-                terminal_concord_conflict_status(exc)
-                or ContractValidityStatus.INVALID_TOKEN
-            )
-            raise ServiceUnavailable(
-                f"contract_{status.value}",
-                "Managed service contract could not be validated",
-                {
-                    **_contract_diagnostics(
-                        self._contract,
-                        service_id=self._service_id,
-                        service_session_id=self._endpoint.session_id,
-                    ),
-                    "status": status.value,
-                    "reason": str(exc),
-                },
-            ) from exc
+        validity = managed.validity
         if not validity.valid or validity.contract is None:
             raise ServiceUnavailable(
                 f"contract_{validity.status.value}",
@@ -906,9 +867,6 @@ class ManagedServiceContract:
 
     async def _managed_contract(self) -> ConcordManagedContract:
         managed = self._participant.managed_contract(self._contract)
-        if managed is None:
-            await self._participant.reconcile(reason="managed service contract refresh")
-            managed = self._participant.managed_contract(self._contract)
         if managed is None:
             raise ServiceUnavailable(
                 "contract_not_managed",
@@ -1388,8 +1346,13 @@ def _service_use_conflict(
     if agreement is not None:
         diagnostics["contractId"] = agreement.contract.contract_id
         diagnostics["generation"] = agreement.contract.generation
+    terminal_status = terminal_concord_conflict_status(exc)
     return ServiceUnavailable(
-        "service_use_conflict",
+        (
+            f"contract_{terminal_status.value}"
+            if terminal_status is not None
+            else "service_use_conflict"
+        ),
         "Service-use contract could not be established",
         diagnostics,
     )

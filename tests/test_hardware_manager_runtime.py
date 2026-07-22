@@ -91,6 +91,30 @@ async def _wait_until(predicate, *, message: str) -> None:
     raise AssertionError(message)
 
 
+async def _wait_for_live_claim(
+    runtime: HardwareManagerRuntime,
+    concord: Concord,
+    contract,
+) -> None:
+    with anyio.fail_after(2):
+        while True:
+            validity = await concord._validate(contract)
+            if (
+                validity.status == ContractValidityStatus.VALID
+                and any(
+                    claim.contract.pointer == contract.pointer
+                    for claim in runtime.live_claims
+                )
+                and runtime._advertised_payload is not None
+                and runtime._advertised_payload["devices"]
+                [next(iter(runtime.live_claims[0].device_ids))]["capacity"]
+                ["claimedInstances"]
+                == 1
+            ):
+                return
+            await anyio.sleep(0)
+
+
 async def _send_to_runtime_subscription(deckr, message) -> None:
     for _ in range(100):
         if deckr._message_bus.subscriptions:
@@ -144,6 +168,7 @@ async def _runtime(
     labels: dict[str, str] | None = None,
     command_handler=None,
     reset_handler=None,
+    start_runtime: bool = True,
 ):
     deckr = mock_deckr()
     view_task_group_cm = anyio.create_task_group()
@@ -165,6 +190,8 @@ async def _runtime(
         command_handler=command_handler,
         reset_handler=reset_handler,
     )
+    if start_runtime:
+        await runtime.start(view_task_group)
     return (
         deckr,
         _RuntimeTestContext(endpoint_cm, view_task_group_cm, view_task_group),
@@ -243,7 +270,7 @@ async def test_runtime_attaches_manager_token_and_routes_live_claim_input() -> N
             controller_endpoint.session_id,
         )
 
-        await runtime._reconcile_claims(reason="test")
+        await _wait_for_live_claim(runtime, concord, contract)
         validity = await concord._validate(contract)
         assert validity.status == ContractValidityStatus.VALID
         assert len(runtime.live_claims) == 1
@@ -322,16 +349,16 @@ async def test_command_authorization_rejects_known_route_mismatch_without_reconc
             controller_endpoint.address,
             controller_endpoint.session_id,
         )
-        await runtime._reconcile_claims(reason="test live")
+        await _wait_for_live_claim(runtime, concord, contract)
 
         reconcile_calls = 0
         original_reconcile = HardwareManagerRuntime._reconcile_claims
 
-        async def counted_reconcile(self, *, reason: str) -> None:
+        async def counted_reconcile(self, *, reason: str, managed=None) -> None:
             nonlocal reconcile_calls
             if self is runtime:
                 reconcile_calls += 1
-            await original_reconcile(self, reason=reason)
+            await original_reconcile(self, reason=reason, managed=managed)
 
         monkeypatch.setattr(
             HardwareManagerRuntime,
@@ -367,7 +394,10 @@ async def test_start_subscription_and_stop_withdraw_beacon_and_authority() -> No
         delivered_commands.append(message)
         return True
 
-    deckr, endpoint_cm, runtime = await _runtime(command_handler=command_handler)
+    deckr, endpoint_cm, runtime = await _runtime(
+        command_handler=command_handler,
+        start_runtime=False,
+    )
     controller_cm = deckr.endpoint(controller_address("controller-main"))
     controller_endpoint = await controller_cm.__aenter__()
     concord = _concord(deckr)
@@ -390,6 +420,7 @@ async def test_start_subscription_and_stop_withdraw_beacon_and_authority() -> No
                     controller_endpoint.address,
                     controller_endpoint.session_id,
                 )
+                await _wait_for_live_claim(runtime, concord, contract)
 
                 command = hw_messages.control_command_message(
                     controller_id="controller-main",
@@ -449,7 +480,7 @@ async def test_command_rejection_wire_replies_match_runtime_contract() -> None:
             controller_endpoint.address,
             controller_endpoint.session_id,
         )
-        await runtime._reconcile_claims(reason="test live")
+        await _wait_for_live_claim(runtime, concord, contract)
 
         unsupported_command = hw_messages.control_command_message(
             controller_id="controller-main",
@@ -518,7 +549,7 @@ async def test_set_device_replacement_cancels_live_claim_and_resets() -> None:
             controller_endpoint.address,
             controller_endpoint.session_id,
         )
-        await runtime._reconcile_claims(reason="test live")
+        await _wait_for_live_claim(runtime, concord, contract)
         assert (
             await concord._validate(contract)
         ).status == ContractValidityStatus.VALID
@@ -567,7 +598,7 @@ async def test_replace_devices_replacement_cancels_live_claim_and_resets() -> No
             controller_endpoint.address,
             controller_endpoint.session_id,
         )
-        await runtime._reconcile_claims(reason="test live")
+        await _wait_for_live_claim(runtime, concord, contract)
         assert (
             await concord._validate(contract)
         ).status == ContractValidityStatus.VALID
@@ -611,7 +642,7 @@ async def test_remove_device_cancels_live_claim_contract_without_lane_event() ->
             controller_endpoint.address,
             controller_endpoint.session_id,
         )
-        await runtime._reconcile_claims(reason="test live")
+        await _wait_for_live_claim(runtime, concord, contract)
         assert (
             await concord._validate(contract)
         ).status == ContractValidityStatus.VALID
@@ -654,7 +685,7 @@ async def test_replace_devices_cancels_live_claim_contract_for_removed_device() 
             controller_endpoint.address,
             controller_endpoint.session_id,
         )
-        await runtime._reconcile_claims(reason="test live")
+        await _wait_for_live_claim(runtime, concord, contract)
         assert (
             await concord._validate(contract)
         ).status == ContractValidityStatus.VALID
@@ -692,7 +723,7 @@ async def test_competing_claims_keep_existing_live_claim_before_lower_key() -> N
         )
         await concord._attach(claim_b, controller_b.address, controller_b.session_id)
 
-        await runtime._reconcile_claims(reason="test first live claim")
+        await _wait_for_live_claim(runtime, concord, claim_b)
         assert [claim.terms.claim_id for claim in runtime.live_claims] == ["claim-b"]
         assert (await concord._validate(claim_b)).status == (
             ContractValidityStatus.VALID
@@ -706,7 +737,11 @@ async def test_competing_claims_keep_existing_live_claim_before_lower_key() -> N
         )
         await concord._attach(claim_a, controller_a.address, controller_a.session_id)
 
-        await runtime._reconcile_claims(reason="test existing claim priority")
+        with anyio.fail_after(2):
+            while (await concord._validate(claim_a)).status != (
+                ContractValidityStatus.NOT_YET_FULFILLED
+            ):
+                await anyio.sleep(0)
         assert [claim.terms.claim_id for claim in runtime.live_claims] == ["claim-b"]
         assert (await concord._validate(claim_b)).status == (
             ContractValidityStatus.VALID

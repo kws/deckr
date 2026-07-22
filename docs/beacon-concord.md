@@ -215,17 +215,26 @@ names that participant, creating its own participant-token key, then adding
 itself to `attachedParticipants` with a revision-guarded contract update. A
 participant must not write another participant's token.
 
+The participant generates and retains the token identity before the token
+create. Token creation followed by a failed contract update is an explicit
+partial-attach state, not authority. The Python lifecycle owner makes at most
+eight contract compare-and-set attempts; after the first conflict it retries
+only after the filtered Concord view advances. Exhaustion exact-withdraws the
+retained token and, if withdrawal cannot complete, best-effort cancels the
+contract. Store unavailability fails local authority closed while retaining the
+partial handle for bounded shutdown cleanup. No state may report successful
+attachment while a partial token remains.
+
 Refresh a token by exact-reading the contract and token, confirming both still
 match the local handle, incrementing `refreshSeq`, and revision-guarded
 `update(tokenKey, tokenRecord)`. Concord derives `ttlSeconds` from the token KV
 bucket TTL instead of a separate participant setting; the default token bucket
-TTL is 120 seconds. Lease implementations treat configured refresh intervals as
-requested cadence, not guaranteed write cadence.
+TTL is 120 seconds. There is no caller-configured participant-token refresh
+cadence.
 Participant-token refresh writes are scheduled from the token TTL with jitter
 between `ttlSeconds * 0.5` and `ttlSeconds * 0.75`; with the default 120-second
-bucket TTL this produces 60-90 second refreshes. Leases may validate an
-already-held token handle more often, but they should not write a token refresh
-until a token must be attached or the effective refresh interval is due. If
+bucket TTL this produces 60-90 second refreshes. A heartbeat refreshes only its
+retained exact handle. If
 validation observes fresher details for the same contract, participant, session,
 token id, and terms hash, the local lease may update that already-held handle
 without immediately writing again. A blank local lease must not adopt a token
@@ -318,14 +327,39 @@ membership remains authoritative when pointer detail overflows. Contract and
 token reconnect rebuilds are installed atomically and include missing-pointer
 removals.
 
-`ConcordParticipant.watch()` follows the same current-first contract with
-`ConcordParticipantSnapshot` and `ConcordParticipantChange`. It exposes the full
-managed-contract membership and changed pointers. The participant manager uses
-one filtered Concord-view subscription per authority bucket pair and reconciles
-only affected pointers during ordinary operation; startup, reconnect, and
-overflow take a full resnapshot. This view is observation and convergence
-machinery only. Concord contract creation, cancellation, and participant-token
-validity remain the sole lifecycle authority.
+`Concord.propose(endpoint, spec)` and `Concord.participant(endpoint, policy)` are
+synchronous factories that return async context managers. Context entry owns
+bootstrap and private workers; context exit cancels and joins those workers,
+performs shielded best-effort remote cleanup within five seconds, publishes a
+closed state, and wakes subscribers. A proposal creates exactly one fresh opaque
+contract. It never loops to create a successor; the caller negotiates a new
+proposal when recovery requires one.
+
+`ConcordAgreementSpec` contains agreement intent only: profile, participants,
+terms, supersedes, optional static current-session assertions, and creator. The
+endpoint supplies local identity and session. `ConcordParticipantPolicy` is an
+immutable batch policy whose selector receives an immutable candidate snapshot
+and returns typed selected pointers. Selection may be asynchronous and runs
+outside runtime state locks. Unknown pointers, malformed selections, and
+selector failures fail explicitly.
+
+Both contexts expose an immutable, monotonically versioned `state`, an atomic
+`wait_for_state(predicate, timeout_seconds=None)`, and current-first
+`watch_state()`. Lifecycle phases are `starting`, `ready`, `unavailable`,
+`terminal`, `closing`, and `closed`. Agreement state contains currentness,
+validity, the contract handle, and local-authority status. Participant state
+contains currentness and the complete immutable managed-contract membership,
+including each contract's validity and local-authority status. A timed-out wait
+raises `TimeoutError`; closure before a match raises `ClosedResourceError`.
+
+The participant context uses one filtered Concord-view subscription, a
+coalesced selector worker, and pointer-scoped serialized workers. Startup,
+filtered view changes, reconnect, overflow resnapshots, and explicit policy
+wakeups are its only reconciliation inputs; there is no periodic repair loop.
+A blocked selector, exact-store operation, or subscriber cannot block unrelated
+pointer workers or bounded shutdown. These views are convergence machinery only.
+Concord contract creation, cancellation, and participant-token validity remain
+the sole lifecycle authority.
 
 `ContractValidity.reason_code` is the behavioral discriminator. Its values are:
 
@@ -365,7 +399,7 @@ renewal and Concord participant-token renewal must only refresh already-owned
 leases/tokens. They must not perform full Concord reconciliation, participant or
 profile prefix discovery, broad KV scans, or successor-contract attachment.
 Discovery belongs to materialized Beacon/Concord views, watch notifications,
-startup/watch-reconnect cache rebuilds, and explicit low-frequency repair.
+startup/watch-reconnect cache rebuilds, and explicit policy wakeups.
 Running full discovery on a fast renewal cadence, including the shared
 five-second state-renewal cadence, is forbidden.
 
