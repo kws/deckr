@@ -16,14 +16,12 @@ implementing them in separate repositories. Read [README.md](README.md) and
   and applicable semantic vectors together. Keep fixture expectations explicit.
 - Preserve semantics that JSON Schema cannot express in the normative specs and
   conformance vectors. Do not claim that structural validation grants authority.
-- Do not add runtime/SDK implementations, language packages, generated clients,
-  runtime tests, launchers or application configuration. Generic CI validation is
-  the only executable repository tooling.
-- Describe observable protocol behavior without depending on a language API,
-  class, module, or local implementation file. Schema titles identify contracts.
-- Document the current contracts. Omit migration history, extraction provenance,
-  and retired implementation inventories. Local links must resolve to files in
-  this reference checkout.
+- Keep repository content focused on schemas, catalogs, fixtures, vectors and
+  documentation. Limit executable tooling to generic CI validation.
+- Describe observable protocol behavior in language-neutral terms. Schema titles
+  identify contracts.
+- Document the current contracts and repository workflows. Local links must
+  resolve to files in this reference checkout.
 - Keep personal context and working preferences outside this repository.
 
 The validation step in `.github/workflows/reference-validation.yml` is the

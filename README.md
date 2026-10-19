@@ -1,16 +1,14 @@
 # Deckr contract-first reference
 
-This is the contract-first source of truth for Beacon, Concord, and the Deckr
-application protocols. Define and review contracts here; implement them in
-separate repositories. The authoritative deliverables are language-neutral JSON
+This repository defines the contracts for Beacon, Concord, and the Deckr
+application protocols. The authoritative deliverables are language-neutral JSON
 Schemas, protocol specifications, message catalogs, and conformance artifacts.
 
-The repository contains reference material and generic validation tooling only.
-Runtime libraries, SDKs, applications, generated clients, and implementation test
-harnesses belong in consuming repositories. References to a controller, runtime,
-service, or reaper describe protocol roles and required behavior.
+Define and review contracts here before consumers implement them. Author schemas
+directly in `contract/v1/schemas/` and validate them with the repository's CI
+workflow.
 
-The contracts are alpha. The current reference release is `1.0.0-alpha.1` for
+The contracts are alpha. The current bundle version is `1.0.0-alpha.1` for
 wire protocol v1.
 
 ## Start here
@@ -23,15 +21,15 @@ wire protocol v1.
 
 ## Contract boundaries
 
-| Module | Responsibility | Dependencies |
+| Module | Responsibility | Direct schema dependencies |
 | --- | --- | --- |
 | Protocol common | Neutral endpoint syntax, nonempty text, JSON values | None |
 | Beacon | Discovery advertisement records | Protocol common |
 | Concord | Agreements, participant tokens, pointers, maintenance records | Protocol common |
 | Deckr messaging | Deckr endpoint policy, envelope, targets and subjects | Protocol common, Beacon, Concord |
-| Deckr services | Service advertisements, declarations, service-use contracts and protected views | Deckr messaging, Beacon, Concord |
-| Deckr hardware | Descriptors, capability values/commands, inventory, claims and hardware messages | Deckr messaging, Beacon, Concord |
-| Deckr Action Runtime | Action/binding/page/settings payloads, service messages and availability views | Deckr services, Deckr hardware |
+| Deckr services | Service advertisements, declarations, service-use contracts and protected views | Protocol common, Concord, Deckr messaging |
+| Deckr hardware | Descriptors, capability values/commands, inventory, claims and hardware messages | Protocol common, Concord, Deckr messaging |
+| Deckr Action Runtime | Action/binding/page/settings payloads, service messages and availability views | Protocol common, Deckr messaging, Deckr services, Deckr hardware |
 
 Beacon and Concord can be implemented without Deckr. Neither protocol schema
 imports Deckr schemas or enumerates Deckr endpoint families. Applications own
@@ -84,10 +82,10 @@ implementation cannot redefine the contract through its types or behavior.
 Resolve reference inconsistencies here through a reviewed contract change.
 
 CI validates schema syntax, offline reference resolution, dependency boundaries,
-every declared fixture, coverage, and local documentation links. It installs
-generic JSON Schema tooling and does not import an SDK. Run the same validation
-step from [the workflow](.github/workflows/reference-validation.yml) locally with
-Python 3.13 and `uv` when needed. Semantic and distributed lifecycle vectors must
+every declared fixture, coverage, and local documentation links using pinned
+JSON Schema tooling. Run the same validation step from
+[the workflow](.github/workflows/reference-validation.yml) locally with Python
+3.13 and `uv` when needed. Semantic and distributed lifecycle vectors must
 also be exercised by each consuming implementation; passing repository CI is not
 a claim of runtime protocol conformance.
 
