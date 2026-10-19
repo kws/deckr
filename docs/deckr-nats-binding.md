@@ -83,7 +83,7 @@ Use these specifications for protocol requirements:
 | Advertisement records, discovery, selection, and advertisement lifecycle | [Beacon](beacon.md). |
 | Agreements, participation, authority, termination, recovery, and maintenance | [Concord](concord.md). |
 | Subject formats, delivery, connection lifecycle, and shared storage mechanics | This document. |
-| Protected service views and service-use fences | [Deckr services: Service use](deckr-services.md#service-use). |
+| Protected service views and service-use fences | [Deckr services: Protected service views](deckr-services.md#protected-service-views). |
 
 Message lanes carry commands, data, and replies. Beacon and Concord do not
 replace lane payloads. Private buckets must not replace Beacon discovery or

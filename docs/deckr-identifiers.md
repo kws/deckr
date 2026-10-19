@@ -1,196 +1,220 @@
-# Deckr identifier policy
+# Deckr identifier policy v1 specification
 
-> Normative identifier policy for Deckr application contracts. Generic Beacon
-> and Concord endpoint families are application-owned. Schema document IDs are
-> absolute URIs; existing wire contract labels remain reverse-DNS identifiers.
+## 1 Purpose and scope
 
-Deckr uses globally owned public identifiers for contracts that can cross
-package, process, host, language, or organization boundaries. Short local names
-are still used for Deckr infrastructure roots and deployment-local addresses,
-but they must not be overloaded as globally owned contract identities.
+This specification defines identifier ownership and naming for Deckr v1 application contracts.
+Public contracts can cross package, process, host, language, and organization boundaries.
+Owner namespaces prevent name conflicts between independently installed packages.
 
-The goal is simple: two independently installed packages should be able to share
-one Deckr runtime and one NATS broker without accidentally colliding because
-both chose names such as `service`, `media`, `openhab`, `button`, or `cache`.
+Generic Beacon and Concord endpoint families remain application-owned.
+Deckr adds its own application naming rules.
+These rules do not restrict endpoint families in the generic protocol schemas.
 
-## Contract Identifiers
+## 2 Identifier categories
 
-The namespace rules apply to public Deckr contract identifiers, including:
+Each identifier has a scope and an owner.
+Short infrastructure names and local addresses must not replace globally owned contract identifiers.
 
-- action provider ids
-- action ids
-- service namespaces
-- Beacon feature and payload profile ids
-- Concord profile ids
-- extension lane names
-- capability families
-- schema ids for contract payloads
-- package-owned private KV bucket names
+| Category | Scope | Ownership | Syntax or format | Example |
+| --- | --- | --- | --- | --- |
+| Public contract label | Contract shared across packages and installations. | The contract owner. | Owner namespace and contract name. Dotted names are preferred. | `com.example.media.service` |
+| Schema document ID | Schema reference and resolution. | The schema publisher. | Absolute URI. | [Capability descriptor schema ID](../contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json) |
+| Deployment-local ID | One installation. | The installation selects the local address or ID. | The applicable contract defines the field syntax. | `sonos-home` |
+| Core infrastructure name | Deckr lanes, endpoint families, and broker infrastructure. | Deckr core. | The fixed name defined by the contract. | `hardware_messages` |
+| Private KV bucket name | Package-owned storage. | The package. | Owner-qualified, purpose-specific, versioned name with underscores. | `com_example_media_cache_v1` |
 
-Official Deckr contract identifiers use the owned `dev.deckr.*` namespace. For
-example:
+The following sections give the rules for each category.
+The applicable schema defines structural field constraints.
+Structural validation does not establish namespace ownership or runtime authority.
 
-- `dev.deckr.profile.hardware.v1`
-- `dev.deckr.profile.hardware_claim.v1`
-- `dev.deckr.action_runtime.provider`
-- `dev.deckr.input.button`
-- `dev.deckr.output.raster`
+## 3 Public contract names
 
-Only Deckr core and official Deckr packages may define `dev.deckr.*`
-identifiers. Third-party packages, deployment-specific packages, and personal
-plugins must not squat under `dev.deckr.*`.
+### 3.1 Contract categories
 
-Third-party integrations own their service feature IDs, Beacon payload profiles,
-Concord profiles and application schemas outside the Deckr namespace.
+Public namespace rules apply to these identifiers:
 
-## Owner Names
+- Action provider IDs
+- Action IDs
+- Service namespaces
+- Beacon feature IDs and payload profile IDs
+- Concord profile IDs
+- Extension lane names
+- Capability families
+- Wire schema labels for contract payloads.
 
-Packages with a stable DNS name should use reverse-DNS style identifiers:
+Private bucket names also identify an owner.
+They use the storage format in [section 8](#8-private-storage).
+Schema document IDs use the URI format in [section 4](#4-schema-identifiers).
 
-- `com.example.media.service`
-- `org.example.input.axis`
-- `dev.example.deckr_plugins.status_panel`
+### 3.2 Owner namespaces
 
-Packages without a DNS name should use a stable forge-qualified style:
+Official Deckr contract labels use `dev.deckr.*`.
+Only Deckr core and official Deckr packages can define labels in that namespace.
+Third-party packages, deployment-specific packages, and personal plugins must not use it for their own contracts.
 
-- `io.github.example-org.media-service.service`
-- `io.github.example-org.media-service.events`
-- `io.gitlab.example-group.panel-tools.action.status`
+Third-party integrations own their service feature IDs, Beacon payload profiles, Concord profiles, and application schemas outside the Deckr namespace.
 
-Use lowercase owner labels where possible. DNS labels may contain hyphens, so
-hyphenated owners such as `com.k-si.*` are valid when they match the owner's
-real name. Prefer dotted identifiers for public contracts. Do not use short
-unqualified public names such as `sonos`, `openhab`, `media`, `home`, `button`,
-`service`, `events`, `cache`, or `state`.
+| Owner condition | Naming rule or recommendation | Examples |
+| --- | --- | --- |
+| Deckr core or an official Deckr package | Public contract labels use `dev.deckr.*`. | `dev.deckr.profile.hardware.v1`, `dev.deckr.profile.hardware_claim.v1`, `dev.deckr.action_runtime.provider` |
+| A package has a stable DNS name. | The package should use a reverse-DNS name. | `com.example.media.service`, `org.example.input.axis`, `dev.example.deckr_plugins.status_panel` |
+| A package has no DNS name. | The package should use a stable name qualified by its code-hosting service and owner. | `io.github.example-org.media-service.service`, `io.gitlab.example-group.panel-tools.action.status` |
 
-## Infrastructure Roots That Stay Short
+Use lowercase owner labels where possible.
+Hyphens are permitted in DNS owner labels, such as `com.k-si.*`, when they match the owner's DNS name.
+Prefer dotted names for public contracts.
 
-These names are Deckr infrastructure roots, not owner-qualified public contract
-ids. They intentionally stay short:
+Do not use short public names without an owner namespace.
+Examples include `sonos`, `openhab`, `media`, `home`, `button`, `service`, `events`, `cache`, and `state`.
+Section 6 lists the separate rules for core infrastructure names.
 
-- core lane names, currently `hardware_messages` and `services`
-- core endpoint families, such as `controller`, `action_provider`,
-  `hardware_manager`, and `service`
-- core NATS subject roots and shared buckets, such as `deckr.msg.*`,
-  `deckr_beacon_advertisement_v1`, `deckr_concord_contract_v1`, and
-  `deckr_concord_token_v1`
+## 4 Schema identifiers
 
-Keeping those roots short does not make `deckr.*` a general-purpose public
-contract namespace. New Deckr-owned public contracts use `dev.deckr.*`.
+Schema document IDs and wire schema labels have different formats.
+The [schema guide](schema-guide.md#authority-and-dialect) defines their mapping in the manifest.
 
-## Deployment-Local Identifiers
+| Identifier | Location | Format |
+| --- | --- | --- |
+| Schema document ID | The schema's `$id` and the manifest schema entry's `id` and `schemaId`. | An absolute URI. |
+| Wire schema label | A wire field or the manifest's `wireSchemaId`, where present. | An owner-qualified label, such as `dev.deckr.hardware.capability_descriptor.v1`. |
 
-Deployment-local identifiers are addresses chosen by one installation. They are
-not globally owned API namespaces and they do not imply package ownership.
-
-Examples include:
-
-- service ids such as `sonos-home`, `openhab-home`, or `media-home`
-- endpoint ids such as `controller-main`, `clock-main`, or
-  `mirabox-main`
-- action-provider instance ids such as `clock-main`
-- hardware manager ids, controller ids, page ids, binding ids, and device ids
-
-Endpoint addresses combine a short core endpoint family with a deployment-local
-id, such as `service:sonos-home` or `action_provider:clock-main`.
-The family names are Deckr protocol terms. The id portion is a configured local
-address.
-
-Do not use deployment-local ids as provider ids, service
-namespaces, action ids, capability families, or schema ids.
-
-## Service Namespaces And Service Ids
-
-A service namespace is the globally named API and state contract owned by the
-service package. A Sonos or OpenHAB integration should use the namespace owned
-by that integration package, for example `org.example.sonos.service` or
-`org.example.openhab.service`. These names are not Deckr core contracts unless
-Deckr itself owns and publishes that service package.
-
-A service id is a deployment-local endpoint id, such as `sonos-home` or
-`media-home`. A service id is not a package name, namespace,
-runtime name, external host name, or provider id.
-
-Under Beacon/Concord, service packages advertise those namespaces with generic
-Beacon advertisements and, when needed, bind live service-specific agreements
-with generic Concord contracts. Implementations validate the Beacon/Concord
-envelopes against the protocol schemas, then validate payloads, operations and
-result/view schemas against the service owner's contracts.
-Service-use Concord contracts are termless; command and
-view authority comes from the contract profile, exact participants, token
-validity, command pointer, and retained service resource scope. After a
-service-specific Concord agreement is negotiated,
-Beacon remains discovery input for future negotiations only; agreement validity
-and withdrawal are Concord concerns.
-
-Service packages should use their namespace as a Beacon `featureId` or inside
-their own profile payload. If a service needs retained views or durable domain
-state, that storage is package-owned and must use an owner-qualified private
-bucket or a service-owned Concord profile. Service protocols define their
-catalog, status, and view keys.
-
-## Extension Lanes
-
-Core lane names are short because they are owned by Deckr itself. Extension
-lanes must use globally owned dotted identifiers, such as:
-
-- `com.example.metrics.events`
-- `org.example.media.events`
-- `io.github.example-org.media-service.events`
-
-Short extension lane names are not valid v1 Deckr contracts.
-
-## Capability Families And Schema Ids
-
-Deckr core capability families and their core schema ids use `dev.deckr.*`.
-Extension capability families and extension schema ids must use an owner
-namespace outside `dev.deckr.*`.
-
-For example, a Deckr core button family is:
+For example, the capability descriptor schema has this document ID:
 
 ```text
-dev.deckr.input.button
+https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json
 ```
 
-An extension family might be:
+Its wire schema label is `dev.deckr.hardware.capability_descriptor.v1`.
+Do not replace a wire `schema` or `profile` value with a schema document URL.
+Deckr core capability wire schema labels use `dev.deckr.*`.
+Extension capability wire schema labels must use the extension owner's namespace outside `dev.deckr.*`.
 
-```text
-com.example.input.axis
-```
+## 5 Deployment-local identifiers
 
-Deckr may bind and route an extension capability generically from its
-descriptor, but extension semantics belong to the package that owns the
-extension namespace.
+### 5.1 Local IDs and endpoint addresses
 
-## Private KV Buckets
+Deployment-local IDs belong to one installation.
+They do not identify global API namespaces or establish package ownership.
 
-The shared protocol buckets are:
+| Local identifier | Examples or subjects |
+| --- | --- |
+| Service ID | `sonos-home`, `openhab-home`, `media-home` |
+| Endpoint ID | `controller-main`, `clock-main`, `mirabox-main` |
+| Action-provider instance ID | `clock-main` |
+| Other local IDs | Hardware managers, controllers, pages, bindings, and devices. |
 
-- `deckr_beacon_advertisement_v1` for TTL-bound Beacon advertisements
-- `deckr_concord_contract_v1` for persistent Concord contracts
-- `deckr_concord_token_v1` for TTL-bound Concord participant tokens
+An endpoint address combines a core family and a local endpoint ID as `<family>:<id>`.
+Examples are `service:sonos-home` and `action_provider:clock-main`.
+The family is a Deckr protocol term; the ID is a configured local address.
+The [Deckr messaging specification](deckr-messaging.md#endpoint-identity) defines endpoint constraints.
 
-Package-owned private buckets are allowed only when a package needs durable
-state outside those shared protocols, or when it owns a documented
-package-specific projection such as controller config.
+Do not use deployment-local IDs as these public identifiers:
 
-Private bucket names must be owner-qualified, purpose-specific, versioned, and
-safe for JetStream bucket names. Use underscores for bucket names rather than
-dots:
+- Provider IDs
+- Service namespaces
+- Action IDs
+- Capability families
+- Schema IDs.
 
-- `com_example_media_cache_v1`
-- `io_github_example_org_media_service_cache_v1`
-- `dev_deckr_controller_config_v1`
+### 5.2 Service names
 
-Do not use generic private bucket names such as `state`, `cache`, `services`,
-`views`, or `config`.
+A service namespace identifies the service package's public API and state contract.
+A service ID identifies a local service endpoint.
 
-Package-owned private buckets must not redefine Beacon advertisements, Concord
-contract validity, or Deckr-owned hardware/action profile semantics. Service
-packages may define their own Beacon payloads and direct
-KV-backed service-view buckets under their own public namespace.
+| Service identifier | Meaning | Example |
+| --- | --- | --- |
+| Service namespace | The contract owned by the integration package. | `org.example.sonos.service`, `org.example.openhab.service` |
+| Service ID | The deployment-local endpoint ID. | `sonos-home`, `media-home` |
 
-## Identifier consistency
+An integration should use its package's namespace.
+Its service contract is a Deckr core contract only if Deckr owns and publishes the service package.
+A service ID is not a package name, namespace, runtime name, external host name, or provider ID.
 
-Use the canonical namespace consistently across contracts, schemas, fixtures,
-vectors, examples, and consumers. Each public contract has one identifier.
+Service packages should use their namespace as a Beacon `featureId` or within their own profile payload.
+Each service protocol defines its catalog, status keys, and view keys.
+Section 9 gives the related service validation and lifecycle requirements.
+
+## 6 Core infrastructure names
+
+Core infrastructure names remain short.
+They are not owner-qualified public contract labels.
+
+| Infrastructure | Names | Purpose or reference |
+| --- | --- | --- |
+| Core lanes | `hardware_messages`, `services` | [Deckr messaging lane registry](deckr-messaging.md#core-lane-registry). |
+| Core endpoint families | `controller`, `action_provider`, `hardware_manager`, `service` | [Deckr messaging endpoint identity](deckr-messaging.md#endpoint-identity). |
+| Core NATS subject root | `deckr.msg.*` | [Deckr NATS binding subjects](deckr-nats-binding.md#52-direct-and-broadcast-subjects). |
+| Beacon advertisement bucket | `deckr_beacon_advertisement_v1` | Advertisements with a store TTL. |
+| Concord contract bucket | `deckr_concord_contract_v1` | Persistent contracts. |
+| Concord participant-token bucket | `deckr_concord_token_v1` | Participant tokens with a store TTL. |
+
+The [Deckr NATS binding](deckr-nats-binding.md#protocol-store-bindings) lists the protocol store bindings, including the maintenance store.
+These short names do not make `deckr.*` a general public contract namespace.
+New Deckr-owned public contract labels use `dev.deckr.*`.
+
+## 7 Extension contracts
+
+Extension lanes and capability families use public owner namespaces.
+The following rules apply:
+
+| Contract category | Requirement | Examples |
+| --- | --- | --- |
+| Extension lane | The name must be a globally owned dotted identifier. Short names are not valid v1 extension lane names. | `com.example.metrics.events`, `org.example.media.events`, `io.github.example-org.media-service.events` |
+| Core capability family | The name uses `dev.deckr.*`. | `dev.deckr.input.button`, `dev.deckr.output.raster` |
+| Extension capability family | The name must use an owner namespace outside `dev.deckr.*`. | `com.example.input.axis` |
+
+Deckr can bind and route an extension capability through its descriptor.
+The package that owns the namespace defines the extension's meaning and behavior.
+The [Deckr hardware capabilities specification](deckr-hardware-capabilities.md#descriptor-driven-extensibility) gives the descriptor requirements.
+
+## 8 Private storage
+
+### 8.1 Permitted use
+
+A private KV bucket is permitted only if at least one condition is true:
+
+- The package needs durable state outside the shared protocols.
+- The package owns a documented projection, such as controller configuration.
+
+Retained service views and durable service state are package-owned.
+They must use an owner-qualified private bucket or a service-owned Concord profile.
+Service packages can define their own Beacon payloads and service-view buckets directly backed by KV stores under their own namespace.
+
+### 8.2 Bucket names and boundaries
+
+Private bucket names must meet all these requirements:
+
+| Property | Requirement |
+| --- | --- |
+| Ownership | The name identifies the package owner. |
+| Purpose | The name identifies the storage purpose. |
+| Version | The name includes a version. |
+| Syntax | The name is valid for a JetStream bucket. Use underscores rather than dots. |
+
+Examples are `com_example_media_cache_v1`, `io_github_example_org_media_service_cache_v1`, and `dev_deckr_controller_config_v1`.
+Do not use generic names such as `state`, `cache`, `services`, `views`, or `config`.
+
+Private buckets must not redefine these contracts:
+
+- Beacon advertisements
+- Concord contract validity
+- Deckr-owned hardware profile semantics
+- Deckr-owned action profile semantics.
+
+## 9 Related service requirements
+
+The following specifications define service behavior beyond identifier naming.
+Their requirements apply to the named records and operations.
+
+| Subject | Governing reference |
+| --- | --- |
+| Generic Beacon advertisements and Concord agreements owned by service packages | [Deckr services: Service package ownership](deckr-services.md#service-package-ownership). |
+| Protocol-envelope validation followed by application payload checks | [Schema guide: Offline resolution](schema-guide.md#offline-resolution). |
+| Service declarations, operations, and payload, result, and view validation | [Semantic validation rules: Services](semantic-rules.md#services). |
+| Termless service-use contracts, exact participants, tokens, message pointers, and retained resource scope | [Deckr services: Service use](deckr-services.md#service-use). |
+| Beacon discovery after agreement and Concord agreement validity and withdrawal | [Concord: Authority and discovery](concord.md#3-authority-and-discovery). |
+
+## 10 Identifier consistency
+
+Each public contract has one identifier.
+Use its canonical namespace consistently in contracts, schemas, fixtures, vectors, examples, and consumers.

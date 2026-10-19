@@ -17,7 +17,7 @@ wire protocol v1.
   resolve references offline, and separate structural validation from authority.
 - [Schema index](contract/v1/index.html) and [machine-readable manifest](contract/v1/manifest.json).
 - [Deckr message catalog](docs/deckr-message-catalog.md): every supported hardware and service message.
-- [Semantic validation rules](docs/semantic-rules.md) and [conformance scenarios](conformance-scenarios.md).
+- [Semantic validation rules](docs/semantic-rules.md) and [Deckr conformance scenarios](deckr-conformance-scenarios.md).
 
 ## Contract boundaries
 
@@ -50,7 +50,7 @@ contract/v1/
   fixtures/           Valid and invalid JSON examples
   vectors/            Keys, hashes, NATS mapping and semantic cases
 docs/                  Normative specifications and consumption guidance
-conformance-scenarios.md
+deckr-conformance-scenarios.md
 .github/workflows/      Reference validation only
 ```
 

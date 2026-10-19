@@ -116,7 +116,7 @@ cases for conditional fields and bounds, not only wrong top-level types.
 
 Semantic fixtures distinguish `schemaValid` from `semanticValid`. CI checks the
 structural expectation; each consuming implementation must execute semantic
-rules and the distributed scenarios in [the conformance scenarios](../conformance-scenarios.md).
+rules and the distributed scenarios in [Deckr conformance scenarios](../deckr-conformance-scenarios.md).
 
 Standards references: [schema identifiers and modular composition](https://json-schema.org/understanding-json-schema/structuring),
 [annotations and defaults](https://json-schema.org/understanding-json-schema/reference/annotations),
