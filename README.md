@@ -66,6 +66,10 @@ deckr-conformance-scenarios.md
 - [Deckr NATS binding](docs/deckr-nats-binding.md): lane subjects, KV keys, store policies and recovery.
 - [Deckr hardware capabilities](docs/deckr-hardware-capabilities.md): descriptors, values and commands.
 - [Deckr identifier policy](docs/deckr-identifiers.md): public ownership, local identifiers and storage names.
+
+## Informative guidance
+
+- [Deckr architecture proposal for v1](docs/deckr-architecture.md): optional baseline architecture, component responsibilities, and lifecycle ownership. Informative, not normative.
 - [Deckr deployment guide](docs/deckr-deployment.md): deployment patterns and responsibilities.
 
 ## Contract-first workflow

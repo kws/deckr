@@ -3,6 +3,10 @@
 These are deployment patterns, not separate wire protocols or bundled runtimes.
 Every implementation uses the same schemas and authority rules.
 
+The [Deckr architecture proposal for v1](deckr-architecture.md) gives an optional
+baseline for component boundaries and lifecycle ownership. It is informative,
+not normative.
+
 | Deployment | Responsibilities |
 | --- | --- |
 | Full installation | Host controllers, hardware managers and services; supply NATS and the shared protocol stores. |
