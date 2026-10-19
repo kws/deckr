@@ -1,4 +1,4 @@
-# Concord specification
+# Concord v1 specification in ASD-STE100
 
 ## 1 Purpose and scope
 
@@ -14,45 +14,67 @@ Use these references with this document:
 - [NATS substrate specification](nats-bus.md), for the substrate requirements.
 - [Contract artifacts](../contract/v1), for schemas, fixtures, and acceptance vectors.
 - [Protocol runtime reference](protocol-runtime-reference.md), for API examples and tools.
+- [Beacon specification](beacon-ste100.md), for discovery requirements.
 
 The JSON Schemas specify record structure. They do not specify all protocol requirements. Implementations must also obey the requirements in this document. Differences between the specification, contract artifacts, and implementation are contract errors.
 
-The word “must” identifies a requirement. The word “can” identifies permission or capability. A paragraph with the label “Recommendation” gives a recommended practice. A recommendation is not a requirement.
+The word **must** identifies a requirement. **Must not** identifies a prohibition.
+The word **can** identifies a possibility or permission. Text marked
+**Recommendation** identifies a recommended action, not a requirement.
 
 ## 2 Technical terms
 
 Use the terms below with the specified meanings. Code identifiers, field names, status values, and schema names keep their exact spelling.
 
+Shared terms have the same meanings in the [Beacon specification](beacon-ste100.md#2-technical-terms).
+In Concord participant-policy sections, “candidate” means “Concord participant
+candidate” and “selector” means “Concord participant selector”. “Session” means
+“endpoint session”.
+
 | Term | Meaning |
 | --- | --- |
-| authority | Permission to do a protected operation through a Concord agreement. |
-| local authority | Authority that a runtime holds for one contract generation. |
-| contract | The stored record of an agreement between named participants. |
-| contract pointer | The pair `contractId` and `generation` that identifies one contract instance. |
-| participant | An endpoint that the contract names in `participants`. |
-| participant token | A record that a participant maintains to show its participation in one contract generation. |
-| session | One runtime instance of an endpoint. |
-| lease | Local runtime state for participation in an agreement. |
-| handle | The local identity information for a contract or participant token. |
-| exact read | A read of the requested key from the underlying store. |
-| materialized source | A local representation of stored records, maintained through snapshots and watch events. |
-| currentness | The source state that shows if its observations are up to date. |
-| compare and set | A mutation that succeeds only if the stored revision is the expected revision. |
-| revision guard | The expected revision supplied to an update or delete operation. |
-| partial attachment | A token creation that succeeds before the related contract update succeeds. |
-| bootstrap | The owner checks and cleanup that occur before a local endpoint creates a proposal. |
-| opaque contract id | A contract id with no application-defined identity structure. |
-| successor | A new agreement that replaces a previous agreement. |
-| fence | Identity information that prevents use of authority from a different agreement or session. |
-| heartbeat | A token renewal or watch signal that must occur before a specified deadline. |
-| TTL | Time to live. The store uses this time interval to expire a record. |
-| reaper | The optional Concord service that cancels stale contracts and removes retained records. |
+| Advertisement heartbeat | A scheduled refresh that keeps a Beacon advertisement in the store. |
+| Authority | Permission to do a protected operation through a Concord agreement. |
+| Bootstrap | The owner checks and cleanup that occur before a local endpoint creates a proposal. |
+| Compare and set | A mutation that succeeds only if the stored revision is the expected revision. |
+| Concord heartbeat | A token renewal or a watch heartbeat from a contract or token source. |
+| Concord participant candidate | Contract information supplied to a Concord participant selector for a participation decision. |
+| Concord participant selector | A function that selects contract pointers from an immutable batch of Concord participant candidates. |
+| Contract | The stored record of an agreement between named participants. |
+| Contract pointer | The pair `contractId` and `generation` that identifies one contract instance. |
+| Currentness | The source state that shows if its observations are up to date. |
+| Endpoint | An addressable entity in Deckr. |
+| Endpoint address | The endpoint family and endpoint ID serialized as `<endpoint-family>:<endpoint-id>`. |
+| Endpoint session | One runtime instance of an endpoint. |
+| Exact read | A read of a specified key directly from the store. This read does not use a materialized source or view. |
+| Fence | Identity information that prevents use of authority from a different agreement or session. |
+| Handle | The local identity information for a contract or participant token. |
+| Heartbeat | A scheduled record refresh or watch signal. |
+| Key token | An encoded value that forms one part of a store key. |
+| Lease | Local runtime state for participation in an agreement. |
+| Local authority | Authority that a runtime holds for one contract generation. |
+| Materialized source | A local cache of store observations and revisions, maintained through snapshots and watch events. |
+| Materialized view | A parsed, indexed representation of observations from one or more materialized sources. |
+| Opaque contract id | A contract id with no application-defined identity structure. |
+| Participant | An endpoint that a Concord contract names in `participants`. |
+| Participant token | A record that a participant maintains to show its participation in one contract generation. |
+| Partial attachment | A token creation that succeeds before the related contract update succeeds. |
+| Profile | A specification that gives the meaning of protocol data and the application rules for its use. |
+| Reaper | The optional Concord service that cancels stale contracts and removes retained records. |
+| Revision | A store version that identifies a write to a key. |
+| Revision guard | A condition that permits an update or delete only if the stored revision is the expected revision. |
+| Session ID | The identifier of one endpoint session. |
+| Successor | A new agreement that replaces a previous agreement. |
+| Token renewal | A refresh that keeps an owned Concord participant token in the store. |
+| TTL | Time to live. The time interval after the last write before the store expires a record. |
+| Watch | A source of state snapshots and change notifications. |
+| Watch heartbeat | A liveness signal from a store watch. |
 
-Computer operations use their technical meanings. These include `create`, `update`, `delete`, parse, encode, hash, refresh, renew, validate, reconcile, and serialize. “Attach” means to create the owned participant token and register the participant in the contract. “Withdraw” means to remove the owned participant token after the necessary identity checks.
+Computer operations use their technical meanings. These include `create`, `update`, `delete`, parse, encode, hash, refresh, renew, validate, reconcile, and serialize. “Attach” means to create the owned participant token and register the participant in the contract. To refresh or renew a participant token is to extend its life in the store. To withdraw a participant token is to remove it from the store after the necessary identity checks.
 
 ## 3 Authority and discovery
 
-A Beacon advertisement can identify a candidate for a new Concord agreement. After negotiation, the advertisement is not part of contract validity.
+A Beacon candidate can identify an endpoint for a new Concord agreement. After negotiation, the advertisement is not part of contract validity.
 
 A missing, expired, withdrawn, replaced, or changed advertisement must not invalidate an existing Concord contract. These changes must not stop protected operations through an agreement that has authority. This rule includes rendering, routing, commands, and view access.
 
@@ -188,7 +210,7 @@ A contract record must obey these requirements:
 | `generation` | Greater than zero. |
 | `participants` | A nonempty list of endpoint addresses, without duplicates, in lexicographic order. |
 | `attachedParticipants` | A list without duplicates, in lexicographic order. Each entry must also be in `participants`. |
-| `participantSessions` | Optional. Each key names a participant. Each value is a nonempty endpoint-session id. |
+| `participantSessions` | Optional. Each key names a participant. Each value is a nonempty session ID. |
 | `state` | `open` or `cancelled`. |
 | `profile`, `terms`, `termsHash` | Optional, subject to the checks below. |
 | Diagnostics and `supersedes` | Optional. `supersedes` gives diagnostic information only. |
@@ -197,13 +219,13 @@ If the contract has `terms`, it must also have `termsHash`. This hash must be th
 
 ### 6.2 Participant sessions
 
-`participantSessions` fixes the session addresses for this proposal. These addresses cannot change. They are not persistent service identities.
+`participantSessions` fixes the participant session IDs for this proposal. These IDs cannot change. They are not persistent service identities.
 
 The proposal owner gets its own session entry from the supplied endpoint. A managed consumer includes the selected peer session. Managed service and hardware proposals include each known participant session.
 
-If `participantSessions` has an entry for the participant, compare that entry with the participant session before token creation. If the sessions are different, the participant must reject the contract. It must also try to cancel the contract. It must not create a token for that proposal.
+If `participantSessions` has an entry for the participant, compare that entry with the participant's current session ID before token creation. If the IDs are different, the participant must reject the contract. It must also try to cancel the contract. It must not create a token for that proposal.
 
-Subsequent Beacon changes must not change the accepted session addresses. Those changes must not invalidate the contract session fence.
+Subsequent Beacon changes must not change the accepted session IDs. Those changes must not invalidate the contract session fence.
 
 ### 6.3 Participant token record
 
@@ -217,6 +239,8 @@ A participant token record must obey these requirements:
 | `refreshSeq` | Greater than zero. |
 | `ttlSeconds` | Greater than zero. Use the token bucket TTL. |
 | `termsHash`, `contractHash`, `observed` | Optional. |
+
+The token `sessionId` identifies the participant's endpoint session.
 
 ## 7 Contract creation and token attachment
 
@@ -279,15 +303,15 @@ Discovery uses materialized views, watch notifications, cache rebuilds at startu
 
 ### 9.1 Heartbeat deadlines
 
-A missed required heartbeat must immediately stop local authority for the affected contract generation. There is no grace period. That local authority cannot pause or start again.
+A missed required Concord heartbeat must immediately stop local authority for the affected contract generation. There is no grace period. That local authority cannot pause or start again.
 
-A heartbeat is missed when one of these conditions occurs:
+A Concord heartbeat is missed when one of these conditions occurs:
 
 - A required token renewal fails.
 - The store is unavailable for a required renewal.
 - A required renewal times out.
 - There is no confirmed renewal success by its deadline.
-- A contract or token authority watch does not receive its required heartbeat by its liveness deadline.
+- A contract or token authority watch does not receive its required watch heartbeat by its liveness deadline.
 
 Before each renewal starts, the runtime must set a deadline. The deadline must be finite and at or before the held token expiry. Retries must not extend the deadline.
 
@@ -297,7 +321,7 @@ The runtime can omit a write that is not necessary only while confirmed renewal 
 
 ### 9.2 Actions after a heartbeat failure
 
-When a required heartbeat is missed, the runtime must immediately do these actions:
+When a required Concord heartbeat is missed, the runtime must immediately do these actions:
 
 1. Stop protected operations through the affected agreement.
 2. Stop token renewal for that generation.
@@ -326,7 +350,7 @@ Transport reconnection must not let terminated local authority start again. Subs
 
 Recovery needs a new opaque contract id and generation 1. The runtime can continue transport reconnection and view rebuilds to negotiate new agreements.
 
-A missed Beacon heartbeat or an expired advertisement affects discovery only. It must not stop an existing Concord agreement.
+A missed advertisement heartbeat, a missed Beacon watch heartbeat, or an expired advertisement affects discovery only. It must not stop an existing Concord agreement.
 
 ## 10 Withdrawal and successor agreements
 
@@ -497,7 +521,7 @@ Callers must use the typed `.code` value. They must not select behavior from exc
 
 ### 13.1 Concord view
 
-The runtime owns one parsed, indexed view of contracts, tokens, observations with errors, and cached validity.
+The runtime owns one materialized view of contracts, tokens, observations with errors, and cached validity. The view uses separate contract and token materialized sources for store observations and revisions.
 
 Filters start with the smallest applicable index. The indexes cover profile, participant, contract state, contract id, and contract pointer. Cached validation gets only the selected contract and its named token observations. A filtered watch must not parse or validate unrelated contracts.
 
@@ -505,7 +529,7 @@ Filters start with the smallest applicable index. The indexes cover profile, par
 
 Later `ConcordWatchChange` values contain the full filtered membership. They also contain a maximum of 256 changed contract pointers and `resnapshot_required`. If pointer detail overflows, the full membership gives the current result.
 
-Reconnect rebuilds of contract and token views are atomic. The rebuilds include removal of missing pointers.
+Reconnect rebuilds of contract and token materialized sources are atomic. The Concord view includes removal of missing pointers after these rebuilds.
 
 ### 13.2 Context entry and exit
 
@@ -534,7 +558,7 @@ A proposal creates only one new opaque contract. It must not loop to create a su
 
 The endpoint supplies the local identity and session.
 
-`ConcordParticipantPolicy` is an immutable batch policy. Its selector receives an immutable candidate snapshot and supplies typed selected pointers. Selection can be asynchronous. The selector does not hold runtime state locks during selection.
+`ConcordParticipantPolicy` is an immutable batch policy. Its Concord participant selector receives an immutable snapshot of Concord participant candidates and supplies typed selected contract pointers. Selection can be asynchronous. The selector does not hold runtime state locks during selection.
 
 Unknown pointers, malformed selections, and selector failures must give explicit failures.
 
