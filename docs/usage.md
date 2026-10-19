@@ -17,8 +17,10 @@ contract codes, or build service-use contracts directly. Treat discovery,
 negotiation, request authority, and view fencing as one managed service context.
 
 Direct Beacon and Concord primitives are implementation-level APIs for core
-runtime code, service or hardware infrastructure, and conformance tests. Their
-normative semantics live in [beacon-concord.md](beacon-concord.md).
+runtime code, service or hardware infrastructure, and conformance tests.
+Application providers and hardware backends use managed contexts. The
+[Beacon specification](beacon-ste100.md) and
+[Concord specification](concord-ste100.md) define the protocol requirements.
 
 ## Service Protocol Definition
 
@@ -350,26 +352,29 @@ lease-loss helpers or treat missing payloads as lifecycle authority.
 
 ## Provider Boundary
 
-Service providers still use lower-level runtime infrastructure to advertise,
-accept service-use contracts, authorize incoming service messages, and publish
-fenced views. That code is service infrastructure, not ordinary feature-client
-code.
+Service providers use `Deckr.service_provider(...)`. The managed context owns
+advertisement publication, participant selection, protocol authorization, and
+cleanup. Providers use its authorization and view-context APIs for protected
+operations. The backend supplies domain behavior and availability information.
 
 Provider implementations should follow these boundaries:
 
 - Beacon advertisement identifies candidates for future managed service-use
   negotiation only.
-- Concord contract creation, cancellation, and participant-token validity are
-  the only lifecycle authority.
-- A cancelled or stale service-use contract is never resumed or reattached.
-- Provider startup must clean stale contracts it owns before treating the
-  service as available.
+- Concord governs agreement authority, including permanent local termination
+  after required heartbeat failures or loss of source currentness.
+- Terminated authority cannot resume. Recovery uses a new agreement.
+- The managed provider context performs owner bootstrap before advertisement
+  publication. Backend code does not scan or clean Concord stores.
+- Domain decisions do not replace protocol validation. Provider callbacks do
+  not classify Concord validity statuses or renew participant tokens.
 - Public plugin/client APIs should expose domain operations and views, not
   Beacon or Concord mechanics.
 
 For protocol semantics, stale contract cleanup, cancellation rules, and
-participant-token behavior, use [beacon-concord.md](beacon-concord.md) and
-[nats-bus.md](nats-bus.md) as the implementation references.
+participant-token behavior, use the
+[managed context requirements](concord-ste100.md#166-managed-providers-and-hardware-managers)
+and the [NATS specification](nats-ste100.md).
 
 ## Maintenance Infrastructure
 

@@ -568,6 +568,17 @@ The endpoint supplies the local identity and session.
 
 Unknown pointers, malformed selections, and selector failures must give explicit failures.
 
+Participant selection is a runtime infrastructure operation. Application code
+must not classify Concord validity statuses to maintain an accepted agreement.
+A change from `not_yet_fulfilled` to `valid` must not, by itself, cancel the
+agreement or withdraw participation.
+
+Domain policy can reject a proposal or withdraw consent for a domain reason.
+The managed context must apply that decision through the Concord lifecycle.
+The runtime must enforce protocol validation and termination independently of
+domain consent. Continued consent must not preserve or restore authority after
+a termination condition from section 9.
+
 ### 13.4 State access
 
 The two contexts give access to immutable `state`. Each new state version is greater than the previous version. They also give access to atomic `wait_for_state(predicate, timeout_seconds=None)` and current-first `watch_state()`.
@@ -822,6 +833,17 @@ policy. The managed contexts own token refresh, reconciliation, contract retries
 task groups, and raw contract pointers. Application code does not manage those
 operations itself.
 
+Application code supplies domain facts, such as device connection changes and
+backend availability. Profile implementations must validate profile data and
+apply the specified consequences of those facts. Generic Concord must validate
+contract and token identity, session assertions, and authority.
+
+Application policy must not replace these checks. It must not maintain accepted
+contract sets in response to Concord validity transitions. Managed contexts must
+enforce local authority before protected operations. They must initiate required
+protocol termination and cleanup without an application or operator request.
+Local authority loss must not wait for a domain callback.
+
 ## 17 Conformance checks
 
 Recommendation: Use the Concord artifacts in `contract/v1` as acceptance inputs for each implementation.
@@ -835,6 +857,7 @@ Schema validation alone is not sufficient. Check these Concord requirements:
 - Canonical participant lists.
 - Record, key, pointer, and token identity agreement.
 - Profile identity agreement.
+- Continued participation when a pending agreement becomes valid and domain consent is unchanged.
 - Permanent authority loss and successor creation.
 - The same evaluation results for the same cached and exact observations.
 - Maintenance cleanup with revision guards and persistent cleanup markers.
