@@ -22,15 +22,16 @@ Use these references together:
   broker operations
 - [`../contract/v1`](../contract/v1): language-neutral schemas, fixtures, and
   acceptance vectors
-- Python models in `deckr.beacon`, `deckr.concord`,
-  `deckr.hardware.profiles`, and `deckr.action_runtime`: current reference
-  implementation and source for generated artifacts
 
 The JSON Schemas are structural wire contracts. They intentionally do not carry
-every semantic rule enforced by the Python models. Non-Python implementations
-must also enforce the semantic rules in this guide, including endpoint parsing,
-positive counters and TTLs, canonical participant ordering, terms-hash
-validation, and profile identity checks.
+every semantic rule. Every implementation must enforce the semantic rules in
+this guide, including endpoint parsing, positive counters and TTLs, canonical
+participant ordering, terms-hash validation, and profile identity checks.
+
+All requirements in this specification apply equally to every implementation.
+Implementation APIs and source models do not qualify or override protocol rules.
+Runtime API examples and tooling are documented separately in the
+[runtime reference](protocol-runtime-reference.md).
 
 Retired current-state authorities are not part of v1. Do not treat endpoint
 presence, action catalogs, hardware inventory, unilateral device claims, lease
@@ -155,7 +156,7 @@ which candidate to try.
 
 ### Beacon Runtime View
 
-The Python `Beacon` facade owns a parsed, indexed current-state view. Feature
+The Beacon runtime owns a parsed, indexed current-state view. Feature
 queries seed from the feature index; arbitrary selectors run outside the view
 lock. Malformed or identity-inconsistent observations remain recorded as
 invalid state and never become candidates.
@@ -226,7 +227,7 @@ participant must not write another participant's token.
 
 The participant generates and retains the token identity before the token
 create. Token creation followed by a failed contract update is an explicit
-partial-attach state, not authority. The Python lifecycle owner makes at most
+partial-attach state, not authority. The lifecycle owner makes at most
 eight contract compare-and-set attempts; after the first conflict it retries
 only after the filtered Concord view advances. Exhaustion exact-withdraws the
 retained token and, if withdrawal cannot complete, best-effort cancels the
@@ -249,12 +250,52 @@ token id, and terms hash, the local lease may update that already-held handle
 without immediately writing again. A blank local lease must not adopt a token
 from KV using participant/session identity alone.
 
-If the contract is cancelled, the token is missing, or the token has changed
-owner/session/token id/terms hash, the participant no longer maintains authority
-for that contract generation. In Python, token refresh unavailability is treated
-as loss of authority: the local lease closes immediately, attempts best-effort
-contract cancellation, and relies on token TTL expiry if the same NATS/KV failure
-prevents writing the cancellation.
+### Heartbeat Failure Is Terminal
+
+A missed Concord heartbeat MUST terminate local authority for the affected
+contract generation immediately. This is irreversible: there is no grace period,
+pause, or resumption of that agreement after the failure.
+
+A missed heartbeat is either:
+
+- a required participant-token renewal that fails, is unavailable, times out,
+  or has no confirmed success by its bounded renewal deadline; or
+- failure to receive a required heartbeat from a contract or participant-token
+  authority watch by that watch's finite liveness deadline.
+
+Each renewal must have a finite deadline established before the operation and
+no later than the held token's expiry. Retries must not extend that deadline.
+Every authority watch must likewise have a finite liveness deadline; a connected
+transport does not extend or replace that deadline.
+Coalescing an unnecessary write is permitted only while confirmed fresh renewal
+evidence for the same already-held token satisfies the renewal requirement; it
+must never conceal or excuse a missed required heartbeat.
+
+On heartbeat failure, the runtime MUST immediately stop protected operations
+under the affected agreement, stop renewing its token for that generation, and
+close local authority. It MUST attempt best-effort contract cancellation and
+withdrawal of its owned token. Remote cleanup failure does not delay local
+termination. Token TTL expiry is the fallback by which peers lose authority
+when cancellation or withdrawal cannot reach the store; it is not permission
+for the participant that detected failure to continue using the agreement.
+
+Loss of an attached participant token, contract cancellation, or a change to
+the held token's owner, session, token id, or terms hash is likewise terminal.
+Loss of currentness in either authority source MUST terminate local authority
+for every agreement that depends on that source, even if exact reads remain
+available. A source must report missed watch heartbeats and consumer recovery
+as loss of currentness; internal transport recovery must not hide that loss.
+
+Restored connectivity, successful later reads, renewed watch delivery, or tokens
+still present in the store MUST NOT revive terminated local authority. Recovery
+requires a fresh opaque contract id and generation 1. The runtime may continue
+reconnecting and rebuilding its views to negotiate new agreements.
+
+These termination rules concern Concord authority. A missed Beacon heartbeat
+or an expired advertisement affects discovery only and MUST NOT terminate an
+existing Concord agreement.
+
+### Withdrawal And Successor Agreements
 
 When a participant lease or owner-side agreement closes cleanly, it should
 best-effort withdraw its owned token by exact-reading the token, confirming
@@ -267,24 +308,48 @@ loss of that token means loss of authority for that generation. The participant
 must not silently recreate a token for the same contract generation. It should
 cancel when possible and negotiate a successor with a fresh opaque contract id
 and generation 1. Contract ids are never reused; `supersedes` remains diagnostic.
-If local lease state is lost while a same-session token still exists in KV, the
-participant must treat the old contract as stale local authority: best-effort
-cancel it when possible and negotiate a successor rather than adopting the token.
+If a participant knows it has lost local lease state for a contract it previously
+owned while its same-session token still exists in KV, it must treat that contract
+as stale local authority: best-effort cancel it when possible and negotiate a
+successor rather than adopting the token. An empty local registry alone does not
+establish that such a loss occurred.
 
-Before a local endpoint creates another proposal, its owner-bootstrap gate
-cancels every open contract created by that endpoint that is not registered as
-current in-process ownership. This includes pending, partial, attached,
-same-session, and previous-session records. Proposal commit, provider readiness,
-hardware-manager readiness, and Beacon publication remain blocked until exact
-cleanup is confirmed. Bootstrap never adopts an old token or contract.
+Before a local endpoint creates another proposal, its owner-bootstrap gate MUST
+distinguish abandoned local ownership from contracts maintained by another live
+session. Absence from the local ownership registry, a different session id, or
+missing Beacon advertisements MUST NOT by themselves justify cancellation.
+
+Bootstrap cleanup may cancel contracts positively known to have lost local
+authority in this runtime, or contracts whose exact Concord state establishes
+terminal authority loss under the rules above. Another session's acceptable
+participant token remains evidence of live participation even while the contract
+is pending. A missing token for a participant that has never attached, or an
+unavailable store, is not evidence that its process has failed. Pending, partial,
+attached, same-session, and previous-session records all require this distinction.
+
+Service admission, capacity, and deliberate replacement remain profile policy.
+Bootstrap MUST NOT implicitly preempt a live session. Where a profile requires
+exclusive ownership, unresolved contention MUST block the contender's proposal
+commit, readiness, and Beacon publication. Any deliberate replacement MUST follow
+explicit profile policy and prevent the displaced session from cancelling the
+successor merely because it uses the same endpoint address. The contention
+mechanism is an implementation choice; random backoff may assist retries but
+does not itself establish authority or abandonment.
+
+After terminal authority loss is established, a waiting process may perform the
+required cleanup and negotiate fresh agreements. A previously displaced process
+may likewise compete again when the role becomes available; it MUST NOT resume
+its old authority. Proposal commit, provider readiness, hardware-manager readiness,
+and Beacon publication remain blocked until required bootstrap cleanup is exactly
+confirmed. Bootstrap never adopts an old token or contract.
 
 A missing token for a participant that is not yet in `attachedParticipants`
 means the contract is not yet fulfilled. A missing token for a participant that
 is already in `attachedParticipants` means authority was lost and the contract is
 invalid for that generation.
 
-Language-neutral implementations validate a contract by exact-reading the
-contract and every named participant token. The result is valid only if:
+Implementations validate a contract by exact-reading the contract and every
+named participant token. The result is valid only if:
 
 - the contract exists and is `open`
 - every named participant is in `attachedParticipants`
@@ -305,7 +370,7 @@ pending, or recoverable local ownership, and a parsing exception must not
 escape a lease boundary. Mutation paths normalize malformed contract and token
 records to typed terminal conflicts before performing any write.
 
-The Python runtime gathers immutable contract and token observations and sends
+The runtime gathers immutable contract and token observations and sends
 both validation paths through one pure evaluator. The evaluator performs no I/O
 or mutation and checks participants in canonical order. `Concord.validate(...)`
 is the normal hot path and gathers raw cached entries by their canonical exact
@@ -322,13 +387,18 @@ sorted, and frozen before evaluation.
 
 A started runtime whose contract or token materialized source is stale returns
 `ContractValidityStatus.UNAVAILABLE` with
-`ContractValidityReason.SOURCE_UNAVAILABLE` on the cached path. Exact validation
-remains independently usable when the exact store is available. Maintenance
-store readiness or contents are not part of contract validity.
+`ContractValidityReason.SOURCE_UNAVAILABLE` on the cached path and MUST terminate
+local authority for affected agreements as specified in
+[Heartbeat Failure Is Terminal](#heartbeat-failure-is-terminal). `UNAVAILABLE`
+describes the observation failure; it does not permit an existing agreement to
+pause and resume. Exact validation remains independently usable for diagnostics,
+cleanup, and new negotiations when the exact store is available, but MUST NOT
+restore terminated local authority. Maintenance store readiness or contents are
+not part of contract validity.
 
 ### Concord Runtime View
 
-The Python `Concord` facade owns one parsed, indexed view of contract records,
+The Concord runtime owns one parsed, indexed view of contract records,
 participant tokens, invalid observations, and cached validity. Filters seed from
 the smallest applicable profile, participant, contract-state, contract-id, or
 pointer index. Cached validation gathers only the selected contract and its
@@ -460,9 +530,8 @@ Concord authority in the lane envelope.
 
 ### Concord Maintenance
 
-Core Concord maintenance is optional and Concord-only. Python exposes it from
-the separate `deckr.concord_maintenance` facade. `ConcordMaintenance` receives
-the contract, participant-token, and maintenance exact/raw stores directly;
+Core Concord maintenance is optional and Concord-only. Its separate capability
+receives the contract, participant-token, and maintenance exact/raw stores directly;
 normal `Concord` has no maintenance store, watcher, cache, readiness dependency,
 or mutation route. Constructing the maintenance capability starts no task or
 watch.
@@ -636,7 +705,7 @@ contract retry, task-group, or raw-pointer plumbing.
 - canonical Concord terms-hash vectors
 - NATS lane subject/header vectors
 
-Non-Python implementations should use those artifacts as acceptance inputs.
+Every implementation should use those artifacts as acceptance inputs.
 Passing schema validation alone is not sufficient; implementations must also
 enforce this guide's semantic rules. In particular, verify endpoint parsing,
 key-token encoding, Beacon/Concord key generation, terms hashing, positive

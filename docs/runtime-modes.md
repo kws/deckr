@@ -58,6 +58,7 @@ Launcher configuration for an external broker:
 [deckr.runtime.substrate]
 kind = "nats"
 url = "nats://127.0.0.1:4222"
+reconnect_max_interval_seconds = 60
 ```
 
 Launcher configuration for a supervised local broker:
@@ -67,6 +68,11 @@ Launcher configuration for a supervised local broker:
 kind = "nats"
 supervised = true
 ```
+
+Both modes retry broker connections indefinitely. The optional
+`reconnect_max_interval_seconds` setting caps reconnection backoff and defaults
+to 60 seconds. See [broker reconnection](nats-bus.md#broker-reconnection) for
+startup and recovery behavior.
 
 Component instances use the same generic shape in every mode. Production
 deployments can configure one action provider runtime instance explicitly:

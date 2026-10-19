@@ -1,9 +1,8 @@
 # NATS Bus
 
-> Live implementation reference: this document describes behavior currently
-> implemented in `deckr`. It should stay in sync with code, tests, generated
-> schemas, examples, and scripts. If it differs from the implementation, treat
-> that as a bug.
+> Normative substrate specification: every implementation must satisfy these
+> NATS transport, store, and recovery requirements. Differences between this
+> specification, contract artifacts, and implementations are contract bugs.
 
 Deckr's distributed substrate is NATS:
 
@@ -15,8 +14,8 @@ Deckr's distributed substrate is NATS:
 NATS subjects, headers, streams, and KV buckets are substrate details. Deckr
 participants must treat [`beacon-concord.md`](beacon-concord.md), this document,
 and the generated `contract/v1` artifacts as the language-neutral contract
-boundary. The Python models are the current reference implementation and source
-for generated artifacts.
+boundary. Runtime API examples, tooling, and implementation notes live in the
+separate [runtime reference](protocol-runtime-reference.md).
 
 ## Current Contract
 
@@ -31,18 +30,18 @@ The supported shared stores are:
 
 Beacon and normal Concord use explicit KV bucket policies and materialized
 views. Production runtime code does not subscribe directly to Beacon or
-Concord authority state. Python runtime participants use the shared `Beacon`
-and `Concord` APIs; both own their materialized runtime views, semantic
-lifecycle snapshots, bounded change wakeups, leases, heartbeats, freshness checks, recovery
-reconciliation, and lifecycle logging. Non-Python implementations must follow
-the same protocol semantics in [`beacon-concord.md`](beacon-concord.md).
+Concord authority state. Managed Beacon and Concord runtimes own their
+materialized views, semantic lifecycle snapshots, bounded change wakeups,
+leases, heartbeats, freshness checks, recovery reconciliation, and lifecycle
+logging. Every implementation must follow the protocol semantics in
+[`beacon-concord.md`](beacon-concord.md).
 The optional Concord reaper is the maintenance exception. It receives the
 separate `deckr.concord_maintenance.ConcordMaintenance` capability and uses
 exact raw KV scans instead of long-lived materialized views. A normal
 `Concord` instance never opens, watches, indexes, or waits for the maintenance
 store.
 Retired shared coordination buckets are not part of the v1 surface. Opening a
-generic state store is no longer part of the Python runtime. Beacon and Concord
+generic state store is not part of the protocol runtime. Beacon and Concord
 open their explicit JetStream KV bucket policies directly and serve normal reads
 from materialized views.
 TTL-bound heartbeats are core-governed. Caller-provided refresh intervals are
@@ -62,12 +61,39 @@ hash, the local lease may update that handle without immediately writing again.
 A blank local lease must not adopt a token from KV using participant/session
 identity alone.
 
+Missed required Concord heartbeats are terminal, as defined in
+[`beacon-concord.md`](beacon-concord.md#heartbeat-failure-is-terminal). A runtime
+that detects a missed heartbeat MUST immediately relinquish the affected local
+authority; it must not wait for token TTL expiry or transport recovery. Recovery
+requires a fresh agreement. Beacon heartbeat loss affects discovery only.
+
 Renewal loops must not be used as discovery loops. Runtime code must not run
 full Beacon or Concord discovery, participant/profile prefix scans, or full
 claim/provider reconciliation on the fast advertisement-renewal cadence. Normal
 discovery uses materialized Beacon/Concord views plus watches. Exact full scans
 are reserved for startup, watch reconnect/cache rebuild, diagnostics,
 maintenance, and low-frequency repair.
+
+## Broker Reconnection
+
+Broker connection attempts have no retry-count limit or overall outage timeout.
+After an established connection is lost, retries use exponential backoff with
+jitter: the delay is between half and all of a window that starts at one second,
+doubles after each attempt, and caps at `reconnect_max_interval_seconds` (60
+seconds by default). Successful reconnection resets the backoff. Each individual
+connection attempt still has a bounded dial timeout.
+
+Set `reconnect_max_interval_seconds` to a finite positive number in
+`[deckr.runtime.substrate]`, or pass it to `NatsSubstrate` or
+`SupervisedNatsSubstrate`. Initial connection also retries indefinitely and
+uses the configured maximum interval between initial attempts. Cancellation or
+runtime shutdown stops connection attempts. The supervised broker's process
+startup deadline and unexpected-process-exit handling remain separate concerns.
+
+Beacon advertisement expiry and Concord authority loss never stop broker
+reconnection. Once the broker connection recovers, materialized sources rebuild
+before reporting current state. Lost Concord authority still requires a fresh
+agreement under the existing protocol rules.
 
 ## Materialized State Watches
 
@@ -91,6 +117,12 @@ recovered snapshot. It marks the view stale when the NATS connection is not
 current and rebuilds after reconnection. Post-barrier absent-key revisions are
 bounded at 2,000; reaching that bound immediately reopens the watch so a fresh
 high-water snapshot can compact the tombstones.
+
+Missed watch heartbeats, loss of consumer continuity, and consumer recovery MUST
+mark the affected authority source stale even if the broker connection remains
+connected. For Concord contract and participant-token sources, that transition
+MUST terminate every dependent local agreement. Installing a recovered snapshot
+may make the source current again, but MUST NOT resume a terminated agreement.
 
 Exact/CAS stores and materialized sources are separate responsibilities. An
 exact create, update, or delete never mutates the materialized cache directly.
@@ -160,23 +192,6 @@ authorization in place of Concord validation.
 
 ## Lane Delivery
 
-Components acquire endpoint sessions with:
-
-```python
-async with deckr.endpoint("action_provider:clock") as endpoint:
-    await endpoint.send(
-        lane="actions",
-        recipient="controller:main",
-        subject=entity_subject("extension", contextId="ctx"),
-        message_type="actionExtension",
-        body={
-            "extensionType": "dev.deckr.example.ping",
-            "extensionSchemaId": "dev.deckr.example.ping.v1",
-            "data": {},
-        },
-    )
-```
-
 The endpoint session stamps `sender` and `senderSessionId`, validates the message
 contract for the requested lane through the message bus, and publishes the
 envelope. Subscribers receive messages only when the envelope recipient matches
@@ -209,27 +224,13 @@ key:    advertisements.by_feature.<feature-id-token>.<advertisement-id-token>
 schema: dev.deckr.beacon.advertisement.v1
 ```
 
-The runtime-facing Python API is `deckr.beacon.Beacon`.
-
-```python
-async with deckr.endpoint("hardware_manager:mirabox-main") as endpoint:
-    async with deckr.beacon.advertise(
-        endpoint,
-        BeaconAdvertisementSpec(
-            feature_id="dev.deckr.hardware",
-            payload=payload,
-        ),
-    ):
-        candidates = deckr.beacon.candidates("dev.deckr.hardware")
-```
-
 Beacon answers "which endpoints currently advertise this feature?" It does not
 grant ownership, reserve anything, prove future success, or make a command safe.
 Consumers should treat results as candidates and establish any needed Concord
 agreement before relying on them. After that agreement exists, Beacon
 advertisement changes do not withdraw or invalidate it. Advertisers may
 withdraw Beacon advertisements when they are not accepting new Concord
-negotiations; that affects only future discovery. The Python `Beacon` runtime
+negotiations; that affects only future discovery. The Beacon runtime
 keeps one materialized advertisement view so `candidates(...)`, `get(...)`, and
 feature watches avoid per-query full key scans.
 `Beacon.advertise(endpoint, spec)` is a synchronous factory for an async context
@@ -243,11 +244,6 @@ own TTL record missing, it republishes its own opaque advertisement identity;
 this remains discovery state and never recreates Concord authority.
 The full Beacon semantic contract is specified in
 [`beacon-concord.md`](beacon-concord.md#beacon).
-
-Cross-runtime status:
-`deckr-adapter-elgato-node` and the Rust manager implementations are still behind
-the managed Beacon/Concord lifecycle contracts used by the Python runtime, so they are
-not yet considered parity-complete for this contract profile.
 
 ## Concord Stores
 
@@ -289,8 +285,7 @@ remains until an exact participant-token rescan is empty. Later reaper scans
 enumerate these markers independently of contract records, so bounded cleanup
 conflicts or a post-delete store outage cannot orphan the generation.
 
-The Python implementation separates three store responsibilities behind narrow
-internal ports:
+Implementations separate three store responsibilities:
 
 | Responsibility | Operations and use |
 | --- | --- |
@@ -322,96 +317,6 @@ Messages remain human-readable diagnostics only. Malformed external values are
 normalized to invalid validation results or typed terminal conflicts instead of
 leaking model parsing errors. Identity mismatches perform no create, update, or
 delete.
-
-The implementation-level Python API for core runtime, hardware/service
-infrastructure, and conformance tests is `deckr.concord.Concord`. Ordinary
-service consumers should use `deckr.services` instead of constructing Concord
-agreements directly.
-
-```python
-concord = deckr.concord
-async with deckr.endpoint("controller:main") as endpoint:
-    async with concord.propose(
-        endpoint,
-        ConcordAgreementSpec(
-            participants=(endpoint.address, "hardware_manager:mirabox-main"),
-            profile="dev.deckr.profile.hardware_claim.v1",
-            terms=terms,
-            participant_sessions={
-                "hardware_manager:mirabox-main": manager_session_id,
-            },
-        ),
-    ) as agreement:
-        state = await agreement.wait_for_state(
-            lambda current: current.valid or current.phase.value == "terminal",
-            timeout_seconds=10,
-        )
-        if not state.valid:
-            raise RuntimeError(state.reason or "hardware claim was rejected")
-```
-
-The remote runtime accepts candidate contracts through its own endpoint-owned
-participant context and an immutable batch policy:
-
-```python
-def select_claims(candidates):
-    return ConcordParticipantSelection(
-        candidate.contract.pointer
-        for candidate in candidates
-        if candidate.validity.status.value == "not_yet_fulfilled"
-    )
-
-async with manager_deckr.endpoint("hardware_manager:mirabox-main") as endpoint:
-    policy = ConcordParticipantPolicy(
-        profile="dev.deckr.profile.hardware_claim.v1",
-        select=select_claims,
-    )
-    async with manager_deckr.concord.participant(endpoint, policy) as participant:
-        await participant.wait_for_state(lambda state: state.current)
-```
-
-Tests use the shipped `deckr.testing` harness instead of constructing normal
-Concord runtime stores directly. Test endpoints provide the same immutable
-address/session evidence as a real `EndpointSession`:
-
-```python
-from dataclasses import dataclass
-
-import anyio
-
-from deckr.testing import ConcordRuntimeHarness
-
-@dataclass(frozen=True)
-class TestEndpoint:
-    address: EndpointAddress
-    session_id: str
-
-harness = ConcordRuntimeHarness()
-async with anyio.create_task_group() as task_group:
-    harness.concord.start(task_group)
-    await harness.concord.wait_current()
-    endpoint = TestEndpoint(
-        address=parse_endpoint_address("controller:main"),
-        session_id="controller-session",
-    )
-    async with harness.concord.propose(
-        endpoint,
-        ConcordAgreementSpec(
-            participants=(endpoint.address, "hardware_manager:mirabox-main"),
-            profile="dev.deckr.profile.hardware_claim.v1",
-            terms=terms,
-        ),
-    ) as agreement:
-        assert agreement.state.local_authority
-        assert agreement.contract.contract_id
-    task_group.cancel_scope.cancel()
-```
-
-Maintenance and reaper tests use the dedicated
-`deckr.concord_maintenance.ConcordMaintenance` capability with three exact/raw
-stores. `ConcordMaintenanceHarness` packages those stores and exposes its
-dedicated `.maintenance` capability for focused tests, but it does not add
-maintenance state to `ConcordRuntimeHarness` or normal `Concord` readiness.
 
 A Concord contract is valid only while the contract is open and every named
 participant maintains an acceptable token for the same contract id, generation,
@@ -457,11 +362,9 @@ The language-neutral profile rules are summarized in
 Hardware single-owner enforcement is profile/manager policy over valid Concord
 claims. Beacon capacity fields are hints; Concord validity is the authority for
 whether a claim or service-use lease is live. A missing Beacon advertisement is
-not a withdrawal of an existing claim or service-use contract. Python hardware
-managers use the shared `deckr.hardware.runtime.HardwareManagerRuntime`
-implementation to advertise hardware through managed
-`Beacon.advertise` leases, maintain claim tokens through
-`ConcordParticipant`, and route input only for live claims.
+not a withdrawal of an existing claim or service-use contract. Hardware
+managers advertise hardware through managed Beacon leases, maintain their own
+Concord claim tokens, and route input only for live claims.
 Hardware device inventory is published through the hardware Beacon profile only.
 The `hardware_messages` lane is for control input, commands, capability state,
 and replies; it must not be treated as the inventory authority. If a claimed
@@ -530,25 +433,6 @@ store manually. Concord is opened by the managed runtime
 as `deckr.concord`; callers should not construct Concord authority directly
 from raw KV buckets.
 
-```python
-from deckr.services import ServiceViewStore
-from deckr.substrates.nats_kv import KvBucketPolicy
-
-beacon = deckr.beacon
-concord = deckr.concord
-views = ServiceViewStore(
-    bucket=deckr.kv_bucket(
-        KvBucketPolicy(
-            bucket="com_example_service_view_v1",
-            ttl_seconds=30,
-            allow_write_ttl=True,
-            description="service view KV",
-        )
-    )
-)
-views.start(task_group)
-```
-
 Core authority bucket names are reserved. Generic `Deckr.kv_bucket(...)` and
 `ComponentContext.kv_bucket(...)` access rejects Beacon and Concord authority
 policies, including the maintenance bucket. The built-in reaper receives its
@@ -577,20 +461,14 @@ The complete cross-runtime Deckr KV policy vector is exactly:
 | `allow_msg_ttl` | whether the bucket permits Deckr's broker-owned TTL writes |
 | `subject_delete_marker_ttl` | equal to `max_age` for a TTL bucket; not applicable to a persistent bucket |
 
-Python and TypeScript compare those normalized fields before exposing a bucket
-handle. `allow_direct` is a client access optimization, `storage` is
+Every implementation MUST compare those normalized fields before exposing a
+bucket handle. `allow_direct` is a client access optimization, `storage` is
 deployment-owned broker policy, and Deckr creation `metadata` is a
 creator-local diagnostic. Those three fields, and every other JetStream stream
 setting, are not part of the shared Deckr policy vector. Fresh creators may set
 different non-authoritative values; an opener neither rejects nor mutates an
 existing bucket because of them. An incompatible value in the four-field
 Deckr vector is rejected without mutating the existing stream.
-
-The real-NATS cross-runtime gate compares the complete fresh stream configs
-after normalizing only bucket names and subjects. With the current clients, the
-observed Python/TypeScript difference set is exactly `allow_direct` and Deckr
-creation `metadata`. Both creators currently resolve to file storage, but
-storage remains deployment-owned rather than a Deckr lifecycle policy field.
 
 Concord treats the token bucket's configured TTL as the single token TTL source.
 Token records mirror that TTL; they are not independently configured by
@@ -613,11 +491,8 @@ The language-neutral bundle in `contract/v1` contains:
 - canonical Concord terms hash vectors
 - NATS lane subject/header vectors
 
-Regenerate the bundle with:
-
-```bash
-uv run python scripts/generate_contract_artifacts.py
-```
+Artifact generation instructions are in the
+[runtime reference](protocol-runtime-reference.md#artifact-generation).
 
 JSON Schemas are structural contracts. Implementations must also enforce the
 semantic rules in [`beacon-concord.md`](beacon-concord.md), such as endpoint
@@ -641,11 +516,8 @@ nats kv ls deckr_concord_maintenance_v1 'stale.>' --server nats://127.0.0.1:4222
 nats kv ls deckr_concord_maintenance_v1 'cleanup.>' --server nats://127.0.0.1:4222
 ```
 
-Summarize current Beacon/Concord KV contents:
-
-```bash
-uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
-```
+Runtime state-reporting commands are in the
+[runtime reference](protocol-runtime-reference.md#state-reporting).
 
 ### JetStream Consumer Hygiene
 
@@ -664,11 +536,11 @@ raw scans because it runs infrequently and does not provide immediate
 notification. `ConcordMaintenance` avoids materialized watches entirely, and
 each temporary list consumer is closed before the scan returns.
 
-Treat watch events as wakeups. Managed materialized views are the normal Python
-runtime authority for reads; exact KV reads are used for writes, strict
+Treat watch events as wakeups. Current managed materialized views serve normal
+runtime authority reads; exact KV reads are used for writes, strict
 validation, recovery, and maintenance. Every watch still consumes broker
-resources. Use `scripts/nats_state_report.py` for current Beacon/Concord keys
-and TTL behavior, then pair it with the `/jsz` check below to confirm that
+resources. Use the [state-reporting tools](protocol-runtime-reference.md#state-reporting)
+for current Beacon/Concord keys and TTL behavior, then pair them with the `/jsz` check below to confirm that
 steady-state unbound consumer counts remain bounded.
 
 ## Troubleshooting
