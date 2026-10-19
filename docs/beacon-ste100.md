@@ -206,30 +206,9 @@ use exact reads and calculate validity again.
 ### 5.3 TTL policy
 
 The broker controls the bucket TTL. The default Beacon bucket TTL is 300 seconds.
-The bucket keeps one message for each subject. It keeps subject delete markers
-for the same time as the bucket TTL.
-
-Delete markers let a materialized source observe record expiry. A client library
-can report a marker as a delete event or an expire event. For each of these
-events, the source must remove the key from its cache. The view must also remove
-the key.
-
-Before an implementation supplies a bucket handle, it must compare these
-normalized policy fields:
-
-| JetStream field | Beacon policy |
-| --- | --- |
-| `max_age` | The bucket TTL in nanoseconds. |
-| `max_msgs_per_subject` | `1`. |
-| `allow_msg_ttl` | The configured permission for Deckr TTL writes that the broker controls. |
-| `subject_delete_marker_ttl` | The same value as `max_age`. |
-
-If these fields disagree with the necessary policy, the implementation must reject
-the bucket. It must not change the existing stream.
-
-The shared policy does not include `allow_direct`, `storage`, or creation
-`metadata`. It does not include other JetStream stream settings. An implementation
-must not reject or change an existing bucket because of those settings.
+The bucket must obey the [shared KV storage requirements](nats-ste100.md#7-shared-kv-storage-requirements).
+Those requirements define policy comparison, retained messages, delete markers,
+and removal of expired keys from the source and view.
 
 ## 6 Advertisement lifecycle
 
@@ -361,23 +340,19 @@ use the managed Beacon view. They do not subscribe directly to its raw store.
 
 `Beacon.watch()` always supplies one `BeaconWatchSnapshot` first.
 This snapshot contains the view `version`, the `current` flag, and the full
-filtered candidate tuple. The watch captures registration and the first
-immutable snapshot with the same state lock.
+filtered candidate tuple. The watch must obey the
+[public state watch requirements](nats-ste100.md#9-public-state-watches).
+Those requirements define atomic registration, change limits, overflow,
+slow subscribers, and registration limits.
 
 Subsequent results use `BeaconWatchChange`. Each result contains the full filtered
-membership and at most 256 changed keys. The full membership is the current
+membership and bounded changed keys. The full membership is the current
 result for that item. This applies also when the change detail overflows.
 
-If more than 256 identities change before a subscriber reads, the changed set
-is empty and `resnapshot_required` is true. Use the full membership on that
+If `resnapshot_required` is true, use the full membership on that
 item. Do not try to reconstruct membership from a partial set of changed keys.
 
 The watch has no replay option. It does not supply an event enumeration.
-If a slow subscriber operates correctly, it must not block ingestion. The
-broadcaster must not remove that subscriber because it is slow.
-
-Each broadcaster can have a maximum of 256 registrations at the same time.
-It must explicitly reject the next registration.
 
 ### 8.3 View recovery
 
@@ -385,23 +360,10 @@ After reconnection, the runtime rebuilds the view as one atomic change.
 It reports transitions between stale and current state. The resulting difference
 includes keys that disappeared during the outage.
 
-The NATS adapter captures the stream high-water revision before it opens the
-broker watch. It replays current subjects and then emits a `KvWatchBarrier`.
-The materialized source installs the recovered snapshot atomically.
-
-The source applies observations newer than the barrier in revision order.
-It creates removals for keys missing from the recovered snapshot.
-Post-barrier absent-key revisions have a limit of 2,000. At that limit, the source
-immediately reopens the watch to compact these revisions with a fresh snapshot.
-
-The source must report stale state if the NATS connection is not current.
-It must also report stale state after missed watch heartbeats, loss of consumer
-continuity, or consumer recovery. A connected broker alone does not prove
-current state.
-
-Exact create, update, and delete operations do not directly change the
-materialized view. If read-your-write behavior is necessary for a started lifecycle
-operation, it waits for the watch to observe the committed revision.
+The source must obey the [shared recovery requirements](nats-ste100.md#8-materialized-sources-and-recovery).
+Those requirements define snapshot barriers, revision ordering, tombstone limits,
+currentness, and observation of exact writes. Loss of Beacon currentness affects
+discovery only, as specified in section 3.
 
 `BeaconDirectory.watch_records()` uses this source and keeps its existing
 domain values. It supplies current state first. It does not poll for recovery.
@@ -448,7 +410,7 @@ The artifact locations are below.
 | [Advertisement lifecycle](#6-advertisement-lifecycle) | Publication, refresh, withdrawal, and recovery. |
 | [Concord specification](concord-ste100.md) | Agreement authority, participant tokens, and recovery. |
 | [Managed service consumers](concord-ste100.md#165-managed-service-consumers) | Service discovery, candidate selection, and agreement negotiation. |
-| [NATS bus specification](nats-bus.md#beacon-store) | Beacon store, TTL policy, and state watch requirements. |
+| [NATS substrate specification](nats-ste100.md) | Transport, shared KV policy, state watches, and source recovery. |
 | [Advertisement schema](../contract/v1/schemas/beacon/advertisement.v1.schema.json) | The full envelope structure. |
 | [Hardware profile schema](../contract/v1/schemas/profiles/hardware.v1.schema.json) | The Beacon hardware payload structure. |
 | [Valid Beacon fixtures](../contract/v1/fixtures/valid/beacon/) | Valid advertisement examples. |

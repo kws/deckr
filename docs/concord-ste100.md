@@ -13,7 +13,7 @@ Beacon advertisement rules and general lane transport rules are outside this sco
 
 Use these references with this document:
 
-- [NATS substrate specification](nats-bus.md), for the substrate requirements.
+- [NATS substrate specification](nats-ste100.md), for the substrate requirements.
 - [Contract artifacts](../contract/v1), for schemas, fixtures, and acceptance vectors.
 - [Protocol runtime reference](protocol-runtime-reference.md), for API examples and tools.
 - [Beacon specification](beacon-ste100.md), for discovery requirements.
@@ -190,18 +190,10 @@ Concord authority bucket names are reserved. Generic `Deckr.kv_bucket(...)` and 
 
 The token bucket TTL is the only source of `ttlSeconds`. Each token record must use that TTL. Participants cannot configure a different token TTL or refresh interval. The default token bucket TTL is 120 seconds.
 
-The broker controls token expiry. The bucket keeps one message per subject. It keeps subject delete markers for the same duration as the bucket TTL. A delete or expire event must remove the key from the materialized cache.
-
-Persistent buckets reject per-write TTL. A conflicting bucket policy is an error. All implementations must compare the four normalized policy fields before they give access to a bucket handle.
-
-| JetStream field | Concord bucket requirement |
-| --- | --- |
-| `max_age` | The bucket TTL in nanoseconds, or `0` for a persistent bucket. |
-| `max_msgs_per_subject` | `1`. |
-| `allow_msg_ttl` | If the bucket permits broker-owned TTL writes. |
-| `subject_delete_marker_ttl` | The same as `max_age` for a TTL bucket. Not applicable to a persistent bucket. |
-
-Other JetStream fields are not part of this shared policy comparison. This includes `allow_direct`, `storage`, and creation `metadata`. Do not reject an existing bucket because these other fields are different. Do not change the bucket because of these differences. Reject an incompatible four-field policy without a mutation to the existing stream.
+The broker controls token expiry. All Concord buckets must obey the
+[shared KV storage requirements](nats-ste100.md#7-shared-kv-storage-requirements).
+Those requirements define policy comparison, retained messages, delete markers,
+cache removal, and restrictions on per-write TTL.
 
 If the bucket TTL decreases during a refresh wait, a token can expire before its participant wakes. The participant then loses authority through the termination rules in section 9.
 
@@ -534,9 +526,16 @@ Filters start with the smallest applicable index. The indexes cover profile, par
 
 `Concord.watch()` first yields one `ConcordWatchSnapshot`. This snapshot contains `version`, `current`, and the full filtered tuple of `ConcordContractState` records.
 
-Later `ConcordWatchChange` values contain the full filtered membership. They also contain a maximum of 256 changed contract pointers and `resnapshot_required`. If pointer detail overflows, the full membership gives the current result.
+The watch must obey the [public state watch requirements](nats-ste100.md#9-public-state-watches).
+Those requirements define atomic registration, change limits, overflow,
+slow subscribers, and registration limits.
+Later `ConcordWatchChange` values contain the full filtered membership,
+bounded changed contract pointers, and `resnapshot_required`.
+If pointer detail overflows, the full membership gives the current result.
 
 Reconnect rebuilds of contract and token materialized sources are atomic. The Concord view includes removal of missing pointers after these rebuilds.
+Both sources must obey the [shared recovery requirements](nats-ste100.md#8-materialized-sources-and-recovery).
+Section 9 defines the permanent effect of lost currentness on local authority.
 
 ### 13.2 Context entry and exit
 
