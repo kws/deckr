@@ -367,6 +367,30 @@ Recovery needs a new opaque contract id and generation 1. The runtime can contin
 
 A missed advertisement heartbeat, a missed Beacon watch heartbeat, or an expired advertisement affects discovery only. It must not stop an existing Concord agreement.
 
+### 9.5 Authority transition summary
+
+The table summarizes the requirements in sections 7 to 12.
+It describes one local agreement.
+Stored contract state, source currentness, and local authority are different observations.
+The lifecycle phases in [section 13.4](#134-state-access) describe local context state.
+A row that permits authority applies only if that local agreement has not lost authority before.
+
+| Event or condition | Stored records | Source state | Local authority and action | Recovery |
+| --- | --- | --- | --- | --- |
+| Create a proposal. | The contract is `open`. Participants have not all attached. | Current. | No authority. Wait for completed attachment and validation. | Continue this proposal under section 7. |
+| Token creation succeeds before the attachment update. | The owned token exists. Attachment is partial. | Can be current or stale. | No authority. Apply the retry and cleanup limits in section 7.3. | Complete attachment or clean up the partial token. |
+| All participants attach and validation passes. | The contract is `open`. All required tokens pass validation. | Contract and token sources are current. | The held agreement can give local authority, subject to profile checks and domain consent. | Maintain the held token under section 8. |
+| A required renewal fails or misses its deadline. | The contract can stay `open`. Tokens can still pass exact validation. | Sources can still be current. | Immediately stop protected operations and token renewal. Try cancellation and owned-token withdrawal under section 9.2. | A new contract is necessary. |
+| A contract or token source becomes stale. | The contract can stay `open`. Tokens can still pass exact validation. | At least one authority source is stale. | Stop affected local authority, even when exact reads work. Apply section 9. | Rebuild the source. A new contract is necessary for authority. |
+| An attached token is lost or its held identity changes. | The contract can stay `open`. A required token is missing or has changed. | Can be current or stale. | Stop affected local authority. Do not create a replacement token for that generation. | Follow section 10.2. A new contract is necessary. |
+| The contract is cancelled. | The contract is `cancelled`. Tokens can still exist. | Can be current or stale. | No authority. Apply the withdrawal rules in section 10. | A new contract is necessary. |
+| Transport or source recovery completes after local authority loss. | Exact validation can pass if cancellation and withdrawal failed. | Sources can become current again. | The previous local authority stays terminated. Stored tokens must not restore it. | Use a new opaque contract ID and generation 1. |
+| Only Beacon discovery is lost or changed. | Concord records are unaffected by this event alone. | Concord sources stay current. | Continue the held agreement while its Concord and profile checks pass. | Discovery recovery alone does not require a new agreement. |
+
+A validation result describes the collected record observations.
+It must not restore local authority that section 9 terminated.
+A new agreement must pass the bootstrap checks in section 11.
+
 ## 10 Withdrawal and successor agreements
 
 ### 10.1 Clean close
@@ -629,6 +653,9 @@ The lifecycle phases are `starting`, `ready`, `unavailable`, `terminal`, `closin
 
 Agreement state contains currentness, validity, the contract handle, and local-authority status. Participant state contains currentness and the full immutable membership of managed contracts. Each member includes contract validity and local-authority status.
 
+Use the [authority transition summary](#95-authority-transition-summary)
+to relate these observations to stored contract state and recovery.
+
 Waits distinguish timeout from closure before the predicate is satisfied.
 Implementations choose suitable language-specific error types for these outcomes.
 
@@ -813,3 +840,11 @@ Schema validation alone is not sufficient. Check these Concord requirements:
 Use the valid and invalid fixtures, key-token vectors, Concord key vectors, and Concord terms-hash vectors.
 Use applicable lane message schemas and vectors for contract pointers. The
 artifacts also contain NATS lane subject and header vectors.
+
+The following lifecycle scenarios test permanent authority loss and bootstrap:
+
+| Requirement | Acceptance scenario |
+| --- | --- |
+| [Watch heartbeat failure](#9-permanent-loss-of-authority), including when exact records pass validation. | [DIT-CCD-007](../deckr-conformance-scenarios.md#dit-ccd-007-missed-watch-heartbeat-stops-authority-with-valid-records). |
+| [Renewal failure](#92-actions-after-a-heartbeat-failure) and [recovery](#94-recovery) when remote cleanup fails. | [DIT-CCD-008](../deckr-conformance-scenarios.md#dit-ccd-008-renewal-failure-with-blocked-cleanup-and-reconnection). |
+| [Bootstrap with another live session](#11-owner-bootstrap-and-competing-sessions), including a pending contract. | [DIT-CCD-009](../deckr-conformance-scenarios.md#dit-ccd-009-bootstrap-preserves-another-live-session). |

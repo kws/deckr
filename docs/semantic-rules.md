@@ -116,7 +116,9 @@ The schema also checks size and uniqueness.
 
 **References:** [Concord: Contract validation](concord.md#12-contract-validation),
 [Concord: Permanent loss of authority](concord.md#9-permanent-loss-of-authority),
-[Concord: Contract pointers on messages](concord.md#14-contract-pointers-on-messages).
+[Concord: Contract pointers on messages](concord.md#14-contract-pointers-on-messages),
+[DIT-CCD-007: Watch heartbeat failure with valid records](../deckr-conformance-scenarios.md#dit-ccd-007-missed-watch-heartbeat-stops-authority-with-valid-records),
+[DIT-CCD-008: Renewal failure and reconnection](../deckr-conformance-scenarios.md#dit-ccd-008-renewal-failure-with-blocked-cleanup-and-reconnection).
 
 ### SEM-CCD-004: Mutations and maintenance
 
@@ -137,7 +139,8 @@ The schema also checks size and uniqueness.
 [Concord: Withdrawal and successor agreements](concord.md#10-withdrawal-and-successor-agreements),
 [Concord: Owner bootstrap and competing sessions](concord.md#11-owner-bootstrap-and-competing-sessions),
 [Concord: Maintenance](concord.md#15-concord-maintenance),
-[Deckr conformance scenarios](../deckr-conformance-scenarios.md).
+[DIT-CCD-008: Renewal failure and reconnection](../deckr-conformance-scenarios.md#dit-ccd-008-renewal-failure-with-blocked-cleanup-and-reconnection),
+[DIT-CCD-009: Bootstrap with another live session](../deckr-conformance-scenarios.md#dit-ccd-009-bootstrap-preserves-another-live-session).
 
 ## Hardware
 

@@ -468,6 +468,125 @@ Implementations without the recommended cleanup can report this scenario as `not
 **References:** [Concord: Cached and exact evaluation](docs/concord.md#123-cached-and-exact-evaluation),
 [Deckr NATS binding: Currentness](docs/deckr-nats-binding.md#82-currentness).
 
+### DIT-CCD-007: Missed watch heartbeat stops authority with valid records
+
+**Setup**
+
+- Maintain a valid managed agreement between two participants.
+- Confirm that the tested participant can do protected operations.
+- Keep its broker connection, exact reads, and required token renewals available.
+- Keep optional maintenance scans stopped.
+- Make cancellation and owned-token deletion fail through fault injection.
+- Use controlled time. Finish both record checks before any token expires.
+- Run the scenario once for the contract source and once for the token source.
+
+**Actions**
+
+1. Suppress required watch heartbeats for the selected source only.
+2. Advance time to its liveness deadline. Keep the broker connection active.
+3. Observe source currentness and local authority. Try a protected operation.
+4. Use an independent observer to validate the exact contract and tokens.
+5. Restore watch heartbeats and let the source recover. Keep cleanup writes blocked.
+6. Repeat exact validation before any token expires. Check the previous local agreement.
+7. Allow cleanup writes. Complete required cleanup and explicitly negotiate a new agreement.
+
+**Expected results**
+
+- The selected source reports stale state at its liveness deadline.
+- The broker stays connected. No required token renewal fails before authority loss.
+- Local authority terminates when the source becomes stale. Protected operations stop.
+- The runtime stops token renewal for the affected generation and tries cancellation and withdrawal.
+- Exact validation returns `valid` during both record checks. The contract stays open and its tokens remain acceptable.
+- Successful exact reads and source recovery do not restore the previous local authority.
+- New authority requires a new opaque contract ID and generation 1.
+- An implementation cannot pass this scenario by detecting token loss or contract cancellation.
+
+**References:** [SEM-CCD-003: Exact authority](docs/semantic-rules.md#sem-ccd-003-exact-authority),
+[Concord: Permanent loss of authority](docs/concord.md#9-permanent-loss-of-authority),
+[Concord: Cached and exact evaluation](docs/concord.md#123-cached-and-exact-evaluation),
+[Deckr NATS binding: Currentness](docs/deckr-nats-binding.md#82-currentness).
+
+### DIT-CCD-008: Renewal failure with blocked cleanup and reconnection
+
+**Setup**
+
+- Maintain a valid managed agreement with current contract and token sources.
+- Confirm that the tested participant holds local authority and the exact records pass validation.
+- Record the held token identity, revision, expiry, and renewal deadline.
+- Select a required renewal that cannot be omitted under the confirmed-freshness rule.
+- Keep the peer's token renewals active and optional maintenance scans stopped.
+- Make cancellation and owned-token deletion fail through fault injection.
+- Use controlled time to permit the record checks and reconnection before token expiry.
+
+**Actions**
+
+1. Make the selected required renewal return a store failure. Keep required watch heartbeats and broker delivery active.
+2. Observe local authority loss and cleanup attempts before causing a watch or transport failure.
+3. Try a protected operation. Validate the exact records through an independent observer.
+4. Disconnect the tested runtime from the broker while remote cleanup remains blocked.
+5. Restore its connection and token-write access. Let its sources rebuild. Keep cancellation and withdrawal blocked.
+6. Repeat exact validation and try a protected operation through the previous agreement.
+7. Allow cleanup writes. Complete required cleanup and explicitly negotiate a successor.
+
+**Expected results**
+
+- The renewal failure immediately terminates local authority without a separate watch or transport failure.
+- Cancellation and withdrawal are attempted. Their failure does not delay termination.
+- Protected operations stop before token expiry or remote cleanup.
+- The runtime does not retry renewal to restore the previous agreement or extend its renewal deadline.
+- The stored contract stays open and its unexpired tokens pass exact validation during both record checks.
+- Local authority loss does not stop broker reconnection or source recovery.
+- Reconnection, current sources, and successful exact reads do not restore the previous local authority.
+- The runtime does not renew or recreate its previous token after write access returns.
+- A successor uses a new opaque contract ID and generation 1. Only the new agreement can authorize new protected operations.
+
+**References:** [SEM-CCD-003: Exact authority](docs/semantic-rules.md#sem-ccd-003-exact-authority),
+[SEM-CCD-004: Mutations and maintenance](docs/semantic-rules.md#sem-ccd-004-mutations-and-maintenance),
+[Concord: Heartbeat deadlines](docs/concord.md#91-heartbeat-deadlines),
+[Concord: Actions after a heartbeat failure](docs/concord.md#92-actions-after-a-heartbeat-failure),
+[Concord: Recovery](docs/concord.md#94-recovery),
+[Deckr NATS binding: Reconnection](docs/deckr-nats-binding.md#42-reconnection).
+
+### DIT-CCD-009: Bootstrap preserves another live session
+
+**Setup**
+
+- Start an owner session and a contender with the same endpoint address and different session IDs.
+- Use a profile that permits only one live session for the owner role. Its policy does not permit deliberate replacement.
+- The owner maintains an open contract and an acceptable token for its own session.
+- The contender has an empty ownership registry and no local handle for that contract.
+- Remove the owner's Beacon advertisement without stopping its Concord participation.
+- Keep exact stores and authority sources available. Keep optional maintenance scans stopped.
+- Run both attachment cases below. Keep the selected case stable during contention checks.
+
+| Case | Existing contract and tokens |
+| --- | --- |
+| Fully attached. | All participants are attached and maintain acceptable tokens. Exact validation returns `valid`. |
+| Pending. | The owner is attached and maintains an acceptable token. The peer has never attached and has no token. Exact validation returns `not_yet_fulfilled`. |
+
+**Actions**
+
+1. Start the contender's owner-bootstrap checks.
+2. Observe those checks and repeated contention wakeups while the owner's token remains acceptable.
+3. Try to commit a contender proposal, report readiness, and publish its Beacon advertisement.
+4. Delay exact confirmation of required bootstrap cleanup. Then have the owner deliberately withdraw and cancel its contract through its normal lifecycle.
+5. Repeat the contender's gated operations while cleanup confirmation is blocked.
+6. Allow exact cleanup confirmation. Let the contender negotiate a new agreement.
+
+**Expected results**
+
+- The contender does not cancel the existing contract or change the owner's token during contention.
+- An empty registry, a different session ID, and missing Beacon discovery do not prove abandoned ownership.
+- In the pending case, the peer's missing token does not prove process failure or permit bootstrap cancellation.
+- The contender cannot use the stored contract or token as local authority.
+- Unresolved exclusive contention blocks proposal commit, readiness, and Beacon publication.
+- Those gates stay blocked until exact checks confirm required cleanup after owner withdrawal.
+- The contender can then negotiate with a new opaque contract ID and generation 1.
+
+**References:** [SEM-CCD-004: Mutations and maintenance](docs/semantic-rules.md#sem-ccd-004-mutations-and-maintenance),
+[Concord: Owner bootstrap and competing sessions](docs/concord.md#11-owner-bootstrap-and-competing-sessions),
+[Concord: Conditions for authority](docs/concord.md#121-conditions-for-authority).
+
 ## Materialized view and restart tests
 
 ### DIT-MAT-001: Watch events are wakeups, exact state is recoverable
