@@ -14,12 +14,6 @@
       "title": "messages.v1"
     },
     {
-      "id": "catalogs/source-coverage.v1.json",
-      "kind": "catalog",
-      "path": "catalogs/source-coverage.v1.json",
-      "title": "source-coverage.v1"
-    },
-    {
       "id": "fixtures/invalid/action-runtime/action-instance-created-missing-contract.v1.json",
       "kind": "fixture",
       "path": "fixtures/invalid/action-runtime/action-instance-created-missing-contract.v1.json",
@@ -4181,9 +4175,8 @@
   "bundle": "deckr-contract-v1",
   "bundleVersion": "1.0.0-alpha.1",
   "contractVersion": "v1",
-  "description": "Authoritative language-neutral reference schemas, fixtures and vectors. No runtime package dependency.",
+  "description": "Contract-first, language-neutral schemas, catalogs, fixtures and vectors. Implementations live in consuming repositories.",
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "schema": "dev.deckr.contract.bundle.v1",
-  "schemaBaseUri": "https://kws.github.io/deckr/contract/v1/schemas/",
-  "sourceCommit": "1dae18252aa1ddfd52e1f3e6f0655d75ae9673b6"
+  "schemaBaseUri": "https://kws.github.io/deckr/contract/v1/schemas/"
 }

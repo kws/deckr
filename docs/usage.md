@@ -1,4 +1,8 @@
-# Using the reference
+# Using the contract-first reference
+
+For a contract change, first define the schema and observable behavior here,
+update the catalogs and conformance examples, and validate the bundle. Consumers
+implement the accepted contract in their own repositories against a pinned revision.
 
 Start with [schema consumption](schemas.md), then select a complete schema from
 the [message catalog](message-catalog.md) or [schema index](../contract/v1/index.html).
@@ -14,6 +18,3 @@ is a complete example. The catalog is a reference declaration, not a new lane me
 For a hardware implementation, publish device/control/capability descriptors
 inside a hardware Beacon advertisement, negotiate a hardware claim and validate
 all hardware lane traffic against the exact contract and device references.
-
-No runtime package or CLI is provided here. The former language APIs are in Git
-history; their migration is described in [the migration guide](migration-guide.md).

@@ -42,7 +42,7 @@
       }
     }
   ],
-  "description": "Value payload for a ``dev.deckr.input.encoder`` relative rotate event.",
+  "description": "Value payload for a `dev.deckr.input.encoder` relative rotate event.",
   "properties": {
     "delta": {
       "not": {

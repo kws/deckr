@@ -2,7 +2,7 @@
   "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/device-power-command-params.v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Command params for ``dev.deckr.device.power`` screen commands.",
+  "description": "Command params for `dev.deckr.device.power` screen commands.",
   "properties": {},
   "title": "DevicePowerCommandParams",
   "type": "object"

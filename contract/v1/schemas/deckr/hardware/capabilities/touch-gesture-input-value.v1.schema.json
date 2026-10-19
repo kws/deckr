@@ -47,7 +47,7 @@
       }
     }
   ],
-  "description": "Value payload for a ``dev.deckr.input.touch`` gesture event.",
+  "description": "Value payload for a `dev.deckr.input.touch` gesture event.",
   "properties": {
     "direction": {
       "anyOf": [

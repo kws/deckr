@@ -113,12 +113,6 @@ jobs:
           assert len([m for m in messages if m.get('serviceNamespace') == 'dev.deckr.action_runtime.provider']) == 14
           for message in messages:
               assert message['schemaPath'] in schemas and message['payloadSchemaPath'] in schemas
-          for definition in read(bundle / 'catalogs/source-coverage.v1.json')['definitions']:
-              assert definition['status'] in {'extracted', 'retired'}
-              if definition['status'] == 'extracted':
-                  assert definition['schemaPath'] in schemas
-              else:
-                  assert definition['reason']
 
           semantic_cases = read(bundle / 'vectors/semantic-validation.v1.json')['cases']
           assert len({c['id'] for c in semantic_cases}) == len(semantic_cases)

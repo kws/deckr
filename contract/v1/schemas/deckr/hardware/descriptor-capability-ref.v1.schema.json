@@ -2,7 +2,7 @@
   "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/descriptor-capability-ref.v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Reference to a capability owned by the enclosing ``DeviceDescriptor``.",
+  "description": "Reference to a capability owned by the enclosing device descriptor.",
   "properties": {
     "capabilityId": {
       "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",

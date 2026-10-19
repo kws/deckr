@@ -25,7 +25,7 @@ The word **can** identifies a possibility or permission. Text marked
 ## 2 Technical terms
 
 The table gives the meanings of technical nouns in this specification.
-Field names, API names, schema identifiers, and code values keep their exact spelling.
+Field names, schema identifiers, and protocol values keep their exact spelling.
 Shared terms have the same meanings in the Beacon and Concord specifications.
 “Session” means “endpoint session”.
 
@@ -303,13 +303,15 @@ and after watch recovery:
 
 1. Capture the stream high-water revision before opening the broker watch.
 2. Replay the current subjects.
-3. Emit a typed `KvWatchBarrier` after the replay, with the captured revision.
+3. Emit a distinguishable snapshot barrier after the replay, carrying the captured revision.
 4. Separate observations newer than the barrier from the recovered snapshot.
 5. Apply those newer observations in revision order.
 6. Install the recovered state atomically.
 7. Include removals for cached keys absent from the recovered state.
 
 The source must not expose a partially rebuilt snapshot as current state.
+The barrier is a local observation boundary; its language-specific representation
+is an implementation choice.
 Revision checks must prevent older observations from replacing newer state.
 Post-barrier absent-key revisions have a limit of 2,000.
 At that limit, the source must immediately reopen the watch.
@@ -369,11 +371,10 @@ remove that subscriber because it is slow.
 Each broadcaster permits at most 256 simultaneous registrations.
 It must explicitly reject the next registration.
 
-These requirements apply to state watches, including protocol views, protected
-service views, and runtime state projections. They also apply to component
-lifecycle and status, logical service-subscription sessions, controller
-configuration, and Sonos zone state. Domain APIs keep their own value
-types and access rules. Lane messages use the delivery rules in section 6.
+These requirements apply to protocol views, protected service views, and
+application state projections using this binding's state-watch contract.
+Applications define the projection payloads and access rules. Lane messages use
+the delivery rules in section 6.
 
 ## 10 Broker resource lifecycle
 
@@ -421,8 +422,9 @@ Schema validation alone is not sufficient.
 | [Schema consumption](schemas.md) | Offline schema resolution and validation. |
 | [Deckr profiles](deckr-profiles.md) | Application advertisements, claims and protected views. |
 
-If the specification, artifacts, and implementation disagree, identify the
-difference as a contract bug. Correct each affected item so they agree.
+Implementations must conform to this specification and its schema artifacts.
+Resolve any inconsistency within the reference through a reviewed contract
+change; implementation behavior does not override the published requirements.
 
 Language reference:
 [ASD-STE100 Simplified Technical English, Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf).

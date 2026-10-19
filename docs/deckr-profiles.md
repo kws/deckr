@@ -27,7 +27,7 @@ must not replace Beacon discovery or Concord authority.
 
 Beacon can identify a device before an endpoint makes a claim. Beacon does not
 give device ownership. A missing hardware advertisement alone does not withdraw
-an existing device claim. The [Concord specification](#hardware-claims)
+an existing device claim. The [hardware claim profile](#hardware-claims)
 gives the claim requirements.
 
 
@@ -79,7 +79,7 @@ The store waits for ordered watch observations as specified in
 [NATS section 8.3](nats.md#83-exact-writes-and-observations).
 Recovered snapshots must remove cached keys that are absent from the store.
 This includes keys whose delete or expiry events were missed.
-Writes return `entry.revision` for revision-guarded updates and deletes.
+Writes return the committed store revision for revision-guarded updates and deletes.
 
 A protected view watch must send payloads only when the entry agrees with its service-use fence. If a same-key entry changes to a different service identity or session, the watcher receives only a removal-style event. It must not receive the replacement payload. Do not send delete or expire events for entries that the watcher did not see.
 
@@ -161,8 +161,8 @@ These boundaries own these operations:
 - Cleanup within the required time limits.
 
 Application code supplies protocol intent, backend or device behavior, and domain
-policy. The managed contexts own token refresh, reconciliation, contract retries,
-task groups, and raw contract pointers. Application code does not manage those
+policy. The managed lifecycle boundaries own token refresh, reconciliation,
+contract retries, background workers, and raw contract pointers. Application code does not manage those
 operations itself.
 
 Application code supplies domain facts, such as device connection changes and

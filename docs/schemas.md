@@ -5,8 +5,13 @@
 The JSON Schemas in `contract/v1/schemas` are authoritative for JSON structure.
 They use JSON Schema Draft 2020-12. Normative protocol specifications and
 [semantic rules](semantic-rules.md) define the additional requirements that
-cannot be expressed by a structural schema. Neither generated language types
-nor a historic runtime can override these contracts.
+cannot be expressed by a structural schema. Implementations and generated
+language types must conform to these contracts.
+
+Contract changes start here, before implementation changes. Review wire shape,
+semantic rules and conformance artifacts together, then have consumers pin the
+accepted revision. Generated types and validators are downstream outputs owned
+by those consumers; this repository's schemas remain the authored source.
 
 The [manifest](../contract/v1/manifest.json) inventories every schema, catalog,
 fixture and vector. `id` and `schemaId` on a schema entry are its absolute `$id`.
@@ -61,7 +66,7 @@ validate images separately.
 
 ## Values, defaults and extensions
 
-- Wire field names are camelCase; Python snake_case input aliases are not wire names.
+- Wire field names are camelCase. Language-specific input aliases are not wire names.
 - JSON values must be finite and serializable. Reject duplicate object keys and
   non-JSON values before schema validation.
 - `default` is documentation, not a mutation instruction. Validation must not
@@ -95,8 +100,7 @@ release. There is no catch-all 'all protocols' message envelope.
 
 The v1 path is the wire-major family. `bundleVersion` identifies a reference
 release. Pin a Git revision or release asset; a branch URL is mutable. Published
-stable releases must be immutable. This first reference release is alpha and
-documents validation corrections in the [migration guide](migration-guide.md).
+stable releases must be immutable. The current reference release is alpha.
 
 For each new schema, add a positive fixture and a negative fixture with an
 explicit `schemaPath` and `valid` result in the manifest. The unconstrained JSON

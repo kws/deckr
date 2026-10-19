@@ -17,12 +17,11 @@ both chose names such as `service`, `media`, `openhab`, `button`, or `cache`.
 
 The namespace rules apply to public Deckr contract identifiers, including:
 
-- component ids
-- component config source ids
-- component instance source ids
 - action provider ids
 - action ids
 - service namespaces
+- Beacon feature and payload profile ids
+- Concord profile ids
 - extension lane names
 - capability families
 - schema ids for contract payloads
@@ -31,11 +30,9 @@ The namespace rules apply to public Deckr contract identifiers, including:
 Official Deckr contract identifiers use the owned `dev.deckr.*` namespace. For
 example:
 
-- `dev.deckr.controller`
-- `dev.deckr.action_provider_runtime.python`
-- `dev.deckr.action_provider_runtime.python.installed_providers`
-- `dev.deckr.clock`
-- `dev.deckr.clock.action.digital`
+- `dev.deckr.profile.hardware.v1`
+- `dev.deckr.profile.hardware_claim.v1`
+- `dev.deckr.action_runtime.provider`
 - `dev.deckr.input.button`
 - `dev.deckr.output.raster`
 
@@ -89,18 +86,17 @@ not globally owned API namespaces and they do not imply package ownership.
 Examples include:
 
 - service ids such as `sonos-home`, `openhab-home`, or `media-home`
-- endpoint ids such as `controller-main`, `python-dev.deckr.clock`, or
+- endpoint ids such as `controller-main`, `clock-main`, or
   `mirabox-main`
-- component instance table names such as `sonos_home` or `clock_actions`
-- component `instance_id` and diagnostic `runtime_name` values
+- action-provider instance ids such as `clock-main`
 - hardware manager ids, controller ids, page ids, binding ids, and device ids
 
 Endpoint addresses combine a short core endpoint family with a deployment-local
-id, such as `service:sonos-home` or `action_provider:python-dev.deckr.clock`.
+id, such as `service:sonos-home` or `action_provider:clock-main`.
 The family names are Deckr protocol terms. The id portion is a configured local
 address.
 
-Do not use deployment-local ids as component ids, provider ids, service
+Do not use deployment-local ids as provider ids, service
 namespaces, action ids, capability families, or schema ids.
 
 ## Service Namespaces And Service Ids
@@ -112,14 +108,15 @@ by that integration package, for example `org.example.sonos.service` or
 Deckr itself owns and publishes that service package.
 
 A service id is a deployment-local endpoint id, such as `sonos-home` or
-`media-home`. A service id is not a package name, component id, namespace,
+`media-home`. A service id is not a package name, namespace,
 runtime name, external host name, or provider id.
 
 Under Beacon/Concord, service packages advertise those namespaces with generic
 Beacon advertisements and, when needed, bind live service-specific agreements
-with generic Concord contracts. Deckr core validates the Beacon/Concord
-envelopes; the service package validates its payloads, operations, and
-result/view schemas. Service-use Concord contracts are termless; command and
+with generic Concord contracts. Implementations validate the Beacon/Concord
+envelopes against the protocol schemas, then validate payloads, operations and
+result/view schemas against the service owner's contracts.
+Service-use Concord contracts are termless; command and
 view authority comes from the contract profile, exact participants, token
 validity, command pointer, and retained service resource scope. After a
 service-specific Concord agreement is negotiated,
@@ -129,8 +126,8 @@ and withdrawal are Concord concerns.
 Service packages should use their namespace as a Beacon `featureId` or inside
 their own profile payload. If a service needs retained views or durable domain
 state, that storage is package-owned and must use an owner-qualified private
-bucket or a service-owned Concord profile. Deckr core no longer defines shared
-service catalog, status, or view keys.
+bucket or a service-owned Concord profile. Service protocols define their
+catalog, status, and view keys.
 
 ## Extension Lanes
 
@@ -193,9 +190,7 @@ contract validity, or Deckr-owned hardware/action profile semantics. Service
 packages may define their own Beacon payloads and direct
 KV-backed service-view buckets under their own public namespace.
 
-## Pre-V1 Contract Rule
+## Identifier consistency
 
-This is a pre-v1 contract rule, not a migration guideline. When an identifier
-uses the wrong namespace, rename it to the canonical namespace and update every
-consumer, schema, fixture, vector and example. Do not add old/new aliases,
-fallback parsing, compatibility shims, or duplicate public names.
+Use the canonical namespace consistently across contracts, schemas, fixtures,
+vectors, examples, and consumers. Each public contract has one identifier.

@@ -5,8 +5,8 @@ for v1. The descriptor model is intentionally extensible: hardware managers and
 adapters can expose new non-Deckr capability families without changing the generic Deckr schemas.
 
 At the same time, any capability family under the `dev.deckr.*` namespace is a core
-Deckr contract. Core capabilities must be specified in `deckr`, not improvised
-by a driver, controller, plugin, or SDK helper. General public identifier
+Deckr contract. Core capabilities must be specified in this reference before
+drivers, controllers, plugins or SDKs implement them. General public identifier
 ownership rules live in [`namespaces.md`](namespaces.md).
 
 ## Contract Boundaries
@@ -33,15 +33,15 @@ real capability in one descriptor. Generic matching should prefer
 `family`, `type`, `direction`, and event or command names. Once a controller has
 matched a concrete binding, messages target the selected `capabilityId`.
 
-Validate JSON values against the selected capability schema. Runtime mapping
-classes and immutability wrappers are implementation details.
+Validate JSON values against the selected capability schema. Consumers choose
+their internal value representations in their own implementations.
 
 ## Core Versus Extension Families
 
 Deckr core families use the `dev.deckr.*` namespace. A `dev.deckr.*` family is valid
 only when it is listed by the capability descriptor schema. Adding one is a core
 contract change and must define the family, type names, direction, access,
-events or commands, schemas, constraints, units, tests, and docs.
+events or commands, schemas, constraints, units, conformance cases, and docs.
 
 Extension families must not use the `dev.deckr.*` namespace. They must be globally
 namespaced according to [`namespaces.md`](namespaces.md). Deckr should accept
@@ -70,7 +70,7 @@ The current v1 core capability families are:
 | `dev.deckr.output.raster` | `bitmap` | `output` | `settable` or `invokable` | commands `set_frame`, `clear` |
 | `dev.deckr.device.power` | `screen` | `command` | `invokable` | commands `sleep`, `wake` |
 
-These family and type names are enforced by `CapabilityDescriptor`. A descriptor
+These family and type names are enforced by the capability descriptor schema. A descriptor
 using a `dev.deckr.*` family outside this list is invalid.
 
 ## Core Input Values
@@ -307,4 +307,5 @@ The required checklist is:
 3. Add complete positive and negative examples, including command-specific cases.
 4. Add semantic cases where descriptor lookup, image decoding or cross-field
    relationships cannot be checked structurally.
-5. Update producers/consumers and this reference in their respective repositories.
+5. Publish the reviewed contract revision, then update producers and consumers
+   in their own repositories to conform to it.

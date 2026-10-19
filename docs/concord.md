@@ -2,8 +2,8 @@
 
 ## Reference status
 
-This is an application-independent protocol specification. Historic wire schema
-labels are retained. The optional [Deckr NATS binding](nats.md#protocol-store-bindings)
+This is an application-independent protocol specification.
+The optional [Deckr NATS binding](nats.md#protocol-store-bindings)
 assigns concrete buckets to the logical stores below. Beacon is a possible source
 of candidates, not a schema dependency or validity requirement.
 
@@ -15,7 +15,8 @@ This document gives the Concord v1 requirements in ASD-STE100 Simplified Technic
 
 This document defines requirements for Concord records, authority, lifecycle, runtime behavior, maintenance, and Concord profiles.
 It includes the shared identity and storage rules necessary for Concord.
-Application profiles and implementation APIs are specified separately.
+Application profiles are specified separately. Implementations choose their
+language APIs in their own repositories.
 Beacon advertisement rules and general lane transport rules are outside this scope.
 
 Use these references with this document:
@@ -26,8 +27,10 @@ Use these references with this document:
 - [Application profiles](deckr-profiles.md), for Deckr-specific requirements.
 - [Beacon specification](beacon.md), for discovery requirements.
 
-The JSON Schemas specify record structure. They do not specify all protocol requirements. Implementations must also obey the requirements in this document. Differences between the specification, contract artifacts, and implementation are contract errors.
-Correct each affected item so they agree.
+The JSON Schemas specify record structure. Implementations must also obey the
+behavioral requirements in this document. Resolve inconsistencies within the
+reference through a reviewed contract change; implementation behavior does not
+override the published requirements.
 
 The word **must** identifies a requirement. **Must not** identifies a prohibition.
 The word **can** identifies a possibility or permission. Text marked
@@ -35,7 +38,8 @@ The word **can** identifies a possibility or permission. Text marked
 
 ## 2 Technical terms
 
-Use the terms below with the specified meanings. Code identifiers, field names, status values, and schema names keep their exact spelling.
+Use the terms below with the specified meanings. Field names, status values,
+and schema identifiers keep their exact spelling.
 
 Shared terms have the same meanings in the [Beacon specification](beacon.md#2-technical-terms).
 In Concord participant-policy sections, “candidate” means “Concord participant
@@ -479,52 +483,56 @@ The paths must not use an index that removes malformed records or records with i
 If a started runtime has a stale contract or token source, cached validation reports these values:
 
 ```text
-status:      ContractValidityStatus.UNAVAILABLE
-reason_code: ContractValidityReason.SOURCE_UNAVAILABLE
+status: unavailable
+reason code: source_unavailable
 ```
 
-The runtime must also stop local authority as specified in section 9. `UNAVAILABLE` describes an observation failure. It does not let an existing agreement pause and start again.
+The runtime must also stop local authority as specified in section 9. `unavailable` describes an observation failure. It does not let an existing agreement pause and start again.
 
 Exact validation can stay available for diagnostics, cleanup, and new negotiations. It must not let terminated local authority start again. Maintenance readiness and maintenance records do not change contract validity.
 
 ### 12.4 Status and reason codes
 
-Use `ContractValidity.reason_code` to select lifecycle behavior. The mapping below is fixed.
+Use the structured reason code to select lifecycle behavior. The mapping below
+defines language-neutral validation outcomes. These are local evaluation results;
+they do not require a particular class, exception type or additional wire record.
 
 | Status | Reason codes |
 | --- | --- |
-| `UNAVAILABLE` | `SOURCE_UNAVAILABLE` |
-| `MISSING_CONTRACT` | `CONTRACT_MISSING` |
-| `INVALID_CONTRACT` | `CONTRACT_MALFORMED`, `CONTRACT_KEY_MISMATCH`, `CONTRACT_POINTER_MISMATCH` |
-| `CANCELLED` | `CONTRACT_CANCELLED` |
-| `NOT_YET_FULFILLED` | `PARTICIPANT_NOT_ATTACHED` |
-| `MISSING_TOKEN` | `TOKEN_MISSING` |
-| `INVALID_TOKEN` | `TOKEN_MALFORMED`, `TOKEN_KEY_MISMATCH`, `TOKEN_CONTRACT_MISMATCH`, `TOKEN_PARTICIPANT_MISMATCH`, `TOKEN_LOCAL_AUTHORITY_LOST` |
-| `GENERATION_MISMATCH` | `TOKEN_GENERATION_MISMATCH` |
-| `TERMS_HASH_MISMATCH` | `TOKEN_TERMS_HASH_MISMATCH` |
-| `SESSION_MISMATCH` | `TOKEN_SESSION_MISMATCH` |
-| `VALID` | None. |
+| `unavailable` | `source_unavailable` |
+| `missing_contract` | `contract_missing` |
+| `invalid_contract` | `contract_malformed`, `contract_key_mismatch`, `contract_pointer_mismatch` |
+| `cancelled` | `contract_cancelled` |
+| `not_yet_fulfilled` | `participant_not_attached` |
+| `missing_token` | `token_missing` |
+| `invalid_token` | `token_malformed`, `token_key_mismatch`, `token_contract_mismatch`, `token_participant_mismatch`, `token_local_authority_lost` |
+| `generation_mismatch` | `token_generation_mismatch` |
+| `terms_hash_mismatch` | `token_terms_hash_mismatch` |
+| `session_mismatch` | `token_session_mismatch` |
+| `valid` | None. |
 
-`ContractValidity.reason` is diagnostic text for people. Code must not compare or parse this text to select lifecycle behavior.
+Human-readable diagnostic text must not be compared or parsed to select lifecycle behavior.
 
 ### 12.5 Mutation errors
 
 Mutation paths must read exact state, check canonical keys, and check the full record identity. Updates and deletes use revision guards. If identity values disagree, do not create, update, or delete records.
 
-Callers must use the typed `.code` value. They must not select behavior from exception messages.
+Callers must use a structured error code. They must not select behavior from
+exception messages. The following codes describe mutation outcomes independently
+of the implementation's error API.
 
 | Condition | Code |
 | --- | --- |
-| Creation collides with an existing key | `ConcordConflictCode.KEY_ALREADY_EXISTS` |
-| Revision guard does not agree with the stored revision | `ConcordConflictCode.REVISION_CHANGED` |
-| Malformed contract | `ConcordConflictCode.CONTRACT_INVALID` |
-| Malformed token | `ConcordConflictCode.TOKEN_INVALID` |
-| Contract identity mismatch | `ConcordConflictCode.CONTRACT_IDENTITY_MISMATCH` |
-| Token identity mismatch | `ConcordConflictCode.TOKEN_IDENTITY_MISMATCH` |
-| Exact store unavailable | `ConcordUnavailableCode.STORE_UNAVAILABLE` |
-| Started materialized source not current | `ConcordUnavailableCode.SOURCE_STALE` |
-| Token TTL metadata missing | `ConcordUnavailableCode.TTL_METADATA_MISSING` |
-| Token TTL metadata incorrect | `ConcordUnavailableCode.TTL_INVALID` |
+| Creation collides with an existing key | `key_already_exists` |
+| Revision guard does not agree with the stored revision | `revision_changed` |
+| Malformed contract | `contract_invalid` |
+| Malformed token | `token_invalid` |
+| Contract identity mismatch | `contract_identity_mismatch` |
+| Token identity mismatch | `token_identity_mismatch` |
+| Exact store unavailable | `store_unavailable` |
+| Started materialized source not current | `source_stale` |
+| Token TTL metadata missing | `ttl_metadata_missing` |
+| Token TTL metadata incorrect | `ttl_invalid` |
 
 ## 13 Runtime views and contexts
 
@@ -662,11 +670,16 @@ Public discovery, advertisements, availability probes, interest updates, and lif
 
 ### 15.1 Maintenance ownership
 
-Core Concord maintenance is optional. `ConcordMaintenance` receives exact raw stores for contracts, tokens, and maintenance records. Construction starts no task or watch.
+Concord maintenance is optional. A dedicated maintenance capability receives
+exact raw stores for contracts, tokens, and maintenance records. Initializing
+that capability must not start background work or watches.
 
-Runtime `Concord` has no maintenance store, watcher, cache, readiness dependency, or mutation route.
+Normal agreement participation has no maintenance store, watcher, cache,
+readiness dependency, or maintenance mutation route.
 
-The component `dev.deckr.concord.reaper` has no lane. It owns `ConcordReaperService.run()`. Infrastructure can also create the service from `ConcordMaintenance` and call `scan_once()` explicitly. Ordinary callers do not supply a task group.
+The deployment owns the reaper's lifecycle and can schedule recurring scans or
+request one explicit scan. Maintenance does not require a message lane.
+Ordinary protocol consumers do not manage maintenance workers.
 
 The reaper scans at low frequency. It is not a materialized-view runtime or an immediate notification service. It uses only Concord contracts and participant tokens to calculate validity.
 

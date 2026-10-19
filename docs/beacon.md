@@ -2,9 +2,9 @@
 
 ## Reference status
 
-This is an application-independent protocol specification. Historic wire schema
-labels are retained. Schemas are authoritative source documents; implementation
-APIs are not required. The optional [Deckr NATS binding](nats.md#protocol-store-bindings)
+This is an application-independent protocol specification.
+Schemas are authoritative source documents. Implementations choose their
+language APIs in their own repositories. The optional [Deckr NATS binding](nats.md#protocol-store-bindings)
 assigns concrete bucket names to the logical stores below.
 
 ## 1 Purpose and scope
@@ -14,7 +14,8 @@ advertisements. A consumer can use an advertisement to select a candidate endpoi
 
 This specification gives the requirements for Beacon v1. It includes the
 advertisement format, the store, the advertisement lifecycle, candidate selection,
-and the runtime view. It also includes the Beacon hardware profile.
+and the discovery view. Application payloads, including the Deckr hardware
+profile, are specified separately in [Deckr profiles](deckr-profiles.md).
 
 The requirements apply to all implementations, in all programming languages.
 An implementation API or source model does not change these requirements.
@@ -28,7 +29,7 @@ The word **can** identifies a possibility or permission. Text marked
 ## 2 Technical terms
 
 The table gives the meanings of technical nouns in this specification. Field
-names, API names, schema identifiers, and code values keep their exact spelling.
+names, schema identifiers, and protocol values keep their exact spelling.
 
 Shared terms have the same meanings in the [Concord specification](concord.md#2-technical-terms).
 In Beacon sections, “candidate” means “Beacon candidate” and “selector” means
@@ -314,8 +315,8 @@ Selectors, labels, hints, and capacity fields supply policy hints. They do not
 give authority. Advertisers can publish duplicate or overlapping advertisements.
 The consumer policy selects the candidate to try.
 
-Endpoint presence and retired coordination stores must not replace Beacon
-discovery records. Action catalogs, hardware inventory, and unilateral device
+Endpoint presence must not replace Beacon discovery records.
+Action catalogs, hardware inventory, and unilateral device
 claims must not replace those records either.
 
 ## 8 Runtime view and watches
@@ -402,8 +403,9 @@ The artifact locations are below.
 | [Key-token vectors](../contract/v1/vectors/key-tokens.v1.json) | Expected token encodings. |
 | [Advertisement key vector](../contract/v1/vectors/beacon-concord-keys.v1.json) | The `beacon_advertisement_key` case only. |
 
-If the specification, artifacts, and implementation disagree, identify the
-difference as a contract bug. Correct each affected item so they agree.
+Implementations must conform to this specification and its schema artifacts.
+Resolve any inconsistency within the reference through a reviewed contract
+change; implementation behavior does not override the published requirements.
 
 Language reference:
 [ASD-STE100 Simplified Technical English, Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf).

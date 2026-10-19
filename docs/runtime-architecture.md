@@ -72,7 +72,7 @@ matching endpoint sessions when supplied.
 | `hardware_messages` | `controller`, `hardware_manager` | `controllers` scope with `controller` family; default hop limit 1 | Required for all eight message types |
 | `services` | `controller`, `action_provider`, `service` | None | Required |
 
-The retired `actions` lane is not part of this registry. Action Runtime uses
+Action Runtime uses
 `services` / `serviceMessage`; its discriminator is `body.name` under
 `body.serviceNamespace = dev.deckr.action_runtime.provider`.
 

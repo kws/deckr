@@ -1,13 +1,17 @@
-# Deckr protocol and schema reference
+# Deckr contract-first reference
 
-This repository is the language-neutral source of truth for Beacon, Concord,
-and the Deckr application contracts. It contains authoritative JSON Schemas,
-normative specifications, examples, and conformance vectors. It does not contain
-or publish a Python, TypeScript, or Rust runtime, SDK, launcher, or command-line tool.
+This is the contract-first source of truth for Beacon, Concord, and the Deckr
+application protocols. Define and review contracts here; implement them in
+separate repositories. The authoritative deliverables are language-neutral JSON
+Schemas, protocol specifications, message catalogs, and conformance artifacts.
+
+The repository contains reference material and generic validation tooling only.
+Runtime libraries, SDKs, applications, generated clients, and implementation test
+harnesses belong in consuming repositories. References to a controller, runtime,
+service, or reaper describe protocol roles and required behavior.
 
 The contracts are alpha. The current reference release is `1.0.0-alpha.1` for
-wire protocol v1. See the [migration guide](docs/migration-guide.md) for intentional
-changes from the former implementation-derived bundle.
+wire protocol v1.
 
 ## Start here
 
@@ -15,7 +19,6 @@ changes from the former implementation-derived bundle.
   resolve references offline, and separate structural validation from authority.
 - [Schema index](contract/v1/index.html) and [machine-readable manifest](contract/v1/manifest.json).
 - [Message catalog](docs/message-catalog.md): every supported hardware and service message.
-- [Extraction coverage](docs/schema-coverage.md): retained definitions and retired contracts.
 - [Semantic rules](docs/semantic-rules.md) and [interoperability scenarios](interoperability-tests.md).
 
 ## Contract boundaries
@@ -32,9 +35,9 @@ changes from the former implementation-derived bundle.
 
 Beacon and Concord can be implemented without Deckr. Neither protocol schema
 imports Deckr schemas or enumerates Deckr endpoint families. Applications own
-their profile payloads and compose them with the generic records. Historic
-`dev.deckr.beacon.*` and `dev.deckr.concord.*` wire labels are retained identifiers,
-not application dependencies.
+their profile payloads and compose them with the generic records. The
+`dev.deckr.beacon.*` and `dev.deckr.concord.*` wire labels identify protocol
+records independently of the application using them.
 
 ## Repository layout
 
@@ -45,7 +48,7 @@ contract/v1/
   schemas/
     protocols/        common, beacon, concord
     deckr/            messaging, services, hardware, action-runtime
-  catalogs/           Message registry, service protocol declaration, extraction coverage
+  catalogs/           Message registry and service protocol declaration
   fixtures/           Valid and invalid JSON examples
   vectors/            Keys, hashes, NATS mapping and semantic cases
 docs/                  Normative specifications and consumption guidance
@@ -63,12 +66,22 @@ interoperability-tests.md
 - [Capabilities](docs/capabilities.md) and [identifier ownership](docs/namespaces.md).
 - [Deployment responsibilities](docs/runtime-modes.md).
 
-## Changing the reference
+## Contract-first workflow
 
-Edit JSON Schemas directly. They are source documents; do not regenerate them
-from runtime type definitions. Update the manifest, examples, specifications and vectors
-in the same change. Reuse public definitions with `$ref`; application modules
-must not become dependencies of protocol modules.
+1. Specify the wire shape, ownership and observable behavior here before changing
+   a consuming implementation. Edit schemas directly and reuse definitions with
+   `$ref`.
+2. Update the normative specifications, catalogs, manifest, examples and
+   conformance vectors together. Assess compatibility and version the contract.
+3. Validate and review the complete reference change, then publish a pinned
+   commit or immutable bundle release.
+4. Update implementations in their own repositories against that pinned contract,
+   and run the applicable structural, semantic and lifecycle conformance checks.
+
+Schemas define JSON structure; specifications define additional behavior and
+authority rules. Examples and vectors demonstrate those requirements. An
+implementation cannot redefine the contract through its types or behavior.
+Resolve reference inconsistencies here through a reviewed contract change.
 
 CI validates schema syntax, offline reference resolution, dependency boundaries,
 every declared fixture, coverage, and local documentation links. It installs
@@ -91,6 +104,4 @@ namespace. These are identifiers, not a promise of a currently deployed website.
 The complete bundle supports offline resolution. Consumers can vendor its needed
 dependency closure or generate language types in their own repositories.
 
-The former implementations are available in Git history at commit
-`1dae18252aa1ddfd52e1f3e6f0655d75ae9673b6`. They are historical evidence, not the
-current specification. All reference material remains under [MIT](LICENSE).
+All reference material is available under [MIT](LICENSE).

@@ -1,8 +1,6 @@
 # Concord v1 canonical JSON
 
-This defines the byte encoding used by the existing v1 terms-hash contract.
-It preserves the extraction baseline's encoding; it does not switch existing
-agreements to a different hashing algorithm. The
+This defines the byte encoding used by the v1 terms-hash contract. The
 [acceptance vectors](../contract/v1/vectors/concord-terms-hash.v1.json) supply
 input JSON text, canonical text and expected SHA-256 digests.
 
@@ -25,7 +23,7 @@ characters as UTF-8, without ASCII-only escaping. Do not escape `/`.
 
 ## Numbers
 
-V1 retains the distinction between an integer token and a decimal/exponent token.
+V1 distinguishes an integer token from a decimal/exponent token.
 An implementation must preserve that distinction when parsing terms for hashing.
 In particular, JSON numbers `1` and `1.0` have different v1 canonical bytes.
 
@@ -45,9 +43,8 @@ In particular, JSON numbers `1` and `1.0` have different v1 canonical bytes.
 Examples include `1.0`, `0.0001`, `1e-05`, `1000000000000000.0`, `1e+16`,
 and `-0.0`. The input text `1e0` therefore normalizes to `1.0`.
 
-These rules preserve the former implementation's integer/float JSON encoding.
-They are not RFC 8785/JCS or ordinary JavaScript `JSON.stringify` rules. A consumer
-must use a number-preserving decoder and a matching encoder when it supports
+These rules differ from RFC 8785/JCS and ordinary JavaScript `JSON.stringify`.
+A consumer must use a number-preserving decoder and a matching encoder for
 generic numeric terms. Profiles can use integer-only or string-encoded decimal
 terms to avoid unnecessary binary64 conversion. Adopting another canonicalization
 would require an explicit protocol revision.

@@ -1,6 +1,7 @@
 # Repository guidance
 
-This is a reference-only repository. Read [README.md](README.md) and
+This is a contract-first, reference-only repository. Define contracts here before
+implementing them in separate repositories. Read [README.md](README.md) and
 [schema guidance](docs/schemas.md) before changing contracts.
 
 - Maintain authoritative JSON Schema Draft 2020-12 documents directly.
@@ -18,8 +19,13 @@ This is a reference-only repository. Read [README.md](README.md) and
 - Do not add runtime/SDK implementations, language packages, generated clients,
   runtime tests, launchers or application configuration. Generic CI validation is
   the only executable repository tooling.
+- Describe observable protocol behavior without depending on a language API,
+  class, module, or local implementation file. Schema titles identify contracts.
+- Document the current contracts. Omit migration history, extraction provenance,
+  and retired implementation inventories. Local links must resolve to files in
+  this reference checkout.
 - Keep personal context and working preferences outside this repository.
 
 The validation step in `.github/workflows/reference-validation.yml` is the
-required check. Run it with the pinned tooling specified there. Package build,
-import-linter, and implementation test commands no longer apply.
+required check. Run it with the pinned tooling specified there. Consuming
+repositories own their implementation builds and runtime conformance checks.
