@@ -465,13 +465,17 @@ Parsing exceptions must not escape a lease boundary. Before a mutation, normaliz
 
 ### 12.3 Cached and exact evaluation
 
-The two validation paths use one pure evaluator. The evaluator does no I/O and makes no mutations. It checks participants in canonical order.
+The cached and exact paths must apply the same validation rules.
+Both paths check participants in canonical order.
+After observations are collected, evaluation performs no I/O and makes no mutations.
 
 Cached validation is the usual runtime path. It gets raw cached entries by their canonical exact keys from ready, current materialized sources.
 
 Exact validation gets the same observations through exact KV reads. This path is available for maintenance, recovery, diagnostics, and operations that must bypass the cache.
 
-The observations cannot change during evaluation. Supplied current-session assertions must be copied, normalized, sorted, and frozen before evaluation.
+The observations cannot change during evaluation.
+Current-session assertions must be normalized, sorted, and fixed before evaluation.
+Later changes to caller-supplied assertions must not change that evaluation.
 
 For the same observations, the two paths must give the same outputs:
 
@@ -480,7 +484,11 @@ For the same observations, the two paths must give the same outputs:
 - Token mapping with correct identity information.
 - Typed reason code.
 
-The paths must not use an index that removes malformed records or records with incorrect identity before evaluation. The token mapping must keep each named token that parses successfully and passes canonical key and identity checks. It must keep those tokens if a subsequent participant causes a terminal result.
+The paths must not exclude malformed records or records with incorrect identity
+before evaluation.
+The token mapping must keep each named token that parses successfully and passes
+canonical key and identity checks.
+It must keep those tokens if a subsequent participant causes a terminal result.
 
 If a started runtime has a stale contract or token source, cached validation reports these values:
 
@@ -542,7 +550,11 @@ of the implementation's error API.
 
 The runtime owns one materialized view of contracts, tokens, observations with errors, and cached validity. The view uses separate contract and token materialized sources for store observations and revisions.
 
-Filters start with the smallest applicable index. The indexes cover profile, participant, contract state, contract id, and contract pointer. Cached validation gets only the selected contract and its named token observations. A filtered watch must not parse or validate unrelated contracts.
+The view supports filters for profile, participant, contract state, contract ID,
+and contract pointer.
+Filtering starts with the smallest applicable set of cached candidates.
+Cached validation gets only the selected contract and its named token observations.
+A filtered watch must not parse or validate unrelated contracts.
 
 A contract watch first yields a snapshot containing `version`, `current`, and
 the full filtered collection of contract states. These are local observation
@@ -591,8 +603,8 @@ The endpoint supplies the local identity and session.
 
 Participant policy is an immutable batch policy. Its selector receives an
 immutable snapshot of participant candidates and supplies selected contract
-pointers. Selection can be asynchronous. The selector does not hold runtime
-state locks during selection.
+pointers. Selection can be asynchronous.
+Selector execution must not block runtime state reads or updates.
 
 Unknown pointers, malformed selections, and selector failures must give explicit failures.
 
@@ -622,7 +634,10 @@ Implementations choose suitable language-specific error types for these outcomes
 
 ### 13.5 Reconciliation
 
-The participant context uses one filtered subscription to the Concord view. It uses a coalesced selector worker and serialized workers for individual contract pointers.
+The participant context uses one filtered subscription to the Concord view.
+Only one participant selection runs at a time.
+Pending selection notifications are combined before the next selection.
+Reconciliation operations for the same contract pointer run in sequence.
 
 Only these inputs cause reconciliation:
 
@@ -632,7 +647,10 @@ Only these inputs cause reconciliation:
 - Resnapshots after overflow.
 - Explicit policy wakeups.
 
-There is no periodic repair loop. A blocked selector, exact-store operation, or subscriber must not block unrelated pointer workers. It must not prevent shutdown in its time limit.
+There is no periodic repair loop.
+A blocked selector, exact-store operation, or subscriber must not block
+reconciliation for unrelated contract pointers.
+It must not prevent shutdown within the specified time limit.
 
 Views help local state converge. They do not give independent authority. Contract creation, cancellation, and participant-token validity are the only lifecycle authority.
 

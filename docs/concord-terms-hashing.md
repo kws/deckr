@@ -27,21 +27,56 @@ V1 distinguishes an integer token from a decimal/exponent token.
 An implementation must preserve that distinction when parsing terms for hashing.
 In particular, JSON numbers `1` and `1.0` have different v1 canonical bytes.
 
-- An integer token has no decimal point or exponent. Emit its exact base-10
-  integer value, without leading zeros or a plus sign; integer `-0` becomes `0`.
-  Do not round large integers through a binary64 representation.
-- A token containing a decimal point or exponent is interpreted as a finite
-  IEEE 754 binary64 value using round-to-nearest, ties-to-even.
-- Emit its shortest round-tripping decimal significand. Choose the nearest
-  decimal where alternatives have the same length; use an even last digit on a tie.
-- For a nonzero value whose normalized decimal exponent is less than -4 or at
-  least 16, use scientific notation: one digit before the point, no redundant
-  fractional zeros, lowercase `e`, an explicit exponent sign and at least two
-  exponent digits. Otherwise use fixed notation, retaining `.0` for an integral
-  binary64 value. Preserve negative binary64 zero as `-0.0`.
+Select the procedure from the original JSON token:
 
-Examples include `1.0`, `0.0001`, `1e-05`, `1000000000000000.0`, `1e+16`,
-and `-0.0`. The input text `1e0` therefore normalizes to `1.0`.
+| Token syntax | Procedure |
+| --- | --- |
+| No decimal point or exponent | [Integer tokens](#integer-tokens). |
+| A decimal point or exponent | [Decimal and exponent tokens](#decimal-and-exponent-tokens). |
+
+### Integer tokens
+
+1. Emit the exact base-10 integer value.
+2. Omit leading zeros and a plus sign.
+3. Emit integer `-0` as `0`.
+
+Do not round large integers through a binary64 representation.
+
+### Decimal and exponent tokens
+
+1. Convert the token to a finite IEEE 754 binary64 value with round-to-nearest, ties-to-even.
+2. Select the shortest decimal significand that converts back to that binary64 value.
+3. If alternatives have the same length, select the decimal nearest to the binary64 value.
+4. If those distances are equal, select the decimal with an even last digit.
+5. Select the notation from the table below.
+
+| Value | Notation |
+| --- | --- |
+| Nonzero, with a normalized decimal exponent less than -4 or at least 16 | Scientific notation. |
+| All other values, including zero | Fixed notation. |
+
+For scientific notation, apply these rules:
+
+- Use one leading significand digit.
+- Omit redundant fractional zeros.
+- Use lowercase `e`.
+- Include the exponent sign.
+- Use at least two exponent digits.
+
+For fixed notation, retain `.0` when the binary64 value is an integer.
+Preserve negative binary64 zero as `-0.0`.
+
+| Input token | Canonical number |
+| --- | --- |
+| `1.0` | `1.0` |
+| `1e0` | `1.0` |
+| `0.0001` | `0.0001` |
+| `0.00001` | `1e-05` |
+| `1000000000000000.0` | `1000000000000000.0` |
+| `10000000000000000.0` | `1e+16` |
+| `-0.0` | `-0.0` |
+
+### Compatibility
 
 These rules differ from RFC 8785/JCS and ordinary JavaScript `JSON.stringify`.
 A consumer must use a number-preserving decoder and a matching encoder for

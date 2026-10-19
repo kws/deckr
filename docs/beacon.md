@@ -326,9 +326,9 @@ claims must not replace those records either.
 
 The Beacon runtime owns one materialized view of advertisement records.
 The view uses one materialized source for store observations and revisions.
-The view contains parsed records and a feature index. Feature queries start
-with this index. The runtime does not hold the view lock when it executes
-arbitrary selectors.
+The view contains parsed records that can be selected by feature.
+Feature queries select cached records for the requested feature before they apply selectors.
+Selector execution must not block view updates or unrelated queries.
 
 The view keeps malformed observations as invalid state. It also keeps
 observations with inconsistent identities as invalid state. These observations

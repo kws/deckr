@@ -56,16 +56,30 @@ defines the reusable envelope. Complete lane schemas constrain it further.
 | `inReplyTo`, `causationId`, `trace` | Correlation, causation and tracing metadata. |
 | `body` | Typed lane body, further constrained by the application protocol. |
 
+### Message identity
+
 Every message carries a nonempty `messageId` and a `createdAt` timestamp, supplied
 by its producer. Receivers must not generate missing values.
 
+### Message expiry
+
 The effective expiry is the earlier of `expiresAt` and `createdAt + ttlMs`, when
 both are present. Expired messages must not be delivered as current work.
-Receivers must not substitute their receive time. Reply acceptance requires a different
-message ID, `inReplyTo` matching the request ID, the same contract pointer, and
-matching endpoint sessions when supplied.
+Receivers must not substitute their receive time.
 
-## Core Lane Registry
+### Reply acceptance
+
+A reply must satisfy these conditions:
+
+- Its `messageId` differs from the request `messageId`.
+- Its `inReplyTo` equals the request `messageId`.
+- Its contract pointer equals the request contract pointer.
+- Its endpoint sessions match the expected sessions, when supplied.
+
+The [Deckr NATS binding](deckr-nats-binding.md#62-requests-and-replies)
+defines reply delivery, acceptance, and timeout cleanup for NATS.
+
+## Core lane registry
 
 | Lane | Senders / direct recipients | Broadcasts | Concord pointer |
 | --- | --- | --- | --- |
@@ -81,12 +95,17 @@ Runtime messages are direct, session-fenced, one-way service messages. Lifecycle
 and input events use `body.event`; commands use `body.params`. A generic service
 message may be request/reply, with application-declared result/error shapes.
 
-## Message Contract Rule
+## Message contract rule
 
-Before a protected operation, validate the complete lane/application schema,
-the exact Concord pointer and current participant tokens, and sender/recipient
-sessions. Apply the profile's device, action, binding, resource and output-generation
-checks. Do not search for a different matching contract to authorize a message.
+Before a protected operation, complete these checks:
+
+- Validate the complete message against its lane and application schemas.
+- Validate the exact Concord contract pointer.
+- Validate the current participant tokens.
+- Check the sender and recipient sessions.
+- Apply the profile checks for devices, actions, bindings, resources, and output generations.
+
+Do not search for a different matching contract to authorize a message.
 
 Core lane traffic has the same logical shape whether transported locally or over
 a broker. NATS subjects and headers are routing hints; they never replace envelope
@@ -101,10 +120,13 @@ home-automation items belongs to the owning service, not Beacon or Concord.
 
 ## Reference roles and lifecycle
 
-Controllers own routing, bindings, settings placement and dynamic page identity.
-Hardware managers own descriptors and hardware behavior. Action runtimes expose
-actions and process lifecycle/input messages. Service providers own their service
-protocol and views. Hosts supply transport, shared stores and lifecycle supervision.
+| Role | Responsibility |
+| --- | --- |
+| Controller | Owns routing, bindings, settings placement, and dynamic page identity. |
+| Hardware manager | Owns descriptors and hardware behavior. |
+| Action runtime | Exposes actions and processes lifecycle and input messages. |
+| Service provider | Owns its service protocol and views. |
+| Host | Supplies transport, shared stores, and lifecycle supervision. |
 
 Shutdown closes subscriptions and relinquishes owned advertisements/tokens with
 identity checks and revision guards. Missing discovery does not terminate an
@@ -127,8 +149,8 @@ These boundaries own these operations:
 
 Application code supplies protocol intent, backend or device behavior, and domain
 policy. The managed lifecycle boundaries own token refresh, reconciliation,
-contract retries, background workers, and raw contract pointers. Application code does not manage those
-operations itself.
+contract retries, background workers, and raw contract pointers. Application code
+does not manage those operations itself.
 
 Application code supplies domain facts, such as device connection changes and
 backend availability. Profile implementations must validate profile data and

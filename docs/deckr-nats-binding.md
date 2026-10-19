@@ -263,6 +263,26 @@ Materialized sources supply cached observations, revisions, readiness, currentne
 and source generations. Normal runtime queries use managed materialized views.
 They must not perform full native KV scans for each query.
 
+#### Protocol store bindings
+
+Generic Beacon and Concord use logical stores.
+This Deckr NATS binding assigns the concrete bucket names below.
+These names are not dependencies of the generic schemas.
+
+| Logical store | Deckr NATS bucket |
+| --- | --- |
+| Advertisement store | `deckr_beacon_advertisement_v1` |
+| Contract store | `deckr_concord_contract_v1` |
+| Participant-token store | `deckr_concord_token_v1` |
+| Maintenance store | `deckr_concord_maintenance_v1` |
+
+The generic protocols define key layouts, revision guards, and TTL behavior.
+A different application binding can assign different store names.
+All its participants must agree on that binding and preserve the protocol behavior.
+
+Action Runtime's Deckr-owned protected view bucket is
+`deckr_action_runtime_service_view_v1`.
+
 ### 7.2 Bucket policy checks
 
 Before an implementation supplies a bucket handle, it must compare these normalized fields:
@@ -428,21 +448,3 @@ Schema validation alone is not sufficient.
 Implementations must conform to this specification and its schema artifacts.
 Resolve any inconsistency within the reference through a reviewed contract
 change; implementation behavior does not override the published requirements.
-
-## Protocol store bindings
-
-Generic Beacon and Concord use logical stores. This Deckr NATS binding assigns
-these concrete bucket names; they are not dependencies of the generic schemas.
-
-| Logical store | Deckr NATS bucket |
-| --- | --- |
-| Advertisement store | `deckr_beacon_advertisement_v1` |
-| Contract store | `deckr_concord_contract_v1` |
-| Participant-token store | `deckr_concord_token_v1` |
-| Maintenance store | `deckr_concord_maintenance_v1` |
-
-Key layouts, revision guards and TTL behavior remain as specified by the generic
-protocols. A different application binding can assign different store names,
-provided all its participants agree on the same binding and preserve those semantics.
-Action Runtime's Deckr-owned protected view bucket is
-`deckr_action_runtime_service_view_v1`.

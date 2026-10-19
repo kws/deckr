@@ -1,15 +1,14 @@
 # Deckr hardware capabilities v1 specification
 
 This document defines how Deckr uses device, control, and capability descriptors
-for v1. The descriptor model is intentionally extensible: hardware managers and
-adapters can expose new non-Deckr capability families without changing the generic Deckr schemas.
+for v1. Hardware managers and adapters can expose extension capability families
+without changes to the generic Deckr schemas.
 
-At the same time, any capability family under the `dev.deckr.*` namespace is a core
-Deckr contract. Core capabilities must be specified in this reference before
-drivers, controllers, plugins or SDKs implement them. General public identifier
-ownership rules live in [Deckr identifier policy](deckr-identifiers.md).
+Core capabilities must be specified in this reference before drivers,
+controllers, plugins, or SDKs implement them.
+The [Deckr identifier policy](deckr-identifiers.md) defines public identifier ownership.
 
-## Contract Boundaries
+## Contract boundaries
 
 A capability descriptor tells Deckr what a device or control can do. The shared
 descriptor schema is [CapabilityDescriptor](../contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json) and defines the common fields:
@@ -36,28 +35,20 @@ matched a concrete binding, messages target the selected `capabilityId`.
 Validate JSON values against the selected capability schema. Consumers choose
 their internal value representations in their own implementations.
 
-## Core Versus Extension Families
+## Core versus extension families
 
 Deckr core families use the `dev.deckr.*` namespace. A `dev.deckr.*` family is valid
-only when it is listed by the capability descriptor schema. Adding one is a core
-contract change and must define the family, type names, direction, access,
-events or commands, schemas, constraints, units, conformance cases, and docs.
+only when it is listed by the capability descriptor schema.
+The [core capability procedure](#adding-a-deckr-core-capability)
+defines the requirements for additions to this namespace.
 
-Extension families must not use the `dev.deckr.*` namespace. They must be globally
-namespaced according to [Deckr identifier policy](deckr-identifiers.md). Deckr should accept
-extension capabilities without code changes when their descriptors are valid and
-their values are JSON wire-safe.
+Extension families must not use the `dev.deckr.*` namespace.
+They must use an owner namespace as specified by the
+[Deckr identifier policy](deckr-identifiers.md).
+The [extension requirements](#descriptor-driven-extensibility)
+define descriptor content and consumer behavior.
 
-Extension semantics belong in the descriptor and in the package that owns the
-extension. Deckr may route, bind, expose, and target the capability generically,
-but it does not parse extension values unless a Deckr component has explicit
-knowledge of that extension family.
-
-If the controller, hardware managers, SDKs, or action providers need shared
-semantic behavior that is not naturally extension-local, add a deliberate
-Deckr core capability instead of relying on duplicated convention.
-
-## Current Core Families
+## Current core families
 
 The current v1 core capability families are:
 
@@ -73,7 +64,7 @@ The current v1 core capability families are:
 These family and type names are enforced by the capability descriptor schema. A descriptor
 using a `dev.deckr.*` family outside this list is invalid.
 
-## Core Input Values
+## Core input values
 
 Input messages carry the selected capability and an `eventType`. The value
 payload must match the selected capability's `valueSchema`.
@@ -204,7 +195,7 @@ The `eventType` field in the message and the `eventType` field in the value
 must agree. `direction` is meaningful for `swipe`; currently supported core
 directions are `left` and `right`.
 
-## Core Output And Command Values
+## Core output and command values
 
 Command messages carry the selected capability and a `commandType`. The params
 payload must match the selected capability's `commandSchema`.
@@ -269,43 +260,58 @@ encoding, and `clear`, `sleep` and `wake` use empty objects. Device-specific ras
 sizes constrain the reusable parameter schema rather than redefine it under the
 same ID. Decoding base64 and checking actual image bytes/dimensions are semantic checks.
 
-## Descriptor-Driven Extensibility
+## Descriptor-driven extensibility
 
-Deckr must be able to bind and route capabilities it does not know in code. For
-an extension capability to be useful, its descriptor should include:
+The extension package owns the meaning of its capability data and behavior.
+Its descriptor supplies the information that Deckr uses to bind and route the capability.
+Extension families must obey the [namespace rules](#core-versus-extension-families).
 
-- A globally namespaced `family` outside `dev.deckr.*`.
-- A stable `type` within that family.
-- The correct `direction` and matching `access`.
-- Complete `eventTypes` or `commandTypes` when the capability emits or accepts
-  named operations.
-- `valueSchema` or `commandSchema` whenever values or params are not empty.
-- `constraints` and `units` for numeric values, sizes, ranges, rates, or
-  physical quantities.
-- `projection` metadata when the capability is derived from another capability.
-- `sources` metadata when provenance matters for diagnostics or adapter
-  boundaries.
+### Descriptor content
 
+An extension descriptor should supply these fields as applicable:
+
+| Field | Content |
+| --- | --- |
+| `family` | The owner-qualified capability family. |
+| `type` | A stable type within that family. |
+| `direction`, `access` | The capability direction and matching access modes. |
+| `eventTypes`, `commandTypes` | Complete names of the events emitted or commands accepted. |
+| `valueSchema`, `commandSchema` | Schemas for values or parameters that are not empty. |
+| `constraints`, `units` | Limits and units for numeric values, sizes, ranges, rates, or physical quantities. |
+| `projection` | Derivation metadata when the capability comes from another capability. |
+| `sources` | Source metadata when diagnostics or adapter boundaries require provenance. |
+
+### Consumer behavior
+
+Deckr must be able to bind and route capabilities whose families it does not know.
+It can also expose and target these capabilities through their descriptors.
+A component interprets extension values only when it has explicit knowledge of the family.
+
+Deckr should accept extension capabilities without code changes when their
+descriptors are valid and their values can be represented in JSON.
 Controllers and action provider runtimes should treat unknown extension values
-as JSON data governed by the descriptor. They should not add extension-specific
-fallback parsing in Deckr core.
+as JSON data governed by the descriptor.
+They should not add extension-specific fallback parsing in Deckr core.
 
-Action providers can request extension capabilities by declaring requirements
-against the extension `family`, `type`, direction, events, and commands. A
-provider that needs semantic helpers for an extension should get those helpers
-from the extension package that owns the family, not from Deckr core.
+Action providers can request extension capabilities through requirements for
+the `family`, `type`, direction, events, and commands.
+Providers should get any extension-specific semantic helpers from the owning
+package, not from Deckr core.
 
-## Adding A Deckr Core Capability
+## Adding a Deckr core capability
 
-Add a new `dev.deckr.*` capability only when the behavior is shared platform
-semantics rather than one device family or one plugin's private convention.
+Add a new core capability only for shared platform behavior.
+Do not add a core capability for one device family's behavior or one plugin's private convention.
+When components need shared behavior that cannot stay within one extension, specify a core capability.
 
-The required checklist is:
+Use this procedure to add a core capability:
 
-1. Specify the family, allowed types, direction, access and event/command vocabulary.
-2. Update the capability descriptor schema and publish reusable value/parameter schemas.
-3. Add complete positive and negative examples, including command-specific cases.
-4. Add semantic cases where descriptor lookup, image decoding or cross-field
-   relationships cannot be checked structurally.
-5. Publish the reviewed contract revision, then update producers and consumers
-   in their own repositories to conform to it.
+1. Specify the family, allowed types, direction, access, and event or command names.
+2. Specify the constraints and units.
+3. Update the capability descriptor schema.
+4. Publish reusable value and command parameter schemas.
+5. Document the capability contract.
+6. Add complete positive and negative examples, including command-specific cases.
+7. Add semantic cases for descriptor lookup, image decoding, or relationships that structural validation cannot check.
+8. Publish the reviewed contract revision.
+9. Update producers and consumers in their own repositories to conform to that revision.

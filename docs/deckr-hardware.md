@@ -40,13 +40,35 @@ gives the claim requirements.
 
 The hardware claim profile is `dev.deckr.profile.hardware_claim.v1`.
 
-Its terms identify a controller endpoint, a hardware-manager endpoint, and one or more claimed devices. Device ids in one claim must be unique. `instanceCount` must be greater than zero.
+### Claim identity and counts
 
-Participants validate ownership through the contract, tokens, endpoint, session, and device refs. Hardware-manager and profile policy control single ownership and capacity over valid Concord claims.
+Claim terms must satisfy these requirements:
 
-If a claimed device disconnects, the hardware manager must cancel or end the claim, or stop token maintenance. A missing hardware advertisement alone does not withdraw the claim.
+- Identify a controller endpoint.
+- Identify a hardware-manager endpoint.
+- Identify one or more claimed devices.
+- Use unique device IDs within the claim.
+- Set each `instanceCount` to a value greater than zero.
 
-The v1 protocol expects claimed device descriptors to stay stable. A material descriptor change uses claim cancellation or token loss, followed by a new discovery candidate. Hardware lane lifecycle messages do not specify this change.
+### Ownership and capacity
+
+Participants validate ownership against the contract and participant tokens.
+They also check endpoint identity, session identity, and device references.
+Hardware-manager and profile policy control single ownership and capacity over
+valid Concord claims.
+
+### Device changes
+
+The v1 protocol expects claimed device descriptors to stay stable.
+The following conditions determine claim lifecycle behavior:
+
+| Condition | Required behavior |
+| --- | --- |
+| A claimed device disconnects | The hardware manager must cancel or end the claim, or stop token maintenance. |
+| A claimed device descriptor changes materially | Cancel the claim or cause token loss. Then publish a new discovery candidate. |
+| The hardware advertisement is missing, with no other change | Do not withdraw the claim for this reason alone. |
+
+Hardware lane lifecycle messages do not specify descriptor changes.
 
 ## Managed hardware managers
 
