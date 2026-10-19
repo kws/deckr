@@ -13,7 +13,10 @@ from deckr.core.config import ConfigDocument, load_config_document
 from deckr.core.util.anyio import add_signal_handler
 from deckr.lanes import MessageBus
 from deckr.runtime import Deckr
-from deckr.substrates.nats import NatsSubstrate
+from deckr.substrates.nats import (
+    DEFAULT_NATS_RECONNECT_MAX_INTERVAL_SECONDS,
+    NatsSubstrate,
+)
 from deckr.substrates.supervised_nats import SupervisedNatsSubstrate
 
 DocumentHook: TypeAlias = Callable[[ConfigDocument], None]
@@ -60,6 +63,11 @@ def build_runtime_substrate(
         raise ValueError("[deckr.runtime.substrate] must be a table")
     kind = str(source.get("kind", "nats")).strip().lower()
     if kind == "nats":
+        reconnect_max_interval_seconds = _float_config(
+            source,
+            "reconnect_max_interval_seconds",
+            default=DEFAULT_NATS_RECONNECT_MAX_INTERVAL_SECONDS,
+        )
         if _bool_config(source, "supervised", default=False):
             if "url" in source:
                 raise ValueError(
@@ -71,6 +79,7 @@ def build_runtime_substrate(
             store_dir = _relative_path_config(document, source, "store_dir")
             return SupervisedNatsSubstrate(
                 lane_contracts=lane_contracts,
+                reconnect_max_interval_seconds=reconnect_max_interval_seconds,
                 auth_enabled=auth_enabled,
                 auth_token=auth_token,
                 server_path=server_path,
@@ -106,6 +115,7 @@ def build_runtime_substrate(
         return NatsSubstrate(
             url=url,
             auth_token=auth_token,
+            reconnect_max_interval_seconds=reconnect_max_interval_seconds,
             lane_contracts=lane_contracts,
         )
     raise ValueError(f"Unsupported Deckr runtime substrate kind: {kind!r}")

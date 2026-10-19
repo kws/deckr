@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import random
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from typing import Any
 
 import anyio
 from pydantic import ValidationError
@@ -27,6 +30,14 @@ from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
 logger = logging.getLogger(__name__)
 
 _LANE_PREFIX = "deckr.msg"
+DEFAULT_NATS_RECONNECT_MAX_INTERVAL_SECONDS = 60.0
+
+
+def _reconnect_interval(value: float) -> float:
+    interval = float(value)
+    if not math.isfinite(interval) or interval <= 0:
+        raise ValueError("reconnect_max_interval_seconds must be finite and positive")
+    return interval
 
 
 class NatsSubstrate:
@@ -37,9 +48,13 @@ class NatsSubstrate:
         auth_token: str | None = None,
         lane_contracts: MessageContractRegistry,
         buffer_size: int = 100,
+        reconnect_max_interval_seconds: float = DEFAULT_NATS_RECONNECT_MAX_INTERVAL_SECONDS,
     ) -> None:
         self.url = url
         self.auth_token = auth_token
+        self.reconnect_max_interval_seconds = _reconnect_interval(
+            reconnect_max_interval_seconds
+        )
         self._lane_contracts = lane_contracts
         self._buffer_size = buffer_size
         self._nc = None
@@ -52,7 +67,30 @@ class NatsSubstrate:
         except ModuleNotFoundError as exc:
             raise RuntimeError("NATS substrate requires deckr[nats].") from exc
 
-        connect_options = {}
+        retry_window = min(1.0, self.reconnect_max_interval_seconds)
+        server_index = 0
+
+        def reconnect_to_server(servers, _server_info):
+            nonlocal retry_window, server_index
+            server = servers[server_index % len(servers)]
+            server_index += 1
+            delay = random.uniform(retry_window * 0.5, retry_window)
+            retry_window = min(retry_window * 2, self.reconnect_max_interval_seconds)
+            return server, delay
+
+        async def reconnected() -> None:
+            nonlocal retry_window, server_index
+            retry_window = min(1.0, self.reconnect_max_interval_seconds)
+            server_index = 0
+
+        connect_options: dict[str, Any] = {
+            "max_reconnect_attempts": -1,
+            # nats-py uses this delay during initial connection; the handler
+            # below owns backoff after an established connection is lost.
+            "reconnect_time_wait": self.reconnect_max_interval_seconds,
+            "reconnect_to_server_handler": reconnect_to_server,
+            "reconnected_cb": reconnected,
+        }
         if self.auth_token is not None:
             connect_options["token"] = self.auth_token
         self._nc = await nats.connect(self.url, **connect_options)

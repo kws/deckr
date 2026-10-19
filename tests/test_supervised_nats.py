@@ -174,6 +174,7 @@ def test_runtime_substrate_config_builds_supervised_nats(
                         "runtime_dir": "run/nats",
                         "store_dir": "state/nats",
                         "startup_timeout": 3.5,
+                        "reconnect_max_interval_seconds": 45,
                         "shutdown_timeout": 1.5,
                         "log_buffer_lines": 25,
                     }
@@ -194,6 +195,7 @@ def test_runtime_substrate_config_builds_supervised_nats(
     assert substrate.supervisor.auth_enabled is True
     assert substrate.supervisor.configured_auth_token is None
     assert substrate.supervisor.startup_timeout == 3.5
+    assert substrate.reconnect_max_interval_seconds == 45
     assert substrate.supervisor.shutdown_timeout == 1.5
 
 
@@ -314,6 +316,7 @@ def test_runtime_substrate_config_builds_external_nats_with_auth_token(
                         "kind": "nats",
                         "url": "nats://nats.example:4222",
                         "auth_token": "secret-token",
+                        "reconnect_max_interval_seconds": 90,
                     }
                 }
             }
@@ -329,6 +332,7 @@ def test_runtime_substrate_config_builds_external_nats_with_auth_token(
     assert isinstance(substrate, NatsSubstrate)
     assert substrate.url == "nats://nats.example:4222"
     assert substrate.auth_token == "secret-token"
+    assert substrate.reconnect_max_interval_seconds == 90
 
 
 @pytest.mark.asyncio
@@ -380,6 +384,7 @@ async def test_supervised_substrate_starts_supervisor_before_nats(
     substrate = SupervisedNatsSubstrate(
         lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
         supervisor=FakeSupervisor(),
+        reconnect_max_interval_seconds=45,
     )
 
     await substrate.connect()
@@ -397,7 +402,36 @@ async def test_supervised_substrate_starts_supervisor_before_nats(
         "auth_token": "secret-token",
         "lane_contracts": DEFAULT_MESSAGE_CONTRACT_REGISTRY,
         "buffer_size": 100,
+        "reconnect_max_interval_seconds": 45,
     }
+
+
+@pytest.mark.parametrize("supervised", [False, True])
+@pytest.mark.parametrize("interval", [0, -1, float("inf"), float("nan"), True])
+def test_runtime_substrate_rejects_invalid_reconnect_interval(
+    tmp_path: Path,
+    supervised: bool,
+    interval: object,
+) -> None:
+    document = _document(
+        {
+            "deckr": {
+                "runtime": {
+                    "substrate": {
+                        "kind": "nats",
+                        "supervised": supervised,
+                        "reconnect_max_interval_seconds": interval,
+                    }
+                }
+            }
+        },
+        base_dir=tmp_path,
+    )
+    with pytest.raises(ValueError, match="reconnect_max_interval_seconds"):
+        build_runtime_substrate(
+            document,
+            lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+        )
 
 
 @pytest.mark.asyncio

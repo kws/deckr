@@ -21,7 +21,11 @@ import anyio
 from deckr.contracts.lanes import MessageContract, MessageContractRegistry
 from deckr.contracts.messages import DeckrMessage, EndpointAddress
 from deckr.lanes import ReplyPredicate
-from deckr.substrates.nats import NatsSubstrate
+from deckr.substrates.nats import (
+    DEFAULT_NATS_RECONNECT_MAX_INTERVAL_SECONDS,
+    NatsSubstrate,
+    _reconnect_interval,
+)
 from deckr.substrates.nats_kv import KvBucketPolicy, NatsJsonKvBucket
 
 logger = logging.getLogger(__name__)
@@ -448,7 +452,11 @@ class SupervisedNatsSubstrate:
         shutdown_timeout: float = 5.0,
         log_buffer_lines: int = 200,
         buffer_size: int = 100,
+        reconnect_max_interval_seconds: float = DEFAULT_NATS_RECONNECT_MAX_INTERVAL_SECONDS,
     ) -> None:
+        self.reconnect_max_interval_seconds = _reconnect_interval(
+            reconnect_max_interval_seconds
+        )
         self.supervisor = supervisor or NatsServerSupervisor(
             server_path=server_path,
             minimum_version=minimum_server_version,
@@ -481,6 +489,7 @@ class SupervisedNatsSubstrate:
             auth_token=handle.auth_token,
             lane_contracts=self._lane_contracts,
             buffer_size=self._buffer_size,
+            reconnect_max_interval_seconds=self.reconnect_max_interval_seconds,
         )
         try:
             await self._nats.connect()

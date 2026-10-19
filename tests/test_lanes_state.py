@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+from urllib.parse import urlparse
 
 import anyio
 import pytest
@@ -515,11 +518,104 @@ async def test_nats_connect_passes_auth_token(
 
     await substrate.connect()
 
-    assert captured == {
-        "url": "nats://nats.example:4222",
-        "options": {"token": "secret-token"},
-    }
+    assert captured["url"] == "nats://nats.example:4222"
+    options = captured["options"]
+    assert options["token"] == "secret-token"
+    assert options["max_reconnect_attempts"] == -1
+    assert options["reconnect_time_wait"] == 60
+    assert callable(options["reconnect_to_server_handler"])
+    assert callable(options["reconnected_cb"])
     assert substrate._js == "jetstream"  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("maximum", [60.0, 5.0, 0.25])
+async def test_nats_reconnect_survives_long_outage_resets_and_stops_on_close(
+    monkeypatch: pytest.MonkeyPatch,
+    maximum: float,
+) -> None:
+    # Exercise nats-py's actual retry loop, replacing only network I/O and time.
+    import nats
+    from nats.aio.client import Client, Srv
+
+    nc = Client()
+    servers = [Srv(urlparse(f"nats://localhost:{port}")) for port in (4222, 4223)]
+    nc._server_pool = servers
+    nc._current_server = servers[0]
+    nc._transport = Mock(wait_closed=AsyncMock(), drain=AsyncMock())
+    nc._process_connect_init = AsyncMock()
+    nc._flush_pending = AsyncMock()
+    nc.flush = AsyncMock()
+    nc._error_cb = AsyncMock()
+    attempts = []
+    delays = []
+    failures_remaining = 130  # More than the old 60-attempt budget per server.
+
+    async def dial(server):
+        nonlocal failures_remaining
+        attempts.append(server.uri.port)
+        if failures_remaining:
+            failures_remaining -= 1
+            raise OSError("broker unavailable")
+
+    async def connect(_url, **options):
+        nc.options = {**options, "dont_randomize": True}
+        nc._reconnect_to_server_handler = options["reconnect_to_server_handler"]
+        nc._reconnected_cb = options["reconnected_cb"]
+        nc._status = Client.CONNECTED
+        return nc
+
+    async def record_sleep(delay):
+        delays.append(delay)
+
+    original_sleep = asyncio.sleep
+    monkeypatch.setattr(nats, "connect", connect)
+    monkeypatch.setattr(nc, "_connect_to_server", dial)
+    monkeypatch.setattr(asyncio, "sleep", record_sleep)
+    monkeypatch.setattr("deckr.substrates.nats.random.uniform", lambda low, high: high)
+    substrate = NatsSubstrate(
+        lane_contracts=DEFAULT_MESSAGE_CONTRACT_REGISTRY,
+        reconnect_max_interval_seconds=maximum,
+    )
+    await substrate.connect()
+    nc._status = Client.RECONNECTING
+    await nc._attempt_reconnect()
+
+    assert nc.is_connected
+    assert len(attempts) == 131
+    assert attempts[:4] == [4222, 4223, 4222, 4223]
+    assert nc._error_cb.await_count == 130
+    assert nc.options["max_reconnect_attempts"] == -1
+    assert nc.options["reconnect_time_wait"] == maximum
+    assert delays[0] == min(1, maximum)
+    assert delays[-1] == maximum
+    assert all(0 < delay <= maximum for delay in delays)
+
+    delays.clear()
+    failures_remaining = 1
+    nc._status = Client.RECONNECTING
+    await nc._attempt_reconnect()
+    assert nc.is_connected
+    assert delays[0] == min(1, maximum)
+
+    sleeping = asyncio.Event()
+
+    async def blocked_sleep(delay):
+        if delay == 0:
+            await original_sleep(0)
+            return
+        sleeping.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(asyncio, "sleep", blocked_sleep)
+    nc._status = Client.RECONNECTING
+    retry = asyncio.create_task(nc._attempt_reconnect())
+    nc._reconnection_task = retry
+    await sleeping.wait()
+    with anyio.fail_after(1):
+        await substrate.aclose()
+        await retry
+    assert nc.is_closed
 
 
 @pytest.mark.asyncio
