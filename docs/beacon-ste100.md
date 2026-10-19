@@ -10,8 +10,9 @@ advertisement format, the store, the advertisement lifecycle, candidate selectio
 and the runtime view. It also includes the Beacon hardware profile.
 
 The requirements apply to all implementations, in all programming languages.
-An implementation API does not change these requirements. The source references
-are in section 10.
+An implementation API or source model does not change these requirements.
+This document defines Beacon protocol requirements. The [Concord specification](concord-ste100.md)
+defines agreement requirements. Section 10 gives the related references.
 
 The word **must** identifies a requirement. **Must not** identifies a prohibition.
 The word **can** identifies a possibility or permission. Text marked
@@ -20,8 +21,7 @@ The word **can** identifies a possibility or permission. Text marked
 ## 2 Technical terms
 
 The table gives the meanings of technical nouns in this specification. Field
-names, API names, schema identifiers, and code values use the same spelling as
-the source specification.
+names, API names, schema identifiers, and code values keep their exact spelling.
 
 Shared terms have the same meanings in the [Concord specification](concord-ste100.md#2-technical-terms).
 In Beacon sections, “candidate” means “Beacon candidate” and “selector” means
@@ -300,6 +300,9 @@ Refresh loops must not become discovery loops. Usual discovery uses the
 materialized view and its watches. Runtime code must not do full discovery or
 participant or profile scans at the advertisement refresh interval. It must not
 do full claim or provider reconciliation at this interval.
+Renewal loops must refresh only advertisements that the runtime already owns.
+They must not attach to successor contracts. Full discovery at the shared
+five-second state-renewal interval is also prohibited.
 
 Exact full scans are for startup, watch recovery, diagnostics, maintenance, and
 repair at a low frequency. They are not part of usual feature queries.
@@ -405,9 +408,9 @@ domain values. It supplies current state first. It does not poll for recovery.
 
 ## 9 Beacon hardware profile
 
-The Beacon profile `dev.deckr.profile.hardware.v1` gives information about
-hardware devices, controls, and capabilities. Its payload must agree with these
-identity conditions:
+Deckr core owns the Beacon profile `dev.deckr.profile.hardware.v1`.
+This profile gives information about hardware devices, controls, and capabilities.
+Its payload must agree with these identity conditions:
 
 | Payload field | Required relationship |
 | --- | --- |
@@ -419,6 +422,8 @@ The hardware Beacon profile is the only public source for device inventory.
 Hardware lane messages do not announce inventory lifecycle changes.
 Hardware lane messages do not replace the device inventory published through
 Beacon.
+They can carry input, commands, capability state, and replies. These messages
+must not replace Beacon discovery or Concord authority.
 
 Beacon can identify a device before an endpoint makes a claim. Beacon does not
 give device ownership. A missing hardware advertisement alone does not withdraw
@@ -437,9 +442,12 @@ The artifact locations are below.
 
 | Reference | Beacon content |
 | --- | --- |
-| [Beacon and Concord guide](beacon-concord.md#beacon) | Beacon behavior and lifecycle requirements. |
-| [Shared rules](beacon-concord.md#shared-rules) | Endpoint addresses, key tokens, and store operations. |
-| [Discovery boundary](beacon-concord.md#discovery-and-agreement-boundary) | The effect of Beacon changes on discovery. |
+| [Discovery boundary](#3-discovery-boundary) | The effect of Beacon changes on discovery and existing agreements. |
+| [Endpoint addresses](#43-endpoint-addresses) | Endpoint identity requirements. |
+| [Advertisement store](#5-advertisement-store) | Key tokens and store operations. |
+| [Advertisement lifecycle](#6-advertisement-lifecycle) | Publication, refresh, withdrawal, and recovery. |
+| [Concord specification](concord-ste100.md) | Agreement authority, participant tokens, and recovery. |
+| [Managed service consumers](concord-ste100.md#165-managed-service-consumers) | Service discovery, candidate selection, and agreement negotiation. |
 | [NATS bus specification](nats-bus.md#beacon-store) | Beacon store, TTL policy, and state watch requirements. |
 | [Advertisement schema](../contract/v1/schemas/beacon/advertisement.v1.schema.json) | The full envelope structure. |
 | [Hardware profile schema](../contract/v1/schemas/profiles/hardware.v1.schema.json) | The Beacon hardware payload structure. |
@@ -450,7 +458,7 @@ The artifact locations are below.
 | [Runtime reference](protocol-runtime-reference.md#beacon-api-example) | Beacon API examples. These examples do not change protocol requirements. |
 
 If the specification, artifacts, and implementation disagree, identify the
-difference as a contract bug.
+difference as a contract bug. Correct each affected item so they agree.
 
 Language reference:
 [ASD-STE100 Simplified Technical English, Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf).
