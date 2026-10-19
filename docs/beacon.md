@@ -1,4 +1,4 @@
-# Beacon v1 specification in ASD-STE100
+# Beacon v1 specification
 
 ## Reference status
 
@@ -406,6 +406,3 @@ The artifact locations are below.
 Implementations must conform to this specification and its schema artifacts.
 Resolve any inconsistency within the reference through a reviewed contract
 change; implementation behavior does not override the published requirements.
-
-Language reference:
-[ASD-STE100 Simplified Technical English, Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf).

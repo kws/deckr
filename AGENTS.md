@@ -22,6 +22,10 @@ implementing them in separate repositories. Read [README.md](README.md) and
   identify contracts.
 - Document the current contracts and repository workflows. Local links must
   resolve to files in this reference checkout.
+- Write all specification documentation in
+  [ASD-STE100 Simplified Technical English, Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf).
+  Keep this writing requirement and its reference in AGENTS.md; do not include
+  STE100 labels, compliance statements or language-reference notes in the documents.
 - Keep personal context and working preferences outside this repository.
 
 The validation step in `.github/workflows/reference-validation.yml` is the

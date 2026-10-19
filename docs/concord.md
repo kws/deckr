@@ -1,4 +1,4 @@
-# Concord v1 specification in ASD-STE100
+# Concord v1 specification
 
 ## Reference status
 
@@ -11,7 +11,7 @@ of candidates, not a schema dependency or validity requirement.
 
 Concord gives temporary runtime agreements between named participants. A contract gives authority only while it is open and all named participants maintain the necessary tokens. Each named participant can cancel the contract. Cancellation is permanent.
 
-This document gives the Concord v1 requirements in ASD-STE100 Simplified Technical English. The requirements apply to all implementations, in each programming language. An implementation API or source model cannot change a protocol requirement.
+This document gives the Concord v1 requirements. The requirements apply to all implementations, in each programming language. An implementation API or source model cannot change a protocol requirement.
 
 This document defines requirements for Concord records, authority, lifecycle, runtime behavior, maintenance, and Concord profiles.
 It includes the shared identity and storage rules necessary for Concord.
@@ -792,5 +792,3 @@ Schema validation alone is not sufficient. Check these Concord requirements:
 Use the valid and invalid fixtures, key-token vectors, Concord key vectors, and Concord terms-hash vectors.
 Use applicable lane message schemas and vectors for contract pointers. The
 artifacts also contain NATS lane subject and header vectors.
-
-The language reference for this rewrite is [ASD-STE100 Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf), dated January 15, 2025.
