@@ -1,4 +1,4 @@
-# Deckr Capability Contracts
+# Deckr hardware capabilities v1 specification
 
 This document defines how Deckr uses device, control, and capability descriptors
 for v1. The descriptor model is intentionally extensible: hardware managers and
@@ -7,7 +7,7 @@ adapters can expose new non-Deckr capability families without changing the gener
 At the same time, any capability family under the `dev.deckr.*` namespace is a core
 Deckr contract. Core capabilities must be specified in this reference before
 drivers, controllers, plugins or SDKs implement them. General public identifier
-ownership rules live in [`namespaces.md`](namespaces.md).
+ownership rules live in [Deckr identifier policy](deckr-identifiers.md).
 
 ## Contract Boundaries
 
@@ -44,7 +44,7 @@ contract change and must define the family, type names, direction, access,
 events or commands, schemas, constraints, units, conformance cases, and docs.
 
 Extension families must not use the `dev.deckr.*` namespace. They must be globally
-namespaced according to [`namespaces.md`](namespaces.md). Deckr should accept
+namespaced according to [Deckr identifier policy](deckr-identifiers.md). Deckr should accept
 extension capabilities without code changes when their descriptors are valid and
 their values are JSON wire-safe.
 

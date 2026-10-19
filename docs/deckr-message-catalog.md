@@ -1,4 +1,4 @@
-# Message catalog
+# Deckr message catalog
 
 This catalog enumerates current lane traffic. Full schemas validate envelopes and
 payloads together; payload schemas can also be used independently. All messages

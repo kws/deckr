@@ -3,7 +3,7 @@
 ## Reference status
 
 This is an application-independent protocol specification.
-The optional [Deckr NATS binding](nats.md#protocol-store-bindings)
+The optional [Deckr NATS binding](deckr-nats-binding.md#protocol-store-bindings)
 assigns concrete buckets to the logical stores below. Beacon is a possible source
 of candidates, not a schema dependency or validity requirement.
 
@@ -21,10 +21,12 @@ Beacon advertisement rules and general lane transport rules are outside this sco
 
 Use these references with this document:
 
-- [NATS substrate specification](nats.md), for the substrate requirements.
+- [Deckr NATS binding specification](deckr-nats-binding.md), for the substrate requirements.
 - [Contract artifacts](../contract/v1), for schemas, fixtures, and acceptance vectors.
-- [Schema consumption](schemas.md), for validation and reference resolution.
-- [Application profiles](deckr-profiles.md), for Deckr-specific requirements.
+- [Schema guide](schema-guide.md), for validation and reference resolution.
+- [Deckr hardware](deckr-hardware.md), for device claims and manager lifecycles.
+- [Deckr services](deckr-services.md), for service-use agreements and service lifecycles.
+- [Deckr Action Runtime](deckr-action-runtime.md), for the Action Runtime service.
 - [Beacon specification](beacon.md), for discovery requirements.
 
 The JSON Schemas specify record structure. Implementations must also obey the
@@ -117,7 +119,7 @@ and contains no colon. The whole address has no leading or trailing whitespace.
 
 Beacon and Concord do not enumerate application families or reserve application
 IDs. For example, `worker:example` and `scheduler:main` are valid protocol
-endpoints. [Deckr addressing policy](runtime-architecture.md#endpoint-identity)
+endpoints. [Deckr addressing policy](deckr-messaging.md#endpoint-identity)
 adds its four families and action-provider restrictions in application schemas.
 
 The [neutral endpoint schema](../contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json)
@@ -137,7 +139,7 @@ Use the shared key-token encoding for state keys.
 
 Use canonical JSON to calculate a Concord terms hash.
 
-The full [canonical encoding rules](canonical-json.md) preserve the v1 byte
+The full [Concord terms hashing rules](concord-terms-hashing.md) preserve the v1 byte
 format, including Unicode ordering and integer/decimal distinctions. Use its
 acceptance vectors when implementing the rules in another language.
 
@@ -205,7 +207,7 @@ stores. Only the dedicated maintenance capability receives all three raw stores.
 The token bucket TTL is the only source of `ttlSeconds`. Each token record must use that TTL. Participants cannot configure a different token TTL or refresh interval. The default token bucket TTL is 120 seconds.
 
 The broker controls token expiry. All Concord buckets must obey the
-[shared KV storage requirements](nats.md#7-shared-kv-storage-requirements).
+[shared KV storage requirements](deckr-nats-binding.md#7-shared-kv-storage-requirements).
 Those requirements define policy comparison, retained messages, delete markers,
 cache removal, and restrictions on per-write TTL.
 
@@ -546,7 +548,7 @@ A contract watch first yields a snapshot containing `version`, `current`, and
 the full filtered collection of contract states. These are local observation
 interfaces, not additional wire records.
 
-The watch must obey the [public state watch requirements](nats.md#9-public-state-watches).
+The watch must obey the [public state watch requirements](deckr-nats-binding.md#9-public-state-watches).
 Those requirements define atomic registration, change limits, overflow,
 slow subscribers, and registration limits.
 Later change values contain the full filtered membership,
@@ -554,7 +556,7 @@ bounded changed contract pointers, and `resnapshot_required`.
 If pointer detail overflows, the full membership gives the current result.
 
 Reconnect rebuilds of contract and token materialized sources are atomic. The Concord view includes removal of missing pointers after these rebuilds.
-Both sources must obey the [shared recovery requirements](nats.md#8-materialized-sources-and-recovery).
+Both sources must obey the [shared recovery requirements](deckr-nats-binding.md#8-materialized-sources-and-recovery).
 Section 9 defines the permanent effect of lost currentness on local authority.
 
 ### 13.2 Context entry and exit
@@ -661,7 +663,7 @@ Each identifier has a different purpose:
 | Device refs, action instance ids, binding ids, page session ids, service view refs, route ids, output generations | Identify the target or stale-state fence in the agreement. |
 
 Application policy specifies whether a message requires a pointer.
-[Deckr messaging](runtime-architecture.md) places it in the `contract` envelope
+[Deckr messaging](deckr-messaging.md) places it in the `contract` envelope
 field and requires it for hardware and service lane traffic.
 
 Public discovery, advertisements, availability probes, interest updates, and lifecycle candidates do not contain Concord authority in the envelope.
@@ -766,9 +768,10 @@ the meaning of terms and application policy. Applications compose the generic
 record with their own profile/terms schemas. Generic Concord must not import an
 application schema or use application policy in place of token authority.
 
-The [Deckr profiles](deckr-profiles.md) specify hardware claims, termless
-service-use contracts, Action Runtime and managed application lifecycle boundaries.
-Those profiles are not prerequisites for an independent Concord implementation.
+The [Deckr hardware specification](deckr-hardware.md) defines hardware claims and manager lifecycle requirements.
+The [Deckr services specification](deckr-services.md) defines termless service-use contracts and service lifecycle requirements.
+The [Deckr Action Runtime specification](deckr-action-runtime.md) defines the Action Runtime service.
+These application specifications are not prerequisites for an independent Concord implementation.
 
 ## 17 Conformance checks
 
@@ -787,7 +790,7 @@ Schema validation alone is not sufficient. Check these Concord requirements:
 - Permanent authority loss and successor creation.
 - The same evaluation results for the same cached and exact observations.
 - Maintenance cleanup with revision guards and persistent cleanup markers.
-- Applicable application requirements from [Deckr profiles](deckr-profiles.md), when implementing Deckr.
+- Applicable requirements from [Deckr hardware](deckr-hardware.md), [Deckr services](deckr-services.md), and [Deckr Action Runtime](deckr-action-runtime.md), when implementing Deckr.
 
 Use the valid and invalid fixtures, key-token vectors, Concord key vectors, and Concord terms-hash vectors.
 Use applicable lane message schemas and vectors for contract pointers. The

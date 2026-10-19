@@ -62,5 +62,5 @@
     }
   ],
   "schema": "dev.deckr.vector.concord_terms_hash.v1",
-  "specification": "../../../docs/canonical-json.md"
+  "specification": "../../../docs/concord-terms-hashing.md"
 }

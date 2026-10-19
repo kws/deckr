@@ -1,10 +1,17 @@
-# Schema consumption and authoring
+# Schema guide
+
+Select an entry point from the [Deckr message catalog](deckr-message-catalog.md)
+or the [schema index](../contract/v1/index.html).
+Load its dependencies into an offline Draft 2020-12 registry.
+After structural validation, apply the profile and authority checks.
+For implementation guidance, see [Deckr hardware](deckr-hardware.md#implementation-guidance)
+and [Deckr services](deckr-services.md#implementation-guidance).
 
 ## Authority and dialect
 
 The JSON Schemas in `contract/v1/schemas` are authoritative for JSON structure.
 They use JSON Schema Draft 2020-12. Normative protocol specifications and
-[semantic rules](semantic-rules.md) define the additional requirements that
+[semantic validation rules](semantic-rules.md) define the additional requirements that
 cannot be expressed by a structural schema. Implementations and generated
 language types must conform to these contracts.
 
@@ -41,7 +48,7 @@ message name, or validate against the service's declared payload schema.
 
 All eight hardware messages and all fourteen Action Runtime messages have
 individual full-message entry points as well as family unions. The
-[message catalog](message-catalog.md) lists their payload locations and direction.
+[Deckr message catalog](deckr-message-catalog.md) lists their payload locations and direction.
 
 ## Offline resolution
 
@@ -109,7 +116,7 @@ cases for conditional fields and bounds, not only wrong top-level types.
 
 Semantic fixtures distinguish `schemaValid` from `semanticValid`. CI checks the
 structural expectation; each consuming implementation must execute semantic
-rules and the distributed scenarios in [the conformance catalog](../interoperability-tests.md).
+rules and the distributed scenarios in [the conformance scenarios](../conformance-scenarios.md).
 
 Standards references: [schema identifiers and modular composition](https://json-schema.org/understanding-json-schema/structuring),
 [annotations and defaults](https://json-schema.org/understanding-json-schema/reference/annotations),

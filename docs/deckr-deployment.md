@@ -1,4 +1,4 @@
-# Deployment responsibilities
+# Deckr deployment guide
 
 These are deployment patterns, not separate wire protocols or bundled runtimes.
 Every implementation uses the same schemas and authority rules.
@@ -17,5 +17,5 @@ choose their language APIs, configuration, dependency injection and process setu
 
 Beacon records are discovery candidates. Concord tokens determine live authority.
 Disconnect/restart behavior must satisfy the [Concord specification](concord.md)
-and [NATS recovery requirements](nats.md). This repository has no launcher,
+and [Deckr NATS binding recovery requirements](deckr-nats-binding.md). This repository has no launcher,
 component entry-point system or installable runtime package.

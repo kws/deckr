@@ -1,15 +1,15 @@
-# Deckr Interoperability Tests
+# Deckr v1 conformance scenarios
 
-> Draft v1 conformance catalog. These scenarios define language-neutral tests
+> Draft v1 conformance scenarios. These scenarios define language-neutral tests
 > for implementations of the Deckr v1 contracts. They are intentionally written
 > as pseudocode, not Python, Rust, or NATS CLI tests.
 
-This catalog complements the normative reference documents:
+These scenarios complement the normative reference documents:
 
 - [Beacon specification](docs/beacon.md)
 - [Concord specification](docs/concord.md)
-- [NATS substrate specification](docs/nats.md)
-- [Deckr message architecture](docs/runtime-architecture.md)
+- [Deckr NATS binding specification](docs/deckr-nats-binding.md)
+- [Deckr messaging specification](docs/deckr-messaging.md)
 - [`contract/v1`](contract/v1)
 
 The goal is to make interoperability enumerable. An implementation should be
@@ -128,7 +128,7 @@ envelopes emitted by the implementation.
 
 ### DIT-KEY-002: Key-Token Vector Compatibility
 
-Spec source: [NATS: 5.1 Key tokens](docs/nats.md#51-key-tokens),
+Spec source: [Deckr NATS binding: 5.1 Key tokens](docs/deckr-nats-binding.md#51-key-tokens),
 `contract/v1/vectors/key-tokens.v1.json`
 
 Scenario: all implementations derive identical key tokens for the same logical
@@ -300,7 +300,7 @@ participant tokens only.
 ### DIT-BCN-004: Startup Cleanup Does Not Revoke Existing Concord Claims
 
 Spec source: [Beacon: 6.1 Create an advertisement](docs/beacon.md#61-create-an-advertisement),
-[Deckr profiles: Hardware claims](docs/deckr-profiles.md#hardware-claims)
+[Deckr hardware: Hardware claims](docs/deckr-hardware.md#hardware-claims)
 
 Scenario: a restarted advertiser removes stale same-feature Beacon records for
 its endpoint without cancelling or invalidating an existing Concord claim.
@@ -490,7 +490,7 @@ participant token.
 ### DIT-CCD-006: Exact Validation Bypasses Stale Local Views
 
 Spec source: [Concord: 12.3 Cached and exact evaluation](docs/concord.md#123-cached-and-exact-evaluation),
-[NATS: 8.2 Currentness](docs/nats.md#82-currentness)
+[Deckr NATS binding: 8.2 Currentness](docs/deckr-nats-binding.md#82-currentness)
 
 Scenario: exact validation reads current KV state even when a runtime's
 materialized view missed a token deletion.
@@ -522,7 +522,7 @@ or refreshes before answering.
 ### DIT-MAT-001: Watch Events Are Wakeups, Exact State Is Recoverable
 
 Spec source: [Beacon: 8.3 View recovery](docs/beacon.md#83-view-recovery),
-[NATS: 8 Materialized sources and recovery](docs/nats.md#8-materialized-sources-and-recovery)
+[Deckr NATS binding: 8 Materialized sources and recovery](docs/deckr-nats-binding.md#8-materialized-sources-and-recovery)
 
 Scenario: a runtime that misses a watch event detects that its view is not
 current and can recover from exact bucket state.
@@ -554,7 +554,7 @@ candidate cache.
 ### DIT-MAT-002: Restart Rebuilds Beacon State Before Candidate Reads
 
 Spec source: [Beacon: 8 Runtime view and watches](docs/beacon.md#8-runtime-view-and-watches),
-[NATS: 8.2 Currentness](docs/nats.md#82-currentness)
+[Deckr NATS binding: 8.2 Currentness](docs/deckr-nats-binding.md#82-currentness)
 
 Scenario: after a controller restart, hardware candidates are read only after
 the Beacon view has reached current state or the read reports unavailable.
@@ -584,7 +584,7 @@ not-yet-ready materialized view.
 ### DIT-MAT-003: Missed Beacon Put Is Recovered Without Per-Query Full Scans
 
 Spec source: [Beacon: 8 Runtime view and watches](docs/beacon.md#8-runtime-view-and-watches),
-[NATS: 10 Broker resource lifecycle](docs/nats.md#10-broker-resource-lifecycle)
+[Deckr NATS binding: 10 Broker resource lifecycle](docs/deckr-nats-binding.md#10-broker-resource-lifecycle)
 
 Scenario: an implementation recovers from a missed advertisement create/update
 without performing a full KV scan on every `candidates` call.
@@ -617,7 +617,7 @@ reconciliation boundaries.
 
 Spec source: [Concord: 9 Permanent loss of authority](docs/concord.md#9-permanent-loss-of-authority),
 [Concord: 12.3 Cached and exact evaluation](docs/concord.md#123-cached-and-exact-evaluation),
-[NATS: 8 Materialized sources and recovery](docs/nats.md#8-materialized-sources-and-recovery)
+[Deckr NATS binding: 8 Materialized sources and recovery](docs/deckr-nats-binding.md#8-materialized-sources-and-recovery)
 
 Scenario: a missed token deletion must not allow a stale materialized Concord
 view to continue granting authority.
@@ -649,8 +649,8 @@ granted.
 
 ### DIT-MAT-005: Snapshot Reconciliation Synthesizes Missing Tombstones
 
-Spec source: [NATS: 8.1 Snapshot barrier](docs/nats.md#81-snapshot-barrier),
-[Deckr profiles: Service use](docs/deckr-profiles.md#service-use)
+Spec source: [Deckr NATS binding: 8.1 Snapshot barrier](docs/deckr-nats-binding.md#81-snapshot-barrier),
+[Deckr services: Service use](docs/deckr-services.md#service-use)
 
 Scenario: a recovered watch snapshot reconciles cached keys that are absent
 from the current bucket.
@@ -681,7 +681,7 @@ snapshot recovery.
 
 ### DIT-SVC-001: Protected View Fence Hides Replacement Payloads
 
-Spec source: [Deckr profiles: Service use](docs/deckr-profiles.md#service-use)
+Spec source: [Deckr services: Service use](docs/deckr-services.md#service-use)
 
 Scenario: a protected watcher sees a removal when a visible entry is replaced
 by another service identity or session, and does not see the replacement
@@ -727,7 +727,7 @@ and session, not just by key.
 
 ### DIT-SVC-002: Delete For Never-Visible Entry Is Suppressed
 
-Spec source: [Deckr profiles: Service use](docs/deckr-profiles.md#service-use)
+Spec source: [Deckr services: Service use](docs/deckr-services.md#service-use)
 
 Scenario: a watcher does not receive delete or expire events for entries that
 were never visible under its service-use fence.
@@ -761,7 +761,7 @@ entries outside their fence.
 
 ### DIT-OPS-001: Steady-State Consumer Count Is Bounded
 
-Spec source: [NATS: 10 Broker resource lifecycle](docs/nats.md#10-broker-resource-lifecycle)
+Spec source: [Deckr NATS binding: 10 Broker resource lifecycle](docs/deckr-nats-binding.md#10-broker-resource-lifecycle)
 
 Scenario: repeated discovery, validation, and service-view reads do not create
 unbounded JetStream watch/list consumers.
@@ -887,10 +887,10 @@ generic protocol fixtures independently of Deckr, including custom endpoint fami
 
 The [semantic vectors](contract/v1/vectors/semantic-validation.v1.json) distinguish
 structural acceptance from application/protocol acceptance. Consumers must run
-the named [semantic rules](docs/semantic-rules.md) and compare `semanticValid`.
+the named [semantic validation rules](docs/semantic-rules.md) and compare `semanticValid`.
 The reference CI checks `schemaValid`; it does not implement a Concord runtime.
 
-For every hardware and Action Runtime operation in the [message catalog](contract/v1/catalogs/messages.v1.json),
+For every hardware and Action Runtime operation in the [Deckr message catalog](contract/v1/catalogs/messages.v1.json),
 test the complete schema, correct payload location, wrong payload type, sender and
 recipient policy, and missing/invalid contract or session identity. Availability
 must be tested as both a reusable payload and a stored record with its full fence.

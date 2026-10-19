@@ -1,4 +1,4 @@
-# NATS substrate v1 specification
+# Deckr NATS binding v1 specification
 
 ## 1 Purpose and scope
 
@@ -14,9 +14,10 @@ An implementation API or source model does not change these requirements.
 The [Beacon specification](beacon.md) defines discovery.
 The [Concord specification](concord.md) defines agreement authority.
 Those specifications own their generic record formats, TTL policy and
-lifecycles. This binding assigns the Deckr store names. Application profiles are
-specified in [Deckr profiles](deckr-profiles.md); schema consumption is described
-in [schema guidance](schemas.md).
+lifecycles. This binding assigns the Deckr store names.
+The [Deckr hardware](deckr-hardware.md), [Deckr services](deckr-services.md), and
+[Deckr Action Runtime](deckr-action-runtime.md) specifications define application requirements.
+The [schema guide](schema-guide.md) describes schema consumption.
 
 The word **must** identifies a requirement. **Must not** identifies a prohibition.
 The word **can** identifies a possibility or permission. Text marked
@@ -82,7 +83,7 @@ Use these specifications for protocol requirements:
 | Advertisement records, discovery, selection, and advertisement lifecycle | [Beacon](beacon.md). |
 | Agreements, participation, authority, termination, recovery, and maintenance | [Concord](concord.md). |
 | Subject formats, delivery, connection lifecycle, and shared storage mechanics | This document. |
-| Protected service views and service-use fences | [Concord service use](deckr-profiles.md#service-use). |
+| Protected service views and service-use fences | [Deckr services: Service use](deckr-services.md#service-use). |
 
 Message lanes carry commands, data, and replies. Beacon and Concord do not
 replace lane payloads. Private buckets must not replace Beacon discovery or
@@ -414,13 +415,15 @@ Schema validation alone is not sufficient.
 
 | Reference | Content |
 | --- | --- |
-| [Beacon specification](beacon.md) | Discovery records, stores, lifecycle, and hardware advertisements. |
-| [Concord specification](concord.md) | Agreements, authority, maintenance, profiles, and protected views. |
+| [Beacon specification](beacon.md) | Discovery records, stores, and advertisement lifecycle. |
+| [Concord specification](concord.md) | Agreements, authority, maintenance, and generic profile requirements. |
 | [NATS lane vectors](../contract/v1/vectors/nats-lane.v1.json) | Expected subjects and headers for the supplied fixtures. |
 | [Key-token vectors](../contract/v1/vectors/key-tokens.v1.json) | Expected token encodings. |
 | [Contract artifacts](../contract/v1/) | Schemas, fixtures, and acceptance vectors. |
-| [Schema consumption](schemas.md) | Offline schema resolution and validation. |
-| [Deckr profiles](deckr-profiles.md) | Application advertisements, claims and protected views. |
+| [Schema guide](schema-guide.md) | Offline schema resolution and validation. |
+| [Deckr hardware](deckr-hardware.md) | Hardware advertisements, claims, and manager lifecycles. |
+| [Deckr services](deckr-services.md) | Service-use agreements, protected views, and service lifecycles. |
+| [Deckr Action Runtime](deckr-action-runtime.md) | Action Runtime service identity and availability. |
 
 Implementations must conform to this specification and its schema artifacts.
 Resolve any inconsistency within the reference through a reviewed contract

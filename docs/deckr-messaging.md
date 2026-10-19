@@ -1,4 +1,4 @@
-# Deckr message architecture
+# Deckr messaging v1 specification
 
 This document specifies the application wire boundary. Runtime APIs, language
 class layouts, process launchers, component discovery mechanisms and configuration
@@ -76,7 +76,7 @@ Action Runtime uses
 `services` / `serviceMessage`; its discriminator is `body.name` under
 `body.serviceNamespace = dev.deckr.action_runtime.provider`.
 
-See the [message catalog](message-catalog.md) for exact message schemas. Action
+See the [Deckr message catalog](deckr-message-catalog.md) for exact message schemas. Action
 Runtime messages are direct, session-fenced, one-way service messages. Lifecycle
 and input events use `body.event`; commands use `body.params`. A generic service
 message may be request/reply, with application-declared result/error shapes.
@@ -109,5 +109,34 @@ protocol and views. Hosts supply transport, shared stores and lifecycle supervis
 Shutdown closes subscriptions and relinquishes owned advertisements/tokens with
 identity checks and revision guards. Missing discovery does not terminate an
 already-valid agreement. Required detailed lifecycle behavior is in
-[Beacon](beacon.md), [Concord](concord.md), [Deckr profiles](deckr-profiles.md), and
-[the NATS binding](nats.md), independent of the chosen implementation framework.
+[Beacon](beacon.md), [Concord](concord.md), [Deckr hardware](deckr-hardware.md),
+[Deckr services](deckr-services.md), and [the Deckr NATS binding](deckr-nats-binding.md).
+These requirements apply to each implementation framework.
+
+### Managed lifecycle boundaries
+
+Service providers and hardware managers require managed lifecycle boundaries.
+These boundaries own these operations:
+
+- Owner bootstrap.
+- Participant selection.
+- Private worker control.
+- Authorization.
+- Advertisement publication after bootstrap.
+- Cleanup within the required time limits.
+
+Application code supplies protocol intent, backend or device behavior, and domain
+policy. The managed lifecycle boundaries own token refresh, reconciliation,
+contract retries, background workers, and raw contract pointers. Application code does not manage those
+operations itself.
+
+Application code supplies domain facts, such as device connection changes and
+backend availability. Profile implementations must validate profile data and
+apply the specified consequences of those facts. Generic Concord must validate
+contract and token identity, session assertions, and authority.
+
+Application policy must not replace these checks. It must not maintain accepted
+contract sets in response to Concord validity transitions. Managed contexts must
+enforce local authority before protected operations. They must initiate required
+protocol termination and cleanup without an application or operator request.
+Local authority loss must not wait for a domain callback.

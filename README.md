@@ -13,11 +13,11 @@ wire protocol v1.
 
 ## Start here
 
-- [Schema consumption and validation](docs/schemas.md): choose an entry point,
+- [Schema guide](docs/schema-guide.md): choose an entry point,
   resolve references offline, and separate structural validation from authority.
 - [Schema index](contract/v1/index.html) and [machine-readable manifest](contract/v1/manifest.json).
-- [Message catalog](docs/message-catalog.md): every supported hardware and service message.
-- [Semantic rules](docs/semantic-rules.md) and [interoperability scenarios](interoperability-tests.md).
+- [Deckr message catalog](docs/deckr-message-catalog.md): every supported hardware and service message.
+- [Semantic validation rules](docs/semantic-rules.md) and [conformance scenarios](conformance-scenarios.md).
 
 ## Contract boundaries
 
@@ -50,7 +50,7 @@ contract/v1/
   fixtures/           Valid and invalid JSON examples
   vectors/            Keys, hashes, NATS mapping and semantic cases
 docs/                  Normative specifications and consumption guidance
-interoperability-tests.md
+conformance-scenarios.md
 .github/workflows/      Reference validation only
 ```
 
@@ -58,11 +58,15 @@ interoperability-tests.md
 
 - [Beacon](docs/beacon.md): application-independent discovery.
 - [Concord](docs/concord.md): application-independent agreement authority.
-- [Deckr profiles](docs/deckr-profiles.md): hardware claims, services and Action Runtime.
-- [Deckr message architecture](docs/runtime-architecture.md): envelopes, routing and lane rules.
-- [NATS binding](docs/nats.md): lane subjects, KV keys, store policies and recovery.
-- [Capabilities](docs/capabilities.md) and [identifier ownership](docs/namespaces.md).
-- [Deployment responsibilities](docs/runtime-modes.md).
+- [Concord terms hashing](docs/concord-terms-hashing.md): canonical JSON encoding and terms digests.
+- [Deckr hardware](docs/deckr-hardware.md): discovery, device claims and manager lifecycles.
+- [Deckr services](docs/deckr-services.md): service-use agreements, protected views and service lifecycles.
+- [Deckr Action Runtime](docs/deckr-action-runtime.md): service identity, availability and runtime messages.
+- [Deckr messaging](docs/deckr-messaging.md): envelopes, routing, lane rules and shared lifecycle requirements.
+- [Deckr NATS binding](docs/deckr-nats-binding.md): lane subjects, KV keys, store policies and recovery.
+- [Deckr hardware capabilities](docs/deckr-hardware-capabilities.md): descriptors, values and commands.
+- [Deckr identifier policy](docs/deckr-identifiers.md): public ownership, local identifiers and storage names.
+- [Deckr deployment guide](docs/deckr-deployment.md): deployment patterns and responsibilities.
 
 ## Contract-first workflow
 

@@ -4,7 +4,7 @@
 
 This is an application-independent protocol specification.
 Schemas are authoritative source documents. Implementations choose their
-language APIs in their own repositories. The optional [Deckr NATS binding](nats.md#protocol-store-bindings)
+language APIs in their own repositories. The optional [Deckr NATS binding](deckr-nats-binding.md#protocol-store-bindings)
 assigns concrete bucket names to the logical stores below.
 
 ## 1 Purpose and scope
@@ -14,8 +14,9 @@ advertisements. A consumer can use an advertisement to select a candidate endpoi
 
 This specification gives the requirements for Beacon v1. It includes the
 advertisement format, the store, the advertisement lifecycle, candidate selection,
-and the discovery view. Application payloads, including the Deckr hardware
-profile, are specified separately in [Deckr profiles](deckr-profiles.md).
+and the discovery view. The [Deckr hardware specification](deckr-hardware.md)
+defines the hardware advertisement payload.
+The [Deckr services specification](deckr-services.md) gives service profile requirements.
 
 The requirements apply to all implementations, in all programming languages.
 An implementation API or source model does not change these requirements.
@@ -152,7 +153,7 @@ and contains no colon. The whole address has no leading or trailing whitespace.
 
 Beacon and Concord do not enumerate application families or reserve application
 IDs. For example, `worker:example` and `scheduler:main` are valid protocol
-endpoints. [Deckr addressing policy](runtime-architecture.md#endpoint-identity)
+endpoints. [Deckr addressing policy](deckr-messaging.md#endpoint-identity)
 adds its four families and action-provider restrictions in application schemas.
 
 The [neutral endpoint schema](../contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json)
@@ -208,7 +209,7 @@ use exact reads and calculate validity again.
 ### 5.3 TTL policy
 
 The broker controls the bucket TTL. The default Beacon bucket TTL is 300 seconds.
-The bucket must obey the [shared KV storage requirements](nats.md#7-shared-kv-storage-requirements).
+The bucket must obey the [shared KV storage requirements](deckr-nats-binding.md#7-shared-kv-storage-requirements).
 Those requirements define policy comparison, retained messages, delete markers,
 and removal of expired keys from the source and view.
 
@@ -342,7 +343,7 @@ use the managed Beacon view. They do not subscribe directly to its raw store.
 A discovery watch always supplies a snapshot first.
 This snapshot contains the view `version`, the `current` flag, and the full
 filtered candidate tuple. The watch must obey the
-[public state watch requirements](nats.md#9-public-state-watches).
+[public state watch requirements](deckr-nats-binding.md#9-public-state-watches).
 Those requirements define atomic registration, change limits, overflow,
 slow subscribers, and registration limits.
 
@@ -361,7 +362,7 @@ After reconnection, the runtime rebuilds the view as one atomic change.
 It reports transitions between stale and current state. The resulting difference
 includes keys that disappeared during the outage.
 
-The source must obey the [shared recovery requirements](nats.md#8-materialized-sources-and-recovery).
+The source must obey the [shared recovery requirements](deckr-nats-binding.md#8-materialized-sources-and-recovery).
 Those requirements define snapshot barriers, revision ordering, tombstone limits,
 currentness, and observation of exact writes. Loss of Beacon currentness affects
 discovery only, as specified in section 3.
@@ -375,7 +376,8 @@ interfaces, not additional wire records.
 Applications define payload schemas and semantic rules. Generic Beacon validates
 the envelope only. Application schemas compose the envelope with a feature ID and
 typed payload; the generic schema must not depend on those application schemas.
-The [Deckr hardware and service profiles](deckr-profiles.md) are examples.
+The [Deckr hardware](deckr-hardware.md) and [Deckr services](deckr-services.md)
+specifications give application examples.
 
 ## 10 Conformance and references
 
@@ -394,8 +396,8 @@ The artifact locations are below.
 | [Advertisement store](#5-advertisement-store) | Key tokens and store operations. |
 | [Advertisement lifecycle](#6-advertisement-lifecycle) | Publication, refresh, withdrawal, and recovery. |
 | [Concord specification](concord.md) | Agreement authority, participant tokens, and recovery. |
-| [Managed service consumers](deckr-profiles.md#managed-service-consumers) | Service discovery, candidate selection, and agreement negotiation. |
-| [NATS substrate specification](nats.md) | Transport, shared KV policy, state watches, and source recovery. |
+| [Managed service consumers](deckr-services.md#managed-service-consumers) | Service discovery, candidate selection, and agreement negotiation. |
+| [Deckr NATS binding specification](deckr-nats-binding.md) | Transport, shared KV policy, state watches, and source recovery. |
 | [Advertisement schema](../contract/v1/schemas/protocols/beacon/advertisement.v1.schema.json) | The full envelope structure. |
 | [Hardware profile schema](../contract/v1/schemas/deckr/hardware/advertisement-payload.v1.schema.json) | The Beacon hardware payload structure. |
 | [Valid Beacon fixtures](../contract/v1/fixtures/valid/beacon/) | Valid advertisement examples. |

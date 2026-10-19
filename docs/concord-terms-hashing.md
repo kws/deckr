@@ -1,4 +1,4 @@
-# Concord v1 canonical JSON
+# Concord terms hashing v1 specification
 
 This defines the byte encoding used by the v1 terms-hash contract. The
 [acceptance vectors](../contract/v1/vectors/concord-terms-hash.v1.json) supply

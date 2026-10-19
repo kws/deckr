@@ -38,7 +38,7 @@ membership are semantic checks; size/uniqueness are also schema assertions.
 **SEM-CCD-002 — Terms hash.** If terms are present, their canonical JSON bytes
 must hash to `termsHash`. If both the contract profile and `terms.profile` are
 present, they must agree. Tokens must carry the expected terms hash. Follow
-[canonical JSON](canonical-json.md) and the hash vectors; do not substitute an
+[Concord terms hashing](concord-terms-hashing.md) and the hash vectors; do not substitute an
 arbitrary language serializer or a different canonicalization scheme.
 
 **SEM-CCD-003 — Exact authority.** Validate the named contract ID and generation,
@@ -53,7 +53,7 @@ or search for a different agreement can grant authority.
 revision guards, bootstrap ownership, token refresh deadlines, cancellation,
 successor creation, stale grace/retention periods, and durable cleanup markers.
 An attached-participant bit alone does not substitute for a live token. The
-protocol lifecycle scenarios remain in the [conformance catalog](../interoperability-tests.md).
+protocol lifecycle scenarios remain in the [conformance scenarios](../conformance-scenarios.md).
 
 ## Hardware
 
@@ -73,7 +73,7 @@ one claim. All device refs name the manager encoded by `managerEndpoint`.
 The agreement participants are exactly the controller and manager named in its
 terms. Check device ownership, session identity and capacity against current
 state. Device disconnect/material descriptor changes must terminate or replace
-the claim as specified in [Deckr profiles](deckr-profiles.md#hardware-claims).
+the claim as specified in [Deckr hardware](deckr-hardware.md#hardware-claims).
 
 **SEM-HW-004 — Descriptor relationships.** Within a device, connection IDs,
 control IDs and device-level capability IDs are unique. Within each control,
@@ -128,7 +128,7 @@ and `generation`. Compare all applicable values against the authorized view
 context and active lease. The storage key is
 `<viewKey>.contract.<encoded-contractId>.<generation>`. Revisions are store
 metadata, not payload fields. A mismatching replacement record must not expose
-its payload through an existing reader/watch. Follow [the NATS recovery rules](nats.md).
+its payload through an existing reader/watch. Follow [the Deckr NATS binding recovery rules](deckr-nats-binding.md).
 
 **SEM-SVC-005 — Payload and reply selection.** Use the message declaration to
 select params/event/result/error schemas. Check request/reply correlation,

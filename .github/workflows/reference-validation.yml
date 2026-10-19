@@ -134,7 +134,7 @@ jobs:
                   result.add(slug + (f'-{count}' if count else ''))
               return result
 
-          for path in [root / 'README.md', root / 'AGENTS.md', root / 'interoperability-tests.md', *sorted((root / 'docs').rglob('*.md'))]:
+          for path in [root / 'README.md', root / 'AGENTS.md', root / 'conformance-scenarios.md', *sorted((root / 'docs').rglob('*.md'))]:
               for destination in re.findall(r'\[[^\]]*\]\(([^\s)]+)\)', path.read_text()):
                   if re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*:', destination):
                       continue

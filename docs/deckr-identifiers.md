@@ -1,4 +1,4 @@
-# Public Identifier Namespaces
+# Deckr identifier policy
 
 > Normative identifier policy for Deckr application contracts. Generic Beacon
 > and Concord endpoint families are application-owned. Schema document IDs are

@@ -2,7 +2,7 @@
 
 This is a contract-first, reference-only repository. Define contracts here before
 implementing them in separate repositories. Read [README.md](README.md) and
-[schema guidance](docs/schemas.md) before changing contracts.
+[schema guide](docs/schema-guide.md) before changing contracts.
 
 - Maintain authoritative JSON Schema Draft 2020-12 documents directly.
 - Keep all protocol schemas under `contract/v1/schemas/protocols/` independent
@@ -22,6 +22,10 @@ implementing them in separate repositories. Read [README.md](README.md) and
   identify contracts.
 - Document the current contracts and repository workflows. Local links must
   resolve to files in this reference checkout.
+- Use lowercase, hyphenated document filenames that identify the subject.
+  Use `deckr-` for Deckr subjects and the protocol name for protocol subjects.
+  Document titles identify the purpose and, for specifications, the wire version.
+  Use the same subject names in navigation links.
 - Write all specification documentation in
   [ASD-STE100 Simplified Technical English, Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf).
   Keep this writing requirement and its reference in AGENTS.md; do not include
