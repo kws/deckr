@@ -1,0 +1,78 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-availability-entry.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "available"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "descriptor": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "descriptor"
+        ]
+      }
+    }
+  ],
+  "description": "Provider-direct availability for one action descriptor.",
+  "properties": {
+    "actionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Actionid",
+      "type": "string"
+    },
+    "descriptor": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-descriptor.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "status": {
+      "enum": [
+        "available",
+        "unavailable",
+        "probing"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "actionId",
+    "status"
+  ],
+  "title": "ActionAvailabilityEntry",
+  "type": "object"
+}

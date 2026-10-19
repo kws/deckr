@@ -1,5 +1,12 @@
 # Beacon v1 specification in ASD-STE100
 
+## Reference status
+
+This is an application-independent protocol specification. Historic wire schema
+labels are retained. Schemas are authoritative source documents; implementation
+APIs are not required. The optional [Deckr NATS binding](nats.md#protocol-store-bindings)
+assigns concrete bucket names to the logical stores below.
+
 ## 1 Purpose and scope
 
 Beacon finds endpoints that advertise a feature. It uses temporary records called
@@ -38,7 +45,7 @@ In Beacon sections, “candidate” means “Beacon candidate” and “selector
 | Compare and set | A mutation that succeeds only if the stored revision is the expected revision. |
 | Consumer | A component that uses Beacon to find a candidate. |
 | Currentness | The source state that shows if its observations are up to date. |
-| Endpoint | An addressable entity in Deckr. |
+| Endpoint | An addressable entity in an application. |
 | Endpoint address | The endpoint family and endpoint ID serialized as `<endpoint-family>:<endpoint-id>`. |
 | Endpoint session | One runtime instance of an endpoint. |
 | Envelope | The advertisement fields that generic Beacon validates. |
@@ -76,8 +83,9 @@ Beacon gives discovery information. It does not prove any of these conditions:
 - A future operation will succeed.
 - A command is safe.
 
-Consumers must use Beacon results as candidates. Before a consumer uses live
-authority, it must make any necessary Concord agreement.
+Consumers must use Beacon results as candidates. An application must obtain
+authority through its chosen agreement protocol before protected operations.
+Deckr uses Concord for this purpose; Beacon does not require Concord schemas.
 
 An advertiser can withdraw advertisements when it does not accept new
 negotiations. It can also stop advertisement refreshes. These actions have an
@@ -133,25 +141,22 @@ is an object, it must contain `namespace` and `version`. The `protocol` object
 must not contain other fields.
 
 Generic Beacon validates the envelope only. The profile owner validates the
-meaning of the payload. Section 9 gives the Beacon hardware profile requirements.
+meaning of the payload. Section 9 describes application profile ownership.
 
 ### 4.3 Endpoint addresses
 
-An endpoint address has this format:
+An endpoint address has the form `<family>:<id>`. The family matches
+`[a-z][a-z0-9_-]*`. The ID is nonempty, has no leading or trailing whitespace,
+and contains no colon. The whole address has no leading or trailing whitespace.
 
-```text
-<endpoint-family>:<endpoint-id>
-```
+Beacon and Concord do not enumerate application families or reserve application
+IDs. For example, `worker:example` and `scheduler:main` are valid protocol
+endpoints. [Deckr addressing policy](runtime-architecture.md#endpoint-identity)
+adds its four families and action-provider restrictions in application schemas.
 
-The core endpoint families are `controller`, `hardware_manager`,
-`action_provider`, and `service`.
-
-An endpoint address must not have whitespace at the start or end. Its endpoint
-ID must not be empty. The endpoint ID must not contain `:`.
-
-An `action_provider` endpoint ID must match `[A-Za-z0-9][A-Za-z0-9._-]*`.
-It must not use a reserved provider identity, such as
-`dev.deckr.controller.builtin`.
+The [neutral endpoint schema](../contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json)
+is shared by both protocols. Applications must validate their own restrictions
+at their composition boundary; they must not add those restrictions to this schema.
 
 ## 5 Advertisement store
 
@@ -160,7 +165,7 @@ It must not use a reserved provider identity, such as
 The NATS store uses this bucket and key format:
 
 ```text
-bucket: deckr_beacon_advertisement_v1
+bucket: <advertisement-store>
 key:    advertisements.by_feature.<feature-id-token>.<advertisement-id-token>
 ```
 
@@ -187,14 +192,10 @@ These examples come from the acceptance vectors:
 
 ### 5.2 Store access
 
-The managed runtime opens Beacon as `deckr.beacon`.
-
-**Recommendation:** Use this managed runtime. Do not manually construct a Beacon
-store.
-
-Core bucket names are reserved. Generic `Deckr.kv_bucket(...)` and
-`ComponentContext.kv_bucket(...)` access rejects Beacon bucket policies.
-Private buckets must not replace the specified Beacon discovery store.
+An implementation should expose managed Beacon publication and discovery access.
+The application binding selects the advertisement bucket name and reserves it
+for Beacon. Generic application bucket access must reject that reserved store.
+Private buckets must not replace the configured Beacon discovery store.
 
 Use compare-and-set operations when the store supports them. Use `create` for
 initial publication. Use a revision guard with `update` for a refresh. Use a
@@ -214,11 +215,10 @@ and removal of expired keys from the source and view.
 
 ### 6.1 Create an advertisement
 
-The runtime owns the advertisement context and the advertisement heartbeat
-schedule. It also owns advertisement lifecycle logging.
-`Beacon.advertise(endpoint, spec)` is a synchronous factory for an asynchronous
-context manager. The endpoint supplies the advertiser identity and the current
-session. The `spec` argument supplies only the advertisement intent.
+The implementation owns the advertisement lifetime, heartbeat schedule and
+lifecycle logging. Publication uses the advertiser's endpoint identity and
+current session. The caller supplies the advertisement intent separately from
+that session identity. Language-specific lifecycle APIs are implementation choices.
 
 Use this procedure for initial publication:
 
@@ -332,20 +332,20 @@ The view keeps malformed observations as invalid state. It also keeps
 observations with inconsistent identities as invalid state. These observations
 must not become candidates.
 
-`candidates(...)`, `get(...)`, and feature watches use the materialized view.
+Candidate queries, exact cached lookups, and feature watches use the materialized view.
 They do not do a full key scan for each query. Production runtime consumers
 use the managed Beacon view. They do not subscribe directly to its raw store.
 
 ### 8.2 Watch results
 
-`Beacon.watch()` always supplies one `BeaconWatchSnapshot` first.
+A discovery watch always supplies a snapshot first.
 This snapshot contains the view `version`, the `current` flag, and the full
 filtered candidate tuple. The watch must obey the
 [public state watch requirements](nats.md#9-public-state-watches).
 Those requirements define atomic registration, change limits, overflow,
 slow subscribers, and registration limits.
 
-Subsequent results use `BeaconWatchChange`. Each result contains the full filtered
+Subsequent results describe changes. Each result contains the full filtered
 membership and bounded changed keys. The full membership is the current
 result for that item. This applies also when the change detail overflows.
 
@@ -365,33 +365,16 @@ Those requirements define snapshot barriers, revision ordering, tombstone limits
 currentness, and observation of exact writes. Loss of Beacon currentness affects
 discovery only, as specified in section 3.
 
-`BeaconDirectory.watch_records()` uses this source and keeps its existing
-domain values. It supplies current state first. It does not poll for recovery.
+Higher-level discovery views use this source, supply current state first and
+do not poll for recovery. Watch snapshots and changes are local observation
+interfaces, not additional wire records.
 
-## 9 Beacon hardware profile
+## 9 Application profiles
 
-Deckr core owns the Beacon profile `dev.deckr.profile.hardware.v1`.
-This profile gives information about hardware devices, controls, and capabilities.
-Its payload must agree with these identity conditions:
-
-| Payload field | Required relationship |
-| --- | --- |
-| `sessionId` | The value must be the same as the advertisement `sessionId`. |
-| `managerEndpoint` | The value must be the same as the advertisement `endpoint`. |
-| `managerId` | The value must be the same as the hardware-manager endpoint ID. |
-
-The hardware Beacon profile is the only public source for device inventory.
-The hardware lane is named `hardware_messages`.
-Hardware lane messages do not announce inventory lifecycle changes.
-Hardware lane messages do not replace the device inventory published through
-Beacon.
-They can carry input, commands, capability state, and replies. These messages
-must not replace Beacon discovery or Concord authority.
-
-Beacon can identify a device before an endpoint makes a claim. Beacon does not
-give device ownership. A missing hardware advertisement alone does not withdraw
-an existing device claim. The [Concord specification](concord.md#161-hardware-claims)
-gives the claim requirements.
+Applications define payload schemas and semantic rules. Generic Beacon validates
+the envelope only. Application schemas compose the envelope with a feature ID and
+typed payload; the generic schema must not depend on those application schemas.
+The [Deckr hardware and service profiles](deckr-profiles.md) are examples.
 
 ## 10 Conformance and references
 
@@ -410,15 +393,14 @@ The artifact locations are below.
 | [Advertisement store](#5-advertisement-store) | Key tokens and store operations. |
 | [Advertisement lifecycle](#6-advertisement-lifecycle) | Publication, refresh, withdrawal, and recovery. |
 | [Concord specification](concord.md) | Agreement authority, participant tokens, and recovery. |
-| [Managed service consumers](concord.md#165-managed-service-consumers) | Service discovery, candidate selection, and agreement negotiation. |
+| [Managed service consumers](deckr-profiles.md#managed-service-consumers) | Service discovery, candidate selection, and agreement negotiation. |
 | [NATS substrate specification](nats.md) | Transport, shared KV policy, state watches, and source recovery. |
-| [Advertisement schema](../contract/v1/schemas/beacon/advertisement.v1.schema.json) | The full envelope structure. |
-| [Hardware profile schema](../contract/v1/schemas/profiles/hardware.v1.schema.json) | The Beacon hardware payload structure. |
+| [Advertisement schema](../contract/v1/schemas/protocols/beacon/advertisement.v1.schema.json) | The full envelope structure. |
+| [Hardware profile schema](../contract/v1/schemas/deckr/hardware/advertisement-payload.v1.schema.json) | The Beacon hardware payload structure. |
 | [Valid Beacon fixtures](../contract/v1/fixtures/valid/beacon/) | Valid advertisement examples. |
 | [Invalid Beacon fixtures](../contract/v1/fixtures/invalid/beacon/) | Invalid advertisement examples. |
 | [Key-token vectors](../contract/v1/vectors/key-tokens.v1.json) | Expected token encodings. |
 | [Advertisement key vector](../contract/v1/vectors/beacon-concord-keys.v1.json) | The `beacon_advertisement_key` case only. |
-| [Runtime reference](protocol-runtime-reference.md#33-publish-a-beacon-advertisement) | Beacon API examples. These examples do not change protocol requirements. |
 
 If the specification, artifacts, and implementation disagree, identify the
 difference as a contract bug. Correct each affected item so they agree.

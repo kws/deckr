@@ -1,0 +1,59 @@
+{
+  "body": {
+    "exchangePattern": "one_way",
+    "intent": "command",
+    "name": "binding_overlay",
+    "params": {
+      "binding": {
+        "actionId": "example",
+        "actionInstanceId": "example",
+        "bindingId": "example",
+        "configId": "example",
+        "contextId": "example",
+        "controlRef": {
+          "controlId": "example",
+          "deviceRef": {
+            "deviceId": "deck-1",
+            "fingerprint": "fingerprint:deck-1",
+            "managerId": "mirabox-main"
+          }
+        },
+        "deviceRef": {
+          "deviceId": "deck-1",
+          "fingerprint": "fingerprint:deck-1",
+          "managerId": "mirabox-main"
+        },
+        "providerId": "example",
+        "providerInstanceId": "example"
+      },
+      "generation": 0,
+      "template": "example"
+    },
+    "serviceNamespace": "dev.deckr.action_runtime.provider"
+  },
+  "contract": {
+    "contractId": "action-runtime-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "services",
+  "messageId": "fixture-action-runtime-action-instance-created",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "service:action-runtime.clock-main",
+  "senderSessionId": "service-session",
+  "subject": {
+    "identifiers": {
+      "name": "binding_overlay",
+      "namespace": "dev.deckr.action_runtime.provider",
+      "serviceId": "action-runtime.clock-main"
+    },
+    "kind": "service"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-unit.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Unit metadata for a capability field.",
+  "properties": {
+    "scale": {
+      "default": 1.0,
+      "exclusiveMinimum": 0,
+      "title": "Scale",
+      "type": "number"
+    },
+    "subject": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Subject",
+      "type": "string"
+    },
+    "symbol": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Symbol"
+    },
+    "unit": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "subject",
+    "unit"
+  ],
+  "title": "CapabilityUnit",
+  "type": "object"
+}

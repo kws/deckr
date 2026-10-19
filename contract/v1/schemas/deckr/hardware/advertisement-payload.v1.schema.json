@@ -1,0 +1,54 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/advertisement-payload.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "devices": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/hardware-advertisement-device.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "title": "Devices",
+      "type": "object"
+    },
+    "labels": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "title": "Labels",
+      "type": "object"
+    },
+    "managerEndpoint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json",
+      "pattern": "^hardware_manager:"
+    },
+    "managerId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Managerid",
+      "type": "string"
+    },
+    "profile": {
+      "const": "dev.deckr.profile.hardware.v1",
+      "default": "dev.deckr.profile.hardware.v1",
+      "title": "Profile",
+      "type": "string"
+    },
+    "sessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "managerId",
+    "managerEndpoint",
+    "sessionId"
+  ],
+  "title": "HardwareBeaconPayload",
+  "type": "object"
+}

@@ -1,0 +1,7 @@
+{
+  "configId": "example",
+  "controllerId": "example",
+  "providerId": "example",
+  "providerInstanceId": "clock\n",
+  "scope": "action_provider_instance"
+}

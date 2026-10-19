@@ -1,0 +1,204 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/control-descriptor.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Descriptor for one addressable user-facing control or region.",
+  "properties": {
+    "configCapabilities": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json"
+          },
+          {
+            "properties": {
+              "direction": {
+                "enum": [
+                  "state",
+                  "command"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "title": "Configcapabilities",
+      "type": "array"
+    },
+    "controlId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Controlid",
+      "type": "string"
+    },
+    "diagnosticCapabilities": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json"
+          },
+          {
+            "properties": {
+              "direction": {
+                "enum": [
+                  "state"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "title": "Diagnosticcapabilities",
+      "type": "array"
+    },
+    "geometry": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/control-geometry.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "groupId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Groupid"
+    },
+    "inputCapabilities": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json"
+          },
+          {
+            "properties": {
+              "direction": {
+                "enum": [
+                  "input"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "title": "Inputcapabilities",
+      "type": "array"
+    },
+    "kind": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Label"
+    },
+    "outputCapabilities": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json"
+          },
+          {
+            "properties": {
+              "direction": {
+                "enum": [
+                  "output"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "title": "Outputcapabilities",
+      "type": "array"
+    },
+    "parentControlId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parentcontrolid"
+    },
+    "relatedControlIds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Relatedcontrolids",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "sources": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-source-reference.v1.schema.json"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "stateCapabilities": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json"
+          },
+          {
+            "properties": {
+              "direction": {
+                "enum": [
+                  "state"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "title": "Statecapabilities",
+      "type": "array"
+    },
+    "surfaceId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Surfaceid"
+    }
+  },
+  "required": [
+    "controlId",
+    "kind"
+  ],
+  "title": "ControlDescriptor",
+  "type": "object"
+}

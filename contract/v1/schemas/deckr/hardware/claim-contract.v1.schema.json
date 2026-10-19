@@ -1,0 +1,45 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/claim-contract.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/contract.v1.schema.json"
+    },
+    {
+      "properties": {
+        "participants": {
+          "allOf": [
+            {
+              "contains": {
+                "pattern": "^controller:"
+              },
+              "maxContains": 1,
+              "minContains": 1
+            },
+            {
+              "contains": {
+                "pattern": "^hardware_manager:"
+              },
+              "maxContains": 1,
+              "minContains": 1
+            }
+          ],
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "profile": {
+          "const": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "terms": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/claim-terms.v1.schema.json"
+        }
+      },
+      "required": [
+        "profile",
+        "terms",
+        "termsHash"
+      ]
+    }
+  ],
+  "title": "Hardware claim contract"
+}

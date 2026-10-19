@@ -1,11 +1,8 @@
 # Public Identifier Namespaces
 
-> Live implementation reference: this document describes behavior currently
-> implemented in `deckr`. It should stay in sync with code, tests, generated
-> schemas, examples, and configuration samples. If it differs from the
-> implementation, treat that as a bug: either update the document to match
-> current behavior or make an intentional code/schema/test change to match the
-> intended v1 contract.
+> Normative identifier policy for Deckr application contracts. Generic Beacon
+> and Concord endpoint families are application-owned. Schema document IDs are
+> absolute URIs; existing wire contract labels remain reverse-DNS identifiers.
 
 Deckr uses globally owned public identifiers for contracts that can cross
 package, process, host, language, or organization boundaries. Short local names
@@ -23,7 +20,7 @@ The namespace rules apply to public Deckr contract identifiers, including:
 - component ids
 - component config source ids
 - component instance source ids
-- Python action provider ids and `deckr.plugins` entry point names
+- action provider ids
 - action ids
 - service namespaces
 - extension lane names
@@ -46,12 +43,8 @@ Only Deckr core and official Deckr packages may define `dev.deckr.*`
 identifiers. Third-party packages, deployment-specific packages, and personal
 plugins must not squat under `dev.deckr.*`.
 
-Kaj-owned examples in this workspace use `com.k-si.deckr.*`, such as
-`com.k-si.deckr.kaj` and `com.k-si.deckr.kaj.action.album_browser`. Those are not
-Deckr-owned identifiers; they are examples of a package owner using its own
-namespace. Sonos, OpenHAB, and similar integrations likewise own their service
-feature ids, Beacon payload profiles, Concord term profiles, operation names,
-and schemas outside Deckr core.
+Third-party integrations own their service feature IDs, Beacon payload profiles,
+Concord profiles and application schemas outside the Deckr namespace.
 
 ## Owner Names
 
@@ -78,12 +71,7 @@ unqualified public names such as `sonos`, `openhab`, `media`, `home`, `button`,
 These names are Deckr infrastructure roots, not owner-qualified public contract
 ids. They intentionally stay short:
 
-- Python import/package roots, such as `deckr` and `deckr.plugins.*`
-- Python entry point group names, such as `deckr.components`, `deckr.plugins`,
-  `deckr.config_sources`, and `deckr.component_instance_sources`
-- the TOML root, `[deckr.*]`
 - core lane names, currently `hardware_messages` and `services`
-- explicitly registered transitional lane names, currently `actions`
 - core endpoint families, such as `controller`, `action_provider`,
   `hardware_manager`, and `service`
 - core NATS subject roots and shared buckets, such as `deckr.msg.*`,
@@ -209,5 +197,5 @@ KV-backed service-view buckets under their own public namespace.
 
 This is a pre-v1 contract rule, not a migration guideline. When an identifier
 uses the wrong namespace, rename it to the canonical namespace and update every
-consumer, test, schema, example, and config sample. Do not add old/new aliases,
+consumer, schema, fixture, vector and example. Do not add old/new aliases,
 fallback parsing, compatibility shims, or duplicate public names.

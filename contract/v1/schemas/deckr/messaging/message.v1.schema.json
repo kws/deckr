@@ -1,0 +1,185 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/message.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "recipientSessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "recipientSessionId"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recipient": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-target.v1.schema.json"
+          }
+        }
+      }
+    }
+  ],
+  "description": "Transport-neutral Deckr logical message envelope.",
+  "properties": {
+    "body": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Body",
+      "type": "object"
+    },
+    "causationId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Causationid"
+    },
+    "contract": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/contract-pointer.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "expiresAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expiresat"
+    },
+    "inReplyTo": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Inreplyto"
+    },
+    "lane": {
+      "title": "Lane",
+      "type": "string"
+    },
+    "messageId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Messageid",
+      "type": "string"
+    },
+    "messageType": {
+      "title": "Messagetype",
+      "type": "string"
+    },
+    "protocolVersion": {
+      "const": "1",
+      "default": "1",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "recipient": {
+      "oneOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-target.v1.schema.json"
+        },
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/broadcast-target.v1.schema.json"
+        }
+      ],
+      "title": "Recipient"
+    },
+    "recipientSessionId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Recipientsessionid"
+    },
+    "schemaVersion": {
+      "default": "1",
+      "title": "Schemaversion",
+      "type": "string"
+    },
+    "sender": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+    },
+    "senderSessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Sendersessionid",
+      "type": "string"
+    },
+    "subject": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/entity-subject.v1.schema.json"
+    },
+    "trace": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/trace-context.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "ttlMs": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ttlms"
+    }
+  },
+  "required": [
+    "messageId",
+    "createdAt",
+    "lane",
+    "messageType",
+    "sender",
+    "senderSessionId",
+    "recipient",
+    "subject",
+    "body"
+  ],
+  "title": "DeckrMessage",
+  "type": "object"
+}

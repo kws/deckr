@@ -1,0 +1,22 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/control-ref.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Reference to a control on a concrete device.",
+  "properties": {
+    "controlId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Controlid",
+      "type": "string"
+    },
+    "deviceRef": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json"
+    }
+  },
+  "required": [
+    "deviceRef",
+    "controlId"
+  ],
+  "title": "ControlRef",
+  "type": "object"
+}

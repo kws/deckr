@@ -1,0 +1,8 @@
+{
+  "deviceRef": {
+    "deviceId": "deck-1",
+    "fingerprint": "fingerprint:deck-1",
+    "managerId": "mirabox-main"
+  },
+  "instanceCount": 1
+}

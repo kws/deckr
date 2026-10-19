@@ -1,0 +1,63 @@
+{
+  "connections": [
+    {
+      "connectionId": "mqtt-action-topic",
+      "facts": {
+        "payloadShape": "zigbee2mqtt-action",
+        "topic": "zigbee2mqtt/remote/0x0330/action"
+      },
+      "status": "connected",
+      "transport": "mqtt",
+      "type": "mqtt"
+    }
+  ],
+  "controls": [
+    {
+      "controlId": "button.brightness_up",
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "button"
+    }
+  ],
+  "deviceId": "zigbee-remote-0x0330",
+  "displayName": "Zigbee2MQTT Remote Button",
+  "fingerprint": "zigbee2mqtt:remote:0x0330",
+  "sources": [
+    {
+      "connectionId": "mqtt-action-topic",
+      "facts": {
+        "actionField": "action",
+        "batteryFieldObserved": true
+      },
+      "sourceId": "zigbee2mqtt-action-payload",
+      "type": "mqtt"
+    }
+  ]
+}

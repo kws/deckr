@@ -1,0 +1,12 @@
+{
+  "access": [
+    "emits"
+  ],
+  "capabilityId": "button",
+  "direction": "input",
+  "eventTypes": [
+    "press"
+  ],
+  "family": "dev.deckr.unknown",
+  "type": "activation"
+}

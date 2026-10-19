@@ -1,0 +1,6 @@
+{
+  "direction": "consumer_to_service",
+  "exchangePattern": "request_reply",
+  "intent": "query",
+  "operation": "read"
+}

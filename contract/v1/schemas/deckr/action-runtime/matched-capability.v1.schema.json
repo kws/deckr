@@ -1,0 +1,152 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/matched-capability.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A capability selected by the controller for a binding requirement.",
+  "properties": {
+    "capability": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-ref.v1.schema.json",
+      "properties": {
+        "controlId": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+        },
+        "deviceRef": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json"
+        }
+      },
+      "required": [
+        "deviceRef",
+        "controlId"
+      ]
+    },
+    "commandTypes": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+        "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+        "type": "string"
+      },
+      "title": "Commandtypes",
+      "type": "array"
+    },
+    "direction": {
+      "enum": [
+        "input",
+        "output",
+        "state",
+        "command"
+      ],
+      "title": "Direction",
+      "type": "string"
+    },
+    "eventTypes": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+        "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+        "type": "string"
+      },
+      "title": "Eventtypes",
+      "type": "array"
+    },
+    "family": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "anyOf": [
+            {
+              "enum": [
+                "dev.deckr.device.power",
+                "dev.deckr.input.button",
+                "dev.deckr.input.encoder",
+                "dev.deckr.input.touch",
+                "dev.deckr.output.raster"
+              ]
+            },
+            {
+              "pattern": "^(?!dev\\.deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+              "type": "string"
+            }
+          ],
+          "enum": [
+            "dev.deckr.device.power",
+            "dev.deckr.input.button",
+            "dev.deckr.input.encoder",
+            "dev.deckr.input.touch",
+            "dev.deckr.output.raster"
+          ]
+        },
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "anyOf": [
+            {
+              "enum": [
+                "dev.deckr.device.power",
+                "dev.deckr.input.button",
+                "dev.deckr.input.encoder",
+                "dev.deckr.input.touch",
+                "dev.deckr.output.raster"
+              ]
+            },
+            {
+              "pattern": "^(?!dev\\.deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+              "type": "string"
+            }
+          ],
+          "pattern": "^(?!dev\\.deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+          "type": "string"
+        }
+      ],
+      "title": "Family",
+      "type": "string"
+    },
+    "provenance": {
+      "default": "native",
+      "enum": [
+        "native",
+        "projection",
+        "derivation",
+        "extension"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "requirementName": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Requirementname"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-ref.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "type": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "capability",
+    "family",
+    "type",
+    "direction"
+  ],
+  "title": "MatchedCapability",
+  "type": "object"
+}

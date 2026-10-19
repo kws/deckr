@@ -1,0 +1,74 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "binding": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-metadata.v1.schema.json"
+    },
+    "durationSeconds": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Durationseconds"
+    },
+    "generation": {
+      "minimum": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "overlayId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Overlayid"
+    },
+    "params": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Params",
+      "type": "object"
+    },
+    "template": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Template",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    }
+  },
+  "required": [
+    "binding",
+    "template",
+    "generation"
+  ],
+  "title": "BindingOverlayBody",
+  "type": "object"
+}

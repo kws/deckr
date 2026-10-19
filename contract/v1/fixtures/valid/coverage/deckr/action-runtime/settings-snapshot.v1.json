@@ -1,0 +1,10 @@
+{
+  "settings": {},
+  "target": {
+    "configId": "example",
+    "controllerId": "example",
+    "providerId": "example",
+    "providerInstanceId": "example",
+    "scope": "action_provider_instance"
+  }
+}

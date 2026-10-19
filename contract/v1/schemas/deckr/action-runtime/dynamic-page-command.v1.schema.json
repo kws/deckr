@@ -1,0 +1,27 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/dynamic-page-command.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Concrete page-session command resolved by the controller.",
+  "properties": {
+    "bindings": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-child-binding-descriptor.v1.schema.json"
+      },
+      "minItems": 1,
+      "title": "Bindings",
+      "type": "array"
+    },
+    "pageId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Pageid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "pageId",
+    "bindings"
+  ],
+  "title": "DynamicPageCommand",
+  "type": "object"
+}

@@ -1,0 +1,47 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/bodies/control-command-message.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capabilityId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Capabilityid",
+      "type": "string"
+    },
+    "commandType": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Commandtype",
+      "type": "string"
+    },
+    "controlId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Controlid"
+    },
+    "deviceRef": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json"
+    },
+    "params": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Params",
+      "type": "object"
+    }
+  },
+  "required": [
+    "deviceRef",
+    "capabilityId",
+    "commandType"
+  ],
+  "title": "ControlCommandMessage",
+  "type": "object"
+}

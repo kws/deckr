@@ -1,0 +1,11 @@
+{
+  "access": [
+    "emits"
+  ],
+  "direction": "input",
+  "eventTypes": [
+    "press"
+  ],
+  "family": "dev.deckr.input.button",
+  "type": "activation"
+}

@@ -1,0 +1,80 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-schema.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A JSON Schema fragment carried by a capability descriptor.",
+  "properties": {
+    "schema": {
+      "additionalProperties": true,
+      "anyOf": [
+        {
+          "required": [
+            "$ref"
+          ]
+        },
+        {
+          "required": [
+            "allOf"
+          ]
+        },
+        {
+          "required": [
+            "anyOf"
+          ]
+        },
+        {
+          "required": [
+            "const"
+          ]
+        },
+        {
+          "required": [
+            "enum"
+          ]
+        },
+        {
+          "required": [
+            "items"
+          ]
+        },
+        {
+          "required": [
+            "oneOf"
+          ]
+        },
+        {
+          "required": [
+            "properties"
+          ]
+        },
+        {
+          "required": [
+            "type"
+          ]
+        }
+      ],
+      "minProperties": 1,
+      "title": "Schema",
+      "type": "object"
+    },
+    "schemaId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Schemaid"
+    }
+  },
+  "required": [
+    "schema"
+  ],
+  "title": "CapabilitySchema",
+  "type": "object"
+}

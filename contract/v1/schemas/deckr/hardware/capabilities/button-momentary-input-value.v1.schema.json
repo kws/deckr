@@ -1,0 +1,21 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/button-momentary-input-value.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Value payload for a ``dev.deckr.input.button`` momentary event.",
+  "properties": {
+    "eventType": {
+      "enum": [
+        "down",
+        "up"
+      ],
+      "title": "Eventtype",
+      "type": "string"
+    }
+  },
+  "required": [
+    "eventType"
+  ],
+  "title": "ButtonMomentaryInputValue",
+  "type": "object"
+}

@@ -1,0 +1,19 @@
+{
+  "__unknownField": true,
+  "attachedParticipants": [
+    "controller:controller-main",
+    "service:action-runtime.clock-main"
+  ],
+  "contractId": "action-runtime-contract-1",
+  "generation": 1,
+  "participantSessions": {
+    "controller:controller-main": "controller-session",
+    "service:action-runtime.clock-main": "service-session"
+  },
+  "participants": [
+    "controller:controller-main",
+    "service:action-runtime.clock-main"
+  ],
+  "profile": "dev.deckr.action_runtime.provider.service_use.v1",
+  "state": "open"
+}

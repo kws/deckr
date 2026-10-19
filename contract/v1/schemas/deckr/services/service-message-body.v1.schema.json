@@ -1,0 +1,121 @@
+{
+  "$defs": {
+    "ServiceExchangePattern": {
+      "enum": [
+        "one_way",
+        "request_reply"
+      ],
+      "title": "ServiceExchangePattern",
+      "type": "string"
+    },
+    "ServiceMessageIntent": {
+      "enum": [
+        "command",
+        "query",
+        "event",
+        "notification"
+      ],
+      "title": "ServiceMessageIntent",
+      "type": "string"
+    },
+    "ServiceMessageStatus": {
+      "enum": [
+        "ok",
+        "rejected",
+        "unavailable",
+        "error"
+      ],
+      "title": "ServiceMessageStatus",
+      "type": "string"
+    }
+  },
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-message-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Shared structure for typed services lane bodies; application protocols constrain their payloads.",
+  "properties": {
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "event": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event"
+    },
+    "exchangePattern": {
+      "$ref": "#/$defs/ServiceExchangePattern"
+    },
+    "intent": {
+      "$ref": "#/$defs/ServiceMessageIntent"
+    },
+    "name": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Name",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Params",
+      "type": "object"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result"
+    },
+    "serviceNamespace": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Servicenamespace",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ServiceMessageStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "serviceNamespace",
+    "name",
+    "intent",
+    "exchangePattern"
+  ],
+  "title": "ServiceMessageBody",
+  "type": "object"
+}

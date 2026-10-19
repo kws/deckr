@@ -1,0 +1,74 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-payload-schema.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A JSON Schema contract for one service-message payload position.",
+  "properties": {
+    "schema": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "anyOf": [
+        {
+          "required": [
+            "$ref"
+          ]
+        },
+        {
+          "required": [
+            "allOf"
+          ]
+        },
+        {
+          "required": [
+            "anyOf"
+          ]
+        },
+        {
+          "required": [
+            "const"
+          ]
+        },
+        {
+          "required": [
+            "enum"
+          ]
+        },
+        {
+          "required": [
+            "items"
+          ]
+        },
+        {
+          "required": [
+            "oneOf"
+          ]
+        },
+        {
+          "required": [
+            "properties"
+          ]
+        },
+        {
+          "required": [
+            "type"
+          ]
+        }
+      ],
+      "minProperties": 1,
+      "title": "Schema",
+      "type": "object"
+    },
+    "schemaId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Schemaid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaId",
+    "schema"
+  ],
+  "title": "ServicePayloadSchema",
+  "type": "object"
+}

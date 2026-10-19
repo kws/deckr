@@ -1,0 +1,183 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-descriptor.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Descriptor for one controller-visible device or sub-surface.",
+  "properties": {
+    "capabilities": {
+      "items": {
+        "allOf": [
+          {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json"
+          },
+          {
+            "properties": {
+              "direction": {
+                "enum": [
+                  "state",
+                  "command",
+                  "output"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "connections": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-connection.v1.schema.json"
+      },
+      "title": "Connections",
+      "type": "array"
+    },
+    "controls": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/control-descriptor.v1.schema.json"
+      },
+      "title": "Controls",
+      "type": "array"
+    },
+    "defaultStatusIndicator": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/descriptor-capability-ref.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "deviceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "not": {
+        "pattern": "^(action_provider|controller|hardware_manager):"
+      },
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "displayName": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Displayname",
+      "type": "string"
+    },
+    "fingerprint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Fingerprint",
+      "type": "string"
+    },
+    "firmwareVersion": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Firmwareversion"
+    },
+    "hardwareVersion": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hardwareversion"
+    },
+    "identifiers": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-identifier.v1.schema.json"
+      },
+      "title": "Identifiers",
+      "type": "array"
+    },
+    "manufacturer": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Manufacturer"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "modelId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Modelid"
+    },
+    "parent": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "serialNumber": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Serialnumber"
+    },
+    "sources": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-source-reference.v1.schema.json"
+      },
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "deviceId",
+    "fingerprint",
+    "displayName"
+  ],
+  "title": "DeviceDescriptor",
+  "type": "object"
+}

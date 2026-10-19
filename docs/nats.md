@@ -13,9 +13,10 @@ An implementation API or source model does not change these requirements.
 
 The [Beacon specification](beacon.md) defines discovery.
 The [Concord specification](concord.md) defines agreement authority.
-Those specifications own their record formats, bucket names, TTL defaults,
-lifecycles, and profiles. The [runtime reference](protocol-runtime-reference.md)
-contains API examples, configuration examples, commands, and troubleshooting.
+Those specifications own their generic record formats, TTL policy and
+lifecycles. This binding assigns the Deckr store names. Application profiles are
+specified in [Deckr profiles](deckr-profiles.md); schema consumption is described
+in [schema guidance](schemas.md).
 
 The word **must** identifies a requirement. **Must not** identifies a prohibition.
 The word **can** identifies a possibility or permission. Text marked
@@ -81,7 +82,7 @@ Use these specifications for protocol requirements:
 | Advertisement records, discovery, selection, and advertisement lifecycle | [Beacon](beacon.md). |
 | Agreements, participation, authority, termination, recovery, and maintenance | [Concord](concord.md). |
 | Subject formats, delivery, connection lifecycle, and shared storage mechanics | This document. |
-| Protected service views and service-use fences | [Concord service use](concord.md#162-service-use). |
+| Protected service views and service-use fences | [Concord service use](deckr-profiles.md#service-use). |
 
 Message lanes carry commands, data, and replies. Beacon and Concord do not
 replace lane payloads. Private buckets must not replace Beacon discovery or
@@ -239,18 +240,18 @@ The requester must continue until it receives an acceptable reply or the timeout
 It must close the inbox subscription when the request completes, fails, times out,
 or is cancelled.
 
-`EndpointSession.reply_to(...)` targets the request sender and `senderSessionId`.
-It sets `inReplyTo` to the request `messageId` and preserves the contract pointer.
+A reply targets the request sender and `senderSessionId`, sets `inReplyTo` to
+the request `messageId`, and preserves the contract pointer.
 
 ## 7 Shared KV storage requirements
 
 ### 7.1 Store access
 
-Protocol stores must open with explicit bucket policies. Beacon and Concord own
-their bucket names, key formats, TTL values, and ownership checks.
-Their managed runtimes supply normal protocol access.
-Generic `Deckr.kv_bucket(...)` and `ComponentContext.kv_bucket(...)` access must
-reject reserved Beacon and Concord policies, including the Concord maintenance policy.
+Protocol stores must open with explicit bucket policies. This binding selects
+the bucket names; Beacon and Concord define their key formats, TTL policies and
+ownership checks. Managed protocol interfaces supply normal access.
+Generic application bucket access must reject reserved Beacon and Concord
+stores, including the Concord maintenance store.
 
 Package-owned private buckets must have owner-qualified, versioned names,
 such as `com_example_media_cache_v1`.
@@ -389,8 +390,8 @@ before its scan returns. Protocol cleanup decisions remain in
 
 **Recommendation:** Check that consumer counts stay bounded during repeated reads,
 watch recovery, and maintenance scans. Check that temporary consumers disappear
-after completion. The [runtime diagnostics](protocol-runtime-reference.md#74-jetstream-consumers)
-give the inspection procedure.
+after completion. Inspect JetStream consumer counts before and after repeated
+reads, reconnects and maintenance scans using the broker's management interface.
 
 ## 11 Conformance and references
 
@@ -417,10 +418,30 @@ Schema validation alone is not sufficient.
 | [NATS lane vectors](../contract/v1/vectors/nats-lane.v1.json) | Expected subjects and headers for the supplied fixtures. |
 | [Key-token vectors](../contract/v1/vectors/key-tokens.v1.json) | Expected token encodings. |
 | [Contract artifacts](../contract/v1/) | Schemas, fixtures, and acceptance vectors. |
-| [Runtime reference](protocol-runtime-reference.md) | API examples, configuration, operations, and diagnostics. |
+| [Schema consumption](schemas.md) | Offline schema resolution and validation. |
+| [Deckr profiles](deckr-profiles.md) | Application advertisements, claims and protected views. |
 
 If the specification, artifacts, and implementation disagree, identify the
 difference as a contract bug. Correct each affected item so they agree.
 
 Language reference:
 [ASD-STE100 Simplified Technical English, Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf).
+
+
+## Protocol store bindings
+
+Generic Beacon and Concord use logical stores. This Deckr NATS binding assigns
+these concrete bucket names; they are not dependencies of the generic schemas.
+
+| Logical store | Deckr NATS bucket |
+| --- | --- |
+| Advertisement store | `deckr_beacon_advertisement_v1` |
+| Contract store | `deckr_concord_contract_v1` |
+| Participant-token store | `deckr_concord_token_v1` |
+| Maintenance store | `deckr_concord_maintenance_v1` |
+
+Key layouts, revision guards and TTL behavior remain as specified by the generic
+protocols. A different application binding can assign different store names,
+provided all its participants agree on the same binding and preserve those semantics.
+Action Runtime's Deckr-owned protected view bucket is
+`deckr_action_runtime_service_view_v1`.

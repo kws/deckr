@@ -1,0 +1,49 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/action-instance-created.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/action-instance-destroyed.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-attached.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-detached.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/page-session-opened.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/page-session-closed.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/capability-input.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/action-lifecycle-rejected.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-output.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-overlay.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-overlay-clear.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/open-page.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/replace-page.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/close-page.v1.schema.json"
+    }
+  ],
+  "title": "Action Runtime service messages"
+}

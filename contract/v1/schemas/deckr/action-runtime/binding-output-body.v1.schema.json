@@ -1,0 +1,51 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-output-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "binding": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-metadata.v1.schema.json"
+    },
+    "capability": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-ref.v1.schema.json",
+      "properties": {
+        "controlId": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+        },
+        "deviceRef": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json"
+        }
+      },
+      "required": [
+        "deviceRef",
+        "controlId"
+      ]
+    },
+    "commandType": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Commandtype",
+      "type": "string"
+    },
+    "generation": {
+      "minimum": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "params": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Params",
+      "type": "object"
+    }
+  },
+  "required": [
+    "binding",
+    "capability",
+    "commandType",
+    "generation"
+  ],
+  "title": "BindingOutputBody",
+  "type": "object"
+}

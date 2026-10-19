@@ -1,87 +1,25 @@
-# AGENTS.md
+# Repository guidance
 
-This file adds agent-specific guidance for the `deckr` repository.
+This is a reference-only repository. Read [README.md](README.md) and
+[schema guidance](docs/schemas.md) before changing contracts.
 
-Use [README.md](./README.md) as the primary source of truth for setup, package
-purpose, and the human-facing release workflow. Keep shared guidance in the
-README and use this file for placement rules and implementation hints.
+- Maintain authoritative JSON Schema Draft 2020-12 documents directly.
+- Keep all protocol schemas under `contract/v1/schemas/protocols/` independent
+  of Deckr schemas. Beacon and Concord may depend on protocol-common definitions,
+  but must not depend on one another or on application payloads.
+- Put Deckr addressing policy, envelopes, profiles, lane messages and payloads
+  under `contract/v1/schemas/deckr/`.
+- Add reusable payload schemas and full-message/record entry points. Use `$ref`
+  instead of duplicating shared definitions.
+- Update manifest entries, positive/negative fixtures, catalogs, normative docs
+  and applicable semantic vectors together. Keep fixture expectations explicit.
+- Preserve semantics that JSON Schema cannot express in the normative specs and
+  conformance vectors. Do not claim that structural validation grants authority.
+- Do not add runtime/SDK implementations, language packages, generated clients,
+  runtime tests, launchers or application configuration. Generic CI validation is
+  the only executable repository tooling.
+- Keep personal context and working preferences outside this repository.
 
-## What Lives Here
-
-`deckr` is the controller-independent Python core for the Deckr ecosystem.
-
-Use this repo for:
-
-- shared hardware contracts and wire models
-- action-provider-facing manifests, messages, and lifecycle primitives
-- reusable runtime utilities that are not controller-specific
-
-Do not place controller orchestration, rendering policy, filesystem config, or
-device-manager-specific behavior here. That belongs in the sibling
-`deckr-controller` repo.
-
-## Directory Guide
-
-- `src/deckr/core`
-  - Generic runtime utilities and messaging primitives.
-  - Must not depend on `deckr.hardware` or `deckr.actions`.
-- `src/deckr/actions`
-  - Runtime-neutral `actions` lane wire contracts, provider-instance catalogs,
-    settings targets, endpoint helpers, and action-facing capability contracts.
-- `src/deckr/hardware`
-  - Shared hardware-facing contracts.
-  - Must not depend on `deckr.actions`.
-- `tests`
-  - Tests for the core package only.
-
-## Placement Rules
-
-- Put code in `deckr` only if it is intended to be reused by multiple Deckr
-  components.
-- Prefer a narrow dependency surface. Small, stable contracts are better than
-  moving implementation details here for convenience.
-- If a change starts to look controller-specific, stop and move it to
-  `deckr-controller`.
-
-## Dependency Rules
-
-These are enforced in [`.importlinter`](./.importlinter):
-
-- `deckr.core` must not import `deckr.hardware`
-- `deckr.core` must not import `deckr.actions`
-- `deckr.contracts` must not import `deckr.actions` or `deckr.hardware`
-- `deckr.hardware` must not import `deckr.actions`
-
-After touching package boundaries or import structure, run:
-
-```bash
-uv run lint-imports
-```
-
-## Development Commands
-
-Use `uv` consistently:
-
-```bash
-uv sync
-uv run ruff check .
-uv run lint-imports
-uv run pytest
-uv build
-```
-
-## Release Notes
-
-Do not duplicate the full release procedure here; follow the release section in
-[README.md](./README.md#releases).
-
-Short version:
-
-- root `pyproject.toml` owns the published `deckr` version
-- tag stable releases as `deckr-vX.Y.Z`
-- after a stable release, bump immediately to the next `X.(Y+1).0.dev0`
-- refresh `uv.lock` after every version change
-
-## Hardware Imports
-
-Use `deckr.hardware` directly in code, tests, and documentation.
+The validation step in `.github/workflows/reference-validation.yml` is the
+required check. Run it with the pinned tooling specified there. Package build,
+import-linter, and implementation test commands no longer apply.

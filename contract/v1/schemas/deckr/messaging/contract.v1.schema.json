@@ -1,0 +1,52 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/contract.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/contract.v1.schema.json"
+    },
+    {
+      "properties": {
+        "attachedParticipants": {
+          "items": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+          }
+        },
+        "cancelledBy": {
+          "anyOf": [
+            {
+              "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+            },
+            {
+              "const": "concord:maintenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdBy": {
+          "anyOf": [
+            {
+              "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "participantSessions": {
+          "propertyNames": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+          }
+        },
+        "participants": {
+          "items": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+          }
+        }
+      }
+    }
+  ],
+  "title": "Deckr Concord contract"
+}

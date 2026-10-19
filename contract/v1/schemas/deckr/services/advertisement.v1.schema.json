@@ -1,0 +1,23 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/advertisement.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/advertisement.v1.schema.json"
+    },
+    {
+      "properties": {
+        "endpoint": {
+          "pattern": "^service:"
+        },
+        "payload": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-advertisement-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "payload"
+      ]
+    }
+  ],
+  "title": "Service advertisement"
+}

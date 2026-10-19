@@ -1,0 +1,224 @@
+{
+  "$defs": {
+    "ContractState": {
+      "enum": [
+        "open",
+        "cancelled"
+      ],
+      "title": "ContractState",
+      "type": "string"
+    }
+  },
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/contract.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "terms": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "terms"
+        ]
+      },
+      "then": {
+        "properties": {
+          "termsHash": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "termsHash"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "attachedParticipants": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+      },
+      "title": "Attachedparticipants",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "cancelReason": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cancelreason"
+    },
+    "cancelRevision": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cancelrevision"
+    },
+    "cancelledAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cancelledat"
+    },
+    "cancelledBy": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "contractId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Contractid",
+      "type": "string"
+    },
+    "createdAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Createdat"
+    },
+    "createdBy": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "generation": {
+      "exclusiveMinimum": 0,
+      "minimum": 1,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "participantSessions": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+      },
+      "title": "Participantsessions",
+      "type": "object"
+    },
+    "participants": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+      },
+      "minItems": 1,
+      "title": "Participants",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "profile": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profile"
+    },
+    "schema": {
+      "const": "dev.deckr.concord.contract.v1",
+      "default": "dev.deckr.concord.contract.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/ContractState",
+      "default": "open"
+    },
+    "supersedes": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/contract-pointer.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "terms": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Terms"
+    },
+    "termsHash": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Termshash"
+    }
+  },
+  "required": [
+    "contractId",
+    "generation",
+    "participants",
+    "attachedParticipants"
+  ],
+  "title": "ContractRecord",
+  "type": "object"
+}

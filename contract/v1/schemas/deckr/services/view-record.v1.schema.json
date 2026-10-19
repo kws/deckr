@@ -1,0 +1,62 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/view-record.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Stored flat object: fence fields and service-owned payload fields share the root. Additional fields are validated by the service-specific view schema. Revisions are KV metadata, not payload fields.",
+  "properties": {
+    "consumerEndpoint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+    },
+    "consumerSessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "contractId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "generation": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "serviceEndpoint": {
+      "allOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+        },
+        {
+          "pattern": "^service:"
+        }
+      ]
+    },
+    "serviceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "serviceNamespace": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "serviceSessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "viewKey": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "writer": {
+      "enum": [
+        "service",
+        "consumer"
+      ]
+    }
+  },
+  "required": [
+    "viewKey",
+    "serviceId",
+    "serviceNamespace",
+    "serviceSessionId",
+    "consumerSessionId",
+    "contractId",
+    "serviceEndpoint",
+    "consumerEndpoint",
+    "writer",
+    "generation"
+  ],
+  "title": "Protected service view record",
+  "type": "object"
+}

@@ -1,0 +1,82 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/touch-gesture-input-value.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "eventType": {
+            "const": "tap"
+          }
+        },
+        "required": [
+          "eventType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "direction": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "eventType": {
+            "const": "swipe"
+          }
+        },
+        "required": [
+          "eventType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "direction": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "direction"
+        ]
+      }
+    }
+  ],
+  "description": "Value payload for a ``dev.deckr.input.touch`` gesture event.",
+  "properties": {
+    "direction": {
+      "anyOf": [
+        {
+          "enum": [
+            "left",
+            "right"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Direction"
+    },
+    "eventType": {
+      "enum": [
+        "tap",
+        "swipe"
+      ],
+      "title": "Eventtype",
+      "type": "string"
+    }
+  },
+  "required": [
+    "eventType"
+  ],
+  "title": "TouchGestureInputValue",
+  "type": "object"
+}

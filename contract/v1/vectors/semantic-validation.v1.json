@@ -1,0 +1,3835 @@
+{
+  "cases": [
+    {
+      "id": "participant-order-valid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-001",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "participant-order-invalid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "hardware_manager:mirabox-main",
+          "controller:controller-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-001",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "attached-subset-valid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-001",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "attached-subset-invalid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:other"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-001",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "session-participant-valid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-001",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "session-participant-invalid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session",
+          "worker:foreign": "session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-001",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "terms-digest-valid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-002",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "terms-digest-invalid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "rule": "SEM-CCD-002",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "terms-profile-valid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "dev.deckr.profile.hardware_claim.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-002",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "terms-profile-invalid",
+      "instance": {
+        "attachedParticipants": [
+          "controller:controller-main"
+        ],
+        "contractId": "hardware-contract-1",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "createdBy": "controller:controller-main",
+        "generation": 1,
+        "participantSessions": {
+          "controller:controller-main": "controller-session",
+          "hardware_manager:mirabox-main": "manager-session"
+        },
+        "participants": [
+          "controller:controller-main",
+          "hardware_manager:mirabox-main"
+        ],
+        "profile": "org.example.other.v1",
+        "schema": "dev.deckr.concord.contract.v1",
+        "state": "open",
+        "terms": {
+          "claimId": "claim-1",
+          "controllerEndpoint": "controller:controller-main",
+          "devices": [
+            {
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "instanceCount": 1
+            }
+          ],
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "profile": "dev.deckr.profile.hardware_claim.v1"
+        },
+        "termsHash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113"
+      },
+      "rule": "SEM-CCD-002",
+      "schemaPath": "schemas/protocols/concord/contract.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "inventory-manager-valid",
+      "instance": {
+        "devices": {
+          "deck-1": {
+            "capacity": {
+              "availableInstances": 1,
+              "claimedInstances": 0,
+              "totalInstances": 1
+            },
+            "descriptor": {
+              "capabilities": [],
+              "connections": [],
+              "controls": [
+                {
+                  "configCapabilities": [],
+                  "controlId": "key.0.0",
+                  "diagnosticCapabilities": [],
+                  "geometry": {
+                    "height": 1.0,
+                    "unit": "grid",
+                    "width": 1.0,
+                    "x": 0.0,
+                    "y": 0.0
+                  },
+                  "inputCapabilities": [
+                    {
+                      "access": [
+                        "emits"
+                      ],
+                      "capabilityId": "button.press",
+                      "commandTypes": [],
+                      "constraints": [],
+                      "direction": "input",
+                      "eventTypes": [
+                        "press"
+                      ],
+                      "family": "dev.deckr.input.button",
+                      "sources": [],
+                      "type": "activation",
+                      "units": [],
+                      "valueSchema": {
+                        "schema": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "eventType": {
+                              "const": "press"
+                            }
+                          },
+                          "required": [
+                            "eventType"
+                          ],
+                          "type": "object"
+                        },
+                        "schemaId": "dev.deckr.value.input.button.activation.v1"
+                      }
+                    }
+                  ],
+                  "kind": "key",
+                  "outputCapabilities": [
+                    {
+                      "access": [
+                        "invokable"
+                      ],
+                      "capabilityId": "screen",
+                      "commandSchema": {
+                        "schema": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "encoding": {
+                                  "enum": [
+                                    "jpeg",
+                                    "png"
+                                  ]
+                                },
+                                "image": {
+                                  "contentEncoding": "base64",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "image",
+                                "encoding"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "maxProperties": 0,
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                      },
+                      "commandTypes": [
+                        "set_frame",
+                        "clear"
+                      ],
+                      "constraints": [],
+                      "direction": "output",
+                      "eventTypes": [],
+                      "family": "dev.deckr.output.raster",
+                      "sources": [],
+                      "type": "bitmap",
+                      "units": []
+                    }
+                  ],
+                  "relatedControlIds": [],
+                  "sources": [],
+                  "stateCapabilities": []
+                }
+              ],
+              "deviceId": "deck-1",
+              "displayName": "Example Deck",
+              "fingerprint": "fingerprint:deck-1",
+              "identifiers": [],
+              "manufacturer": "Deckr",
+              "model": "Fixture Panel",
+              "sources": []
+            },
+            "deviceRef": {
+              "deviceId": "deck-1",
+              "fingerprint": "fingerprint:deck-1",
+              "managerId": "mirabox-main"
+            }
+          }
+        },
+        "labels": {
+          "room": "office"
+        },
+        "managerEndpoint": "hardware_manager:mirabox-main",
+        "managerId": "mirabox-main",
+        "profile": "dev.deckr.profile.hardware.v1",
+        "sessionId": "manager-session"
+      },
+      "rule": "SEM-HW-001",
+      "schemaPath": "schemas/deckr/hardware/advertisement-payload.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "inventory-manager-invalid",
+      "instance": {
+        "devices": {
+          "deck-1": {
+            "capacity": {
+              "availableInstances": 1,
+              "claimedInstances": 0,
+              "totalInstances": 1
+            },
+            "descriptor": {
+              "capabilities": [],
+              "connections": [],
+              "controls": [
+                {
+                  "configCapabilities": [],
+                  "controlId": "key.0.0",
+                  "diagnosticCapabilities": [],
+                  "geometry": {
+                    "height": 1.0,
+                    "unit": "grid",
+                    "width": 1.0,
+                    "x": 0.0,
+                    "y": 0.0
+                  },
+                  "inputCapabilities": [
+                    {
+                      "access": [
+                        "emits"
+                      ],
+                      "capabilityId": "button.press",
+                      "commandTypes": [],
+                      "constraints": [],
+                      "direction": "input",
+                      "eventTypes": [
+                        "press"
+                      ],
+                      "family": "dev.deckr.input.button",
+                      "sources": [],
+                      "type": "activation",
+                      "units": [],
+                      "valueSchema": {
+                        "schema": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "eventType": {
+                              "const": "press"
+                            }
+                          },
+                          "required": [
+                            "eventType"
+                          ],
+                          "type": "object"
+                        },
+                        "schemaId": "dev.deckr.value.input.button.activation.v1"
+                      }
+                    }
+                  ],
+                  "kind": "key",
+                  "outputCapabilities": [
+                    {
+                      "access": [
+                        "invokable"
+                      ],
+                      "capabilityId": "screen",
+                      "commandSchema": {
+                        "schema": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "encoding": {
+                                  "enum": [
+                                    "jpeg",
+                                    "png"
+                                  ]
+                                },
+                                "image": {
+                                  "contentEncoding": "base64",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "image",
+                                "encoding"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "maxProperties": 0,
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                      },
+                      "commandTypes": [
+                        "set_frame",
+                        "clear"
+                      ],
+                      "constraints": [],
+                      "direction": "output",
+                      "eventTypes": [],
+                      "family": "dev.deckr.output.raster",
+                      "sources": [],
+                      "type": "bitmap",
+                      "units": []
+                    }
+                  ],
+                  "relatedControlIds": [],
+                  "sources": [],
+                  "stateCapabilities": []
+                }
+              ],
+              "deviceId": "deck-1",
+              "displayName": "Example Deck",
+              "fingerprint": "fingerprint:deck-1",
+              "identifiers": [],
+              "manufacturer": "Deckr",
+              "model": "Fixture Panel",
+              "sources": []
+            },
+            "deviceRef": {
+              "deviceId": "deck-1",
+              "fingerprint": "fingerprint:deck-1",
+              "managerId": "mirabox-main"
+            }
+          }
+        },
+        "labels": {
+          "room": "office"
+        },
+        "managerEndpoint": "hardware_manager:mirabox-main",
+        "managerId": "other-manager",
+        "profile": "dev.deckr.profile.hardware.v1",
+        "sessionId": "manager-session"
+      },
+      "rule": "SEM-HW-001",
+      "schemaPath": "schemas/deckr/hardware/advertisement-payload.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "advertisement-session-valid",
+      "instance": {
+        "advertisementId": "hardware-advertisement-1",
+        "advertiser": "hardware_manager:mirabox-main",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "endpoint": "hardware_manager:mirabox-main",
+        "featureId": "dev.deckr.hardware",
+        "hints": {},
+        "labels": {},
+        "operations": [],
+        "payload": {
+          "devices": {
+            "deck-1": {
+              "capacity": {
+                "availableInstances": 1,
+                "claimedInstances": 0,
+                "totalInstances": 1
+              },
+              "descriptor": {
+                "capabilities": [],
+                "connections": [],
+                "controls": [
+                  {
+                    "configCapabilities": [],
+                    "controlId": "key.0.0",
+                    "diagnosticCapabilities": [],
+                    "geometry": {
+                      "height": 1.0,
+                      "unit": "grid",
+                      "width": 1.0,
+                      "x": 0.0,
+                      "y": 0.0
+                    },
+                    "inputCapabilities": [
+                      {
+                        "access": [
+                          "emits"
+                        ],
+                        "capabilityId": "button.press",
+                        "commandTypes": [],
+                        "constraints": [],
+                        "direction": "input",
+                        "eventTypes": [
+                          "press"
+                        ],
+                        "family": "dev.deckr.input.button",
+                        "sources": [],
+                        "type": "activation",
+                        "units": [],
+                        "valueSchema": {
+                          "schema": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "eventType": {
+                                "const": "press"
+                              }
+                            },
+                            "required": [
+                              "eventType"
+                            ],
+                            "type": "object"
+                          },
+                          "schemaId": "dev.deckr.value.input.button.activation.v1"
+                        }
+                      }
+                    ],
+                    "kind": "key",
+                    "outputCapabilities": [
+                      {
+                        "access": [
+                          "invokable"
+                        ],
+                        "capabilityId": "screen",
+                        "commandSchema": {
+                          "schema": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "encoding": {
+                                    "enum": [
+                                      "jpeg",
+                                      "png"
+                                    ]
+                                  },
+                                  "image": {
+                                    "contentEncoding": "base64",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "image",
+                                  "encoding"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "maxProperties": 0,
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                        },
+                        "commandTypes": [
+                          "set_frame",
+                          "clear"
+                        ],
+                        "constraints": [],
+                        "direction": "output",
+                        "eventTypes": [],
+                        "family": "dev.deckr.output.raster",
+                        "sources": [],
+                        "type": "bitmap",
+                        "units": []
+                      }
+                    ],
+                    "relatedControlIds": [],
+                    "sources": [],
+                    "stateCapabilities": []
+                  }
+                ],
+                "deviceId": "deck-1",
+                "displayName": "Example Deck",
+                "fingerprint": "fingerprint:deck-1",
+                "identifiers": [],
+                "manufacturer": "Deckr",
+                "model": "Fixture Panel",
+                "sources": []
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              }
+            }
+          },
+          "labels": {
+            "room": "office"
+          },
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "managerId": "mirabox-main",
+          "profile": "dev.deckr.profile.hardware.v1",
+          "sessionId": "manager-session"
+        },
+        "refreshSeq": 1,
+        "schema": "dev.deckr.beacon.advertisement.v1",
+        "sessionId": "manager-session",
+        "ttlSeconds": 300,
+        "updatedAt": "2026-04-29T10:00:00Z"
+      },
+      "rule": "SEM-HW-001",
+      "schemaPath": "schemas/deckr/hardware/advertisement.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "advertisement-session-invalid",
+      "instance": {
+        "advertisementId": "hardware-advertisement-1",
+        "advertiser": "hardware_manager:mirabox-main",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "endpoint": "hardware_manager:mirabox-main",
+        "featureId": "dev.deckr.hardware",
+        "hints": {},
+        "labels": {},
+        "operations": [],
+        "payload": {
+          "devices": {
+            "deck-1": {
+              "capacity": {
+                "availableInstances": 1,
+                "claimedInstances": 0,
+                "totalInstances": 1
+              },
+              "descriptor": {
+                "capabilities": [],
+                "connections": [],
+                "controls": [
+                  {
+                    "configCapabilities": [],
+                    "controlId": "key.0.0",
+                    "diagnosticCapabilities": [],
+                    "geometry": {
+                      "height": 1.0,
+                      "unit": "grid",
+                      "width": 1.0,
+                      "x": 0.0,
+                      "y": 0.0
+                    },
+                    "inputCapabilities": [
+                      {
+                        "access": [
+                          "emits"
+                        ],
+                        "capabilityId": "button.press",
+                        "commandTypes": [],
+                        "constraints": [],
+                        "direction": "input",
+                        "eventTypes": [
+                          "press"
+                        ],
+                        "family": "dev.deckr.input.button",
+                        "sources": [],
+                        "type": "activation",
+                        "units": [],
+                        "valueSchema": {
+                          "schema": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "eventType": {
+                                "const": "press"
+                              }
+                            },
+                            "required": [
+                              "eventType"
+                            ],
+                            "type": "object"
+                          },
+                          "schemaId": "dev.deckr.value.input.button.activation.v1"
+                        }
+                      }
+                    ],
+                    "kind": "key",
+                    "outputCapabilities": [
+                      {
+                        "access": [
+                          "invokable"
+                        ],
+                        "capabilityId": "screen",
+                        "commandSchema": {
+                          "schema": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "encoding": {
+                                    "enum": [
+                                      "jpeg",
+                                      "png"
+                                    ]
+                                  },
+                                  "image": {
+                                    "contentEncoding": "base64",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "image",
+                                  "encoding"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "maxProperties": 0,
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                        },
+                        "commandTypes": [
+                          "set_frame",
+                          "clear"
+                        ],
+                        "constraints": [],
+                        "direction": "output",
+                        "eventTypes": [],
+                        "family": "dev.deckr.output.raster",
+                        "sources": [],
+                        "type": "bitmap",
+                        "units": []
+                      }
+                    ],
+                    "relatedControlIds": [],
+                    "sources": [],
+                    "stateCapabilities": []
+                  }
+                ],
+                "deviceId": "deck-1",
+                "displayName": "Example Deck",
+                "fingerprint": "fingerprint:deck-1",
+                "identifiers": [],
+                "manufacturer": "Deckr",
+                "model": "Fixture Panel",
+                "sources": []
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              }
+            }
+          },
+          "labels": {
+            "room": "office"
+          },
+          "managerEndpoint": "hardware_manager:mirabox-main",
+          "managerId": "mirabox-main",
+          "profile": "dev.deckr.profile.hardware.v1",
+          "sessionId": "other-session"
+        },
+        "refreshSeq": 1,
+        "schema": "dev.deckr.beacon.advertisement.v1",
+        "sessionId": "manager-session",
+        "ttlSeconds": 300,
+        "updatedAt": "2026-04-29T10:00:00Z"
+      },
+      "rule": "SEM-HW-001",
+      "schemaPath": "schemas/deckr/hardware/advertisement.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "capacity-arithmetic-valid",
+      "instance": {
+        "capacity": {
+          "availableInstances": 1,
+          "claimedInstances": 0,
+          "totalInstances": 1
+        },
+        "descriptor": {
+          "capabilities": [],
+          "connections": [],
+          "controls": [
+            {
+              "configCapabilities": [],
+              "controlId": "key.0.0",
+              "diagnosticCapabilities": [],
+              "geometry": {
+                "height": 1.0,
+                "unit": "grid",
+                "width": 1.0,
+                "x": 0.0,
+                "y": 0.0
+              },
+              "inputCapabilities": [
+                {
+                  "access": [
+                    "emits"
+                  ],
+                  "capabilityId": "button.press",
+                  "commandTypes": [],
+                  "constraints": [],
+                  "direction": "input",
+                  "eventTypes": [
+                    "press"
+                  ],
+                  "family": "dev.deckr.input.button",
+                  "sources": [],
+                  "type": "activation",
+                  "units": [],
+                  "valueSchema": {
+                    "schema": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "eventType": {
+                          "const": "press"
+                        }
+                      },
+                      "required": [
+                        "eventType"
+                      ],
+                      "type": "object"
+                    },
+                    "schemaId": "dev.deckr.value.input.button.activation.v1"
+                  }
+                }
+              ],
+              "kind": "key",
+              "outputCapabilities": [
+                {
+                  "access": [
+                    "invokable"
+                  ],
+                  "capabilityId": "screen",
+                  "commandSchema": {
+                    "schema": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "encoding": {
+                              "enum": [
+                                "jpeg",
+                                "png"
+                              ]
+                            },
+                            "image": {
+                              "contentEncoding": "base64",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "image",
+                            "encoding"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "maxProperties": 0,
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "constraints": [],
+                  "direction": "output",
+                  "eventTypes": [],
+                  "family": "dev.deckr.output.raster",
+                  "sources": [],
+                  "type": "bitmap",
+                  "units": []
+                }
+              ],
+              "relatedControlIds": [],
+              "sources": [],
+              "stateCapabilities": []
+            }
+          ],
+          "deviceId": "deck-1",
+          "displayName": "Example Deck",
+          "fingerprint": "fingerprint:deck-1",
+          "identifiers": [],
+          "manufacturer": "Deckr",
+          "model": "Fixture Panel",
+          "sources": []
+        },
+        "deviceRef": {
+          "deviceId": "deck-1",
+          "fingerprint": "fingerprint:deck-1",
+          "managerId": "mirabox-main"
+        }
+      },
+      "rule": "SEM-HW-002",
+      "schemaPath": "schemas/deckr/hardware/hardware-advertisement-device.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "capacity-arithmetic-invalid",
+      "instance": {
+        "capacity": {
+          "availableInstances": 2,
+          "claimedInstances": 1,
+          "totalInstances": 2
+        },
+        "descriptor": {
+          "capabilities": [],
+          "connections": [],
+          "controls": [
+            {
+              "configCapabilities": [],
+              "controlId": "key.0.0",
+              "diagnosticCapabilities": [],
+              "geometry": {
+                "height": 1.0,
+                "unit": "grid",
+                "width": 1.0,
+                "x": 0.0,
+                "y": 0.0
+              },
+              "inputCapabilities": [
+                {
+                  "access": [
+                    "emits"
+                  ],
+                  "capabilityId": "button.press",
+                  "commandTypes": [],
+                  "constraints": [],
+                  "direction": "input",
+                  "eventTypes": [
+                    "press"
+                  ],
+                  "family": "dev.deckr.input.button",
+                  "sources": [],
+                  "type": "activation",
+                  "units": [],
+                  "valueSchema": {
+                    "schema": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "eventType": {
+                          "const": "press"
+                        }
+                      },
+                      "required": [
+                        "eventType"
+                      ],
+                      "type": "object"
+                    },
+                    "schemaId": "dev.deckr.value.input.button.activation.v1"
+                  }
+                }
+              ],
+              "kind": "key",
+              "outputCapabilities": [
+                {
+                  "access": [
+                    "invokable"
+                  ],
+                  "capabilityId": "screen",
+                  "commandSchema": {
+                    "schema": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "encoding": {
+                              "enum": [
+                                "jpeg",
+                                "png"
+                              ]
+                            },
+                            "image": {
+                              "contentEncoding": "base64",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "image",
+                            "encoding"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "maxProperties": 0,
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "constraints": [],
+                  "direction": "output",
+                  "eventTypes": [],
+                  "family": "dev.deckr.output.raster",
+                  "sources": [],
+                  "type": "bitmap",
+                  "units": []
+                }
+              ],
+              "relatedControlIds": [],
+              "sources": [],
+              "stateCapabilities": []
+            }
+          ],
+          "deviceId": "deck-1",
+          "displayName": "Example Deck",
+          "fingerprint": "fingerprint:deck-1",
+          "identifiers": [],
+          "manufacturer": "Deckr",
+          "model": "Fixture Panel",
+          "sources": []
+        },
+        "deviceRef": {
+          "deviceId": "deck-1",
+          "fingerprint": "fingerprint:deck-1",
+          "managerId": "mirabox-main"
+        }
+      },
+      "rule": "SEM-HW-002",
+      "schemaPath": "schemas/deckr/hardware/hardware-advertisement-device.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "claim-manager-valid",
+      "instance": {
+        "claimId": "claim-1",
+        "controllerEndpoint": "controller:controller-main",
+        "devices": [
+          {
+            "deviceRef": {
+              "deviceId": "deck-1",
+              "fingerprint": "fingerprint:deck-1",
+              "managerId": "mirabox-main"
+            },
+            "instanceCount": 1
+          }
+        ],
+        "managerEndpoint": "hardware_manager:mirabox-main",
+        "profile": "dev.deckr.profile.hardware_claim.v1"
+      },
+      "rule": "SEM-HW-003",
+      "schemaPath": "schemas/deckr/hardware/claim-terms.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "claim-manager-invalid",
+      "instance": {
+        "claimId": "claim-1",
+        "controllerEndpoint": "controller:controller-main",
+        "devices": [
+          {
+            "deviceRef": {
+              "deviceId": "deck-1",
+              "fingerprint": "fingerprint:deck-1",
+              "managerId": "mirabox-main"
+            },
+            "instanceCount": 1
+          }
+        ],
+        "managerEndpoint": "hardware_manager:other",
+        "profile": "dev.deckr.profile.hardware_claim.v1"
+      },
+      "rule": "SEM-HW-003",
+      "schemaPath": "schemas/deckr/hardware/claim-terms.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "duplicate-claim-device-valid",
+      "instance": {
+        "claimId": "claim-1",
+        "controllerEndpoint": "controller:controller-main",
+        "devices": [
+          {
+            "deviceRef": {
+              "deviceId": "deck-1",
+              "fingerprint": "fingerprint:deck-1",
+              "managerId": "mirabox-main"
+            },
+            "instanceCount": 1
+          }
+        ],
+        "managerEndpoint": "hardware_manager:mirabox-main",
+        "profile": "dev.deckr.profile.hardware_claim.v1"
+      },
+      "rule": "SEM-HW-003",
+      "schemaPath": "schemas/deckr/hardware/claim-terms.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "duplicate-claim-device-invalid",
+      "instance": {
+        "claimId": "claim-1",
+        "controllerEndpoint": "controller:controller-main",
+        "devices": [
+          {
+            "deviceRef": {
+              "deviceId": "deck-1",
+              "fingerprint": "fingerprint:deck-1",
+              "managerId": "mirabox-main"
+            },
+            "instanceCount": 1
+          },
+          {
+            "deviceRef": {
+              "deviceId": "deck-1",
+              "fingerprint": "fingerprint:deck-1",
+              "managerId": "mirabox-main"
+            },
+            "instanceCount": 1
+          }
+        ],
+        "managerEndpoint": "hardware_manager:mirabox-main",
+        "profile": "dev.deckr.profile.hardware_claim.v1"
+      },
+      "rule": "SEM-HW-003",
+      "schemaPath": "schemas/deckr/hardware/claim-terms.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "duplicate-control-valid",
+      "instance": {
+        "capabilities": [],
+        "connections": [],
+        "controls": [
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          }
+        ],
+        "deviceId": "deck-1",
+        "displayName": "Example Deck",
+        "fingerprint": "fingerprint:deck-1",
+        "identifiers": [],
+        "manufacturer": "Deckr",
+        "model": "Fixture Panel",
+        "sources": []
+      },
+      "rule": "SEM-HW-004",
+      "schemaPath": "schemas/deckr/hardware/device-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "duplicate-control-invalid",
+      "instance": {
+        "capabilities": [],
+        "connections": [],
+        "controls": [
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          },
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          }
+        ],
+        "deviceId": "deck-1",
+        "displayName": "Example Deck",
+        "fingerprint": "fingerprint:deck-1",
+        "identifiers": [],
+        "manufacturer": "Deckr",
+        "model": "Fixture Panel",
+        "sources": []
+      },
+      "rule": "SEM-HW-004",
+      "schemaPath": "schemas/deckr/hardware/device-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "unknown-source-connection-valid",
+      "instance": {
+        "capabilities": [],
+        "connections": [],
+        "controls": [
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          }
+        ],
+        "deviceId": "deck-1",
+        "displayName": "Example Deck",
+        "fingerprint": "fingerprint:deck-1",
+        "identifiers": [],
+        "manufacturer": "Deckr",
+        "model": "Fixture Panel",
+        "sources": []
+      },
+      "rule": "SEM-HW-004",
+      "schemaPath": "schemas/deckr/hardware/device-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "unknown-source-connection-invalid",
+      "instance": {
+        "capabilities": [],
+        "connections": [],
+        "controls": [
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          }
+        ],
+        "deviceId": "deck-1",
+        "displayName": "Example Deck",
+        "fingerprint": "fingerprint:deck-1",
+        "identifiers": [],
+        "manufacturer": "Deckr",
+        "model": "Fixture Panel",
+        "sources": [
+          {
+            "connectionId": "unknown",
+            "sourceId": "report-1",
+            "type": "report"
+          }
+        ]
+      },
+      "rule": "SEM-HW-004",
+      "schemaPath": "schemas/deckr/hardware/device-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "self-control-parent-valid",
+      "instance": {
+        "capabilities": [],
+        "connections": [],
+        "controls": [
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          }
+        ],
+        "deviceId": "deck-1",
+        "displayName": "Example Deck",
+        "fingerprint": "fingerprint:deck-1",
+        "identifiers": [],
+        "manufacturer": "Deckr",
+        "model": "Fixture Panel",
+        "sources": []
+      },
+      "rule": "SEM-HW-004",
+      "schemaPath": "schemas/deckr/hardware/device-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "self-control-parent-invalid",
+      "instance": {
+        "capabilities": [],
+        "connections": [],
+        "controls": [
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "parentControlId": "key.0.0",
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          }
+        ],
+        "deviceId": "deck-1",
+        "displayName": "Example Deck",
+        "fingerprint": "fingerprint:deck-1",
+        "identifiers": [],
+        "manufacturer": "Deckr",
+        "model": "Fixture Panel",
+        "sources": []
+      },
+      "rule": "SEM-HW-004",
+      "schemaPath": "schemas/deckr/hardware/device-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "unknown-status-indicator-valid",
+      "instance": {
+        "capabilities": [],
+        "connections": [],
+        "controls": [
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          }
+        ],
+        "deviceId": "deck-1",
+        "displayName": "Example Deck",
+        "fingerprint": "fingerprint:deck-1",
+        "identifiers": [],
+        "manufacturer": "Deckr",
+        "model": "Fixture Panel",
+        "sources": []
+      },
+      "rule": "SEM-HW-004",
+      "schemaPath": "schemas/deckr/hardware/device-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "unknown-status-indicator-invalid",
+      "instance": {
+        "capabilities": [],
+        "connections": [],
+        "controls": [
+          {
+            "configCapabilities": [],
+            "controlId": "key.0.0",
+            "diagnosticCapabilities": [],
+            "geometry": {
+              "height": 1.0,
+              "unit": "grid",
+              "width": 1.0,
+              "x": 0.0,
+              "y": 0.0
+            },
+            "inputCapabilities": [
+              {
+                "access": [
+                  "emits"
+                ],
+                "capabilityId": "button.press",
+                "commandTypes": [],
+                "constraints": [],
+                "direction": "input",
+                "eventTypes": [
+                  "press"
+                ],
+                "family": "dev.deckr.input.button",
+                "sources": [],
+                "type": "activation",
+                "units": [],
+                "valueSchema": {
+                  "schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "eventType": {
+                        "const": "press"
+                      }
+                    },
+                    "required": [
+                      "eventType"
+                    ],
+                    "type": "object"
+                  },
+                  "schemaId": "dev.deckr.value.input.button.activation.v1"
+                }
+              }
+            ],
+            "kind": "key",
+            "outputCapabilities": [
+              {
+                "access": [
+                  "invokable"
+                ],
+                "capabilityId": "screen",
+                "commandSchema": {
+                  "schema": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "encoding": {
+                            "enum": [
+                              "jpeg",
+                              "png"
+                            ]
+                          },
+                          "image": {
+                            "contentEncoding": "base64",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "image",
+                          "encoding"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "maxProperties": 0,
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+                },
+                "commandTypes": [
+                  "set_frame",
+                  "clear"
+                ],
+                "constraints": [],
+                "direction": "output",
+                "eventTypes": [],
+                "family": "dev.deckr.output.raster",
+                "sources": [],
+                "type": "bitmap",
+                "units": []
+              }
+            ],
+            "relatedControlIds": [],
+            "sources": [],
+            "stateCapabilities": []
+          }
+        ],
+        "defaultStatusIndicator": {
+          "capabilityId": "missing"
+        },
+        "deviceId": "deck-1",
+        "displayName": "Example Deck",
+        "fingerprint": "fingerprint:deck-1",
+        "identifiers": [],
+        "manufacturer": "Deckr",
+        "model": "Fixture Panel",
+        "sources": []
+      },
+      "rule": "SEM-HW-004",
+      "schemaPath": "schemas/deckr/hardware/device-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "constraint-order-valid",
+      "instance": {
+        "maximum": 1,
+        "minimum": 0,
+        "subject": "value",
+        "type": "range"
+      },
+      "rule": "SEM-HW-005",
+      "schemaPath": "schemas/deckr/hardware/capability-constraint.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "constraint-order-invalid",
+      "instance": {
+        "maximum": 1,
+        "minimum": 5,
+        "subject": "value",
+        "type": "range"
+      },
+      "rule": "SEM-HW-005",
+      "schemaPath": "schemas/deckr/hardware/capability-constraint.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "service-endpoint-id-valid",
+      "instance": {
+        "backendStatus": "available",
+        "diagnostics": {
+          "providerId": "dev.deckr.clock"
+        },
+        "profile": "dev.deckr.action_runtime.provider.advertisement.v1",
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceNamespace": "dev.deckr.action_runtime.provider",
+        "serviceUseProfile": "dev.deckr.action_runtime.provider.service_use.v1",
+        "sessionId": "service-session",
+        "supportedMessages": {
+          "action_instance_created": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_instance_created"
+          },
+          "action_instance_destroyed": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_instance_destroyed"
+          },
+          "action_lifecycle_rejected": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_lifecycle_rejected"
+          },
+          "binding_attached": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "binding_attached"
+          },
+          "binding_detached": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "binding_detached"
+          },
+          "binding_output": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_output"
+          },
+          "binding_overlay": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_overlay"
+          },
+          "binding_overlay_clear": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_overlay_clear"
+          },
+          "capability_input": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "capability_input"
+          },
+          "close_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "close_page"
+          },
+          "open_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "open_page"
+          },
+          "page_session_closed": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "page_session_closed"
+          },
+          "page_session_opened": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "page_session_opened"
+          },
+          "replace_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "replace_page"
+          }
+        },
+        "supportedOperations": [
+          "action_instance_created",
+          "action_instance_destroyed",
+          "action_lifecycle_rejected",
+          "binding_attached",
+          "binding_detached",
+          "binding_output",
+          "binding_overlay",
+          "binding_overlay_clear",
+          "capability_input",
+          "close_page",
+          "open_page",
+          "page_session_closed",
+          "page_session_opened",
+          "replace_page"
+        ],
+        "views": {
+          "action_availability": {
+            "keyPrefix": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.",
+            "storeName": "deckr_action_runtime_service_view_v1",
+            "writer": "service"
+          }
+        }
+      },
+      "rule": "SEM-SVC-001",
+      "schemaPath": "schemas/deckr/services/service-advertisement-payload.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "service-endpoint-id-invalid",
+      "instance": {
+        "backendStatus": "available",
+        "diagnostics": {
+          "providerId": "dev.deckr.clock"
+        },
+        "profile": "dev.deckr.action_runtime.provider.advertisement.v1",
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "other-service",
+        "serviceNamespace": "dev.deckr.action_runtime.provider",
+        "serviceUseProfile": "dev.deckr.action_runtime.provider.service_use.v1",
+        "sessionId": "service-session",
+        "supportedMessages": {
+          "action_instance_created": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_instance_created"
+          },
+          "action_instance_destroyed": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_instance_destroyed"
+          },
+          "action_lifecycle_rejected": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_lifecycle_rejected"
+          },
+          "binding_attached": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "binding_attached"
+          },
+          "binding_detached": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "binding_detached"
+          },
+          "binding_output": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_output"
+          },
+          "binding_overlay": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_overlay"
+          },
+          "binding_overlay_clear": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_overlay_clear"
+          },
+          "capability_input": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "capability_input"
+          },
+          "close_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "close_page"
+          },
+          "open_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "open_page"
+          },
+          "page_session_closed": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "page_session_closed"
+          },
+          "page_session_opened": {
+            "direction": "consumer_to_service",
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "page_session_opened"
+          },
+          "replace_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "replace_page"
+          }
+        },
+        "supportedOperations": [
+          "action_instance_created",
+          "action_instance_destroyed",
+          "action_lifecycle_rejected",
+          "binding_attached",
+          "binding_detached",
+          "binding_output",
+          "binding_overlay",
+          "binding_overlay_clear",
+          "capability_input",
+          "close_page",
+          "open_page",
+          "page_session_closed",
+          "page_session_opened",
+          "replace_page"
+        ],
+        "views": {
+          "action_availability": {
+            "keyPrefix": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.",
+            "storeName": "deckr_action_runtime_service_view_v1",
+            "writer": "service"
+          }
+        }
+      },
+      "rule": "SEM-SVC-001",
+      "schemaPath": "schemas/deckr/services/service-advertisement-payload.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "service-advertisement-session-valid",
+      "instance": {
+        "advertisementId": "action-runtime-advertisement-1",
+        "advertiser": "service:action-runtime.clock-main",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "endpoint": "service:action-runtime.clock-main",
+        "featureId": "dev.deckr.action_runtime.provider",
+        "hints": {},
+        "labels": {},
+        "operations": [],
+        "payload": {
+          "backendStatus": "available",
+          "diagnostics": {
+            "providerId": "dev.deckr.clock"
+          },
+          "profile": "dev.deckr.action_runtime.provider.advertisement.v1",
+          "serviceEndpoint": "service:action-runtime.clock-main",
+          "serviceId": "action-runtime.clock-main",
+          "serviceNamespace": "dev.deckr.action_runtime.provider",
+          "serviceUseProfile": "dev.deckr.action_runtime.provider.service_use.v1",
+          "sessionId": "service-session",
+          "supportedMessages": {
+            "action_instance_created": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "action_instance_created"
+            },
+            "action_instance_destroyed": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "action_instance_destroyed"
+            },
+            "action_lifecycle_rejected": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "action_lifecycle_rejected"
+            },
+            "binding_attached": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "binding_attached"
+            },
+            "binding_detached": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "binding_detached"
+            },
+            "binding_output": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "binding_output"
+            },
+            "binding_overlay": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "binding_overlay"
+            },
+            "binding_overlay_clear": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "binding_overlay_clear"
+            },
+            "capability_input": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "capability_input"
+            },
+            "close_page": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "close_page"
+            },
+            "open_page": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "open_page"
+            },
+            "page_session_closed": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "page_session_closed"
+            },
+            "page_session_opened": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "page_session_opened"
+            },
+            "replace_page": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "replace_page"
+            }
+          },
+          "supportedOperations": [
+            "action_instance_created",
+            "action_instance_destroyed",
+            "action_lifecycle_rejected",
+            "binding_attached",
+            "binding_detached",
+            "binding_output",
+            "binding_overlay",
+            "binding_overlay_clear",
+            "capability_input",
+            "close_page",
+            "open_page",
+            "page_session_closed",
+            "page_session_opened",
+            "replace_page"
+          ],
+          "views": {
+            "action_availability": {
+              "keyPrefix": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.",
+              "storeName": "deckr_action_runtime_service_view_v1",
+              "writer": "service"
+            }
+          }
+        },
+        "refreshSeq": 1,
+        "schema": "dev.deckr.beacon.advertisement.v1",
+        "sessionId": "service-session",
+        "ttlSeconds": 300,
+        "updatedAt": "2026-04-29T10:00:00Z"
+      },
+      "rule": "SEM-SVC-001",
+      "schemaPath": "schemas/deckr/services/advertisement.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "service-advertisement-session-invalid",
+      "instance": {
+        "advertisementId": "action-runtime-advertisement-1",
+        "advertiser": "service:action-runtime.clock-main",
+        "createdAt": "2026-04-29T10:00:00Z",
+        "endpoint": "service:action-runtime.clock-main",
+        "featureId": "dev.deckr.action_runtime.provider",
+        "hints": {},
+        "labels": {},
+        "operations": [],
+        "payload": {
+          "backendStatus": "available",
+          "diagnostics": {
+            "providerId": "dev.deckr.clock"
+          },
+          "profile": "dev.deckr.action_runtime.provider.advertisement.v1",
+          "serviceEndpoint": "service:action-runtime.clock-main",
+          "serviceId": "action-runtime.clock-main",
+          "serviceNamespace": "dev.deckr.action_runtime.provider",
+          "serviceUseProfile": "dev.deckr.action_runtime.provider.service_use.v1",
+          "sessionId": "other-session",
+          "supportedMessages": {
+            "action_instance_created": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "action_instance_created"
+            },
+            "action_instance_destroyed": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "action_instance_destroyed"
+            },
+            "action_lifecycle_rejected": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "action_lifecycle_rejected"
+            },
+            "binding_attached": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "binding_attached"
+            },
+            "binding_detached": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "binding_detached"
+            },
+            "binding_output": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "binding_output"
+            },
+            "binding_overlay": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "binding_overlay"
+            },
+            "binding_overlay_clear": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "binding_overlay_clear"
+            },
+            "capability_input": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "capability_input"
+            },
+            "close_page": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "close_page"
+            },
+            "open_page": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "open_page"
+            },
+            "page_session_closed": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "page_session_closed"
+            },
+            "page_session_opened": {
+              "direction": "consumer_to_service",
+              "exchangePattern": "one_way",
+              "intent": "event",
+              "operation": "page_session_opened"
+            },
+            "replace_page": {
+              "direction": "service_to_consumer",
+              "exchangePattern": "one_way",
+              "intent": "command",
+              "operation": "replace_page"
+            }
+          },
+          "supportedOperations": [
+            "action_instance_created",
+            "action_instance_destroyed",
+            "action_lifecycle_rejected",
+            "binding_attached",
+            "binding_detached",
+            "binding_output",
+            "binding_overlay",
+            "binding_overlay_clear",
+            "capability_input",
+            "close_page",
+            "open_page",
+            "page_session_closed",
+            "page_session_opened",
+            "replace_page"
+          ],
+          "views": {
+            "action_availability": {
+              "keyPrefix": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.",
+              "storeName": "deckr_action_runtime_service_view_v1",
+              "writer": "service"
+            }
+          }
+        },
+        "refreshSeq": 1,
+        "schema": "dev.deckr.beacon.advertisement.v1",
+        "sessionId": "service-session",
+        "ttlSeconds": 300,
+        "updatedAt": "2026-04-29T10:00:00Z"
+      },
+      "rule": "SEM-SVC-001",
+      "schemaPath": "schemas/deckr/services/advertisement.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "undeclared-operation-valid",
+      "instance": {
+        "advertisementProfile": "dev.deckr.action_runtime.provider.advertisement.v1",
+        "featureId": "dev.deckr.action_runtime.provider",
+        "messages": {
+          "action_instance_created": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_instance_created"
+          },
+          "action_instance_destroyed": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_instance_destroyed"
+          },
+          "action_lifecycle_rejected": {
+            "direction": "service_to_consumer",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-lifecycle-rejected-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-lifecycle-rejected-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_lifecycle_rejected"
+          },
+          "binding_attached": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-attached-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-attached-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "binding_attached"
+          },
+          "binding_detached": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-detached-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-detached-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "binding_detached"
+          },
+          "binding_output": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_output",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-output-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-output-body.v1.schema.json"
+            }
+          },
+          "binding_overlay": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_overlay",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-body.v1.schema.json"
+            }
+          },
+          "binding_overlay_clear": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_overlay_clear",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-clear-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-clear-body.v1.schema.json"
+            }
+          },
+          "capability_input": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-input-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-input-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "capability_input"
+          },
+          "close_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "close_page",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json"
+            }
+          },
+          "open_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "open_page",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/open-page-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/open-page-body.v1.schema.json"
+            }
+          },
+          "page_session_closed": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "page_session_closed"
+          },
+          "page_session_opened": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "page_session_opened"
+          },
+          "replace_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "replace_page",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/replace-page-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/replace-page-body.v1.schema.json"
+            }
+          }
+        },
+        "namespace": "dev.deckr.action_runtime.provider",
+        "operations": {
+          "action_instance_created": {},
+          "action_instance_destroyed": {},
+          "action_lifecycle_rejected": {},
+          "binding_attached": {},
+          "binding_detached": {},
+          "binding_output": {},
+          "binding_overlay": {},
+          "binding_overlay_clear": {},
+          "capability_input": {},
+          "close_page": {},
+          "open_page": {},
+          "page_session_closed": {},
+          "page_session_opened": {},
+          "replace_page": {}
+        },
+        "useProfile": "dev.deckr.action_runtime.provider.service_use.v1",
+        "viewFamilies": {
+          "action_availability": {
+            "storeName": "deckr_action_runtime_service_view_v1",
+            "writer": "service"
+          }
+        }
+      },
+      "rule": "SEM-SVC-002",
+      "schemaPath": "schemas/deckr/services/protocol-definition.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "undeclared-operation-invalid",
+      "instance": {
+        "advertisementProfile": "dev.deckr.action_runtime.provider.advertisement.v1",
+        "featureId": "dev.deckr.action_runtime.provider",
+        "messages": {
+          "action_instance_created": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "unknown"
+          },
+          "action_instance_destroyed": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_instance_destroyed"
+          },
+          "action_lifecycle_rejected": {
+            "direction": "service_to_consumer",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-lifecycle-rejected-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-lifecycle-rejected-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "action_lifecycle_rejected"
+          },
+          "binding_attached": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-attached-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-attached-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "binding_attached"
+          },
+          "binding_detached": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-detached-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-detached-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "binding_detached"
+          },
+          "binding_output": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_output",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-output-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-output-body.v1.schema.json"
+            }
+          },
+          "binding_overlay": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_overlay",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-body.v1.schema.json"
+            }
+          },
+          "binding_overlay_clear": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "binding_overlay_clear",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-clear-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-clear-body.v1.schema.json"
+            }
+          },
+          "capability_input": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-input-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-input-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "capability_input"
+          },
+          "close_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "close_page",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json"
+            }
+          },
+          "open_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "open_page",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/open-page-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/open-page-body.v1.schema.json"
+            }
+          },
+          "page_session_closed": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "page_session_closed"
+          },
+          "page_session_opened": {
+            "direction": "consumer_to_service",
+            "eventSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json"
+            },
+            "exchangePattern": "one_way",
+            "intent": "event",
+            "operation": "page_session_opened"
+          },
+          "replace_page": {
+            "direction": "service_to_consumer",
+            "exchangePattern": "one_way",
+            "intent": "command",
+            "operation": "replace_page",
+            "paramsSchema": {
+              "schema": {
+                "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/replace-page-body.v1.schema.json"
+              },
+              "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/replace-page-body.v1.schema.json"
+            }
+          }
+        },
+        "namespace": "dev.deckr.action_runtime.provider",
+        "operations": {
+          "action_instance_created": {},
+          "action_instance_destroyed": {},
+          "action_lifecycle_rejected": {},
+          "binding_attached": {},
+          "binding_detached": {},
+          "binding_output": {},
+          "binding_overlay": {},
+          "binding_overlay_clear": {},
+          "capability_input": {},
+          "close_page": {},
+          "open_page": {},
+          "page_session_closed": {},
+          "page_session_opened": {},
+          "replace_page": {}
+        },
+        "useProfile": "dev.deckr.action_runtime.provider.service_use.v1",
+        "viewFamilies": {
+          "action_availability": {
+            "storeName": "deckr_action_runtime_service_view_v1",
+            "writer": "service"
+          }
+        }
+      },
+      "rule": "SEM-SVC-002",
+      "schemaPath": "schemas/deckr/services/protocol-definition.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "consumerEndpoint": "controller:controller-main",
+        "consumerSessionId": "controller-session",
+        "contractId": "action-runtime-contract-1",
+        "generation": 1,
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceNamespace": "dev.deckr.action_runtime.provider",
+        "serviceSessionId": "service-session",
+        "viewKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current",
+        "writer": "service"
+      },
+      "id": "view-session-valid",
+      "instance": {
+        "annotations": {
+          "runtime": "python"
+        },
+        "consumerEndpoint": "controller:controller-main",
+        "consumerSessionId": "controller-session",
+        "contractId": "action-runtime-contract-1",
+        "entries": [
+          {
+            "actionId": "dev.deckr.clock.time",
+            "descriptor": {
+              "actionId": "dev.deckr.clock.time",
+              "name": "Clock",
+              "providerId": "dev.deckr.clock"
+            },
+            "status": "available"
+          }
+        ],
+        "generation": 1,
+        "labels": {
+          "room": "office"
+        },
+        "providerId": "dev.deckr.clock",
+        "providerInstanceId": "clock-main",
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceNamespace": "dev.deckr.action_runtime.provider",
+        "serviceSessionId": "service-session",
+        "viewKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current",
+        "writer": "service"
+      },
+      "rule": "SEM-SVC-004",
+      "schemaPath": "schemas/deckr/action-runtime/availability-view.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "context": {
+        "consumerEndpoint": "controller:controller-main",
+        "consumerSessionId": "controller-session",
+        "contractId": "action-runtime-contract-1",
+        "generation": 1,
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceNamespace": "dev.deckr.action_runtime.provider",
+        "serviceSessionId": "service-session",
+        "viewKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current",
+        "writer": "service"
+      },
+      "id": "view-session-invalid",
+      "instance": {
+        "annotations": {
+          "runtime": "python"
+        },
+        "consumerEndpoint": "controller:controller-main",
+        "consumerSessionId": "controller-session",
+        "contractId": "action-runtime-contract-1",
+        "entries": [
+          {
+            "actionId": "dev.deckr.clock.time",
+            "descriptor": {
+              "actionId": "dev.deckr.clock.time",
+              "name": "Clock",
+              "providerId": "dev.deckr.clock"
+            },
+            "status": "available"
+          }
+        ],
+        "generation": 1,
+        "labels": {
+          "room": "office"
+        },
+        "providerId": "dev.deckr.clock",
+        "providerInstanceId": "clock-main",
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceNamespace": "dev.deckr.action_runtime.provider",
+        "serviceSessionId": "stale-session",
+        "viewKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current",
+        "writer": "service"
+      },
+      "rule": "SEM-SVC-004",
+      "schemaPath": "schemas/deckr/action-runtime/availability-view.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "contractId": "action-runtime-contract-1",
+        "generation": 1
+      },
+      "id": "view-contract-valid",
+      "instance": {
+        "annotations": {
+          "runtime": "python"
+        },
+        "consumerEndpoint": "controller:controller-main",
+        "consumerSessionId": "controller-session",
+        "contractId": "action-runtime-contract-1",
+        "entries": [
+          {
+            "actionId": "dev.deckr.clock.time",
+            "descriptor": {
+              "actionId": "dev.deckr.clock.time",
+              "name": "Clock",
+              "providerId": "dev.deckr.clock"
+            },
+            "status": "available"
+          }
+        ],
+        "generation": 1,
+        "labels": {
+          "room": "office"
+        },
+        "providerId": "dev.deckr.clock",
+        "providerInstanceId": "clock-main",
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceNamespace": "dev.deckr.action_runtime.provider",
+        "serviceSessionId": "service-session",
+        "viewKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current",
+        "writer": "service"
+      },
+      "rule": "SEM-SVC-004",
+      "schemaPath": "schemas/deckr/action-runtime/availability-view.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "context": {
+        "contractId": "action-runtime-contract-1",
+        "generation": 1
+      },
+      "id": "view-contract-invalid",
+      "instance": {
+        "annotations": {
+          "runtime": "python"
+        },
+        "consumerEndpoint": "controller:controller-main",
+        "consumerSessionId": "controller-session",
+        "contractId": "another-contract",
+        "entries": [
+          {
+            "actionId": "dev.deckr.clock.time",
+            "descriptor": {
+              "actionId": "dev.deckr.clock.time",
+              "name": "Clock",
+              "providerId": "dev.deckr.clock"
+            },
+            "status": "available"
+          }
+        ],
+        "generation": 1,
+        "labels": {
+          "room": "office"
+        },
+        "providerId": "dev.deckr.clock",
+        "providerInstanceId": "clock-main",
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceNamespace": "dev.deckr.action_runtime.provider",
+        "serviceSessionId": "service-session",
+        "viewKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current",
+        "writer": "service"
+      },
+      "rule": "SEM-SVC-004",
+      "schemaPath": "schemas/deckr/action-runtime/availability-view.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "runtime-provider-id-valid",
+      "instance": {
+        "annotations": {
+          "runtime": "python"
+        },
+        "entries": [
+          {
+            "actionId": "dev.deckr.clock.time",
+            "descriptor": {
+              "actionId": "dev.deckr.clock.time",
+              "name": "Clock",
+              "providerId": "dev.deckr.clock"
+            },
+            "status": "available"
+          }
+        ],
+        "labels": {
+          "room": "office"
+        },
+        "providerId": "dev.deckr.clock",
+        "providerInstanceId": "clock-main",
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceSessionId": "service-session"
+      },
+      "rule": "SEM-ACT-001",
+      "schemaPath": "schemas/deckr/action-runtime/availability-payload.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "runtime-provider-id-invalid",
+      "instance": {
+        "annotations": {
+          "runtime": "python"
+        },
+        "entries": [
+          {
+            "actionId": "dev.deckr.clock.time",
+            "descriptor": {
+              "actionId": "dev.deckr.clock.time",
+              "name": "Clock",
+              "providerId": "dev.deckr.clock"
+            },
+            "status": "available"
+          }
+        ],
+        "labels": {
+          "room": "office"
+        },
+        "providerId": "dev.deckr.clock",
+        "providerInstanceId": "different-provider",
+        "serviceEndpoint": "service:action-runtime.clock-main",
+        "serviceId": "action-runtime.clock-main",
+        "serviceSessionId": "service-session"
+      },
+      "rule": "SEM-ACT-001",
+      "schemaPath": "schemas/deckr/action-runtime/availability-payload.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "availability-action-id-valid",
+      "instance": {
+        "actionId": "org.example.action",
+        "descriptor": {
+          "actionId": "org.example.action"
+        },
+        "status": "available"
+      },
+      "rule": "SEM-ACT-001",
+      "schemaPath": "schemas/deckr/action-runtime/action-availability-entry.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "availability-action-id-invalid",
+      "instance": {
+        "actionId": "org.example.action",
+        "descriptor": {
+          "actionId": "org.example.other"
+        },
+        "status": "available"
+      },
+      "rule": "SEM-ACT-001",
+      "schemaPath": "schemas/deckr/action-runtime/action-availability-entry.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "duplicate-requirement-name-valid",
+      "instance": {
+        "actionId": "example"
+      },
+      "rule": "SEM-ACT-002",
+      "schemaPath": "schemas/deckr/action-runtime/action-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "duplicate-requirement-name-invalid",
+      "instance": {
+        "actionId": "example",
+        "requirements": [
+          {
+            "name": "activate",
+            "preferences": [
+              {
+                "family": "dev.deckr.input.button"
+              }
+            ]
+          },
+          {
+            "name": "activate",
+            "preferences": [
+              {
+                "family": "dev.deckr.input.encoder"
+              }
+            ]
+          }
+        ]
+      },
+      "rule": "SEM-ACT-002",
+      "schemaPath": "schemas/deckr/action-runtime/action-descriptor.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "duplicate-page-control-valid",
+      "instance": {
+        "bindings": [
+          {
+            "controlId": "button-1",
+            "target": {
+              "kind": "self"
+            }
+          }
+        ],
+        "pageId": "page-1"
+      },
+      "rule": "SEM-ACT-003",
+      "schemaPath": "schemas/deckr/action-runtime/dynamic-page-command.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "duplicate-page-control-invalid",
+      "instance": {
+        "bindings": [
+          {
+            "controlId": "button-1",
+            "target": {
+              "kind": "self"
+            }
+          },
+          {
+            "controlId": "button-1",
+            "target": {
+              "kind": "self"
+            }
+          }
+        ],
+        "pageId": "page-1"
+      },
+      "rule": "SEM-ACT-003",
+      "schemaPath": "schemas/deckr/action-runtime/dynamic-page-command.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "id": "settings-target-mirror-valid",
+      "instance": {
+        "providerId": "example",
+        "providerInstanceId": "example",
+        "target": {
+          "configId": "example",
+          "controllerId": "example",
+          "providerId": "example",
+          "providerInstanceId": "example",
+          "scope": "action_provider_instance"
+        }
+      },
+      "rule": "SEM-ACT-004",
+      "schemaPath": "schemas/deckr/action-runtime/settings-target-description.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "id": "settings-target-mirror-invalid",
+      "instance": {
+        "providerId": "org.example.other",
+        "providerInstanceId": "example",
+        "target": {
+          "configId": "example",
+          "controllerId": "example",
+          "providerId": "example",
+          "providerInstanceId": "example",
+          "scope": "action_provider_instance"
+        }
+      },
+      "rule": "SEM-ACT-004",
+      "schemaPath": "schemas/deckr/action-runtime/settings-target-description.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    }
+  ],
+  "description": "Declarative semantic conformance cases. schemaValid is checked by repository CI; consuming implementations evaluate semanticValid using the named rule. These are not schema-invalid fixtures."
+}

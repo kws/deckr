@@ -1,0 +1,46 @@
+{
+  "body": {
+    "event": {
+      "actionInstance": {
+        "actionId": "dev.deckr.clock.time",
+        "actionInstanceId": "clock-instance-1",
+        "configId": "clock-config-1",
+        "contextId": "clock-context-1",
+        "providerId": "dev.deckr.clock",
+        "providerInstanceId": "clock-main"
+      },
+      "reason": "action_not_available",
+      "targetKind": "action_instance"
+    },
+    "exchangePattern": "one_way",
+    "intent": "event",
+    "name": "action_lifecycle_rejected",
+    "params": {},
+    "serviceNamespace": "dev.deckr.action_runtime.provider"
+  },
+  "contract": {
+    "contractId": "action-runtime-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "services",
+  "messageId": "fixture-action-runtime-action-instance-created",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "service:action-runtime.clock-main",
+  "senderSessionId": "service-session",
+  "subject": {
+    "identifiers": {
+      "name": "action_lifecycle_rejected",
+      "namespace": "dev.deckr.action_runtime.provider",
+      "serviceId": "action-runtime.clock-main"
+    },
+    "kind": "service"
+  }
+}

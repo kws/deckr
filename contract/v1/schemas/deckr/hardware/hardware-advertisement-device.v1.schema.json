@@ -1,0 +1,22 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/hardware-advertisement-device.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capacity": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/profile-capacity.v1.schema.json"
+    },
+    "descriptor": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-descriptor.v1.schema.json"
+    },
+    "deviceRef": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json"
+    }
+  },
+  "required": [
+    "deviceRef",
+    "descriptor"
+  ],
+  "title": "HardwareAdvertisementDevice",
+  "type": "object"
+}

@@ -1,0 +1,31 @@
+{
+  "annotations": {
+    "runtime": "python"
+  },
+  "consumerEndpoint": "controller:controller-main",
+  "consumerSessionId": "controller-session",
+  "contractId": "action-runtime-contract-1",
+  "entries": [
+    {
+      "actionId": "dev.deckr.clock.time",
+      "descriptor": {
+        "actionId": "dev.deckr.clock.time",
+        "name": "Clock",
+        "providerId": "dev.deckr.clock"
+      },
+      "status": "available"
+    }
+  ],
+  "generation": 0,
+  "labels": {
+    "room": "office"
+  },
+  "providerId": "dev.deckr.clock",
+  "providerInstanceId": "clock-main",
+  "serviceEndpoint": "service:action-runtime.clock-main",
+  "serviceId": "action-runtime.clock-main",
+  "serviceNamespace": "dev.deckr.action_runtime.provider",
+  "serviceSessionId": "service-session",
+  "viewKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current",
+  "writer": "service"
+}

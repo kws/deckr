@@ -1,0 +1,39 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/settings-snapshot.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "provenance": {
+      "items": {
+        "enum": [
+          "config_default",
+          "user_override",
+          "template_override",
+          "runtime",
+          "stale_schema"
+        ],
+        "type": "string"
+      },
+      "title": "Provenance",
+      "type": "array"
+    },
+    "schemaMetadata": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/settings-schema-metadata.v1.schema.json"
+    },
+    "settings": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "type": "object"
+    },
+    "target": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/settings-target-ref.v1.schema.json"
+    }
+  },
+  "required": [
+    "target",
+    "settings"
+  ],
+  "title": "Settings snapshot",
+  "type": "object"
+}

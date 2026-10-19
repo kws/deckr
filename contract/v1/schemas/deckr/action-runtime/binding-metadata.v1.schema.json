@@ -1,0 +1,115 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-metadata.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Action-provider-facing metadata for one controller-owned control binding.",
+  "properties": {
+    "actionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Actionid",
+      "type": "string"
+    },
+    "actionInstanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Actioninstanceid",
+      "type": "string"
+    },
+    "bindingId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Bindingid",
+      "type": "string"
+    },
+    "configId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Configid",
+      "type": "string"
+    },
+    "contextId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Contextid",
+      "type": "string"
+    },
+    "controlRef": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/control-ref.v1.schema.json"
+    },
+    "deviceRef": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json"
+    },
+    "handler": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Handler"
+    },
+    "itemKey": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Itemkey"
+    },
+    "matchedCapabilities": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/matched-capability.v1.schema.json"
+      },
+      "title": "Matchedcapabilities",
+      "type": "array"
+    },
+    "outputGeneration": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Outputgeneration",
+      "type": "integer"
+    },
+    "pageSessionId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pagesessionid"
+    },
+    "providerId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Providerid",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Providerinstanceid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "providerInstanceId",
+    "providerId",
+    "actionId",
+    "actionInstanceId",
+    "configId",
+    "contextId",
+    "bindingId",
+    "deviceRef",
+    "controlRef"
+  ],
+  "title": "BindingMetadata",
+  "type": "object"
+}

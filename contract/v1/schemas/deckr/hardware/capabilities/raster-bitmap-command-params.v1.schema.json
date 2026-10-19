@@ -1,0 +1,13 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/raster-bitmap-command-params.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/raster-bitmap-set-frame-params.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/raster-bitmap-clear-params.v1.schema.json"
+    }
+  ],
+  "title": "Raster bitmap command parameters"
+}

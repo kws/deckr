@@ -1,0 +1,21 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-target.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "endpoint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json"
+    },
+    "targetType": {
+      "const": "endpoint",
+      "default": "endpoint",
+      "title": "Targettype",
+      "type": "string"
+    }
+  },
+  "required": [
+    "endpoint"
+  ],
+  "title": "EndpointTarget",
+  "type": "object"
+}

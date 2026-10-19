@@ -1,0 +1,22 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/hardware-claim-device.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "deviceRef": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json"
+    },
+    "instanceCount": {
+      "exclusiveMinimum": 0,
+      "minimum": 1,
+      "title": "Instancecount",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "deviceRef",
+    "instanceCount"
+  ],
+  "title": "HardwareClaimDevice",
+  "type": "object"
+}

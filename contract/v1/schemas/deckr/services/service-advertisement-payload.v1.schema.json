@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "ServiceBackendStatus": {
+      "enum": [
+        "available",
+        "degraded",
+        "unavailable"
+      ],
+      "title": "ServiceBackendStatus",
+      "type": "string"
+    },
+    "ServiceExchangePattern": {
+      "enum": [
+        "one_way",
+        "request_reply"
+      ],
+      "title": "ServiceExchangePattern",
+      "type": "string"
+    },
+    "ServiceMessageDirection": {
+      "enum": [
+        "consumer_to_service",
+        "service_to_consumer",
+        "bidirectional"
+      ],
+      "title": "ServiceMessageDirection",
+      "type": "string"
+    },
+    "ServiceMessageIntent": {
+      "enum": [
+        "command",
+        "query",
+        "event",
+        "notification"
+      ],
+      "title": "ServiceMessageIntent",
+      "type": "string"
+    },
+    "ServiceViewWriter": {
+      "enum": [
+        "service",
+        "consumer"
+      ],
+      "title": "ServiceViewWriter",
+      "type": "string"
+    }
+  },
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-advertisement-payload.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "backendStatus": {
+      "$ref": "#/$defs/ServiceBackendStatus"
+    },
+    "diagnostics": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Diagnostics",
+      "type": "object"
+    },
+    "profile": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Profile",
+      "type": "string"
+    },
+    "serviceEndpoint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json",
+      "pattern": "^service:"
+    },
+    "serviceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Serviceid",
+      "type": "string"
+    },
+    "serviceNamespace": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Servicenamespace",
+      "type": "string"
+    },
+    "serviceUseProfile": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Serviceuseprofile",
+      "type": "string"
+    },
+    "sessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "supportedMessages": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-message-definition.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "title": "Supportedmessages",
+      "type": "object"
+    },
+    "supportedOperations": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "title": "Supportedoperations",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "views": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-view-family.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "title": "Views",
+      "type": "object"
+    }
+  },
+  "required": [
+    "profile",
+    "serviceId",
+    "serviceEndpoint",
+    "serviceNamespace",
+    "sessionId",
+    "serviceUseProfile",
+    "backendStatus",
+    "supportedOperations",
+    "supportedMessages",
+    "views"
+  ],
+  "title": "ServiceAdvertisementPayload",
+  "type": "object"
+}

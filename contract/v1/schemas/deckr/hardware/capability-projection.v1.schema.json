@@ -1,0 +1,48 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-projection.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Explicit projection or derivation metadata for a capability.",
+  "properties": {
+    "description": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "owner": {
+      "enum": [
+        "hardware_manager",
+        "adapter",
+        "component"
+      ],
+      "title": "Owner",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/descriptor-capability-ref.v1.schema.json"
+    },
+    "type": {
+      "default": "projection",
+      "enum": [
+        "projection",
+        "derivation"
+      ],
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "owner",
+    "source"
+  ],
+  "title": "CapabilityProjection",
+  "type": "object"
+}

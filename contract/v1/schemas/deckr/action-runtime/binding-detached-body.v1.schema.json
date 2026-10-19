@@ -1,0 +1,20 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-detached-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "binding": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-metadata.v1.schema.json"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "binding",
+    "reason"
+  ],
+  "title": "BindingDetachedBody",
+  "type": "object"
+}

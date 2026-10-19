@@ -1,0 +1,186 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-lifecycle-rejected-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "targetKind": {
+            "const": "action_instance"
+          }
+        },
+        "required": [
+          "targetKind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "actionInstance": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "binding": {
+            "type": "null"
+          },
+          "pageSession": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "actionInstance"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "targetKind": {
+            "const": "binding"
+          }
+        },
+        "required": [
+          "targetKind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "actionInstance": {
+            "type": "null"
+          },
+          "binding": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "pageSession": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "binding"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "targetKind": {
+            "const": "page_session"
+          }
+        },
+        "required": [
+          "targetKind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "actionInstance": {
+            "type": "null"
+          },
+          "binding": {
+            "type": "null"
+          },
+          "pageSession": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "pageSession"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "actionInstance": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-metadata.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "binding": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-metadata.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "details": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Details",
+      "type": "object"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Message"
+    },
+    "pageSession": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-metadata.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "reason": {
+      "enum": [
+        "action_not_available",
+        "provider_not_ready",
+        "invalid_settings",
+        "unsupported_capability",
+        "resource_unavailable",
+        "permission_denied",
+        "stale_lifecycle",
+        "internal_error"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "retryable": {
+      "default": false,
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "targetKind": {
+      "enum": [
+        "action_instance",
+        "binding",
+        "page_session"
+      ],
+      "title": "Targetkind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "targetKind",
+    "reason"
+  ],
+  "title": "ActionLifecycleRejectedBody",
+  "type": "object"
+}

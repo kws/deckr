@@ -1,0 +1,42 @@
+{
+  "cases": [
+    {
+      "id": "provider",
+      "key": "settings.target.action_provider_instance.controller-main.config-1.clock-main.b64_b3JnLmV4YW1wbGUuY2xvY2s",
+      "target": {
+        "configId": "config-1",
+        "controllerId": "controller-main",
+        "providerId": "org.example.clock",
+        "providerInstanceId": "clock-main",
+        "scope": "action_provider_instance"
+      }
+    },
+    {
+      "id": "instance",
+      "key": "settings.target.action_instance.controller-main.config-1.clock-main.b64_b3JnLmV4YW1wbGUuY2xvY2s.b64_b3JnLmV4YW1wbGUuY2xvY2s.clock-1.0",
+      "target": {
+        "actionId": "org.example.clock",
+        "actionInstanceId": "clock-1",
+        "configId": "config-1",
+        "controllerId": "controller-main",
+        "providerId": "org.example.clock",
+        "providerInstanceId": "clock-main",
+        "scope": "action_instance"
+      }
+    },
+    {
+      "id": "stable_instance",
+      "key": "settings.target.action_instance.controller-main.config-1.clock-main.b64_b3JnLmV4YW1wbGUuY2xvY2s.b64_b3JnLmV4YW1wbGUuY2xvY2s.clock-1.1.b64_cGFnZSAvIMOp",
+      "target": {
+        "actionId": "org.example.clock",
+        "actionInstanceId": "clock-1",
+        "configId": "config-1",
+        "controllerId": "controller-main",
+        "providerId": "org.example.clock",
+        "providerInstanceId": "clock-main",
+        "scope": "action_instance",
+        "stableId": "page / é"
+      }
+    }
+  ]
+}

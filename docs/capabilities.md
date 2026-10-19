@@ -2,8 +2,7 @@
 
 This document defines how Deckr uses device, control, and capability descriptors
 for v1. The descriptor model is intentionally extensible: hardware managers and
-adapters can expose new non-Deckr capability families without changing Deckr
-core code.
+adapters can expose new non-Deckr capability families without changing the generic Deckr schemas.
 
 At the same time, any capability family under the `dev.deckr.*` namespace is a core
 Deckr contract. Core capabilities must be specified in `deckr`, not improvised
@@ -13,8 +12,7 @@ ownership rules live in [`namespaces.md`](namespaces.md).
 ## Contract Boundaries
 
 A capability descriptor tells Deckr what a device or control can do. The shared
-descriptor model lives in `deckr.hardware.descriptors` and defines the common
-fields:
+descriptor schema is [CapabilityDescriptor](../contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json) and defines the common fields:
 
 - `capabilityId`: descriptor-local identifier used to target a concrete
   capability on a specific device or control.
@@ -35,14 +33,13 @@ real capability in one descriptor. Generic matching should prefer
 `family`, `type`, `direction`, and event or command names. Once a controller has
 matched a concrete binding, messages target the selected `capabilityId`.
 
-Python models may freeze JSON values as immutable mappings. Consumers must not
-depend on receiving a plain `dict`; use the canonical parser for Deckr core
-payloads or `deckr.contracts.models.thaw_json` before generic inspection.
+Validate JSON values against the selected capability schema. Runtime mapping
+classes and immutability wrappers are implementation details.
 
 ## Core Versus Extension Families
 
 Deckr core families use the `dev.deckr.*` namespace. A `dev.deckr.*` family is valid
-only when it is listed by `deckr.hardware.descriptors`. Adding one is a core
+only when it is listed by the capability descriptor schema. Adding one is a core
 contract change and must define the family, type names, direction, access,
 events or commands, schemas, constraints, units, tests, and docs.
 
@@ -168,8 +165,8 @@ declares a more specific unit. Positive values mean clockwise rotation. Negative
 values mean counterclockwise rotation. `direction` is optional, but if present
 it must agree with the sign of `delta`.
 
-Consumers should use `deckr.hardware.capabilities.encoder_relative_input_value`
-instead of inspecting raw mappings directly.
+Consumers validate this payload with the
+[encoder value schema](../contract/v1/schemas/deckr/hardware/capabilities/encoder-relative-input-value.v1.schema.json).
 
 ### Touch Gesture
 
@@ -260,32 +257,17 @@ Command params:
 Device-level capabilities do not have a `controlId`. They target the device
 itself.
 
-## Canonical Helpers
+## Canonical schemas
 
-The canonical schemas and parsers for Deckr core capability payloads live in
-`deckr.hardware.capabilities`.
+All core value and command parameter definitions are published independently in
+[the capability schema directory](../contract/v1/schemas/deckr/hardware/capabilities/).
+Use the manifest's `wireSchemaId` mapping to resolve the IDs listed above.
 
-Current helpers include:
-
-- `button_activation_value_schema`
-- `button_activation_input_value`
-- `button_momentary_value_schema`
-- `button_momentary_input_value`
-- `encoder_relative_value_schema`
-- `encoder_relative_input_value`
-- `touch_gesture_value_schema`
-- `touch_gesture_input_value`
-- `raster_bitmap_command_schema`
-- `raster_bitmap_command_params`
-- `device_power_command_schema`
-- `device_power_command_params`
-
-These helpers are not a registry for extension capabilities. They are the
-shared implementation of the Deckr-owned `dev.deckr.*` vocabulary only.
-
-Python components that create or consume Deckr-owned capability values or
-command params should use these helpers rather than hand-building or
-hand-parsing payload dictionaries.
+Raster commands have separate `set_frame` and `clear` parameter schemas; the
+family union alone does not select the command. A `set_frame` requires image and
+encoding, and `clear`, `sleep` and `wake` use empty objects. Device-specific raster
+sizes constrain the reusable parameter schema rather than redefine it under the
+same ID. Decoding base64 and checking actual image bytes/dimensions are semantic checks.
 
 ## Descriptor-Driven Extensibility
 
@@ -320,16 +302,9 @@ semantics rather than one device family or one plugin's private convention.
 
 The required checklist is:
 
-1. Add the family constant, allowed type list, and event or command constants in
-   `deckr.hardware.descriptors`.
-2. Define canonical value or command schemas in `deckr.hardware.capabilities`
-   when the payload has semantics beyond an empty object.
-3. Add parser or constructor helpers only when they are thin helpers over the
-   canonical schema.
-4. Update descriptor validation so malformed core descriptors fail early.
-5. Add fixtures and tests for descriptor validation, schema shape, and any
-   parser helper.
-6. Update producers, consumers, SDK helper constructors, examples, and BAU docs
-   to use the new single contract.
-7. Do not add aliases, compatibility shapes, or fallback parsing for old Deckr
-   internal contracts.
+1. Specify the family, allowed types, direction, access and event/command vocabulary.
+2. Update the capability descriptor schema and publish reusable value/parameter schemas.
+3. Add complete positive and negative examples, including command-specific cases.
+4. Add semantic cases where descriptor lookup, image decoding or cross-field
+   relationships cannot be checked structurally.
+5. Update producers/consumers and this reference in their respective repositories.

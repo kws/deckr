@@ -1,0 +1,43 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-ref.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Reference to a manager-local device in a hardware manager context.",
+  "properties": {
+    "deviceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "not": {
+        "pattern": "^(action_provider|controller|hardware_manager):"
+      },
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "fingerprint": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fingerprint"
+    },
+    "managerId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "not": {
+        "pattern": "^(action_provider|controller|hardware_manager):"
+      },
+      "title": "Managerid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "managerId",
+    "deviceId"
+  ],
+  "title": "DeviceRef",
+  "type": "object"
+}

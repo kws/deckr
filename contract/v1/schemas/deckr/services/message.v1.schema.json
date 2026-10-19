@@ -1,0 +1,48 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/message.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/message.v1.schema.json"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-message-body.v1.schema.json"
+        },
+        "contract": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/contract-pointer.v1.schema.json"
+        },
+        "lane": {
+          "const": "services"
+        },
+        "messageType": {
+          "const": "serviceMessage"
+        },
+        "recipient": {
+          "properties": {
+            "endpoint": {
+              "pattern": "^(controller|action_provider|service):"
+            },
+            "targetType": {
+              "const": "endpoint"
+            }
+          },
+          "required": [
+            "endpoint"
+          ]
+        },
+        "sender": {
+          "pattern": "^(controller|action_provider|service):"
+        }
+      },
+      "required": [
+        "lane",
+        "messageType",
+        "contract",
+        "body"
+      ]
+    }
+  ],
+  "title": "Services lane message"
+}

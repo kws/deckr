@@ -1,0 +1,88 @@
+{
+  "connections": [
+    {
+      "connectionId": "vendor-radio-0",
+      "type": "radio"
+    }
+  ],
+  "controls": [
+    {
+      "controlId": "button.smart",
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "smart.button",
+          "direction": "input",
+          "eventTypes": [
+            "single",
+            "double",
+            "hold",
+            "release"
+          ],
+          "family": "com.example.input.smart_button",
+          "type": "action",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "enum": [
+                    "single",
+                    "double",
+                    "hold",
+                    "release"
+                  ]
+                }
+              },
+              "required": [
+                "action"
+              ],
+              "type": "object"
+            },
+            "schemaId": "com.example.input.smart_button.value.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "smart.button",
+              "controlId": "button.smart"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "button"
+    }
+  ],
+  "deviceId": "smart-button",
+  "displayName": "Smart Button",
+  "fingerprint": "com.example:smart-button:001"
+}

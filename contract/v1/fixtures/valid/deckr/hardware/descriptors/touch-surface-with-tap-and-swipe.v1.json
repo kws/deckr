@@ -1,0 +1,77 @@
+{
+  "connections": [
+    {
+      "connectionId": "virtual-0",
+      "type": "virtual"
+    }
+  ],
+  "controls": [
+    {
+      "controlId": "touch.main",
+      "geometry": {
+        "height": 1,
+        "unit": "normalized",
+        "width": 1,
+        "x": 0,
+        "y": 0
+      },
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "touch.gesture",
+          "direction": "input",
+          "eventTypes": [
+            "tap",
+            "swipe"
+          ],
+          "family": "dev.deckr.input.touch",
+          "type": "gesture",
+          "valueSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "eventType": {
+                      "const": "tap"
+                    }
+                  },
+                  "required": [
+                    "eventType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "direction": {
+                      "enum": [
+                        "left",
+                        "right"
+                      ]
+                    },
+                    "eventType": {
+                      "const": "swipe"
+                    }
+                  },
+                  "required": [
+                    "eventType",
+                    "direction"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.value.input.touch.gesture.v1"
+          }
+        }
+      ],
+      "kind": "touch_surface"
+    }
+  ],
+  "deviceId": "touch-surface",
+  "displayName": "Touch Surface",
+  "fingerprint": "virtual:touch-surface"
+}

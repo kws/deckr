@@ -1,0 +1,76 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/encoder-relative-input-value.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "direction": {
+            "const": "clockwise"
+          }
+        },
+        "required": [
+          "direction"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delta": {
+            "minimum": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "direction": {
+            "const": "counterclockwise"
+          }
+        },
+        "required": [
+          "direction"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delta": {
+            "maximum": -1
+          }
+        }
+      }
+    }
+  ],
+  "description": "Value payload for a ``dev.deckr.input.encoder`` relative rotate event.",
+  "properties": {
+    "delta": {
+      "not": {
+        "const": 0
+      },
+      "title": "Delta",
+      "type": "integer"
+    },
+    "direction": {
+      "anyOf": [
+        {
+          "enum": [
+            "clockwise",
+            "counterclockwise"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Direction"
+    }
+  },
+  "required": [
+    "delta"
+  ],
+  "title": "EncoderRelativeInputValue",
+  "type": "object"
+}

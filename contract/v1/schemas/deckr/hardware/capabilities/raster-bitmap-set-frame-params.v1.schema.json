@@ -1,0 +1,58 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/raster-bitmap-set-frame-params.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Command params for ``dev.deckr.output.raster`` bitmap ``set_frame``.",
+  "properties": {
+    "encoding": {
+      "enum": [
+        "jpeg",
+        "png"
+      ],
+      "title": "Encoding",
+      "type": "string"
+    },
+    "height": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Height"
+    },
+    "image": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "contentEncoding": "base64",
+      "description": "Base64-encoded image bytes. Implementations must decode and verify the declared image format.",
+      "minLength": 1,
+      "title": "Image",
+      "type": "string"
+    },
+    "width": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Width"
+    }
+  },
+  "required": [
+    "image",
+    "encoding"
+  ],
+  "title": "RasterBitmapSetFrameParams",
+  "type": "object"
+}

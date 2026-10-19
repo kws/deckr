@@ -1,0 +1,25 @@
+{
+  "binding": {
+    "actionId": "example",
+    "actionInstanceId": "example",
+    "bindingId": "example",
+    "configId": "example",
+    "contextId": "example",
+    "controlRef": {
+      "controlId": "example",
+      "deviceRef": {
+        "deviceId": "deck-1",
+        "fingerprint": "fingerprint:deck-1",
+        "managerId": "mirabox-main"
+      }
+    },
+    "deviceRef": {
+      "deviceId": "deck-1",
+      "fingerprint": "fingerprint:deck-1",
+      "managerId": "mirabox-main"
+    },
+    "providerId": "example",
+    "providerInstanceId": "example"
+  },
+  "generation": 0
+}

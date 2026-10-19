@@ -1,0 +1,23 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/protocols/beacon/beacon-protocol.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "namespace": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Namespace",
+      "type": "string"
+    },
+    "version": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "namespace",
+    "version"
+  ],
+  "title": "BeaconProtocol",
+  "type": "object"
+}

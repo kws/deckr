@@ -1,0 +1,27 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "pageSession": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-metadata.v1.schema.json"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "pageSession"
+  ],
+  "title": "PageSessionLifecycleBody",
+  "type": "object"
+}

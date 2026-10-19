@@ -1,0 +1,19 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-input-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "binding": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-metadata.v1.schema.json"
+    },
+    "event": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-input-event.v1.schema.json"
+    }
+  },
+  "required": [
+    "binding",
+    "event"
+  ],
+  "title": "CapabilityInputBody",
+  "type": "object"
+}

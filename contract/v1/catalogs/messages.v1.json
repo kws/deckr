@@ -1,0 +1,235 @@
+{
+  "messages": [
+    {
+      "lane": "hardware_messages",
+      "messageType": "controlInput",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/hardware/bodies/control-input-message.v1.schema.json",
+      "schemaPath": "schemas/deckr/hardware/messages/control-input.v1.schema.json"
+    },
+    {
+      "lane": "hardware_messages",
+      "messageType": "controlCommand",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/hardware/bodies/control-command-message.v1.schema.json",
+      "schemaPath": "schemas/deckr/hardware/messages/control-command.v1.schema.json"
+    },
+    {
+      "lane": "hardware_messages",
+      "messageType": "capabilityStateChanged",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/hardware/bodies/capability-state-changed-message.v1.schema.json",
+      "schemaPath": "schemas/deckr/hardware/messages/capability-state-changed.v1.schema.json"
+    },
+    {
+      "lane": "hardware_messages",
+      "messageType": "capabilityStateRequest",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/hardware/bodies/capability-state-request-message.v1.schema.json",
+      "schemaPath": "schemas/deckr/hardware/messages/capability-state-request.v1.schema.json"
+    },
+    {
+      "lane": "hardware_messages",
+      "messageType": "capabilityStateReply",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/hardware/bodies/capability-state-reply-message.v1.schema.json",
+      "schemaPath": "schemas/deckr/hardware/messages/capability-state-reply.v1.schema.json"
+    },
+    {
+      "lane": "hardware_messages",
+      "messageType": "commandAccepted",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/hardware/bodies/command-accepted-message.v1.schema.json",
+      "schemaPath": "schemas/deckr/hardware/messages/command-accepted.v1.schema.json"
+    },
+    {
+      "lane": "hardware_messages",
+      "messageType": "commandRejected",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/hardware/bodies/command-rejected-message.v1.schema.json",
+      "schemaPath": "schemas/deckr/hardware/messages/command-rejected.v1.schema.json"
+    },
+    {
+      "lane": "hardware_messages",
+      "messageType": "commandReply",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/hardware/bodies/command-reply-message.v1.schema.json",
+      "schemaPath": "schemas/deckr/hardware/messages/command-reply.v1.schema.json"
+    },
+    {
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "payloadLocation": "body",
+      "payloadSchemaPath": "schemas/deckr/services/service-message-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/services/message.v1.schema.json"
+    },
+    {
+      "direction": "controller_to_runtime",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "action_instance_created",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/action-instance-created.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "controller_to_runtime",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "action_instance_destroyed",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/action-instance-destroyed.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "controller_to_runtime",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "binding_attached",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/binding-attached-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-attached.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "controller_to_runtime",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "binding_detached",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/binding-detached-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-detached.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "controller_to_runtime",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "page_session_opened",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/page-session-opened.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "controller_to_runtime",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "page_session_closed",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/page-session-closed.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "controller_to_runtime",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "capability_input",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/capability-input-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/capability-input.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "runtime_to_controller",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "action_lifecycle_rejected",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/action-lifecycle-rejected-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/action-lifecycle-rejected.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "runtime_to_controller",
+      "exchangePattern": "one_way",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "binding_output",
+      "payloadLocation": "body.params",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/binding-output-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-output.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "runtime_to_controller",
+      "exchangePattern": "one_way",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "binding_overlay",
+      "payloadLocation": "body.params",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/binding-overlay-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-overlay.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "runtime_to_controller",
+      "exchangePattern": "one_way",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "binding_overlay_clear",
+      "payloadLocation": "body.params",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/binding-overlay-clear-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-overlay-clear.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "runtime_to_controller",
+      "exchangePattern": "one_way",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "open_page",
+      "payloadLocation": "body.params",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/open-page-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/open-page.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "runtime_to_controller",
+      "exchangePattern": "one_way",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "replace_page",
+      "payloadLocation": "body.params",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/replace-page-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/replace-page.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "runtime_to_controller",
+      "exchangePattern": "one_way",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "close_page",
+      "payloadLocation": "body.params",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/empty-action-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/close-page.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    }
+  ]
+}

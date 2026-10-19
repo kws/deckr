@@ -1,0 +1,561 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-descriptor.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "direction": {
+            "const": "input"
+          }
+        },
+        "required": [
+          "direction"
+        ]
+      },
+      "then": {
+        "properties": {
+          "access": {
+            "contains": {
+              "enum": [
+                "emits"
+              ]
+            }
+          },
+          "commandSchema": {
+            "type": "null"
+          },
+          "commandTypes": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "direction": {
+            "const": "output"
+          }
+        },
+        "required": [
+          "direction"
+        ]
+      },
+      "then": {
+        "properties": {
+          "access": {
+            "contains": {
+              "enum": [
+                "invokable",
+                "settable"
+              ]
+            }
+          },
+          "eventTypes": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "direction": {
+            "const": "state"
+          }
+        },
+        "required": [
+          "direction"
+        ]
+      },
+      "then": {
+        "properties": {
+          "access": {
+            "contains": {
+              "enum": [
+                "emits",
+                "readable",
+                "requestable",
+                "settable"
+              ]
+            }
+          },
+          "commandSchema": {
+            "type": "null"
+          },
+          "commandTypes": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "direction": {
+            "const": "command"
+          }
+        },
+        "required": [
+          "direction"
+        ]
+      },
+      "then": {
+        "properties": {
+          "access": {
+            "contains": {
+              "enum": [
+                "invokable"
+              ]
+            }
+          },
+          "eventTypes": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.device.power"
+          }
+        },
+        "required": [
+          "family"
+        ]
+      },
+      "then": {
+        "properties": {
+          "direction": {
+            "const": "command"
+          },
+          "type": {
+            "enum": [
+              "screen"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.input.button"
+          }
+        },
+        "required": [
+          "family"
+        ]
+      },
+      "then": {
+        "properties": {
+          "direction": {
+            "const": "input"
+          },
+          "type": {
+            "enum": [
+              "activation",
+              "momentary"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.input.encoder"
+          }
+        },
+        "required": [
+          "family"
+        ]
+      },
+      "then": {
+        "properties": {
+          "direction": {
+            "const": "input"
+          },
+          "type": {
+            "enum": [
+              "relative"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.input.touch"
+          }
+        },
+        "required": [
+          "family"
+        ]
+      },
+      "then": {
+        "properties": {
+          "direction": {
+            "const": "input"
+          },
+          "type": {
+            "enum": [
+              "gesture"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.output.raster"
+          }
+        },
+        "required": [
+          "family"
+        ]
+      },
+      "then": {
+        "properties": {
+          "direction": {
+            "const": "output"
+          },
+          "type": {
+            "enum": [
+              "bitmap"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.input.button"
+          },
+          "type": {
+            "const": "activation"
+          }
+        },
+        "required": [
+          "family",
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "eventTypes": {
+            "const": [
+              "press"
+            ]
+          }
+        },
+        "required": [
+          "eventTypes"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.input.button"
+          },
+          "type": {
+            "const": "momentary"
+          }
+        },
+        "required": [
+          "family",
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "eventTypes": {
+            "const": [
+              "down",
+              "up"
+            ]
+          }
+        },
+        "required": [
+          "eventTypes"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.input.encoder"
+          },
+          "type": {
+            "const": "relative"
+          }
+        },
+        "required": [
+          "family",
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "eventTypes": {
+            "const": [
+              "rotate"
+            ]
+          }
+        },
+        "required": [
+          "eventTypes"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.input.touch"
+          },
+          "type": {
+            "const": "gesture"
+          }
+        },
+        "required": [
+          "family",
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "eventTypes": {
+            "const": [
+              "tap",
+              "swipe"
+            ]
+          }
+        },
+        "required": [
+          "eventTypes"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.output.raster"
+          },
+          "type": {
+            "const": "bitmap"
+          }
+        },
+        "required": [
+          "family",
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "commandTypes": {
+            "const": [
+              "set_frame",
+              "clear"
+            ]
+          }
+        },
+        "required": [
+          "commandTypes"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "family": {
+            "const": "dev.deckr.device.power"
+          },
+          "type": {
+            "const": "screen"
+          }
+        },
+        "required": [
+          "family",
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "commandTypes": {
+            "const": [
+              "sleep",
+              "wake"
+            ]
+          }
+        },
+        "required": [
+          "commandTypes"
+        ]
+      }
+    }
+  ],
+  "description": "Descriptor for one input, output, state, or command capability.",
+  "properties": {
+    "access": {
+      "items": {
+        "enum": [
+          "emits",
+          "readable",
+          "settable",
+          "requestable",
+          "invokable"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Access",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "capabilityId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Capabilityid",
+      "type": "string"
+    },
+    "commandSchema": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-schema.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "commandTypes": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+        "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+        "type": "string"
+      },
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Commandtypes",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "constraints": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-constraint.v1.schema.json"
+      },
+      "title": "Constraints",
+      "type": "array"
+    },
+    "direction": {
+      "enum": [
+        "input",
+        "output",
+        "state",
+        "command"
+      ],
+      "title": "Direction",
+      "type": "string"
+    },
+    "eventTypes": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+        "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+        "type": "string"
+      },
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Eventtypes",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "family": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "anyOf": [
+        {
+          "enum": [
+            "dev.deckr.device.power",
+            "dev.deckr.input.button",
+            "dev.deckr.input.encoder",
+            "dev.deckr.input.touch",
+            "dev.deckr.output.raster"
+          ]
+        },
+        {
+          "pattern": "^(?!dev\\.deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+          "type": "string"
+        }
+      ],
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+      "title": "Family",
+      "type": "string"
+    },
+    "projection": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-projection.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "sources": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-source-reference.v1.schema.json"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "type": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Type",
+      "type": "string"
+    },
+    "units": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-unit.v1.schema.json"
+      },
+      "title": "Units",
+      "type": "array"
+    },
+    "valueSchema": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capability-schema.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "capabilityId",
+    "family",
+    "type",
+    "direction",
+    "access"
+  ],
+  "title": "CapabilityDescriptor",
+  "type": "object"
+}

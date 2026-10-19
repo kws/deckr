@@ -1,0 +1,8 @@
+{
+  "actionId": "dev.deckr.clock.time",
+  "actionInstanceId": "clock-instance-1",
+  "configId": "clock-config-1",
+  "contextId": "clock-context-1",
+  "providerId": "dev.deckr.clock",
+  "providerInstanceId": "clock-main"
+}

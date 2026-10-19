@@ -1,0 +1,176 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-requirement-selector.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "anyOf": [
+        {
+          "properties": {
+            "capabilityId": {
+              "not": {
+                "type": "null"
+              }
+            }
+          },
+          "required": [
+            "capabilityId"
+          ]
+        },
+        {
+          "properties": {
+            "family": {
+              "not": {
+                "type": "null"
+              }
+            }
+          },
+          "required": [
+            "family"
+          ]
+        },
+        {
+          "properties": {
+            "type": {
+              "not": {
+                "type": "null"
+              }
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "properties": {
+            "direction": {
+              "not": {
+                "type": "null"
+              }
+            }
+          },
+          "required": [
+            "direction"
+          ]
+        },
+        {
+          "properties": {
+            "eventTypes": {
+              "minItems": 1
+            }
+          },
+          "required": [
+            "eventTypes"
+          ]
+        },
+        {
+          "properties": {
+            "commandTypes": {
+              "minItems": 1
+            }
+          },
+          "required": [
+            "commandTypes"
+          ]
+        }
+      ]
+    }
+  ],
+  "description": "One acceptable capability shape for an action requirement.",
+  "properties": {
+    "capabilityId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Capabilityid"
+    },
+    "commandTypes": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+        "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+        "type": "string"
+      },
+      "title": "Commandtypes",
+      "type": "array"
+    },
+    "direction": {
+      "anyOf": [
+        {
+          "enum": [
+            "input",
+            "output",
+            "state",
+            "command"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Direction"
+    },
+    "eventTypes": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+        "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+        "type": "string"
+      },
+      "title": "Eventtypes",
+      "type": "array"
+    },
+    "family": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "anyOf": [
+            {
+              "enum": [
+                "dev.deckr.device.power",
+                "dev.deckr.input.button",
+                "dev.deckr.input.encoder",
+                "dev.deckr.input.touch",
+                "dev.deckr.output.raster"
+              ]
+            },
+            {
+              "pattern": "^(?!dev\\.deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$",
+              "type": "string"
+            }
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Family"
+    },
+    "type": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Type"
+    }
+  },
+  "title": "CapabilityRequirementSelector",
+  "type": "object"
+}

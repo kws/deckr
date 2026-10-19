@@ -1,0 +1,57 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/protocol-definition.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "advertisementProfile": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "featureId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "messages": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-message-definition.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "type": "object"
+    },
+    "namespace": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "operations": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-operation-definition.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "type": "object"
+    },
+    "useProfile": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "viewFamilies": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-view-family-definition.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "namespace",
+    "featureId",
+    "advertisementProfile",
+    "useProfile",
+    "operations",
+    "messages",
+    "viewFamilies"
+  ],
+  "title": "Service protocol definition",
+  "type": "object"
+}

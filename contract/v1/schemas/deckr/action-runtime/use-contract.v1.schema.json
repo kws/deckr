@@ -1,0 +1,35 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/use-contract.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/use-contract.v1.schema.json"
+    },
+    {
+      "properties": {
+        "participants": {
+          "allOf": [
+            {
+              "contains": {
+                "pattern": "^service:action-runtime\\.[A-Za-z0-9][A-Za-z0-9._-]*$"
+              },
+              "maxContains": 1,
+              "minContains": 1
+            },
+            {
+              "contains": {
+                "pattern": "^controller:"
+              },
+              "maxContains": 1,
+              "minContains": 1
+            }
+          ]
+        },
+        "profile": {
+          "const": "dev.deckr.action_runtime.provider.service_use.v1"
+        }
+      }
+    }
+  ],
+  "title": "Action Runtime service-use contract"
+}

@@ -1,0 +1,49 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-metadata.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Action-provider-facing metadata for one controller-owned action instance.",
+  "properties": {
+    "actionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Actionid",
+      "type": "string"
+    },
+    "actionInstanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Actioninstanceid",
+      "type": "string"
+    },
+    "configId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Configid",
+      "type": "string"
+    },
+    "contextId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Contextid",
+      "type": "string"
+    },
+    "providerId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Providerid",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Providerinstanceid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "providerInstanceId",
+    "providerId",
+    "actionId",
+    "actionInstanceId",
+    "configId",
+    "contextId"
+  ],
+  "title": "ActionInstanceMetadata",
+  "type": "object"
+}

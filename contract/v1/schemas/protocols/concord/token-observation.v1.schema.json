@@ -1,0 +1,56 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/token-observation.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "generation": {
+      "exclusiveMinimum": 0,
+      "minimum": 1,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "refreshSeq": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Refreshseq"
+    },
+    "revision": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revision"
+    },
+    "tokenHash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tokenhash"
+    }
+  },
+  "required": [
+    "generation"
+  ],
+  "title": "TokenObservation",
+  "type": "object"
+}

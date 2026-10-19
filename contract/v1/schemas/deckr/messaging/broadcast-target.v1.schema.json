@@ -1,0 +1,60 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/broadcast-target.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "domain": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Domain"
+    },
+    "endpointFamily": {
+      "enum": [
+        "controller",
+        "hardware_manager",
+        "action_provider",
+        "service"
+      ],
+      "title": "Endpointfamily",
+      "type": "string"
+    },
+    "hopLimit": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hoplimit"
+    },
+    "scope": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Scope",
+      "type": "string"
+    },
+    "targetType": {
+      "const": "broadcast",
+      "default": "broadcast",
+      "title": "Targettype",
+      "type": "string"
+    }
+  },
+  "required": [
+    "scope",
+    "endpointFamily"
+  ],
+  "title": "BroadcastTarget",
+  "type": "object"
+}

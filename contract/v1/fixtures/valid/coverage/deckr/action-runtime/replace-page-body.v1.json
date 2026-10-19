@@ -1,0 +1,13 @@
+{
+  "descriptor": {
+    "bindings": [
+      {
+        "controlId": "button-1",
+        "target": {
+          "kind": "self"
+        }
+      }
+    ],
+    "pageId": "page-1"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/advertisement.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/advertisement.v1.schema.json"
+    },
+    {
+      "properties": {
+        "advertiser": {
+          "pattern": "^hardware_manager:"
+        },
+        "endpoint": {
+          "pattern": "^hardware_manager:"
+        },
+        "featureId": {
+          "const": "dev.deckr.hardware"
+        },
+        "payload": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/advertisement-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "payload"
+      ]
+    }
+  ],
+  "title": "Hardware advertisement"
+}

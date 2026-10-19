@@ -1,0 +1,142 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-child-binding-target.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "self"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "actionId": {
+            "type": "null"
+          },
+          "instanceKey": {
+            "type": "null"
+          },
+          "providerInstanceId": {
+            "type": "null"
+          },
+          "providerLabels": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "maxProperties": 0,
+                "type": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "action"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "actionId": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "actionId"
+        ]
+      }
+    }
+  ],
+  "description": "Action target for one dynamic-page child binding.",
+  "properties": {
+    "actionId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Actionid"
+    },
+    "instanceKey": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Instancekey"
+    },
+    "kind": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "enum": [
+        "self",
+        "action"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Providerinstanceid"
+    },
+    "providerLabels": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+          },
+          "propertyNames": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Providerlabels"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "PageChildBindingTarget",
+  "type": "object"
+}

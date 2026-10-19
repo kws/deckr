@@ -1,0 +1,66 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/availability-payload.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Provider-scoped current action availability for one runtime service lease.",
+  "properties": {
+    "annotations": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Annotations",
+      "type": "object"
+    },
+    "entries": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-availability-entry.v1.schema.json"
+      },
+      "title": "Entries",
+      "type": "array"
+    },
+    "labels": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "title": "Labels",
+      "type": "object"
+    },
+    "providerId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Providerid",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Providerinstanceid",
+      "type": "string"
+    },
+    "serviceEndpoint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json",
+      "pattern": "^service:action-runtime\\.[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "serviceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^action-runtime\\.[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Serviceid",
+      "type": "string"
+    },
+    "serviceSessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Servicesessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "providerInstanceId",
+    "serviceId",
+    "serviceEndpoint",
+    "providerId",
+    "serviceSessionId"
+  ],
+  "title": "ActionRuntimeAvailabilityViewPayload",
+  "type": "object"
+}

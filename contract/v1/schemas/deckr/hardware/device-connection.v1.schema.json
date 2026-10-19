@@ -1,0 +1,72 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/device-connection.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Structured protocol or transport facts about a device connection.",
+  "properties": {
+    "connectionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "not": {
+        "pattern": "^(action_provider|controller|hardware_manager):"
+      },
+      "title": "Connectionid",
+      "type": "string"
+    },
+    "facts": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Facts",
+      "type": "object"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Label"
+    },
+    "status": {
+      "default": "available",
+      "enum": [
+        "connected",
+        "available",
+        "unavailable",
+        "unknown"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "transport": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Transport"
+    },
+    "type": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "connectionId",
+    "type"
+  ],
+  "title": "DeviceConnection",
+  "type": "object"
+}

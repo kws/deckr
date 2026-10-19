@@ -1,5 +1,12 @@
 # Concord v1 specification in ASD-STE100
 
+## Reference status
+
+This is an application-independent protocol specification. Historic wire schema
+labels are retained. The optional [Deckr NATS binding](nats.md#protocol-store-bindings)
+assigns concrete buckets to the logical stores below. Beacon is a possible source
+of candidates, not a schema dependency or validity requirement.
+
 ## 1 Purpose and scope
 
 Concord gives temporary runtime agreements between named participants. A contract gives authority only while it is open and all named participants maintain the necessary tokens. Each named participant can cancel the contract. Cancellation is permanent.
@@ -7,15 +14,16 @@ Concord gives temporary runtime agreements between named participants. A contrac
 This document gives the Concord v1 requirements in ASD-STE100 Simplified Technical English. The requirements apply to all implementations, in each programming language. An implementation API or source model cannot change a protocol requirement.
 
 This document defines requirements for Concord records, authority, lifecycle, runtime behavior, maintenance, and Concord profiles.
-It includes shared identity and storage rules necessary for Concord. Section 16
-also specifies managed service consumers, service providers, and hardware managers.
+It includes the shared identity and storage rules necessary for Concord.
+Application profiles and implementation APIs are specified separately.
 Beacon advertisement rules and general lane transport rules are outside this scope.
 
 Use these references with this document:
 
 - [NATS substrate specification](nats.md), for the substrate requirements.
 - [Contract artifacts](../contract/v1), for schemas, fixtures, and acceptance vectors.
-- [Protocol runtime reference](protocol-runtime-reference.md), for API examples and tools.
+- [Schema consumption](schemas.md), for validation and reference resolution.
+- [Application profiles](deckr-profiles.md), for Deckr-specific requirements.
 - [Beacon specification](beacon.md), for discovery requirements.
 
 The JSON Schemas specify record structure. They do not specify all protocol requirements. Implementations must also obey the requirements in this document. Differences between the specification, contract artifacts, and implementation are contract errors.
@@ -46,7 +54,7 @@ candidate” and “selector” means “Concord participant selector”. “Ses
 | Contract | The stored record of an agreement between named participants. |
 | Contract pointer | The pair `contractId` and `generation` that identifies one contract instance. |
 | Currentness | The source state that shows if its observations are up to date. |
-| Endpoint | An addressable entity in Deckr. |
+| Endpoint | An addressable entity in an application. |
 | Endpoint address | The endpoint family and endpoint ID serialized as `<endpoint-family>:<endpoint-id>`. |
 | Endpoint session | One runtime instance of an endpoint. |
 | Exact read | A read of a specified key directly from the store. This read does not use a materialized source or view. |
@@ -99,23 +107,18 @@ Do not use this information to replace Concord authority:
 
 ### 4.1 Endpoint addresses
 
-Serialize an endpoint address in this format:
+An endpoint address has the form `<family>:<id>`. The family matches
+`[a-z][a-z0-9_-]*`. The ID is nonempty, has no leading or trailing whitespace,
+and contains no colon. The whole address has no leading or trailing whitespace.
 
-```text
-<endpoint-family>:<endpoint-id>
-```
+Beacon and Concord do not enumerate application families or reserve application
+IDs. For example, `worker:example` and `scheduler:main` are valid protocol
+endpoints. [Deckr addressing policy](runtime-architecture.md#endpoint-identity)
+adds its four families and action-provider restrictions in application schemas.
 
-The core endpoint families are `controller`, `hardware_manager`, `action_provider`, and `service`.
-
-An endpoint address must not have whitespace at its start or end. The endpoint id must not be empty. The endpoint id must not contain `:`.
-
-An action provider endpoint id must agree with this expression:
-
-```text
-[A-Za-z0-9][A-Za-z0-9._-]*
-```
-
-An action provider endpoint id must not use a reserved provider identity. One reserved identity is `dev.deckr.controller.builtin`.
+The [neutral endpoint schema](../contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json)
+is shared by both protocols. Applications must validate their own restrictions
+at their composition boundary; they must not add those restrictions to this schema.
 
 ### 4.2 Key tokens
 
@@ -129,6 +132,10 @@ Use the shared key-token encoding for state keys.
 ### 4.3 Terms hashes
 
 Use canonical JSON to calculate a Concord terms hash.
+
+The full [canonical encoding rules](canonical-json.md) preserve the v1 byte
+format, including Unicode ordering and integer/decimal distinctions. Use its
+acceptance vectors when implementing the rules in another language.
 
 1. Serialize the JSON value with sorted object keys.
 2. Use compact separators without insignificant whitespace.
@@ -152,10 +159,10 @@ The NATS substrate uses these Concord buckets and keys:
 
 | Record | Bucket | Key |
 | --- | --- | --- |
-| Contract | `deckr_concord_contract_v1` | `contracts.<contract-id-token>.<generation>.meta` |
-| Participant token | `deckr_concord_token_v1` | `contracts.<contract-id-token>.<generation>.participants.<participant-token>` |
-| Stale observation | `deckr_concord_maintenance_v1` | `stale.<contract-id-token>.<generation>` |
-| Token cleanup marker | `deckr_concord_maintenance_v1` | `cleanup.<contract-id-token>.<generation>` |
+| Contract | `<contract-store>` | `contracts.<contract-id-token>.<generation>.meta` |
+| Participant token | `<participant-token-store>` | `contracts.<contract-id-token>.<generation>.participants.<participant-token>` |
+| Stale observation | `<maintenance-store>` | `stale.<contract-id-token>.<generation>` |
+| Token cleanup marker | `<maintenance-store>` | `cleanup.<contract-id-token>.<generation>` |
 
 The contract and maintenance buckets are persistent. The participant-token bucket uses a TTL. Encode the contract id and participant endpoint with the key-token rules in section 4.2.
 
@@ -184,9 +191,10 @@ subscribe directly to raw contract or participant-token stores.
 
 Exact reads are also available for strict validation, recovery, and diagnostics. Only the maintenance path uses broad exact prefix scans at low frequency. The maintenance store is not part of runtime Concord readiness or validity.
 
-The managed runtime opens Concord as `deckr.concord`. Recommendation: Use this managed runtime to create Concord authority.
-
-Concord authority bucket names are reserved. Generic `Deckr.kv_bucket(...)` and `ComponentContext.kv_bucket(...)` access reject these policies, including the maintenance policy. A core-owned typed factory gives the reaper its three raw stores.
+An implementation should expose managed Concord lifecycle and view access.
+The application binding selects and reserves the authority and maintenance
+bucket names. Generic application bucket access must reject these reserved
+stores. Only the dedicated maintenance capability receives all three raw stores.
 
 ### 5.3 Token TTL policy
 
@@ -453,9 +461,9 @@ Parsing exceptions must not escape a lease boundary. Before a mutation, normaliz
 
 The two validation paths use one pure evaluator. The evaluator does no I/O and makes no mutations. It checks participants in canonical order.
 
-`Concord.validate(...)` is the usual runtime path. It gets raw cached entries by their canonical exact keys from ready, current materialized sources.
+Cached validation is the usual runtime path. It gets raw cached entries by their canonical exact keys from ready, current materialized sources.
 
-`Concord.validate_exact(...)` gets the same observations through exact KV reads. This path is available for maintenance, recovery, diagnostics, and operations that must bypass the cache.
+Exact validation gets the same observations through exact KV reads. This path is available for maintenance, recovery, diagnostics, and operations that must bypass the cache.
 
 The observations cannot change during evaluation. Supplied current-session assertions must be copied, normalized, sorted, and frozen before evaluation.
 
@@ -526,12 +534,14 @@ The runtime owns one materialized view of contracts, tokens, observations with e
 
 Filters start with the smallest applicable index. The indexes cover profile, participant, contract state, contract id, and contract pointer. Cached validation gets only the selected contract and its named token observations. A filtered watch must not parse or validate unrelated contracts.
 
-`Concord.watch()` first yields one `ConcordWatchSnapshot`. This snapshot contains `version`, `current`, and the full filtered tuple of `ConcordContractState` records.
+A contract watch first yields a snapshot containing `version`, `current`, and
+the full filtered collection of contract states. These are local observation
+interfaces, not additional wire records.
 
 The watch must obey the [public state watch requirements](nats.md#9-public-state-watches).
 Those requirements define atomic registration, change limits, overflow,
 slow subscribers, and registration limits.
-Later `ConcordWatchChange` values contain the full filtered membership,
+Later change values contain the full filtered membership,
 bounded changed contract pointers, and `resnapshot_required`.
 If pointer detail overflows, the full membership gives the current result.
 
@@ -541,7 +551,10 @@ Section 9 defines the permanent effect of lost currentness on local authority.
 
 ### 13.2 Context entry and exit
 
-`Concord.propose(endpoint, spec)` and `Concord.participant(endpoint, policy)` are synchronous factories. Each factory supplies an async context manager.
+An implementation exposes managed proposal and participant lifetimes. A proposal
+combines an endpoint session with agreement intent. A participant lifetime
+combines an endpoint session with a selection policy. The language-specific
+resource-management API is an implementation choice.
 
 The runtime owns lifecycle logging. Context entry owns bootstrap and private workers. Context exit does these actions:
 
@@ -555,7 +568,7 @@ A proposal creates only one new opaque contract. It must not loop to create a su
 
 ### 13.3 Agreement intent and participant policy
 
-`ConcordAgreementSpec` contains only agreement intent:
+Agreement intent contains:
 
 - Profile.
 - Participants.
@@ -566,7 +579,10 @@ A proposal creates only one new opaque contract. It must not loop to create a su
 
 The endpoint supplies the local identity and session.
 
-`ConcordParticipantPolicy` is an immutable batch policy. Its Concord participant selector receives an immutable snapshot of Concord participant candidates and supplies typed selected contract pointers. Selection can be asynchronous. The selector does not hold runtime state locks during selection.
+Participant policy is an immutable batch policy. Its selector receives an
+immutable snapshot of participant candidates and supplies selected contract
+pointers. Selection can be asynchronous. The selector does not hold runtime
+state locks during selection.
 
 Unknown pointers, malformed selections, and selector failures must give explicit failures.
 
@@ -583,13 +599,16 @@ a termination condition from section 9.
 
 ### 13.4 State access
 
-The two contexts give access to immutable `state`. Each new state version is greater than the previous version. They also give access to atomic `wait_for_state(predicate, timeout_seconds=None)` and current-first `watch_state()`.
+Both lifetimes expose immutable state with monotonically increasing versions,
+atomic predicate waits with an optional timeout, and watches that supply current
+state first.
 
 The lifecycle phases are `starting`, `ready`, `unavailable`, `terminal`, `closing`, and `closed`.
 
 Agreement state contains currentness, validity, the contract handle, and local-authority status. Participant state contains currentness and the full immutable membership of managed contracts. Each member includes contract validity and local-authority status.
 
-If a wait times out, it raises `TimeoutError`. If the context closes before the predicate is satisfied, the wait raises `ClosedResourceError`.
+Waits distinguish timeout from closure before the predicate is satisfied.
+Implementations choose suitable language-specific error types for these outcomes.
 
 ### 13.5 Reconciliation
 
@@ -609,7 +628,8 @@ Views help local state converge. They do not give independent authority. Contrac
 
 ## 14 Contract pointers on messages
 
-A lane message that needs Concord authority must contain the contract pointer in the `DeckrMessage` envelope:
+An application message that needs Concord authority must carry an exact contract
+pointer. The reusable pointer has this shape; an application defines its placement:
 
 ```json
 {
@@ -632,7 +652,9 @@ Each identifier has a different purpose:
 | `senderSessionId` and `recipientSessionId` | Identify endpoint sessions. Check these against Concord participant tokens. |
 | Device refs, action instance ids, binding ids, page session ids, service view refs, route ids, output generations | Identify the target or stale-state fence in the agreement. |
 
-Core lane policy specifies if a message must have `contract`, must not have it, or does not use it. Hardware control, input, and state messages must have it. Protected service and action commands must also have it.
+Application policy specifies whether a message requires a pointer.
+[Deckr messaging](runtime-architecture.md) places it in the `contract` envelope
+field and requires it for hardware and service lane traffic.
 
 Public discovery, advertisements, availability probes, interest updates, and lifecycle candidates do not contain Concord authority in the envelope.
 
@@ -652,7 +674,7 @@ The reaper must not use Beacon advertisements, endpoint presence, catalogs, lane
 
 ### 15.2 Stale contracts
 
-For each `contractId:generation`, the reaper stores `firstObservedStaleAt` in `deckr_concord_maintenance_v1`.
+For each `contractId:generation`, the reaper stores `firstObservedStaleAt` in `<maintenance-store>`.
 
 An open contract counts as stale only when scan-time validation reports one of these statuses:
 
@@ -724,147 +746,16 @@ Subsequent scans list `cleanup.*` markers independently of contract records. The
 
 At the end of each scan, remove orphaned `stale.*` observations that have no contract record. Use deletes with revision guards.
 
-## 16 Concord profile requirements
+## 16 Application profile requirements
 
-Generic Concord validates contract and token mechanics. Profile owners validate the meaning of terms and other profile data. Profile policy does not replace Concord authority.
-Deckr core owns the hardware claim profile and the action runtime service protocol below.
+Generic Concord validates agreement and token mechanics. Profile owners define
+the meaning of terms and application policy. Applications compose the generic
+record with their own profile/terms schemas. Generic Concord must not import an
+application schema or use application policy in place of token authority.
 
-### 16.1 Hardware claims
-
-The hardware claim profile is `dev.deckr.profile.hardware_claim.v1`.
-
-Its terms identify a controller endpoint, a hardware-manager endpoint, and one or more claimed devices. Device ids in one claim must be unique. `instanceCount` must be greater than zero.
-
-Participants validate ownership through the contract, tokens, endpoint, session, and device refs. Hardware-manager and profile policy control single ownership and capacity over valid Concord claims.
-
-If a claimed device disconnects, the hardware manager must cancel or end the claim, or stop token maintenance. A missing hardware advertisement alone does not withdraw the claim.
-
-The v1 protocol expects claimed device descriptors to stay stable. A material descriptor change uses claim cancellation or token loss, followed by a new discovery candidate. Hardware lane lifecycle messages do not specify this change.
-
-### 16.2 Service use
-
-Service-use contracts have opaque runtime ids. They contain the service-use profile without service-specific `terms`. The contract must not have `terms` or `termsHash`.
-Service protocols declare their use profile, such as `*.service_use.v1`.
-
-The participants must be the service endpoint and the client endpoint only. New or lost service-use authority needs a new Concord contract.
-
-After negotiation, the held lease and participant tokens control service-message and protected-view authority. Continued Beacon advertisement presence is not necessary for that authority.
-
-A consumer-to-service message must contain the exact contract pointer. It must name a protocol operation. The sender must be the peer named in the contract.
-Authorization must also enforce any retained resource scope that the service
-protocol manages. Services carry these messages on the core `services` lane.
-
-Protected view access uses the advertised view-family prefixes and the service identity, session, and contract pointer as fences. A consumer can refresh a held lease while it passes validation. New or lost lease state needs current discovery and a new opaque Concord contract.
-
-Protected service views use explicit JetStream KV buckets. Each entry must carry
-the `serviceId`, `serviceNamespace`, and `sessionId` fence values. Protected reads
-and watches need an active Concord service-use lease and the matching contract
-pointer. A namespace mismatch must not expose a payload.
-
-Service views use the shared materialized-source recovery and public state-watch
-requirements from the [NATS specification](nats.md#8-materialized-sources-and-recovery).
-Usual reads use the cached view. After a started view store completes a write or
-delete, its local view must reflect the committed revision or a newer observation.
-The store waits for ordered watch observations as specified in
-[NATS section 8.3](nats.md#83-exact-writes-and-observations).
-Recovered snapshots must remove cached keys that are absent from the store.
-This includes keys whose delete or expiry events were missed.
-Writes return `entry.revision` for revision-guarded updates and deletes.
-
-A protected view watch must send payloads only when the entry agrees with its service-use fence. If a same-key entry changes to a different service identity or session, the watcher receives only a removal-style event. It must not receive the replacement payload. Do not send delete or expire events for entries that the watcher did not see.
-
-### 16.3 Action runtime service
-
-The action runtime service protocol is `dev.deckr.action_runtime.provider`.
-
-The service id must be `action-runtime.<providerInstanceId>`. The endpoint must be `service:<serviceId>`.
-The provider publishes action availability through the contract-fenced
-`action_availability` view.
-
-A controller gets authority through the service-use contract. It then reads the contract-fenced `action_availability` view and sends runtime lifecycle messages on the `services` lane. Individual control bindings are controller-owned routing state.
-
-After negotiation, Beacon is not part of the service-use contract lifecycle or validity. Package owners specify service-specific domain semantics and view schemas.
-
-### 16.4 Service package ownership
-
-Service packages can use generic Beacon and Concord with their own feature IDs,
-advertisement payload profiles, and use profiles. They can use service views
-directly backed by KV stores.
-
-Deckr core does not define service-specific data or behavior, such as Sonos zones
-or OpenHAB items. Package owners define those rules and their view schemas.
-
-### 16.5 Managed service consumers
-
-Ordinary service consumers must use the managed `deckr.services.DeckrServices`
-client. The client owns these operations:
-
-- Service candidate discovery through Beacon.
-- Service descriptor parsing.
-- Local predicate filtering.
-- Negotiation races and successor negotiation through Concord.
-- Request authorization.
-- Service-view access with the required fences.
-
-For each protocol feature ID, the client must use one feature watch.
-It must not use a separate feature watch for each service ID.
-The client gets the service ID and concrete view key prefixes from each validated
-service descriptor. Discovery gives only a candidate for a new service-use
-negotiation.
-
-Ordinary service consumers must not do these operations themselves:
-
-- Scan raw Beacon KV records.
-- Make an exact NATS round trip for discovery.
-- Scan all Beacon candidates and parse service descriptors with their own code.
-- Maintain a duplicate service-specific Beacon index.
-- Classify Concord terminal statuses.
-- Query Concord to find available services.
-
-`DeckrServices.use_matching(...)` admits a maximum of 64 unique service candidates
-that match the local predicate. Each unique endpoint and session pair counts as
-one service candidate. The client must negotiate with all admitted candidates at
-the same time. It must also include later candidates while negotiation stays
-pending. The same limit applies.
-
-Each attempt must use a new opaque contract ID. Before the client accepts the
-winner, all other attempts must give up local authority.
-
-If the winner loses authority, the client must publish `reconnecting`. It must
-start a new negotiation race. The client must not replay published commands under
-a different contract.
-
-After acceptance, Beacon withdrawal or replacement must not change the winner's
-lifecycle. `use(descriptor)` negotiates with the exact candidate from the supplied
-service descriptor.
-
-### 16.6 Managed providers and hardware managers
-
-Service providers use `Deckr.service_provider(...)`. Hardware managers use
-`Deckr.hardware_manager(...)`. These contexts own these operations:
-
-- Owner bootstrap.
-- Participant selection.
-- Private worker control.
-- Authorization.
-- Advertisement publication after bootstrap.
-- Cleanup within the required time limits.
-
-Application code supplies protocol intent, backend or device behavior, and domain
-policy. The managed contexts own token refresh, reconciliation, contract retries,
-task groups, and raw contract pointers. Application code does not manage those
-operations itself.
-
-Application code supplies domain facts, such as device connection changes and
-backend availability. Profile implementations must validate profile data and
-apply the specified consequences of those facts. Generic Concord must validate
-contract and token identity, session assertions, and authority.
-
-Application policy must not replace these checks. It must not maintain accepted
-contract sets in response to Concord validity transitions. Managed contexts must
-enforce local authority before protected operations. They must initiate required
-protocol termination and cleanup without an application or operator request.
-Local authority loss must not wait for a domain callback.
+The [Deckr profiles](deckr-profiles.md) specify hardware claims, termless
+service-use contracts, Action Runtime and managed application lifecycle boundaries.
+Those profiles are not prerequisites for an independent Concord implementation.
 
 ## 17 Conformance checks
 
@@ -883,8 +774,7 @@ Schema validation alone is not sufficient. Check these Concord requirements:
 - Permanent authority loss and successor creation.
 - The same evaluation results for the same cached and exact observations.
 - Maintenance cleanup with revision guards and persistent cleanup markers.
-- Managed service discovery and negotiation races from section 16.5.
-- Context responsibilities from section 16.6.
+- Applicable application requirements from [Deckr profiles](deckr-profiles.md), when implementing Deckr.
 
 Use the valid and invalid fixtures, key-token vectors, Concord key vectors, and Concord terms-hash vectors.
 Use applicable lane message schemas and vectors for contract pointers. The

@@ -1,0 +1,19 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/view-ref.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "key": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "storeName": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    }
+  },
+  "required": [
+    "storeName",
+    "key"
+  ],
+  "title": "Service view reference",
+  "type": "object"
+}

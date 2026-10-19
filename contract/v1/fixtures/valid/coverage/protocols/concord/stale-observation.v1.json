@@ -1,0 +1,6 @@
+{
+  "contractId": "example",
+  "firstObservedStaleAt": "2026-04-29T10:00:00Z",
+  "generation": 1,
+  "status": "valid"
+}

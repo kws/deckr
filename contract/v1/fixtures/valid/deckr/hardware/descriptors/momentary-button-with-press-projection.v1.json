@@ -1,0 +1,84 @@
+{
+  "connections": [
+    {
+      "connectionId": "virtual-0",
+      "type": "virtual"
+    }
+  ],
+  "controls": [
+    {
+      "controlId": "button.1",
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.momentary",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "button.momentary",
+              "controlId": "button.1"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "button"
+    }
+  ],
+  "deviceId": "momentary-button",
+  "displayName": "Momentary Button",
+  "fingerprint": "virtual:momentary-button"
+}

@@ -1,0 +1,6 @@
+{
+  "maximum": 1,
+  "minimum": 0,
+  "subject": "value",
+  "type": "range"
+}

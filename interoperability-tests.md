@@ -4,7 +4,7 @@
 > for implementations of the Deckr v1 contracts. They are intentionally written
 > as pseudocode, not Python, Rust, or NATS CLI tests.
 
-This catalog complements the normative and live-reference documents:
+This catalog complements the normative reference documents:
 
 - [Beacon specification](docs/beacon.md)
 - [Concord specification](docs/concord.md)
@@ -83,8 +83,8 @@ Exact syntax is not normative. Observable behavior is normative.
 Spec source: `docs/beacon.md#43-endpoint-addresses`,
 `docs/concord.md#41-endpoint-addresses`
 
-Scenario: implementations accept valid endpoint families and ids and reject
-malformed endpoint addresses before writing protocol state.
+Scenario: generic protocols accept application-defined endpoint families; Deckr
+application wrappers additionally enforce Deckr families and reserved identities.
 
 Pseudocode:
 
@@ -93,7 +93,8 @@ for address in [
   "controller:main",
   "hardware_manager:mirabox-main",
   "action_provider:clock.1",
-  "service:sonos_home"
+  "service:sonos_home",
+  "worker:example"
 ]:
   assert parse_endpoint(address).ok
 
@@ -103,11 +104,18 @@ for address in [
   ":main",
   "controller:main:extra",
   " controller:main",
-  "controller:main ",
-  "action_provider:dev.deckr.controller.builtin"
+  "controller:main "
 ]:
   assert parse_endpoint(address).error
   assert implementation refuses Beacon or Concord writes using address
+```
+
+Additional Deckr checks:
+
+```text
+assert generic_protocol_accepts("worker:example")
+assert deckr_endpoint_rejects("worker:example")
+assert deckr_endpoint_rejects("action_provider:dev.deckr.controller.builtin")
 ```
 
 Pass criteria: invalid endpoint addresses never appear in Beacon
@@ -638,7 +646,7 @@ granted.
 ### DIT-MAT-005: Snapshot Reconciliation Synthesizes Missing Tombstones
 
 Spec source: `docs/nats.md#81-snapshot-barrier`,
-`docs/concord.md#162-service-use`
+`docs/deckr-profiles.md#service-use`
 
 Scenario: a recovered watch snapshot reconciles cached keys that are absent
 from the current bucket.
@@ -669,7 +677,7 @@ snapshot recovery.
 
 ### DIT-SVC-001: Protected View Fence Hides Replacement Payloads
 
-Spec source: `docs/concord.md#162-service-use`
+Spec source: `docs/deckr-profiles.md#service-use`
 
 Scenario: a protected watcher sees a removal when a visible entry is replaced
 by another service identity or session, and does not see the replacement
@@ -715,7 +723,7 @@ and session, not just by key.
 
 ### DIT-SVC-002: Delete For Never-Visible Entry Is Suppressed
 
-Spec source: `docs/concord.md#162-service-use`
+Spec source: `docs/deckr-profiles.md#service-use`
 
 Scenario: a watcher does not receive delete or expire events for entries that
 were never visible under its service-use fence.
@@ -865,3 +873,20 @@ Implementations should report each scenario independently:
 
 `not-applicable` should be rare and must include a note explaining which
 protocol surface the implementation does not claim to implement.
+
+
+## Structural and semantic extraction checks
+
+Load the [manifest](contract/v1/manifest.json) and validate every fixture against
+its declared schema with Draft 2020-12 and date-time assertion enabled. Check
+generic protocol fixtures independently of Deckr, including custom endpoint families.
+
+The [semantic vectors](contract/v1/vectors/semantic-validation.v1.json) distinguish
+structural acceptance from application/protocol acceptance. Consumers must run
+the named [semantic rules](docs/semantic-rules.md) and compare `semanticValid`.
+The reference CI checks `schemaValid`; it does not implement a Concord runtime.
+
+For every hardware and Action Runtime operation in the [message catalog](contract/v1/catalogs/messages.v1.json),
+test the complete schema, correct payload location, wrong payload type, sender and
+recipient policy, and missing/invalid contract or session identity. Availability
+must be tested as both a reusable payload and a stored record with its full fence.

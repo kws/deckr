@@ -1,0 +1,42 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/claim-terms.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "claimId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Claimid",
+      "type": "string"
+    },
+    "controllerEndpoint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json",
+      "pattern": "^controller:"
+    },
+    "devices": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/hardware-claim-device.v1.schema.json"
+      },
+      "minItems": 1,
+      "title": "Devices",
+      "type": "array"
+    },
+    "managerEndpoint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/endpoint-address.v1.schema.json",
+      "pattern": "^hardware_manager:"
+    },
+    "profile": {
+      "const": "dev.deckr.profile.hardware_claim.v1",
+      "default": "dev.deckr.profile.hardware_claim.v1",
+      "title": "Profile",
+      "type": "string"
+    }
+  },
+  "required": [
+    "claimId",
+    "controllerEndpoint",
+    "managerEndpoint",
+    "devices"
+  ],
+  "title": "HardwareClaimTerms",
+  "type": "object"
+}

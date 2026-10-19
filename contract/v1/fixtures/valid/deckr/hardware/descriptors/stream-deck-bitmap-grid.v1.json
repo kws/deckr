@@ -1,0 +1,1136 @@
+{
+  "connections": [
+    {
+      "connectionId": "usb-hid-0",
+      "facts": {
+        "productId": 99,
+        "reportDescriptorHash": "sha256:stream-deck-mini",
+        "serialNumber": "serial-abc",
+        "usage": 1,
+        "usagePage": 65280,
+        "vendorId": 4057
+      },
+      "status": "connected",
+      "transport": "usb",
+      "type": "hid"
+    }
+  ],
+  "controls": [
+    {
+      "controlId": "key.0.0",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 0,
+        "y": 0
+      },
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.momentary",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "button.momentary",
+              "controlId": "key.0.0"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "bitmap_key",
+      "label": "Key 0,0",
+      "outputCapabilities": [
+        {
+          "access": [
+            "settable"
+          ],
+          "capabilityId": "raster.bitmap",
+          "commandSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "encoding": {
+                      "enum": [
+                        "jpeg",
+                        "png"
+                      ]
+                    },
+                    "height": {
+                      "const": 72
+                    },
+                    "image": {
+                      "contentEncoding": "base64",
+                      "type": "string"
+                    },
+                    "width": {
+                      "const": 72
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "encoding"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "constraints": [
+            {
+              "subject": "width",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "height",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "encoding",
+              "type": "enum",
+              "values": [
+                "jpeg",
+                "png"
+              ]
+            },
+            {
+              "subject": "rotation",
+              "type": "fixed",
+              "unit": "degree",
+              "value": 180
+            }
+          ],
+          "direction": "output",
+          "family": "dev.deckr.output.raster",
+          "type": "bitmap",
+          "units": [
+            {
+              "subject": "width",
+              "unit": "pixel"
+            },
+            {
+              "subject": "height",
+              "unit": "pixel"
+            },
+            {
+              "subject": "rotation",
+              "unit": "degree"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "connectionId": "usb-hid-0",
+          "facts": {
+            "keyIndex": 0
+          },
+          "sourceId": "key-report-0-0",
+          "type": "hid"
+        }
+      ]
+    },
+    {
+      "controlId": "key.1.0",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 1,
+        "y": 0
+      },
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.momentary",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "button.momentary",
+              "controlId": "key.1.0"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "bitmap_key",
+      "label": "Key 1,0",
+      "outputCapabilities": [
+        {
+          "access": [
+            "settable"
+          ],
+          "capabilityId": "raster.bitmap",
+          "commandSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "encoding": {
+                      "enum": [
+                        "jpeg",
+                        "png"
+                      ]
+                    },
+                    "height": {
+                      "const": 72
+                    },
+                    "image": {
+                      "contentEncoding": "base64",
+                      "type": "string"
+                    },
+                    "width": {
+                      "const": 72
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "encoding"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "constraints": [
+            {
+              "subject": "width",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "height",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "encoding",
+              "type": "enum",
+              "values": [
+                "jpeg",
+                "png"
+              ]
+            },
+            {
+              "subject": "rotation",
+              "type": "fixed",
+              "unit": "degree",
+              "value": 180
+            }
+          ],
+          "direction": "output",
+          "family": "dev.deckr.output.raster",
+          "type": "bitmap",
+          "units": [
+            {
+              "subject": "width",
+              "unit": "pixel"
+            },
+            {
+              "subject": "height",
+              "unit": "pixel"
+            },
+            {
+              "subject": "rotation",
+              "unit": "degree"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "connectionId": "usb-hid-0",
+          "facts": {
+            "keyIndex": 1
+          },
+          "sourceId": "key-report-1-0",
+          "type": "hid"
+        }
+      ]
+    },
+    {
+      "controlId": "key.2.0",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 2,
+        "y": 0
+      },
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.momentary",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "button.momentary",
+              "controlId": "key.2.0"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "bitmap_key",
+      "label": "Key 2,0",
+      "outputCapabilities": [
+        {
+          "access": [
+            "settable"
+          ],
+          "capabilityId": "raster.bitmap",
+          "commandSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "encoding": {
+                      "enum": [
+                        "jpeg",
+                        "png"
+                      ]
+                    },
+                    "height": {
+                      "const": 72
+                    },
+                    "image": {
+                      "contentEncoding": "base64",
+                      "type": "string"
+                    },
+                    "width": {
+                      "const": 72
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "encoding"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "constraints": [
+            {
+              "subject": "width",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "height",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "encoding",
+              "type": "enum",
+              "values": [
+                "jpeg",
+                "png"
+              ]
+            },
+            {
+              "subject": "rotation",
+              "type": "fixed",
+              "unit": "degree",
+              "value": 180
+            }
+          ],
+          "direction": "output",
+          "family": "dev.deckr.output.raster",
+          "type": "bitmap",
+          "units": [
+            {
+              "subject": "width",
+              "unit": "pixel"
+            },
+            {
+              "subject": "height",
+              "unit": "pixel"
+            },
+            {
+              "subject": "rotation",
+              "unit": "degree"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "connectionId": "usb-hid-0",
+          "facts": {
+            "keyIndex": 2
+          },
+          "sourceId": "key-report-2-0",
+          "type": "hid"
+        }
+      ]
+    },
+    {
+      "controlId": "key.0.1",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 0,
+        "y": 1
+      },
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.momentary",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "button.momentary",
+              "controlId": "key.0.1"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "bitmap_key",
+      "label": "Key 0,1",
+      "outputCapabilities": [
+        {
+          "access": [
+            "settable"
+          ],
+          "capabilityId": "raster.bitmap",
+          "commandSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "encoding": {
+                      "enum": [
+                        "jpeg",
+                        "png"
+                      ]
+                    },
+                    "height": {
+                      "const": 72
+                    },
+                    "image": {
+                      "contentEncoding": "base64",
+                      "type": "string"
+                    },
+                    "width": {
+                      "const": 72
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "encoding"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "constraints": [
+            {
+              "subject": "width",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "height",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "encoding",
+              "type": "enum",
+              "values": [
+                "jpeg",
+                "png"
+              ]
+            },
+            {
+              "subject": "rotation",
+              "type": "fixed",
+              "unit": "degree",
+              "value": 180
+            }
+          ],
+          "direction": "output",
+          "family": "dev.deckr.output.raster",
+          "type": "bitmap",
+          "units": [
+            {
+              "subject": "width",
+              "unit": "pixel"
+            },
+            {
+              "subject": "height",
+              "unit": "pixel"
+            },
+            {
+              "subject": "rotation",
+              "unit": "degree"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "connectionId": "usb-hid-0",
+          "facts": {
+            "keyIndex": 3
+          },
+          "sourceId": "key-report-0-1",
+          "type": "hid"
+        }
+      ]
+    },
+    {
+      "controlId": "key.1.1",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 1,
+        "y": 1
+      },
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.momentary",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "button.momentary",
+              "controlId": "key.1.1"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "bitmap_key",
+      "label": "Key 1,1",
+      "outputCapabilities": [
+        {
+          "access": [
+            "settable"
+          ],
+          "capabilityId": "raster.bitmap",
+          "commandSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "encoding": {
+                      "enum": [
+                        "jpeg",
+                        "png"
+                      ]
+                    },
+                    "height": {
+                      "const": 72
+                    },
+                    "image": {
+                      "contentEncoding": "base64",
+                      "type": "string"
+                    },
+                    "width": {
+                      "const": 72
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "encoding"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "constraints": [
+            {
+              "subject": "width",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "height",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "encoding",
+              "type": "enum",
+              "values": [
+                "jpeg",
+                "png"
+              ]
+            },
+            {
+              "subject": "rotation",
+              "type": "fixed",
+              "unit": "degree",
+              "value": 180
+            }
+          ],
+          "direction": "output",
+          "family": "dev.deckr.output.raster",
+          "type": "bitmap",
+          "units": [
+            {
+              "subject": "width",
+              "unit": "pixel"
+            },
+            {
+              "subject": "height",
+              "unit": "pixel"
+            },
+            {
+              "subject": "rotation",
+              "unit": "degree"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "connectionId": "usb-hid-0",
+          "facts": {
+            "keyIndex": 4
+          },
+          "sourceId": "key-report-1-1",
+          "type": "hid"
+        }
+      ]
+    },
+    {
+      "controlId": "key.2.1",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 2,
+        "y": 1
+      },
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.momentary",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "button.momentary",
+              "controlId": "key.2.1"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "bitmap_key",
+      "label": "Key 2,1",
+      "outputCapabilities": [
+        {
+          "access": [
+            "settable"
+          ],
+          "capabilityId": "raster.bitmap",
+          "commandSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "encoding": {
+                      "enum": [
+                        "jpeg",
+                        "png"
+                      ]
+                    },
+                    "height": {
+                      "const": 72
+                    },
+                    "image": {
+                      "contentEncoding": "base64",
+                      "type": "string"
+                    },
+                    "width": {
+                      "const": 72
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "encoding"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "constraints": [
+            {
+              "subject": "width",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "height",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 72
+            },
+            {
+              "subject": "encoding",
+              "type": "enum",
+              "values": [
+                "jpeg",
+                "png"
+              ]
+            },
+            {
+              "subject": "rotation",
+              "type": "fixed",
+              "unit": "degree",
+              "value": 180
+            }
+          ],
+          "direction": "output",
+          "family": "dev.deckr.output.raster",
+          "type": "bitmap",
+          "units": [
+            {
+              "subject": "width",
+              "unit": "pixel"
+            },
+            {
+              "subject": "height",
+              "unit": "pixel"
+            },
+            {
+              "subject": "rotation",
+              "unit": "degree"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "connectionId": "usb-hid-0",
+          "facts": {
+            "keyIndex": 5
+          },
+          "sourceId": "key-report-2-1",
+          "type": "hid"
+        }
+      ]
+    }
+  ],
+  "defaultStatusIndicator": {
+    "capabilityId": "raster.bitmap",
+    "controlId": "key.0.0"
+  },
+  "deviceId": "stream-deck-mini",
+  "displayName": "Stream Deck Mini",
+  "fingerprint": "usb:0fd9:0063:serial-abc",
+  "identifiers": [
+    {
+      "namespace": "usb",
+      "type": "usb.vendor_product",
+      "value": "0fd9:0063"
+    }
+  ],
+  "manufacturer": "Elgato",
+  "model": "Stream Deck Mini",
+  "modelId": "20GAA9901",
+  "serialNumber": "serial-abc"
+}

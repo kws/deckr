@@ -1,0 +1,133 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/protocols/beacon/advertisement.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "advertisementId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Advertisementid",
+      "type": "string"
+    },
+    "advertiser": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+    },
+    "createdAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Createdat"
+    },
+    "endpoint": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+    },
+    "featureId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Featureid",
+      "type": "string"
+    },
+    "hints": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Hints",
+      "type": "object"
+    },
+    "labels": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "title": "Labels",
+      "type": "object"
+    },
+    "operations": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+      },
+      "title": "Operations",
+      "type": "array"
+    },
+    "payload": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Payload"
+    },
+    "protocol": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/beacon/beacon-protocol.v1.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "refreshSeq": {
+      "exclusiveMinimum": 0,
+      "minimum": 1,
+      "title": "Refreshseq",
+      "type": "integer"
+    },
+    "schema": {
+      "const": "dev.deckr.beacon.advertisement.v1",
+      "default": "dev.deckr.beacon.advertisement.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "sessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "ttlSeconds": {
+      "exclusiveMinimum": 0,
+      "minimum": 1,
+      "title": "Ttlseconds",
+      "type": "integer"
+    },
+    "updatedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Updatedat"
+    }
+  },
+  "required": [
+    "advertisementId",
+    "featureId",
+    "advertiser",
+    "endpoint",
+    "sessionId",
+    "refreshSeq",
+    "ttlSeconds"
+  ],
+  "title": "AdvertisementRecord",
+  "type": "object"
+}

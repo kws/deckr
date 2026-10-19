@@ -1,0 +1,27 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-lifecycle-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-instance-metadata.v1.schema.json"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "metadata"
+  ],
+  "title": "ActionInstanceLifecycleBody",
+  "type": "object"
+}

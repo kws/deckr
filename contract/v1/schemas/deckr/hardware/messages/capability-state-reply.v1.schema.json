@@ -1,0 +1,69 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/messages/capability-state-reply.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/messaging/message.v1.schema.json"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/bodies/capability-state-reply-message.v1.schema.json"
+        },
+        "contract": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/contract-pointer.v1.schema.json"
+        },
+        "lane": {
+          "const": "hardware_messages"
+        },
+        "messageType": {
+          "const": "capabilityStateReply"
+        },
+        "recipient": {
+          "oneOf": [
+            {
+              "properties": {
+                "endpoint": {
+                  "pattern": "^(controller|hardware_manager):"
+                },
+                "targetType": {
+                  "const": "endpoint"
+                }
+              },
+              "required": [
+                "endpoint"
+              ]
+            },
+            {
+              "properties": {
+                "endpointFamily": {
+                  "const": "controller"
+                },
+                "scope": {
+                  "const": "controllers"
+                },
+                "targetType": {
+                  "const": "broadcast"
+                }
+              },
+              "required": [
+                "scope",
+                "endpointFamily"
+              ]
+            }
+          ]
+        },
+        "sender": {
+          "pattern": "^(controller|hardware_manager):"
+        }
+      },
+      "required": [
+        "lane",
+        "messageType",
+        "contract",
+        "body"
+      ]
+    }
+  ],
+  "title": "capabilityStateReply"
+}

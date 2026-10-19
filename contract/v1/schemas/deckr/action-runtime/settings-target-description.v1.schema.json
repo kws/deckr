@@ -1,0 +1,79 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/settings-target-description.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Editor-facing description of one editable settings target.",
+  "properties": {
+    "actionId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Actionid"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Label"
+    },
+    "placement": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+      },
+      "title": "Placement",
+      "type": "object"
+    },
+    "provenance": {
+      "items": {
+        "enum": [
+          "config_default",
+          "user_override",
+          "template_override",
+          "runtime",
+          "stale_schema"
+        ],
+        "type": "string"
+      },
+      "title": "Provenance",
+      "type": "array"
+    },
+    "providerId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Providerid",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Providerinstanceid",
+      "type": "string"
+    },
+    "schemaMetadata": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/settings-schema-metadata.v1.schema.json"
+    },
+    "target": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/settings-target-ref.v1.schema.json"
+    }
+  },
+  "required": [
+    "target",
+    "providerInstanceId",
+    "providerId"
+  ],
+  "title": "SettingsTargetDescription",
+  "type": "object"
+}

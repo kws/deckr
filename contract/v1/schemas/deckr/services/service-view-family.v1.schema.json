@@ -1,0 +1,37 @@
+{
+  "$defs": {
+    "ServiceViewWriter": {
+      "enum": [
+        "service",
+        "consumer"
+      ],
+      "title": "ServiceViewWriter",
+      "type": "string"
+    }
+  },
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-view-family.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "keyPrefix": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Keyprefix",
+      "type": "string"
+    },
+    "storeName": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Storename",
+      "type": "string"
+    },
+    "writer": {
+      "$ref": "#/$defs/ServiceViewWriter"
+    }
+  },
+  "required": [
+    "storeName",
+    "keyPrefix",
+    "writer"
+  ],
+  "title": "ServiceViewFamily",
+  "type": "object"
+}

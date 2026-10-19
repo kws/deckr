@@ -1,0 +1,14 @@
+{
+  "capability": {
+    "capabilityId": "button",
+    "controlId": "button-1",
+    "deviceRef": {
+      "deviceId": "deck-1",
+      "fingerprint": "fingerprint:deck-1",
+      "managerId": "mirabox-main"
+    }
+  },
+  "direction": "input",
+  "family": "dev.deckr.input.button",
+  "type": "activation"
+}

@@ -1,0 +1,115 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/control-geometry.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "unit": {
+            "const": "normalized"
+          }
+        },
+        "required": [
+          "unit"
+        ]
+      },
+      "then": {
+        "properties": {
+          "height": {
+            "maximum": 1,
+            "minimum": 0
+          },
+          "width": {
+            "maximum": 1,
+            "minimum": 0
+          },
+          "x": {
+            "maximum": 1,
+            "minimum": 0
+          },
+          "y": {
+            "maximum": 1,
+            "minimum": 0
+          }
+        }
+      }
+    }
+  ],
+  "description": "A control's placement on a logical or physical surface.",
+  "properties": {
+    "height": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Height"
+    },
+    "layer": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Layer"
+    },
+    "rotation": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rotation"
+    },
+    "unit": {
+      "default": "grid",
+      "enum": [
+        "grid",
+        "pixel",
+        "normalized",
+        "millimeter"
+      ],
+      "title": "Unit",
+      "type": "string"
+    },
+    "width": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Width"
+    },
+    "x": {
+      "default": 0,
+      "title": "X",
+      "type": "number"
+    },
+    "y": {
+      "default": 0,
+      "title": "Y",
+      "type": "number"
+    }
+  },
+  "title": "ControlGeometry",
+  "type": "object"
+}

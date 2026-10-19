@@ -1,0 +1,532 @@
+{
+  "connections": [
+    {
+      "connectionId": "usb-hid-0",
+      "facts": {
+        "interfaceNumber": 0,
+        "productId": 4097,
+        "usagePage": 65440,
+        "vendorId": 2816
+      },
+      "status": "connected",
+      "transport": "usb",
+      "type": "hid"
+    }
+  ],
+  "controls": [
+    {
+      "controlId": "key.0.0",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 0,
+        "y": 0
+      },
+      "groupId": "content-grid",
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.momentary",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "bitmap_key",
+      "outputCapabilities": [
+        {
+          "access": [
+            "settable"
+          ],
+          "capabilityId": "raster.bitmap",
+          "commandSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "encoding": {
+                      "enum": [
+                        "jpeg",
+                        "png"
+                      ]
+                    },
+                    "height": {
+                      "const": 96
+                    },
+                    "image": {
+                      "contentEncoding": "base64",
+                      "type": "string"
+                    },
+                    "width": {
+                      "const": 96
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "encoding"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "constraints": [
+            {
+              "subject": "width",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 96
+            },
+            {
+              "subject": "height",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 96
+            },
+            {
+              "subject": "encoding",
+              "type": "enum",
+              "values": [
+                "jpeg",
+                "png"
+              ]
+            },
+            {
+              "subject": "rotation",
+              "type": "fixed",
+              "unit": "degree",
+              "value": 0
+            }
+          ],
+          "direction": "output",
+          "family": "dev.deckr.output.raster",
+          "type": "bitmap",
+          "units": [
+            {
+              "subject": "width",
+              "unit": "pixel"
+            },
+            {
+              "subject": "height",
+              "unit": "pixel"
+            },
+            {
+              "subject": "rotation",
+              "unit": "degree"
+            }
+          ]
+        }
+      ],
+      "surfaceId": "main-display"
+    },
+    {
+      "controlId": "dial.0",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 0,
+        "y": 2
+      },
+      "groupId": "dial-strip",
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "encoder.relative",
+          "constraints": [
+            {
+              "maximum": 24,
+              "minimum": -24,
+              "step": 1,
+              "subject": "delta",
+              "type": "range",
+              "unit": "detent"
+            }
+          ],
+          "direction": "input",
+          "eventTypes": [
+            "rotate"
+          ],
+          "family": "dev.deckr.input.encoder",
+          "type": "relative",
+          "units": [
+            {
+              "subject": "delta",
+              "unit": "detent"
+            }
+          ],
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "delta": {
+                  "not": {
+                    "const": 0
+                  },
+                  "type": "integer"
+                },
+                "direction": {
+                  "enum": [
+                    "clockwise",
+                    "counterclockwise"
+                  ]
+                }
+              },
+              "required": [
+                "delta"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.encoder.relative.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "encoder.button",
+          "direction": "input",
+          "eventTypes": [
+            "down",
+            "up"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "momentary",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "enum": [
+                    "down",
+                    "up"
+                  ]
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.momentary.v1"
+          }
+        },
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "encoder.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "projection": {
+            "owner": "hardware_manager",
+            "source": {
+              "capabilityId": "encoder.button",
+              "controlId": "dial.0"
+            }
+          },
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "rotary_encoder",
+      "outputCapabilities": [
+        {
+          "access": [
+            "settable"
+          ],
+          "capabilityId": "dial.raster",
+          "commandSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "encoding": {
+                      "enum": [
+                        "jpeg",
+                        "png"
+                      ]
+                    },
+                    "height": {
+                      "const": 240
+                    },
+                    "image": {
+                      "contentEncoding": "base64",
+                      "type": "string"
+                    },
+                    "width": {
+                      "const": 240
+                    }
+                  },
+                  "required": [
+                    "image",
+                    "encoding"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.command.output.raster.bitmap.v1"
+          },
+          "commandTypes": [
+            "set_frame",
+            "clear"
+          ],
+          "constraints": [
+            {
+              "subject": "width",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 240
+            },
+            {
+              "subject": "height",
+              "type": "fixed",
+              "unit": "pixel",
+              "value": 240
+            },
+            {
+              "subject": "encoding",
+              "type": "enum",
+              "values": [
+                "jpeg",
+                "png"
+              ]
+            },
+            {
+              "subject": "rotation",
+              "type": "fixed",
+              "unit": "degree",
+              "value": 0
+            }
+          ],
+          "direction": "output",
+          "family": "dev.deckr.output.raster",
+          "type": "bitmap",
+          "units": [
+            {
+              "subject": "width",
+              "unit": "pixel"
+            },
+            {
+              "subject": "height",
+              "unit": "pixel"
+            },
+            {
+              "subject": "rotation",
+              "unit": "degree"
+            }
+          ]
+        }
+      ],
+      "surfaceId": "dial-strip"
+    },
+    {
+      "controlId": "touch.0",
+      "geometry": {
+        "height": 0.25,
+        "unit": "grid",
+        "width": 1,
+        "x": 0,
+        "y": 2
+      },
+      "groupId": "dial-strip",
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "touch.gesture",
+          "direction": "input",
+          "eventTypes": [
+            "tap",
+            "swipe"
+          ],
+          "family": "dev.deckr.input.touch",
+          "type": "gesture",
+          "valueSchema": {
+            "schema": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "eventType": {
+                      "const": "tap"
+                    }
+                  },
+                  "required": [
+                    "eventType"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "direction": {
+                      "enum": [
+                        "left",
+                        "right"
+                      ]
+                    },
+                    "eventType": {
+                      "const": "swipe"
+                    }
+                  },
+                  "required": [
+                    "eventType",
+                    "direction"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "schemaId": "dev.deckr.value.input.touch.gesture.v1"
+          }
+        }
+      ],
+      "kind": "touch_surface",
+      "parentControlId": "dial.0",
+      "relatedControlIds": [
+        "dial.0"
+      ],
+      "surfaceId": "dial-strip"
+    },
+    {
+      "controlId": "button.home",
+      "geometry": {
+        "height": 1,
+        "unit": "grid",
+        "width": 1,
+        "x": 0,
+        "y": 3
+      },
+      "groupId": "hardware-buttons",
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "button"
+    }
+  ],
+  "defaultStatusIndicator": {
+    "capabilityId": "raster.bitmap",
+    "controlId": "key.0.0"
+  },
+  "deviceId": "mars-gaming-msd-two",
+  "displayName": "Mars Gaming MSD-TWO",
+  "fingerprint": "usb:0b00:1001:msd-two-001",
+  "firmwareVersion": "V25.MSD_TWO.01.005",
+  "manufacturer": "Mars Gaming",
+  "model": "MSD-TWO"
+}

@@ -1,0 +1,6 @@
+{
+  "controlId": "example",
+  "target": {
+    "kind": "self"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "body": {
+    "event": [],
+    "exchangePattern": "one_way",
+    "intent": "event",
+    "name": "page_session_opened",
+    "params": {},
+    "serviceNamespace": "dev.deckr.action_runtime.provider"
+  },
+  "contract": {
+    "contractId": "action-runtime-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "services",
+  "messageId": "fixture-action-runtime-action-instance-created",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "service:action-runtime.clock-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "service-session",
+  "schemaVersion": "1",
+  "sender": "controller:controller-main",
+  "senderSessionId": "controller-session",
+  "subject": {
+    "identifiers": {
+      "name": "page_session_opened",
+      "namespace": "dev.deckr.action_runtime.provider",
+      "serviceId": "action-runtime.clock-main"
+    },
+    "kind": "service"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "capabilityId": "example",
+  "commandType": "example",
+  "deviceRef": {
+    "deviceId": "deck-1",
+    "fingerprint": "fingerprint:deck-1",
+    "managerId": "mirabox-main"
+  }
+}

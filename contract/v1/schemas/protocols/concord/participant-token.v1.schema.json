@@ -1,0 +1,96 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/participant-token.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "contractHash": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Contracthash"
+    },
+    "contractId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Contractid",
+      "type": "string"
+    },
+    "generation": {
+      "exclusiveMinimum": 0,
+      "minimum": 1,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "observed": {
+      "additionalProperties": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/concord/token-observation.v1.schema.json"
+      },
+      "propertyNames": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+      },
+      "title": "Observed",
+      "type": "object"
+    },
+    "participant": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+    },
+    "refreshSeq": {
+      "exclusiveMinimum": 0,
+      "minimum": 1,
+      "title": "Refreshseq",
+      "type": "integer"
+    },
+    "schema": {
+      "const": "dev.deckr.concord.participant-token.v1",
+      "default": "dev.deckr.concord.participant-token.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "sessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "termsHash": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Termshash"
+    },
+    "tokenId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Tokenid",
+      "type": "string"
+    },
+    "ttlSeconds": {
+      "exclusiveMinimum": 0,
+      "minimum": 1,
+      "title": "Ttlseconds",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "contractId",
+    "generation",
+    "participant",
+    "sessionId",
+    "tokenId",
+    "refreshSeq",
+    "ttlSeconds"
+  ],
+  "title": "ParticipantTokenRecord",
+  "type": "object"
+}

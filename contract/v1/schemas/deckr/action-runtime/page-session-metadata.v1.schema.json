@@ -1,0 +1,75 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-metadata.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Action-provider-facing metadata for one dynamic page session.",
+  "properties": {
+    "actionInstanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Actioninstanceid",
+      "type": "string"
+    },
+    "bindings": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-metadata.v1.schema.json"
+      },
+      "title": "Bindings",
+      "type": "array"
+    },
+    "configId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Configid",
+      "type": "string"
+    },
+    "contextId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Contextid",
+      "type": "string"
+    },
+    "ownerBindingId": {
+      "anyOf": [
+        {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ownerbindingid"
+    },
+    "pageId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Pageid",
+      "type": "string"
+    },
+    "pageSessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Pagesessionid",
+      "type": "string"
+    },
+    "providerId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Providerid",
+      "type": "string"
+    },
+    "providerInstanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Providerinstanceid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "providerInstanceId",
+    "providerId",
+    "actionInstanceId",
+    "configId",
+    "pageId",
+    "pageSessionId",
+    "contextId"
+  ],
+  "title": "PageSessionMetadata",
+  "type": "object"
+}

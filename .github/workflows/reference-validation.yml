@@ -1,0 +1,160 @@
+name: Reference validation
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v5
+      - name: Validate schemas, fixtures, boundaries and references
+        shell: bash
+        run: |
+          uv run --no-project --with 'jsonschema[format-nongpl]==4.26.0' --with referencing==0.37.0 python - <<'PYVALIDATE'
+          """Validation step embedded in the reference-only CI workflow."""
+          import hashlib
+          import json
+          import re
+          import subprocess
+          from collections import Counter
+          from pathlib import Path
+          from urllib.parse import unquote, urldefrag
+
+          from jsonschema import Draft202012Validator, FormatChecker
+          from referencing import Registry, Resource
+
+          root = Path.cwd()
+          bundle = root / 'contract/v1'
+
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  assert key not in result, f'Duplicate JSON key: {key}'
+                  result[key] = value
+              return result
+
+          def reject_constant(value):
+              raise ValueError(f'Non-JSON number: {value}')
+
+          def read(path):
+              return json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=unique_object, parse_constant=reject_constant)
+
+          manifest = read(bundle / 'manifest.json')
+          artifacts = manifest['artifacts']
+          listed = {a['path'] for a in artifacts}
+          assert len(listed) == len(artifacts), 'Duplicate artifact path'
+          assert len({a['id'] for a in artifacts}) == len(artifacts), 'Duplicate artifact ID'
+          actual = {str(p.relative_to(bundle)) for p in bundle.rglob('*.json')} - {'manifest.json'}
+          assert listed == actual, f'Manifest mismatch: {listed ^ actual}'
+          schemas = {a['path']: read(bundle / a['path']) for a in artifacts if a['kind'] == 'schema'}
+          by_id = {s['$id']: s for s in schemas.values()}
+          assert len(by_id) == len(schemas), 'Duplicate schema ID'
+          registry = Registry().with_resources((i, Resource.from_contents(s)) for i, s in by_id.items())
+          formats = FormatChecker()
+          assert 'date-time' in formats.checkers, 'Install jsonschema[format-nongpl]'
+          assert not formats.conforms('not-a-date', 'date-time')
+          assert not formats.conforms('2026-02-30T10:00:00Z', 'date-time')
+          validators = {p: Draft202012Validator(s, registry=registry, format_checker=formats) for p, s in schemas.items()}
+
+          def walk(value):
+              if isinstance(value, dict):
+                  yield value
+                  for item in value.values():
+                      yield from walk(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      yield from walk(item)
+
+          base = manifest['schemaBaseUri'].removesuffix('schemas/')
+          for path, schema in schemas.items():
+              Draft202012Validator.check_schema(schema)
+              assert schema['$schema'] == manifest['jsonSchemaDialect'], path
+              assert schema['$id'] == base + path, path
+              for node in walk(schema):
+                  if '$ref' not in node:
+                      continue
+                  target, fragment = urldefrag(node['$ref'])
+                  resolved = by_id[target] if target else schema
+                  if fragment:
+                      assert fragment.startswith('/'), node['$ref']
+                      for part in fragment[1:].split('/'):
+                          resolved = resolved[part.replace('~1', '/').replace('~0', '~')]
+                  if path.startswith('schemas/protocols/') and target:
+                      group = path.split('/')[2]
+                      allowed = {base + 'schemas/protocols/common/', base + f'schemas/protocols/{group}/'}
+                      assert any(target.startswith(prefix) for prefix in allowed), (path, target)
+
+          coverage = Counter()
+          for artifact in artifacts:
+              if artifact['kind'] == 'fixture':
+                  path = artifact['schemaPath']
+                  value = read(bundle / artifact['path'])
+                  errors = list(validators[path].iter_errors(value))
+                  assert (not errors) == artifact['valid'], (artifact['path'], [e.message for e in errors[:3]])
+                  coverage[path, artifact['valid']] += 1
+              elif artifact['kind'] == 'catalog' and 'schemaPath' in artifact:
+                  validators[artifact['schemaPath']].validate(read(bundle / artifact['path']))
+          for artifact in artifacts:
+              if artifact['kind'] == 'schema':
+                  assert coverage[artifact['path'], True], f'No positive fixture: {artifact["path"]}'
+                  assert coverage[artifact['path'], False] or artifact.get('negativeFixtureExemption'), f'No negative fixture: {artifact["path"]}'
+
+          messages = read(bundle / 'catalogs/messages.v1.json')['messages']
+          assert len([m for m in messages if m['lane'] == 'hardware_messages']) == 8
+          assert len([m for m in messages if m.get('serviceNamespace') == 'dev.deckr.action_runtime.provider']) == 14
+          for message in messages:
+              assert message['schemaPath'] in schemas and message['payloadSchemaPath'] in schemas
+          for definition in read(bundle / 'catalogs/source-coverage.v1.json')['definitions']:
+              assert definition['status'] in {'extracted', 'retired'}
+              if definition['status'] == 'extracted':
+                  assert definition['schemaPath'] in schemas
+              else:
+                  assert definition['reason']
+
+          semantic_cases = read(bundle / 'vectors/semantic-validation.v1.json')['cases']
+          assert len({c['id'] for c in semantic_cases}) == len(semantic_cases)
+          for case in semantic_cases:
+              assert validators[case['schemaPath']].is_valid(case['instance']) == case['schemaValid'], case['id']
+              assert case['rule'] in (root / 'docs/semantic-rules.md').read_text(), case['rule']
+          # Verify published byte/digest pairs; implementations separately test canonicalization.
+          for case in read(bundle / 'vectors/concord-terms-hash.v1.json')['cases']:
+              assert 'sha256:' + hashlib.sha256(case['canonicalJson'].encode()).hexdigest() == case['hash'], case['id']
+
+          # Check local Markdown destinations and heading anchors without running a site build.
+          def anchors(path):
+              names = Counter()
+              result = set()
+              for heading in re.findall(r'^#{1,6}\s+(.+)$', path.read_text(), re.M):
+                  slug = re.sub(r'[^\w\- ]', '', heading.lower().replace('`', '')).replace(' ', '-')
+                  count = names[slug]
+                  names[slug] += 1
+                  result.add(slug + (f'-{count}' if count else ''))
+              return result
+
+          for path in [root / 'README.md', root / 'AGENTS.md', root / 'interoperability-tests.md', *sorted((root / 'docs').rglob('*.md'))]:
+              for destination in re.findall(r'\[[^\]]*\]\(([^\s)]+)\)', path.read_text()):
+                  if re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*:', destination):
+                      continue
+                  target, fragment = urldefrag(unquote(destination))
+                  linked = (path.parent / target).resolve() if target else path
+                  assert linked.is_relative_to(root), (path, destination)
+                  assert linked.exists(), (path, destination)
+                  if fragment and linked.suffix == '.md':
+                      assert fragment in anchors(linked), (path, destination, 'missing heading')
+
+          for relative in subprocess.check_output(['git', 'ls-files'], text=True).splitlines():
+              path = root / relative
+              if path.exists():
+                  assert path.suffix not in {'.py', '.ts', '.rs'}, f'Implementation file remains: {relative}'
+
+          print(f'{len(schemas)} schemas; {sum(coverage.values())} fixture expectations; {len(semantic_cases)} semantic case structures; offline refs, module boundaries, catalog coverage and documentation links passed.')
+          PYVALIDATE

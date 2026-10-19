@@ -1,0 +1,6 @@
+{
+  "schema": {
+    "type": "string"
+  },
+  "schemaId": "org.example.value.v1"
+}

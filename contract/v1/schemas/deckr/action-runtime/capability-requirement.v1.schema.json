@@ -1,0 +1,64 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-requirement.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A named action input, output, state, config, or diagnostic requirement.",
+  "properties": {
+    "commandTypes": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+        "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+        "type": "string"
+      },
+      "title": "Commandtypes",
+      "type": "array"
+    },
+    "eventTypes": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+        "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
+        "type": "string"
+      },
+      "title": "Eventtypes",
+      "type": "array"
+    },
+    "name": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Name",
+      "type": "string"
+    },
+    "preferences": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-requirement-selector.v1.schema.json"
+      },
+      "minItems": 1,
+      "title": "Preferences",
+      "type": "array"
+    },
+    "required": {
+      "default": true,
+      "title": "Required",
+      "type": "boolean"
+    },
+    "views": {
+      "items": {
+        "enum": [
+          "raw",
+          "native",
+          "projected",
+          "derived",
+          "extension"
+        ],
+        "type": "string"
+      },
+      "title": "Views",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "preferences"
+  ],
+  "title": "CapabilityRequirement",
+  "type": "object"
+}

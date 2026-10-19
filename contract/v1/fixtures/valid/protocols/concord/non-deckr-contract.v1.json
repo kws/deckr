@@ -1,0 +1,10 @@
+{
+  "attachedParticipants": [],
+  "contractId": "example-agreement",
+  "generation": 1,
+  "participants": [
+    "scheduler:main",
+    "worker:example"
+  ],
+  "profile": "org.example.work.v1"
+}

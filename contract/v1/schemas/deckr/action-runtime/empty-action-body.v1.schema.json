@@ -1,0 +1,9 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Body for messages whose meaning lives entirely in the envelope/subject.",
+  "properties": {},
+  "title": "EmptyActionBody",
+  "type": "object"
+}

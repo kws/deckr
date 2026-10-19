@@ -1,0 +1,18 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/action-availability-selector.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Controller request selector for one provider action.",
+  "properties": {
+    "actionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "title": "Actionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "actionId"
+  ],
+  "title": "ActionAvailabilitySelector",
+  "type": "object"
+}

@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "contractId": "contract-1",
+      "family": "action_availability",
+      "generation": 1,
+      "serviceId": "action-runtime.clock-main",
+      "storageKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current.contract.contract-1.1",
+      "token": "current",
+      "viewKey": "views.b64_YWN0aW9uLXJ1bnRpbWUuY2xvY2stbWFpbg.action_availability.current"
+    },
+    {
+      "contractId": "contract / é",
+      "family": "action_availability",
+      "generation": 7,
+      "serviceId": "media-home",
+      "storageKey": "views.media-home.action_availability.current.contract.b64_Y29udHJhY3QgLyDDqQ.7",
+      "token": "current",
+      "viewKey": "views.media-home.action_availability.current"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Any JSON value. Inputs must be JSON: NaN, Infinity, duplicate object keys and non-JSON runtime values are not permitted.",
+  "title": "JSON value"
+}

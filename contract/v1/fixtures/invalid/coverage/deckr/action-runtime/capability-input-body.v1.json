@@ -1,0 +1,15 @@
+{
+  "event": {
+    "capability": {
+      "capabilityId": "button",
+      "controlId": "button-1",
+      "deviceRef": {
+        "deviceId": "deck-1",
+        "fingerprint": "fingerprint:deck-1",
+        "managerId": "mirabox-main"
+      }
+    },
+    "eventType": "example",
+    "occurredAt": "2026-04-29T10:00:00Z"
+  }
+}

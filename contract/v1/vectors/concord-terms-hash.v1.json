@@ -3,8 +3,64 @@
     {
       "canonicalJson": "{\"claimId\":\"claim-1\",\"controllerEndpoint\":\"controller:controller-main\",\"devices\":[{\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"instanceCount\":1}],\"managerEndpoint\":\"hardware_manager:mirabox-main\",\"profile\":\"dev.deckr.profile.hardware_claim.v1\"}",
       "hash": "sha256:53e9478a8975871368eaf33b31c3980da70d68992ccc3d750799289848df7113",
-      "id": "hardware_claim"
+      "id": "hardware_claim",
+      "inputJson": "{\"claimId\":\"claim-1\",\"controllerEndpoint\":\"controller:controller-main\",\"devices\":[{\"deviceRef\":{\"deviceId\":\"deck-1\",\"fingerprint\":\"fingerprint:deck-1\",\"managerId\":\"mirabox-main\"},\"instanceCount\":1}],\"managerEndpoint\":\"hardware_manager:mirabox-main\",\"profile\":\"dev.deckr.profile.hardware_claim.v1\"}"
+    },
+    {
+      "canonicalJson": "{\"a\":\"text\",\"z\":[{\"a\":1,\"b\":2},true,null]}",
+      "hash": "sha256:fa949259e6166e5cd736a52ec0aa96ddd8d7d90de38e2f2d2e7186b4eb5cfc2c",
+      "id": "nested_order",
+      "inputJson": "{\"z\":[{\"b\":2,\"a\":1},true,null],\"a\":\"text\"}"
+    },
+    {
+      "canonicalJson": "{\"a\":\"\\n\\u0000/\",\"é\":\"café\",\"\":2,\"😀\":1}",
+      "hash": "sha256:119ef4339d2ce952723196e7f242c6ea9794f3cee262946a9fe3b120375fe2f4",
+      "id": "unicode_scalars",
+      "inputJson": "{\"😀\":1,\"\\ue000\":2,\"é\":\"café\",\"a\":\"\\n\\u0000/\"}"
+    },
+    {
+      "canonicalJson": "{\"n\":1}",
+      "hash": "sha256:2bfd14f43d17fc7cea24e0917a8879b4b2f880b8baeec1b9d90fbaad655e71bd",
+      "id": "integer_one",
+      "inputJson": "{\"n\":1}"
+    },
+    {
+      "canonicalJson": "{\"n\":1.0}",
+      "hash": "sha256:3b6b06ecd1c968c8e738e0f11c4bb361fca80a9a694de22fe66a05286afbd081",
+      "id": "float_one",
+      "inputJson": "{\"n\":1.0}"
+    },
+    {
+      "canonicalJson": "{\"n\":1.0}",
+      "hash": "sha256:3b6b06ecd1c968c8e738e0f11c4bb361fca80a9a694de22fe66a05286afbd081",
+      "id": "float_exponent_one",
+      "inputJson": "{\"n\":1e0}"
+    },
+    {
+      "canonicalJson": "{\"i\":0,\"n\":-0.0}",
+      "hash": "sha256:95f6f5452853981cadf0b7c484e799a3a8b227e7d5a8884d7474e4ae6b7c38d7",
+      "id": "negative_zero",
+      "inputJson": "{\"n\":-0.0,\"i\":-0}"
+    },
+    {
+      "canonicalJson": "{\"a\":0.0001,\"b\":1e-05,\"c\":1000000000000000.0,\"d\":1e+16}",
+      "hash": "sha256:6573b66897043294071f5fa337a3c83f6c5d0a30cf465e31414629c1b96a2b77",
+      "id": "float_notation_thresholds",
+      "inputJson": "{\"a\":0.0001,\"b\":0.00001,\"c\":1000000000000000.0,\"d\":10000000000000000.0}"
+    },
+    {
+      "canonicalJson": "{\"n\":9007199254740993}",
+      "hash": "sha256:4ac8309cc76123ef6c5325ef925fc873e9b5856ec4f844ef1462f9303960378a",
+      "id": "large_integer",
+      "inputJson": "{\"n\":9007199254740993}"
+    },
+    {
+      "canonicalJson": "{\"n\":0.1}",
+      "hash": "sha256:c20c34ed16c837e86b4dcdb33f98c274c9f7da1231f64302082d2cd50743f951",
+      "id": "binary64_rounding",
+      "inputJson": "{\"n\":0.1000000000000000055511151231257827021181583404541015625}"
     }
   ],
-  "schema": "dev.deckr.vector.concord_terms_hash.v1"
+  "schema": "dev.deckr.vector.concord_terms_hash.v1",
+  "specification": "../../../docs/canonical-json.md"
 }

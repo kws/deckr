@@ -1,0 +1,8 @@
+{
+  "exchangePattern": "request_reply",
+  "intent": "command",
+  "name": "play",
+  "params": {
+    "zone": "kitchen"
+  }
+}

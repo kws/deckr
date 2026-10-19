@@ -1,0 +1,41 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/profile-capacity.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "availableInstances": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Availableinstances"
+    },
+    "claimedInstances": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Claimedinstances",
+      "type": "integer"
+    },
+    "totalInstances": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Totalinstances"
+    }
+  },
+  "title": "ProfileCapacity",
+  "type": "object"
+}

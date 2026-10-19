@@ -1,0 +1,46 @@
+{
+  "connections": [
+    {
+      "connectionId": "virtual-0",
+      "type": "virtual"
+    }
+  ],
+  "controls": [
+    {
+      "controlId": "button.1",
+      "inputCapabilities": [
+        {
+          "access": [
+            "emits"
+          ],
+          "capabilityId": "button.press",
+          "direction": "input",
+          "eventTypes": [
+            "press"
+          ],
+          "family": "dev.deckr.input.button",
+          "type": "activation",
+          "valueSchema": {
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "eventType": {
+                  "const": "press"
+                }
+              },
+              "required": [
+                "eventType"
+              ],
+              "type": "object"
+            },
+            "schemaId": "dev.deckr.value.input.button.activation.v1"
+          }
+        }
+      ],
+      "kind": "button"
+    }
+  ],
+  "deviceId": "remote-button-pad",
+  "displayName": "Remote Button Pad",
+  "fingerprint": "virtual:remote-button-pad"
+}
