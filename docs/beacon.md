@@ -11,7 +11,7 @@ and the runtime view. It also includes the Beacon hardware profile.
 
 The requirements apply to all implementations, in all programming languages.
 An implementation API or source model does not change these requirements.
-This document defines Beacon protocol requirements. The [Concord specification](concord-ste100.md)
+This document defines Beacon protocol requirements. The [Concord specification](concord.md)
 defines agreement requirements. Section 10 gives the related references.
 
 The word **must** identifies a requirement. **Must not** identifies a prohibition.
@@ -23,7 +23,7 @@ The word **can** identifies a possibility or permission. Text marked
 The table gives the meanings of technical nouns in this specification. Field
 names, API names, schema identifiers, and code values keep their exact spelling.
 
-Shared terms have the same meanings in the [Concord specification](concord-ste100.md#2-technical-terms).
+Shared terms have the same meanings in the [Concord specification](concord.md#2-technical-terms).
 In Beacon sections, “candidate” means “Beacon candidate” and “selector” means
 “Beacon selector”. “Session” means “endpoint session”.
 
@@ -206,7 +206,7 @@ use exact reads and calculate validity again.
 ### 5.3 TTL policy
 
 The broker controls the bucket TTL. The default Beacon bucket TTL is 300 seconds.
-The bucket must obey the [shared KV storage requirements](nats-ste100.md#7-shared-kv-storage-requirements).
+The bucket must obey the [shared KV storage requirements](nats.md#7-shared-kv-storage-requirements).
 Those requirements define policy comparison, retained messages, delete markers,
 and removal of expired keys from the source and view.
 
@@ -215,7 +215,7 @@ and removal of expired keys from the source and view.
 ### 6.1 Create an advertisement
 
 The runtime owns the advertisement context and the advertisement heartbeat
-schedule.
+schedule. It also owns advertisement lifecycle logging.
 `Beacon.advertise(endpoint, spec)` is a synchronous factory for an asynchronous
 context manager. The endpoint supplies the advertiser identity and the current
 session. The `spec` argument supplies only the advertisement intent.
@@ -341,7 +341,7 @@ use the managed Beacon view. They do not subscribe directly to its raw store.
 `Beacon.watch()` always supplies one `BeaconWatchSnapshot` first.
 This snapshot contains the view `version`, the `current` flag, and the full
 filtered candidate tuple. The watch must obey the
-[public state watch requirements](nats-ste100.md#9-public-state-watches).
+[public state watch requirements](nats.md#9-public-state-watches).
 Those requirements define atomic registration, change limits, overflow,
 slow subscribers, and registration limits.
 
@@ -360,7 +360,7 @@ After reconnection, the runtime rebuilds the view as one atomic change.
 It reports transitions between stale and current state. The resulting difference
 includes keys that disappeared during the outage.
 
-The source must obey the [shared recovery requirements](nats-ste100.md#8-materialized-sources-and-recovery).
+The source must obey the [shared recovery requirements](nats.md#8-materialized-sources-and-recovery).
 Those requirements define snapshot barriers, revision ordering, tombstone limits,
 currentness, and observation of exact writes. Loss of Beacon currentness affects
 discovery only, as specified in section 3.
@@ -381,6 +381,7 @@ Its payload must agree with these identity conditions:
 | `managerId` | The value must be the same as the hardware-manager endpoint ID. |
 
 The hardware Beacon profile is the only public source for device inventory.
+The hardware lane is named `hardware_messages`.
 Hardware lane messages do not announce inventory lifecycle changes.
 Hardware lane messages do not replace the device inventory published through
 Beacon.
@@ -389,7 +390,7 @@ must not replace Beacon discovery or Concord authority.
 
 Beacon can identify a device before an endpoint makes a claim. Beacon does not
 give device ownership. A missing hardware advertisement alone does not withdraw
-an existing device claim. The [Concord specification](concord-ste100.md#161-hardware-claims)
+an existing device claim. The [Concord specification](concord.md#161-hardware-claims)
 gives the claim requirements.
 
 ## 10 Conformance and references
@@ -408,16 +409,16 @@ The artifact locations are below.
 | [Endpoint addresses](#43-endpoint-addresses) | Endpoint identity requirements. |
 | [Advertisement store](#5-advertisement-store) | Key tokens and store operations. |
 | [Advertisement lifecycle](#6-advertisement-lifecycle) | Publication, refresh, withdrawal, and recovery. |
-| [Concord specification](concord-ste100.md) | Agreement authority, participant tokens, and recovery. |
-| [Managed service consumers](concord-ste100.md#165-managed-service-consumers) | Service discovery, candidate selection, and agreement negotiation. |
-| [NATS substrate specification](nats-ste100.md) | Transport, shared KV policy, state watches, and source recovery. |
+| [Concord specification](concord.md) | Agreement authority, participant tokens, and recovery. |
+| [Managed service consumers](concord.md#165-managed-service-consumers) | Service discovery, candidate selection, and agreement negotiation. |
+| [NATS substrate specification](nats.md) | Transport, shared KV policy, state watches, and source recovery. |
 | [Advertisement schema](../contract/v1/schemas/beacon/advertisement.v1.schema.json) | The full envelope structure. |
 | [Hardware profile schema](../contract/v1/schemas/profiles/hardware.v1.schema.json) | The Beacon hardware payload structure. |
 | [Valid Beacon fixtures](../contract/v1/fixtures/valid/beacon/) | Valid advertisement examples. |
 | [Invalid Beacon fixtures](../contract/v1/fixtures/invalid/beacon/) | Invalid advertisement examples. |
 | [Key-token vectors](../contract/v1/vectors/key-tokens.v1.json) | Expected token encodings. |
 | [Advertisement key vector](../contract/v1/vectors/beacon-concord-keys.v1.json) | The `beacon_advertisement_key` case only. |
-| [Runtime reference](protocol-runtime-reference.md#beacon-api-example) | Beacon API examples. These examples do not change protocol requirements. |
+| [Runtime reference](protocol-runtime-reference.md#33-publish-a-beacon-advertisement) | Beacon API examples. These examples do not change protocol requirements. |
 
 If the specification, artifacts, and implementation disagree, identify the
 difference as a contract bug. Correct each affected item so they agree.

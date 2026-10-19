@@ -13,10 +13,10 @@ Beacon advertisement rules and general lane transport rules are outside this sco
 
 Use these references with this document:
 
-- [NATS substrate specification](nats-ste100.md), for the substrate requirements.
+- [NATS substrate specification](nats.md), for the substrate requirements.
 - [Contract artifacts](../contract/v1), for schemas, fixtures, and acceptance vectors.
 - [Protocol runtime reference](protocol-runtime-reference.md), for API examples and tools.
-- [Beacon specification](beacon-ste100.md), for discovery requirements.
+- [Beacon specification](beacon.md), for discovery requirements.
 
 The JSON Schemas specify record structure. They do not specify all protocol requirements. Implementations must also obey the requirements in this document. Differences between the specification, contract artifacts, and implementation are contract errors.
 Correct each affected item so they agree.
@@ -29,7 +29,7 @@ The word **can** identifies a possibility or permission. Text marked
 
 Use the terms below with the specified meanings. Code identifiers, field names, status values, and schema names keep their exact spelling.
 
-Shared terms have the same meanings in the [Beacon specification](beacon-ste100.md#2-technical-terms).
+Shared terms have the same meanings in the [Beacon specification](beacon.md#2-technical-terms).
 In Concord participant-policy sections, “candidate” means “Concord participant
 candidate” and “selector” means “Concord participant selector”. “Session” means
 “endpoint session”.
@@ -175,10 +175,12 @@ Use different interfaces for these store responsibilities:
 | Store interface | Responsibility |
 | --- | --- |
 | Exact Concord KV | Exact reads, creation, guarded mutations, and token TTL metadata. |
-| Concord materialized source | Readiness, currentness, source generation, cached observations, cached revisions, and runtime subscriptions. |
+| Concord materialized source | Readiness, currentness, source generation, cached raw exact-key and prefix snapshots, cached revisions, and runtime subscriptions. |
 | Concord maintenance capability | Exact prefix lists, exact reads, and guarded maintenance mutations through dedicated raw stores. |
 
 Runtime contract and token stores give exact access and materialized sources. They do not give access to maintenance mutations. Runtime reads use the materialized sources. Mutations use exact reads to check identity and revision.
+Production runtime consumers must use the managed Concord view. They must not
+subscribe directly to raw contract or participant-token stores.
 
 Exact reads are also available for strict validation, recovery, and diagnostics. Only the maintenance path uses broad exact prefix scans at low frequency. The maintenance store is not part of runtime Concord readiness or validity.
 
@@ -191,7 +193,7 @@ Concord authority bucket names are reserved. Generic `Deckr.kv_bucket(...)` and 
 The token bucket TTL is the only source of `ttlSeconds`. Each token record must use that TTL. Participants cannot configure a different token TTL or refresh interval. The default token bucket TTL is 120 seconds.
 
 The broker controls token expiry. All Concord buckets must obey the
-[shared KV storage requirements](nats-ste100.md#7-shared-kv-storage-requirements).
+[shared KV storage requirements](nats.md#7-shared-kv-storage-requirements).
 Those requirements define policy comparison, retained messages, delete markers,
 cache removal, and restrictions on per-write TTL.
 
@@ -526,7 +528,7 @@ Filters start with the smallest applicable index. The indexes cover profile, par
 
 `Concord.watch()` first yields one `ConcordWatchSnapshot`. This snapshot contains `version`, `current`, and the full filtered tuple of `ConcordContractState` records.
 
-The watch must obey the [public state watch requirements](nats-ste100.md#9-public-state-watches).
+The watch must obey the [public state watch requirements](nats.md#9-public-state-watches).
 Those requirements define atomic registration, change limits, overflow,
 slow subscribers, and registration limits.
 Later `ConcordWatchChange` values contain the full filtered membership,
@@ -534,14 +536,14 @@ bounded changed contract pointers, and `resnapshot_required`.
 If pointer detail overflows, the full membership gives the current result.
 
 Reconnect rebuilds of contract and token materialized sources are atomic. The Concord view includes removal of missing pointers after these rebuilds.
-Both sources must obey the [shared recovery requirements](nats-ste100.md#8-materialized-sources-and-recovery).
+Both sources must obey the [shared recovery requirements](nats.md#8-materialized-sources-and-recovery).
 Section 9 defines the permanent effect of lost currentness on local authority.
 
 ### 13.2 Context entry and exit
 
 `Concord.propose(endpoint, spec)` and `Concord.participant(endpoint, policy)` are synchronous factories. Each factory supplies an async context manager.
 
-Context entry owns bootstrap and private workers. Context exit does these actions:
+The runtime owns lifecycle logging. Context entry owns bootstrap and private workers. Context exit does these actions:
 
 1. Cancel the private workers.
 2. Wait for those workers to finish.
@@ -742,14 +744,32 @@ The v1 protocol expects claimed device descriptors to stay stable. A material de
 ### 16.2 Service use
 
 Service-use contracts have opaque runtime ids. They contain the service-use profile without service-specific `terms`. The contract must not have `terms` or `termsHash`.
+Service protocols declare their use profile, such as `*.service_use.v1`.
 
 The participants must be the service endpoint and the client endpoint only. New or lost service-use authority needs a new Concord contract.
 
 After negotiation, the held lease and participant tokens control service-message and protected-view authority. Continued Beacon advertisement presence is not necessary for that authority.
 
 A consumer-to-service message must contain the exact contract pointer. It must name a protocol operation. The sender must be the peer named in the contract.
+Authorization must also enforce any retained resource scope that the service
+protocol manages. Services carry these messages on the core `services` lane.
 
 Protected view access uses the advertised view-family prefixes and the service identity, session, and contract pointer as fences. A consumer can refresh a held lease while it passes validation. New or lost lease state needs current discovery and a new opaque Concord contract.
+
+Protected service views use explicit JetStream KV buckets. Each entry must carry
+the `serviceId`, `serviceNamespace`, and `sessionId` fence values. Protected reads
+and watches need an active Concord service-use lease and the matching contract
+pointer. A namespace mismatch must not expose a payload.
+
+Service views use the shared materialized-source recovery and public state-watch
+requirements from the [NATS specification](nats.md#8-materialized-sources-and-recovery).
+Usual reads use the cached view. After a started view store completes a write or
+delete, its local view must reflect the committed revision or a newer observation.
+The store waits for ordered watch observations as specified in
+[NATS section 8.3](nats.md#83-exact-writes-and-observations).
+Recovered snapshots must remove cached keys that are absent from the store.
+This includes keys whose delete or expiry events were missed.
+Writes return `entry.revision` for revision-guarded updates and deletes.
 
 A protected view watch must send payloads only when the entry agrees with its service-use fence. If a same-key entry changes to a different service identity or session, the watcher receives only a removal-style event. It must not receive the replacement payload. Do not send delete or expire events for entries that the watcher did not see.
 
@@ -795,7 +815,9 @@ negotiation.
 Ordinary service consumers must not do these operations themselves:
 
 - Scan raw Beacon KV records.
+- Make an exact NATS round trip for discovery.
 - Scan all Beacon candidates and parse service descriptors with their own code.
+- Maintain a duplicate service-specific Beacon index.
 - Classify Concord terminal statuses.
 - Query Concord to find available services.
 

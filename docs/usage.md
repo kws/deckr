@@ -19,8 +19,8 @@ negotiation, request authority, and view fencing as one managed service context.
 Direct Beacon and Concord primitives are implementation-level APIs for core
 runtime code, service or hardware infrastructure, and conformance tests.
 Application providers and hardware backends use managed contexts. The
-[Beacon specification](beacon-ste100.md) and
-[Concord specification](concord-ste100.md) define the protocol requirements.
+[Beacon specification](beacon.md) and
+[Concord specification](concord.md) define the protocol requirements.
 
 ## Service Protocol Definition
 
@@ -373,8 +373,8 @@ Provider implementations should follow these boundaries:
 
 For protocol semantics, stale contract cleanup, cancellation rules, and
 participant-token behavior, use the
-[managed context requirements](concord-ste100.md#166-managed-providers-and-hardware-managers)
-and the [NATS specification](nats-ste100.md).
+[managed context requirements](concord.md#166-managed-providers-and-hardware-managers)
+and the [NATS specification](nats.md).
 
 ## Maintenance Infrastructure
 

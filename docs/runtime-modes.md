@@ -71,7 +71,7 @@ supervised = true
 
 Both modes retry broker connections indefinitely. The optional
 `reconnect_max_interval_seconds` setting caps reconnection backoff and defaults
-to 60 seconds. See [broker reconnection](nats-bus.md#broker-reconnection) for
+to 60 seconds. See [broker reconnection](nats.md#4-broker-connection-lifecycle) for
 startup and recovery behavior.
 
 Component instances use the same generic shape in every mode. Production

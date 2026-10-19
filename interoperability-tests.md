@@ -6,8 +6,9 @@
 
 This catalog complements the normative and live-reference documents:
 
-- [`docs/beacon-concord.md`](docs/beacon-concord.md)
-- [`docs/nats-bus.md`](docs/nats-bus.md)
+- [Beacon specification](docs/beacon.md)
+- [Concord specification](docs/concord.md)
+- [NATS substrate specification](docs/nats.md)
 - [`docs/runtime-architecture.md`](docs/runtime-architecture.md)
 - [`contract/v1`](contract/v1)
 
@@ -79,7 +80,8 @@ Exact syntax is not normative. Observable behavior is normative.
 
 ### DIT-KEY-001: Endpoint Address Acceptance
 
-Spec source: `docs/beacon-concord.md#shared-rules`
+Spec source: `docs/beacon.md#43-endpoint-addresses`,
+`docs/concord.md#41-endpoint-addresses`
 
 Scenario: implementations accept valid endpoint families and ids and reject
 malformed endpoint addresses before writing protocol state.
@@ -114,7 +116,7 @@ envelopes emitted by the implementation.
 
 ### DIT-KEY-002: Key-Token Vector Compatibility
 
-Spec source: `docs/beacon-concord.md#shared-rules`,
+Spec source: `docs/nats.md#51-key-tokens`,
 `contract/v1/vectors/key-tokens.v1.json`
 
 Scenario: all implementations derive identical key tokens for the same logical
@@ -135,8 +137,8 @@ padding removal behavior.
 
 ### DIT-KEY-003: Beacon And Concord Key Vector Compatibility
 
-Spec source: `docs/nats-bus.md#beacon-store`,
-`docs/nats-bus.md#concord-stores`,
+Spec source: `docs/beacon.md#51-bucket-and-key`,
+`docs/concord.md#51-buckets-and-keys`,
 `contract/v1/vectors/beacon-concord-keys.v1.json`
 
 Scenario: independent implementations read and write the same logical records
@@ -155,7 +157,7 @@ Pass criteria: the derived keys match the vector byte-for-byte.
 
 ### DIT-HASH-001: Concord Terms Hash Compatibility
 
-Spec source: `docs/beacon-concord.md#shared-rules`,
+Spec source: `docs/concord.md#43-terms-hashes`,
 `contract/v1/vectors/concord-terms-hash.v1.json`
 
 Scenario: all implementations compute the same canonical hash for equivalent
@@ -177,7 +179,7 @@ UTF-8 text, and `sha256:<hex>` serialization.
 
 ### DIT-BCN-001: Advertisement Create, Refresh, And Withdraw
 
-Spec source: `docs/beacon-concord.md#beacon`
+Spec source: `docs/beacon.md#6-advertisement-lifecycle`
 
 Scenario: one implementation advertises a feature and another discovers it as a
 candidate, then observes withdrawal.
@@ -219,7 +221,7 @@ withdrawal or TTL expiry.
 
 ### DIT-BCN-002: Advertisement Identity And Key Agreement
 
-Spec source: `docs/beacon-concord.md#beacon`
+Spec source: `docs/beacon.md#7-candidate-selection`
 
 Scenario: an implementation rejects a Beacon record whose key and payload
 identity disagree.
@@ -251,7 +253,8 @@ diagnostics, but never returned as usable candidates.
 
 ### DIT-BCN-003: Beacon Is Discovery Only
 
-Spec source: `docs/beacon-concord.md#discovery-and-agreement-boundary`
+Spec source: `docs/beacon.md#3-discovery-boundary`,
+`docs/concord.md#3-authority-and-discovery`
 
 Scenario: removing a Beacon advertisement after a Concord agreement exists does
 not invalidate that agreement.
@@ -284,8 +287,8 @@ participant tokens only.
 
 ### DIT-BCN-004: Startup Cleanup Does Not Revoke Existing Concord Claims
 
-Spec source: `docs/beacon-concord.md#beacon`,
-`docs/beacon-concord.md#profiles`
+Spec source: `docs/beacon.md#61-create-an-advertisement`,
+`docs/concord.md#161-hardware-claims`
 
 Scenario: a restarted advertiser removes stale same-feature Beacon records for
 its endpoint without cancelling or invalidating an existing Concord claim.
@@ -316,7 +319,8 @@ unchanged while valid participant tokens remain.
 
 ### DIT-CCD-001: Contract Is Not Valid Until All Participants Attach
 
-Spec source: `docs/beacon-concord.md#concord`
+Spec source: `docs/concord.md#7-contract-creation-and-token-attachment`,
+`docs/concord.md#121-conditions-for-authority`
 
 Scenario: creating an open contract with no attached participants does not
 grant authority.
@@ -349,7 +353,8 @@ valid authority.
 
 ### DIT-CCD-002: Participant Token Ownership
 
-Spec source: `docs/beacon-concord.md#concord`
+Spec source: `docs/concord.md#72-attach-a-participant`,
+`docs/concord.md#8-token-refresh`
 
 Scenario: a participant must write only its own token, and validation rejects a
 token whose payload participant does not match the participant key.
@@ -382,7 +387,7 @@ Pass criteria: token key identity and token payload identity must agree.
 
 ### DIT-CCD-003: Missing Attached Token Invalidates Authority
 
-Spec source: `docs/beacon-concord.md#concord`
+Spec source: `docs/concord.md#9-permanent-loss-of-authority`
 
 Scenario: once a participant is attached, losing that participant's token makes
 the contract invalid for that generation.
@@ -410,7 +415,8 @@ not a temporary unknown state.
 
 ### DIT-CCD-004: Cancelled Contract Is Terminal
 
-Spec source: `docs/beacon-concord.md#concord`
+Spec source: `docs/concord.md#9-permanent-loss-of-authority`,
+`docs/concord.md#10-withdrawal-and-successor-agreements`
 
 Scenario: a cancelled contract does not become valid again even if tokens are
 refreshed or recreated.
@@ -435,7 +441,7 @@ cancelled generation.
 
 ### DIT-CCD-005: Terms Hash Mismatch Is Invalid
 
-Spec source: `docs/beacon-concord.md#concord`
+Spec source: `docs/concord.md#12-contract-validation`
 
 Scenario: a token with a different terms hash from the contract does not
 maintain authority.
@@ -471,8 +477,8 @@ participant token.
 
 ### DIT-CCD-006: Exact Validation Bypasses Stale Local Views
 
-Spec source: `docs/beacon-concord.md#concord`,
-`docs/nats-bus.md#jetstream-consumer-hygiene`
+Spec source: `docs/concord.md#123-cached-and-exact-evaluation`,
+`docs/nats.md#82-currentness`
 
 Scenario: exact validation reads current KV state even when a runtime's
 materialized view missed a token deletion.
@@ -503,8 +509,8 @@ or refreshes before answering.
 
 ### DIT-MAT-001: Watch Events Are Wakeups, Exact State Is Recoverable
 
-Spec source: `docs/beacon-concord.md#shared-rules`,
-`docs/nats-bus.md#jetstream-consumer-hygiene`
+Spec source: `docs/beacon.md#83-view-recovery`,
+`docs/nats.md#8-materialized-sources-and-recovery`
 
 Scenario: a runtime that misses a watch event detects that its view is not
 current and can recover from exact bucket state.
@@ -535,8 +541,8 @@ candidate cache.
 
 ### DIT-MAT-002: Restart Rebuilds Beacon State Before Candidate Reads
 
-Spec source: `docs/nats-bus.md#beacon-store`,
-`docs/nats-bus.md#troubleshooting`
+Spec source: `docs/beacon.md#8-runtime-view-and-watches`,
+`docs/nats.md#82-currentness`
 
 Scenario: after a controller restart, hardware candidates are read only after
 the Beacon view has reached current state or the read reports unavailable.
@@ -565,7 +571,8 @@ not-yet-ready materialized view.
 
 ### DIT-MAT-003: Missed Beacon Put Is Recovered Without Per-Query Full Scans
 
-Spec source: `docs/nats-bus.md#jetstream-consumer-hygiene`
+Spec source: `docs/beacon.md#8-runtime-view-and-watches`,
+`docs/nats.md#10-broker-resource-lifecycle`
 
 Scenario: an implementation recovers from a missed advertisement create/update
 without performing a full KV scan on every `candidates` call.
@@ -596,8 +603,9 @@ reconciliation boundaries.
 
 ### DIT-MAT-004: Missed Concord Token Deletion Is Recovered
 
-Spec source: `docs/beacon-concord.md#concord`,
-`docs/nats-bus.md#concord-stores`
+Spec source: `docs/concord.md#9-permanent-loss-of-authority`,
+`docs/concord.md#123-cached-and-exact-evaluation`,
+`docs/nats.md#8-materialized-sources-and-recovery`
 
 Scenario: a missed token deletion must not allow a stale materialized Concord
 view to continue granting authority.
@@ -629,7 +637,8 @@ granted.
 
 ### DIT-MAT-005: Snapshot Reconciliation Synthesizes Missing Tombstones
 
-Spec source: `docs/nats-bus.md#jetstream-consumer-hygiene`
+Spec source: `docs/nats.md#81-snapshot-barrier`,
+`docs/concord.md#162-service-use`
 
 Scenario: a recovered watch snapshot reconciles cached keys that are absent
 from the current bucket.
@@ -660,8 +669,7 @@ snapshot recovery.
 
 ### DIT-SVC-001: Protected View Fence Hides Replacement Payloads
 
-Spec source: `docs/beacon-concord.md#profiles`,
-`docs/nats-bus.md#deckr-profiles`
+Spec source: `docs/concord.md#162-service-use`
 
 Scenario: a protected watcher sees a removal when a visible entry is replaced
 by another service identity or session, and does not see the replacement
@@ -707,7 +715,7 @@ and session, not just by key.
 
 ### DIT-SVC-002: Delete For Never-Visible Entry Is Suppressed
 
-Spec source: `docs/beacon-concord.md#profiles`
+Spec source: `docs/concord.md#162-service-use`
 
 Scenario: a watcher does not receive delete or expire events for entries that
 were never visible under its service-use fence.
@@ -741,7 +749,7 @@ entries outside their fence.
 
 ### DIT-OPS-001: Steady-State Consumer Count Is Bounded
 
-Spec source: `docs/nats-bus.md#jetstream-consumer-hygiene`
+Spec source: `docs/nats.md#10-broker-resource-lifecycle`
 
 Scenario: repeated discovery, validation, and service-view reads do not create
 unbounded JetStream watch/list consumers.
@@ -771,8 +779,8 @@ that clean up after themselves. Consumer count stabilizes.
 
 ### DIT-OPS-002: Heartbeat Refresh Cadence Is TTL-Governed
 
-Spec source: `docs/beacon-concord.md#beacon`,
-`docs/beacon-concord.md#concord`
+Spec source: `docs/beacon.md#64-schedule-refreshes`,
+`docs/concord.md#8-token-refresh`
 
 Scenario: aggressive caller refresh loops do not write Beacon advertisements or
 Concord participant tokens faster than the protocol cadence permits.
@@ -803,8 +811,9 @@ publish immediately.
 
 ### DIT-OPS-003: Revision Guards Prevent Deleting Another Owner's State
 
-Spec source: `docs/beacon-concord.md#shared-rules`,
-`docs/beacon-concord.md#concord`
+Spec source: `docs/beacon.md#63-withdraw-an-advertisement`,
+`docs/concord.md#125-mutation-errors`,
+`docs/concord.md#101-clean-close`
 
 Scenario: cleanup code does not delete a replacement advertisement or token
 that changed owner, session, token id, or revision after the cleanup process

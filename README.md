@@ -19,16 +19,19 @@ The normative architecture and protocol references now live in:
 - [docs/runtime-architecture.md](docs/runtime-architecture.md)
 - [docs/runtime-modes.md](docs/runtime-modes.md)
 - [docs/migration-guide.md](docs/migration-guide.md)
-- [docs/beacon-concord.md](docs/beacon-concord.md)
-- [docs/nats-bus.md](docs/nats-bus.md)
+- [docs/beacon.md](docs/beacon.md)
+- [docs/concord.md](docs/concord.md)
+- [docs/nats.md](docs/nats.md)
 
 Those documents are the source of truth for the current architecture and
 protocol contract. They are explicitly normative, alpha-stage, and
 intentionally non-backward-compatible.
+API examples and operational procedures are in the non-normative
+[runtime reference](docs/protocol-runtime-reference.md).
 The distributed bus replacement has closed on NATS as the Deckr distributed
 substrate: Core NATS carries lane traffic and JetStream KV carries current
 state. The supported NATS/KV contract now lives in
-[docs/nats-bus.md](docs/nats-bus.md). Future bus ideas live outside this package
+[docs/nats.md](docs/nats.md). Future bus ideas live outside this package
 until they become implementor- or user-relevant specification.
 
 The controller now lives in its own sibling repository:
@@ -51,9 +54,11 @@ src/deckr/
   lanes.py     Endpoint sessions, lane views, and message validation
   runtime.py   Managed Deckr runtime context for lanes and endpoint lifecycle
 docs/
-  beacon-concord.md
+  beacon.md
+  concord.md
   migration-guide.md
-  nats-bus.md
+  nats.md
+  protocol-runtime-reference.md
   runtime-architecture.md
   runtime-modes.md
 contract/v1/
@@ -163,11 +168,14 @@ policy, read [docs/runtime-architecture.md](docs/runtime-architecture.md).
 Public contract identifier ownership and collision-avoidance rules live in
 [docs/namespaces.md](docs/namespaces.md).
 Beacon and Concord protocol semantics for non-Python implementors live in
-[docs/beacon-concord.md](docs/beacon-concord.md).
+[the Beacon specification](docs/beacon.md) and
+[the Concord specification](docs/concord.md).
 
 The Deckr distributed message bus is NATS. Read
-[docs/nats-bus.md](docs/nats-bus.md) for endpoint sessions, recipient filtering,
-Beacon/Concord KV stores, and broker diagnostics.
+[docs/nats.md](docs/nats.md) for endpoint sessions, recipient
+filtering, and shared KV storage rules. The Beacon and Concord specifications
+define their protocol stores. Broker diagnostics are in the
+[runtime reference](docs/protocol-runtime-reference.md#74-jetstream-consumers).
 
 The old home-grown WebSocket/MQTT lane transports, route table, route leases,
 route metadata, and remote-endpoint hint architecture are removal targets. This
@@ -193,8 +201,9 @@ can supervise a private local `nats-server` process. This is still the same
 NATS/KV runtime contract, not an in-memory or no-NATS product mode.
 
 `scripts/nats_state_report.py` summarizes the broker's current Deckr
-Beacon/Concord communication state. The NATS bus docs also cover JetStream
-consumer hygiene checks for watch paths.
+Beacon/Concord communication state. The
+[runtime reference](docs/protocol-runtime-reference.md#74-jetstream-consumers)
+also covers JetStream consumer checks for watch paths.
 
 ```bash
 uv run --extra nats python scripts/nats_state_report.py --url nats://127.0.0.1:4222
@@ -228,7 +237,7 @@ managers. They are separate from transport protocols such as MQTT and WebSocket,
 and separate from adapter-private third-party protocols.
 
 The supported message bus and protocol-store model is defined in
-[docs/nats-bus.md](docs/nats-bus.md). `deckr.action_runtime`,
+[docs/nats.md](docs/nats.md). `deckr.action_runtime`,
 `deckr.actions.messages`, and `deckr.actions.endpoints` contain the shared
 Action Runtime service contracts used by controllers, action provider runtimes,
 service bus adapters, and non-Python implementations. The v1 action contract is

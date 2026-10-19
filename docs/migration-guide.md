@@ -326,5 +326,6 @@ uv run pytest
 
 For language-neutral implementors, also validate against `contract/v1` schemas,
 fixtures, and vectors. Passing JSON Schema validation alone is not enough; the
-semantic rules in `docs/beacon-concord.md`, `docs/nats-bus.md`, and
-`docs/runtime-architecture.md` are part of the contract.
+semantic rules in the [Beacon specification](beacon.md),
+[Concord specification](concord.md), [NATS specification](nats.md),
+and [runtime architecture](runtime-architecture.md) are part of the contract.

@@ -124,10 +124,12 @@ hosts an action-lane component. Removing that transitional lane is Phase 8
 work; documentation must not describe it as a current core lane.
 
 The distributed message bus is NATS. This document owns the generic component
-and lane model. Beacon/Concord protocol semantics are specified in
-[`beacon-concord.md`](beacon-concord.md). The NATS bus specification owns
-endpoint sessions, recipient filtering, Beacon/Concord KV stores,
-broker-resource ownership, and broker diagnostics in [`nats-bus.md`](nats-bus.md).
+and lane model. The [Beacon specification](beacon.md) and
+[Concord specification](concord.md) define their protocol semantics and
+stores. The [NATS substrate specification](nats.md) defines endpoint
+sessions, recipient filtering, shared KV storage, and broker-resource ownership.
+The [runtime reference](protocol-runtime-reference.md) gives broker
+diagnostics and API examples.
 The v1 device, control, and capability descriptor contracts are implemented in
 `deckr.hardware.descriptors`.
 Canonical core capability value contracts and helpers live in
@@ -810,7 +812,7 @@ readiness unless a required dependency is currently unready.
 ### Lane Substrate Replacement
 
 The old generic transport-component model for Deckr lanes has been removed in
-favor of the NATS substrate design specified in [`nats-bus.md`](nats-bus.md).
+favor of the NATS substrate design specified in [`nats.md`](nats.md).
 
 Removed targets include the home-grown WebSocket/MQTT lane transports,
 `remote_endpoints`, route-table route claims, route leases, route metadata, and
@@ -921,9 +923,9 @@ to understand component-specific settings.
 - There is one component model.
 - There is one runtime participant model.
 - Beacon is the shared weak feature discovery protocol specified in
-  [`beacon-concord.md`](beacon-concord.md).
+  [the Beacon specification](beacon.md).
 - Concord is the shared live agreement protocol specified in
-  [`beacon-concord.md`](beacon-concord.md).
+  [the Concord specification](concord.md).
 - After a Concord agreement is negotiated, Beacon no longer participates in that
   agreement's lifecycle, validity, or withdrawal.
 - Runtime components use `Beacon` and `Concord`; raw Beacon/Concord
@@ -931,7 +933,7 @@ to understand component-specific settings.
   internals.
 - Lane contracts are the only generic wiring primitive.
 - The runtime host creates the full core lane set before component startup.
-- Optional/profile-provided lanes, including `services`, require explicit lane
+- Optional/profile-provided lanes, including the transitional `actions` lane, require explicit lane
   contracts and lane registration.
 - Core lane names belong in `deckr`.
 - Lanes are logical runtime contracts and may be transported across transport

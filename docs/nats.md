@@ -8,12 +8,11 @@ and package-owned state.
 
 This specification gives the requirements for message transport, broker
 connections, shared storage, state watches, and broker resource cleanup.
-It is the replacement for the [NATS bus specification](nats-bus.md).
 The requirements apply to all implementations, in all programming languages.
 An implementation API or source model does not change these requirements.
 
-The [Beacon specification](beacon-ste100.md) defines discovery.
-The [Concord specification](concord-ste100.md) defines agreement authority.
+The [Beacon specification](beacon.md) defines discovery.
+The [Concord specification](concord.md) defines agreement authority.
 Those specifications own their record formats, bucket names, TTL defaults,
 lifecycles, and profiles. The [runtime reference](protocol-runtime-reference.md)
 contains API examples, configuration examples, commands, and troubleshooting.
@@ -79,10 +78,10 @@ Use these specifications for protocol requirements:
 
 | Responsibility | Specification |
 | --- | --- |
-| Advertisement records, discovery, selection, and advertisement lifecycle | [Beacon](beacon-ste100.md). |
-| Agreements, participation, authority, termination, recovery, and maintenance | [Concord](concord-ste100.md). |
+| Advertisement records, discovery, selection, and advertisement lifecycle | [Beacon](beacon.md). |
+| Agreements, participation, authority, termination, recovery, and maintenance | [Concord](concord.md). |
 | Subject formats, delivery, connection lifecycle, and shared storage mechanics | This document. |
-| Protected service views and service-use fences | [Concord service use](concord-ste100.md#162-service-use). |
+| Protected service views and service-use fences | [Concord service use](concord.md#162-service-use). |
 
 Message lanes carry commands, data, and replies. Beacon and Concord do not
 replace lane payloads. Private buckets must not replace Beacon discovery or
@@ -117,7 +116,7 @@ with jitter. Use this procedure:
 Advertisement expiry and Concord authority loss must not stop reconnection.
 After reconnection, materialized sources must rebuild before they report current state.
 Reconnection must not restore terminated Concord authority.
-The [Concord recovery rules](concord-ste100.md#94-recovery) define the necessary new agreement.
+The [Concord recovery rules](concord.md#94-recovery) define the necessary new agreement.
 
 ## 5 Message subjects and headers
 
@@ -210,7 +209,7 @@ broadcast scope, and contract-pointer policy.
 If the message type requires `contract`, a missing pointer must fail validation
 before publication. If the message type forbids `contract`, the sender must not
 include a pointer. The receiver must apply the
-[Concord message rules](concord-ste100.md#14-contract-pointers-on-messages)
+[Concord message rules](concord.md#14-contract-pointers-on-messages)
 before it uses protected authority.
 
 A subscriber must receive a message only if these conditions are true:
@@ -329,9 +328,9 @@ Recovery must not hide a transition to stale state.
 The source can report current state again only after it installs the recovered state.
 
 The owning protocol defines the effect of stale state. In particular,
-[Concord authority loss](concord-ste100.md#9-permanent-loss-of-authority)
+[Concord authority loss](concord.md#9-permanent-loss-of-authority)
 is permanent for each affected local agreement.
-[Beacon discovery loss](beacon-ste100.md#3-discovery-boundary) does not, by itself,
+[Beacon discovery loss](beacon.md#3-discovery-boundary) does not, by itself,
 terminate an existing agreement.
 
 ### 8.3 Exact writes and observations
@@ -370,7 +369,9 @@ Each broadcaster permits at most 256 simultaneous registrations.
 It must explicitly reject the next registration.
 
 These requirements apply to state watches, including protocol views, protected
-service views, and runtime state projections. Domain APIs keep their own value
+service views, and runtime state projections. They also apply to component
+lifecycle and status, logical service-subscription sessions, controller
+configuration, and Sonos zone state. Domain APIs keep their own value
 types and access rules. Lane messages use the delivery rules in section 6.
 
 ## 10 Broker resource lifecycle
@@ -384,11 +385,11 @@ Server-side inactive cleanup is a fallback. It must not be the normal cleanup me
 Concord maintenance uses exact raw scans at low frequency.
 It does not start materialized watches. Each temporary list consumer must close
 before its scan returns. Protocol cleanup decisions remain in
-[Concord maintenance](concord-ste100.md#15-concord-maintenance).
+[Concord maintenance](concord.md#15-concord-maintenance).
 
 **Recommendation:** Check that consumer counts stay bounded during repeated reads,
 watch recovery, and maintenance scans. Check that temporary consumers disappear
-after completion. The [runtime diagnostics](protocol-runtime-reference.md#jetstream-consumer-diagnostics)
+after completion. The [runtime diagnostics](protocol-runtime-reference.md#74-jetstream-consumers)
 give the inspection procedure.
 
 ## 11 Conformance and references
@@ -411,8 +412,8 @@ Schema validation alone is not sufficient.
 
 | Reference | Content |
 | --- | --- |
-| [Beacon specification](beacon-ste100.md) | Discovery records, stores, lifecycle, and hardware advertisements. |
-| [Concord specification](concord-ste100.md) | Agreements, authority, maintenance, profiles, and protected views. |
+| [Beacon specification](beacon.md) | Discovery records, stores, lifecycle, and hardware advertisements. |
+| [Concord specification](concord.md) | Agreements, authority, maintenance, profiles, and protected views. |
 | [NATS lane vectors](../contract/v1/vectors/nats-lane.v1.json) | Expected subjects and headers for the supplied fixtures. |
 | [Key-token vectors](../contract/v1/vectors/key-tokens.v1.json) | Expected token encodings. |
 | [Contract artifacts](../contract/v1/) | Schemas, fixtures, and acceptance vectors. |
