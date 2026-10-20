@@ -12,7 +12,9 @@ Notes explain the checks or the limits of structural validation.
 References identify related contracts and acceptance artifacts.
 Some semantic requirements are defined in this document only.
 
-The [semantic vectors](../contract/v1/vectors/semantic-validation.v1.json) contain inputs and expected outcomes.
+The [semantic vectors](../contract/v1/vectors/semantic-validation.v1.json) and
+[Action Runtime cases](../contract/v1/vectors/action-runtime-semantics.v1.json)
+contain inputs and expected outcomes.
 The repository validator checks their structural expectations.
 Consuming implementations execute the semantic checks.
 
@@ -381,8 +383,17 @@ Storage key:
 **Checks**
 
 - Require unique action requirement names.
+- Apply the [requirement matching rules](deckr-action-runtime.md#capability-requirement-matching).
+- Treat absent, null, and empty requirements as no declared capabilities.
+- Use the first eligible preference, with all listed event and command names.
+- Apply the view predicates and report the specified provenance and source.
+- Require one named match per satisfied requirement, in declaration order.
+- Omit an unsatisfied optional requirement. Do not attach with an unsatisfied required requirement.
+- Permit shared capability matches without duplicate input delivery.
 - Check that resolved capabilities and sources exist in the negotiated descriptors.
-- Check that those capabilities and sources match the declared requirement.
+- Check that selected capabilities match the declared requirement.
+- Check source references against the selected descriptor's projection metadata.
+  A source need not itself match the action requirement.
 - Treat binding, action-instance, and page-session IDs as controller-owned.
 - Check that those IDs resolve in the authorized session.
 - Check output generations against the controller's current binding generation.
@@ -408,11 +419,18 @@ Storage key:
 - Resolve `action` through its action/provider selector.
 - Do not let providers supply controller-owned live action-instance IDs for dynamic children.
 - Check selection and identity ownership against controller state.
+- Require the explicit target specified by the [page command rules](deckr-action-runtime.md#page-commands).
+- Resolve it in the authorized controller session, runtime, and agreement.
+- Check its active state, generation, and retained device and claim scope at commit.
+- For replacement, require the existing page ID and increase the page-session generation.
+- Report page-session metadata after opening and replacement, and final metadata after closure.
+- Reject commands for a retired session or an earlier generation without changing another page.
 
 **Note:** The schema checks conditional target fields.
 
 **References:** [Dynamic page command schema](../contract/v1/schemas/deckr/action-runtime/dynamic-page-command.v1.schema.json),
-[Page child binding target schema](../contract/v1/schemas/deckr/action-runtime/page-child-binding-target.v1.schema.json).
+[Page child binding target schema](../contract/v1/schemas/deckr/action-runtime/page-child-binding-target.v1.schema.json),
+[Page command target schema](../contract/v1/schemas/deckr/action-runtime/page-command-target.v1.schema.json).
 
 ### SEM-ACT-004: Settings identity
 
@@ -429,6 +447,19 @@ Storage key:
 [Settings-target reference schema](../contract/v1/schemas/deckr/action-runtime/settings-target-ref.v1.schema.json),
 [Concord: Key tokens](concord.md#42-key-tokens),
 [Settings key vectors](../contract/v1/vectors/settings-target-keys.v1.json).
+
+### SEM-ACT-005: Service subjects
+
+**Checks**
+
+- Require the Action Runtime service subject in both directions.
+- Check its service ID against the runtime endpoint.
+- Check its namespace against the Action Runtime namespace.
+- Check its name against `body.name`.
+- Do not get domain targets from subject identifiers.
+
+**References:** [Message subjects](deckr-action-runtime.md#message-subjects),
+[Service subject schema](../contract/v1/schemas/deckr/action-runtime/service-subject.v1.schema.json).
 
 ## Testing obligations
 

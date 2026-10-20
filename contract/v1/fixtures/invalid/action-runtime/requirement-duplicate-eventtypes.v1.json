@@ -1,0 +1,13 @@
+{
+  "eventTypes": [
+    "press",
+    "press"
+  ],
+  "name": "activate",
+  "preferences": [
+    {
+      "family": "dev.deckr.input.button",
+      "type": "activation"
+    }
+  ]
+}

@@ -30,6 +30,302 @@
       "valid": false
     },
     {
+      "id": "fixtures/invalid/action-runtime/binding-command-target-missing-fields.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/binding-command-target-missing-fields.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "title": "binding command target missing fields",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/binding-command-target-missing-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/binding-command-target-missing-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "title": "binding command target missing generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/binding-target-conflicting-id.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/binding-target-conflicting-id.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "title": "binding target conflicting id",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/binding-target-fractional-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/binding-target-fractional-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "title": "binding target fractional generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/binding-target-negative-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/binding-target-negative-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "title": "binding target negative generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/binding-target-wrong-kind.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/binding-target-wrong-kind.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "title": "binding target wrong kind",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/close-page-binding-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/close-page-binding-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/close-page.v1.schema.json",
+      "title": "close page binding target",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/close-page-body-missing-fields.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/close-page-body-missing-fields.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/close-page-body.v1.schema.json",
+      "title": "close page body missing fields",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/close-page-context-subject.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/close-page-context-subject.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/close-page.v1.schema.json",
+      "title": "close page context subject",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/close-page-missing-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/close-page-missing-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/close-page.v1.schema.json",
+      "title": "close page missing target",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/close-page-wrong-subject-name.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/close-page-wrong-subject-name.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/close-page.v1.schema.json",
+      "title": "close page wrong subject name",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/match-empty-requirement.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/match-empty-requirement.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/matched-capability.v1.schema.json",
+      "title": "match empty requirement",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/match-missing-requirement.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/match-missing-requirement.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/matched-capability.v1.schema.json",
+      "title": "match missing requirement",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/match-null-requirement.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/match-null-requirement.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/matched-capability.v1.schema.json",
+      "title": "match null requirement",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/open-page-context-subject.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/open-page-context-subject.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/open-page.v1.schema.json",
+      "title": "open page context subject",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/open-page-missing-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/open-page-missing-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/open-page.v1.schema.json",
+      "title": "open page missing target",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/open-page-wrong-subject-name.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/open-page-wrong-subject-name.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/open-page.v1.schema.json",
+      "title": "open page wrong subject name",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-command-target-missing-fields.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-command-target-missing-fields.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-command-target.v1.schema.json",
+      "title": "page command target missing fields",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-closed-missing-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-closed-missing-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/page-session-closed.v1.schema.json",
+      "title": "page session closed missing generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-command-target-missing-fields.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-command-target-missing-fields.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "title": "page session command target missing fields",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-command-target-missing-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-command-target-missing-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "title": "page session command target missing generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-metadata-missing-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-metadata-missing-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-session-metadata.v1.schema.json",
+      "title": "page session metadata missing generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-opened-missing-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-opened-missing-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/page-session-opened.v1.schema.json",
+      "title": "page session opened missing generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-target-conflicting-id.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-target-conflicting-id.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "title": "page session target conflicting id",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-target-fractional-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-target-fractional-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "title": "page session target fractional generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-target-negative-generation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-target-negative-generation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "title": "page session target negative generation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/page-session-target-wrong-kind.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/page-session-target-wrong-kind.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "title": "page session target wrong kind",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/replace-page-binding-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/replace-page-binding-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/replace-page.v1.schema.json",
+      "title": "replace page binding target",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/replace-page-context-subject.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/replace-page-context-subject.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/replace-page.v1.schema.json",
+      "title": "replace page context subject",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/replace-page-missing-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/replace-page-missing-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/replace-page.v1.schema.json",
+      "title": "replace page missing target",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/replace-page-wrong-subject-name.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/replace-page-wrong-subject-name.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/replace-page.v1.schema.json",
+      "title": "replace page wrong subject name",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/requirement-duplicate-commandtypes.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/requirement-duplicate-commandtypes.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/capability-requirement.v1.schema.json",
+      "title": "requirement duplicate commandtypes",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/requirement-duplicate-eventtypes.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/requirement-duplicate-eventtypes.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/capability-requirement.v1.schema.json",
+      "title": "requirement duplicate eventtypes",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/requirement-duplicate-views.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/requirement-duplicate-views.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/capability-requirement.v1.schema.json",
+      "title": "requirement duplicate views",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/selector-duplicate-commandtypes.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/selector-duplicate-commandtypes.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/capability-requirement-selector.v1.schema.json",
+      "title": "selector duplicate commandtypes",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/selector-duplicate-eventtypes.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/selector-duplicate-eventtypes.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/capability-requirement-selector.v1.schema.json",
+      "title": "selector duplicate eventtypes",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/service-subject-missing-fields.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/service-subject-missing-fields.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/service-subject.v1.schema.json",
+      "title": "service subject missing fields",
+      "valid": false
+    },
+    {
       "id": "fixtures/invalid/beacon/advertisement-missing-session.v1.json",
       "kind": "fixture",
       "path": "fixtures/invalid/beacon/advertisement-missing-session.v1.json",
@@ -1902,6 +2198,86 @@
       "valid": true
     },
     {
+      "id": "fixtures/valid/action-runtime/binding-command-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/binding-command-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "title": "binding command target",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/close-page-body.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/close-page-body.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/close-page-body.v1.schema.json",
+      "title": "close page body",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/open-page-session-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/open-page-session-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/open-page.v1.schema.json",
+      "title": "open page session target",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/page-command-target-session.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/page-command-target-session.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-command-target.v1.schema.json",
+      "title": "page command target session",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/page-command-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/page-command-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-command-target.v1.schema.json",
+      "title": "page command target",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/page-session-command-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/page-session-command-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "title": "page session command target",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/requirements-absent.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/requirements-absent.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/action-descriptor.v1.schema.json",
+      "title": "requirements absent",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/requirements-empty.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/requirements-empty.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/action-descriptor.v1.schema.json",
+      "title": "requirements empty",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/requirements-null.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/requirements-null.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/action-descriptor.v1.schema.json",
+      "title": "requirements null",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/service-subject.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/service-subject.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/service-subject.v1.schema.json",
+      "title": "service subject",
+      "valid": true
+    },
+    {
       "id": "fixtures/valid/beacon/action-runtime-advertisement.v1.json",
       "kind": "fixture",
       "path": "fixtures/valid/beacon/action-runtime-advertisement.v1.json",
@@ -3159,6 +3535,14 @@
       "title": "BindingAttachedBody"
     },
     {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+      "title": "BindingCommandTarget"
+    },
+    {
       "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-detached-body.v1.schema.json",
       "kind": "schema",
       "module": "deckr/action-runtime",
@@ -3229,6 +3613,14 @@
       "path": "schemas/deckr/action-runtime/capability-requirement.v1.schema.json",
       "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-requirement.v1.schema.json",
       "title": "CapabilityRequirement"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/close-page-body.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/close-page-body.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/close-page-body.v1.schema.json",
+      "title": "ClosePageBody"
     },
     {
       "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/dynamic-page-command.v1.schema.json",
@@ -3399,6 +3791,22 @@
       "title": "PageChildBindingTarget"
     },
     {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-command-target.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/page-command-target.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-command-target.v1.schema.json",
+      "title": "PageCommandTarget"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+      "title": "PageSessionCommandTarget"
+    },
+    {
       "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-lifecycle-body.v1.schema.json",
       "kind": "schema",
       "module": "deckr/action-runtime",
@@ -3421,6 +3829,14 @@
       "path": "schemas/deckr/action-runtime/replace-page-body.v1.schema.json",
       "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/replace-page-body.v1.schema.json",
       "title": "ReplacePageBody"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/service-subject.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/service-subject.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/service-subject.v1.schema.json",
+      "title": "Action Runtime service subject"
     },
     {
       "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/settings-schema-metadata.v1.schema.json",
@@ -4130,6 +4546,13 @@
       "title": "TokenObservation"
     },
     {
+      "id": "vectors/action-runtime-semantics.v1.json",
+      "kind": "vector",
+      "path": "vectors/action-runtime-semantics.v1.json",
+      "semantic": true,
+      "title": "Action Runtime semantic cases"
+    },
+    {
       "id": "vectors/beacon-concord-keys.v1.json",
       "kind": "vector",
       "path": "vectors/beacon-concord-keys.v1.json",
@@ -4157,6 +4580,7 @@
       "id": "vectors/semantic-validation.v1.json",
       "kind": "vector",
       "path": "vectors/semantic-validation.v1.json",
+      "semantic": true,
       "title": "semantic-validation.v1"
     },
     {
@@ -4173,7 +4597,7 @@
     }
   ],
   "bundle": "deckr-contract-v1",
-  "bundleVersion": "1.0.0-alpha.1",
+  "bundleVersion": "1.0.0-alpha.2",
   "contractVersion": "v1",
   "description": "Contract-first, language-neutral schemas, catalogs, fixtures and vectors. Implementations live in consuming repositories.",
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",

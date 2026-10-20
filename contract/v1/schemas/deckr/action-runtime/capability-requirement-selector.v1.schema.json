@@ -76,7 +76,7 @@
       ]
     }
   ],
-  "description": "One acceptable capability shape for an action requirement.",
+  "description": "One acceptable capability shape. All specified fields apply together; all listed event and command names must be supported.",
   "properties": {
     "capabilityId": {
       "anyOf": [
@@ -99,7 +99,8 @@
         "type": "string"
       },
       "title": "Commandtypes",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "direction": {
       "anyOf": [
@@ -126,7 +127,8 @@
         "type": "string"
       },
       "title": "Eventtypes",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "family": {
       "anyOf": [

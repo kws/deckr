@@ -1,0 +1,8 @@
+{
+  "identifiers": {
+    "name": "close_page",
+    "namespace": "dev.deckr.action_runtime.provider",
+    "serviceId": "action-runtime.clock-main"
+  },
+  "kind": "service"
+}

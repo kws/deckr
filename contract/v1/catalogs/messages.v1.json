@@ -227,7 +227,7 @@
       "messageType": "serviceMessage",
       "name": "close_page",
       "payloadLocation": "body.params",
-      "payloadSchemaPath": "schemas/deckr/action-runtime/empty-action-body.v1.schema.json",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/close-page-body.v1.schema.json",
       "schemaPath": "schemas/deckr/action-runtime/messages/close-page.v1.schema.json",
       "serviceNamespace": "dev.deckr.action_runtime.provider"
     }

@@ -104,6 +104,7 @@
         }
       ],
       "default": null,
+      "description": "Absent, null, and an empty array all declare no capability requirements and produce no matched capabilities.",
       "title": "Requirements"
     },
     "settingsSchema": {

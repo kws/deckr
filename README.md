@@ -8,7 +8,7 @@ Define and review contracts here before consumers implement them. Author schemas
 directly in `contract/v1/schemas/` and validate them with the repository's CI
 workflow.
 
-The contracts are alpha. The current bundle version is `1.0.0-alpha.1` for
+The contracts are alpha. The current bundle version is `1.0.0-alpha.2` for
 wire protocol v1.
 
 ## Project repositories

@@ -117,9 +117,9 @@
       "operation": "close_page",
       "paramsSchema": {
         "schema": {
-          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json"
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/close-page-body.v1.schema.json"
         },
-        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json"
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/close-page-body.v1.schema.json"
       }
     },
     "open_page": {

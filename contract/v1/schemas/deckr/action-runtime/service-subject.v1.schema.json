@@ -1,0 +1,38 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/service-subject.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The runtime service and message name. Domain targets are carried in the message payload.",
+  "properties": {
+    "identifiers": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+        },
+        "namespace": {
+          "const": "dev.deckr.action_runtime.provider"
+        },
+        "serviceId": {
+          "pattern": "^action-runtime\\.[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "serviceId",
+        "namespace",
+        "name"
+      ],
+      "type": "object"
+    },
+    "kind": {
+      "const": "service"
+    }
+  },
+  "required": [
+    "kind",
+    "identifiers"
+  ],
+  "title": "Action Runtime service subject",
+  "type": "object"
+}

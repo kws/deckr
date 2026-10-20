@@ -9,5 +9,10 @@
       }
     ],
     "pageId": "page-1"
+  },
+  "target": {
+    "generation": 0,
+    "kind": "page_session",
+    "pageSessionId": "page-session-1"
   }
 }

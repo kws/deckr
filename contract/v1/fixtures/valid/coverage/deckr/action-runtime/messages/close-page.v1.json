@@ -3,7 +3,13 @@
     "exchangePattern": "one_way",
     "intent": "command",
     "name": "close_page",
-    "params": {},
+    "params": {
+      "target": {
+        "generation": 0,
+        "kind": "page_session",
+        "pageSessionId": "page-session-1"
+      }
+    },
     "serviceNamespace": "dev.deckr.action_runtime.provider"
   },
   "contract": {

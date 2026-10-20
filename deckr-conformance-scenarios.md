@@ -926,6 +926,74 @@ An omitted write must not hide a missed required heartbeat or extend its deadlin
 [Concord: Mutation errors](docs/concord.md#125-mutation-errors),
 [Concord: Clean close](docs/concord.md#101-clean-close).
 
+## Action Runtime scenarios
+
+### DIT-ACT-001: Page commands retain target identity and freshness
+
+**Setup**
+
+- Establish a service-use agreement between a controller and an Action Runtime.
+- Attach a binding on a claimed device.
+- Retain another active page on a different device.
+
+**Actions**
+
+1. Open a page through the binding ID and current output generation.
+2. Read the resulting `page_session_opened` metadata.
+3. Replace that session through its ID and generation.
+4. Read the updated metadata for the same session.
+5. Deliver a close command with the generation from step 2.
+6. Close the session with its current generation. Repeat that close command.
+7. Repeat with a different runtime session, contract pointer, hidden target,
+   or child control outside the retained device.
+8. Pause a valid command before commit. End its service-use authority or hardware
+   claim, then resume the command.
+
+**Expected results**
+
+- A new page session starts at generation zero.
+- Replacement keeps the session identity and increases its generation by one.
+- The controller reports the new generation through `page_session_opened`.
+- Commands with an old generation or retired target have no effect.
+- Wrong ownership, scope, or authority prevents the transition.
+- The other device's page remains unchanged.
+- No command moves to a successor agreement.
+- Where nested opening is supported, a current page-session target can open a
+  page within the same device scope. Policy rejection leaves the state unchanged.
+
+**References:** [Page commands](docs/deckr-action-runtime.md#page-commands),
+[Action Runtime semantic cases](contract/v1/vectors/action-runtime-semantics.v1.json).
+
+### DIT-ACT-002: Requirement matching has consistent observable results
+
+**Setup**
+
+- Supply a negotiated descriptor with native, extension, projected, and derived
+  capabilities.
+- Define the configured capability scope for one control.
+
+**Actions**
+
+1. Execute the matching cases in the
+   [Action Runtime semantic vectors](contract/v1/vectors/action-runtime-semantics.v1.json).
+2. For equivalent candidates, exercise each permitted selection.
+3. Match one input capability to two named requirements.
+4. Deliver one authorized input message for that capability.
+
+**Expected results**
+
+- Each implementation accepts or rejects the supplied match as specified.
+- An earlier eligible preference takes priority.
+- A missing required capability prevents attachment.
+- An unavailable optional requirement has no match.
+- Omitted, null, and empty requirements produce no matches.
+- Equivalent candidates can differ between controllers.
+- Shared matches retain their separate requirement names.
+- One received input message produces one delivery to the binding.
+
+**References:** [Requirement matching](docs/deckr-action-runtime.md#capability-requirement-matching),
+[Requirements and routing](docs/semantic-rules.md#sem-act-002-requirements-and-routing).
+
 ## Structural and semantic conformance checks
 
 ### Structural checks
@@ -938,10 +1006,27 @@ An omitted write must not hide a missed required heartbeat or extend its deadlin
 
 ### Semantic checks
 
-1. Load the [semantic vector document](contract/v1/vectors/semantic-validation.v1.json) and select its `cases` array.
+1. Load each vector document marked `semantic: true` in the manifest and select
+   its `cases` array. These include the
+   [general cases](contract/v1/vectors/semantic-validation.v1.json) and
+   [Action Runtime cases](contract/v1/vectors/action-runtime-semantics.v1.json).
 2. Apply each case's named [semantic validation rule](docs/semantic-rules.md).
 3. Compare structural acceptance with `schemaValid`.
 4. Compare semantic acceptance with `semanticValid`.
+
+Use inline `context` when present. If the case has `contextRef`, read that entry
+from the document's `contexts` map. Contexts are supplied test observations.
+They are not messages or an additional source of runtime authority.
+
+For Action Runtime matching cases, `instance` is proposed binding metadata.
+The context supplies `actionDescriptor`, `deviceDescriptor`, `deviceRef`,
+`controlId`, and `configuredCapabilityIds`. Test whether that metadata is a
+permitted attachment result. A false result can mean that no binding can attach.
+For page cases, `instance` is the complete command. The context supplies the
+current endpoint sessions, contract, authority flags, and target registries.
+Each target entry's `generation` is its current binding output generation or
+page-session generation. Its `active` flag states whether that target can change
+the current page. Evaluate the command at commit.
 
 The reference validator checks the semantic vectors' structural expectations.
 Consuming implementations execute the semantic checks and distributed lifecycle scenarios.

@@ -25,7 +25,7 @@
               "const": "close_page"
             },
             "params": {
-              "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json"
+              "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/close-page-body.v1.schema.json"
             },
             "result": {
               "type": "null"
@@ -63,6 +63,18 @@
         },
         "sender": {
           "pattern": "^service:action-runtime\\.[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "subject": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/service-subject.v1.schema.json",
+          "properties": {
+            "identifiers": {
+              "properties": {
+                "name": {
+                  "const": "close_page"
+                }
+              }
+            }
+          }
         }
       },
       "required": [

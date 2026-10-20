@@ -117,6 +117,12 @@ cases for conditional fields and bounds, not only wrong top-level types.
 Semantic fixtures distinguish `schemaValid` from `semanticValid`. CI checks the
 structural expectation; each consuming implementation must execute semantic
 rules and the distributed scenarios in [Deckr conformance scenarios](../deckr-conformance-scenarios.md).
+The manifest marks semantic vector documents with `semantic: true`.
+A case can contain inline `context` or name a reusable context with `contextRef`.
+The document's `contexts` map supplies those named test inputs.
+An optional `contextSchemas` map assigns schemas to fields in those contexts.
+CI validates those fields when present; it does not evaluate runtime authority
+or the expected semantic result.
 
 The [project repository map](../README.md#project-repositories) identifies the
 implementations and the cross-language integration harness. Their tests consume

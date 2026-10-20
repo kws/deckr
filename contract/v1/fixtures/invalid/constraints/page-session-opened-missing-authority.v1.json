@@ -5,6 +5,7 @@
         "actionInstanceId": "example",
         "configId": "example",
         "contextId": "example",
+        "generation": 0,
         "pageId": "example",
         "pageSessionId": "example",
         "providerId": "example",

@@ -9,5 +9,10 @@
       }
     ],
     "pageId": "page-1"
+  },
+  "target": {
+    "bindingId": "binding-1",
+    "generation": 0,
+    "kind": "binding"
   }
 }

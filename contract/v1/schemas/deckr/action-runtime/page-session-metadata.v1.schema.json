@@ -26,6 +26,11 @@
       "title": "Contextid",
       "type": "string"
     },
+    "generation": {
+      "description": "Starts at zero. Increases after each successful replacement of this page session.",
+      "minimum": 0,
+      "type": "integer"
+    },
     "ownerBindingId": {
       "anyOf": [
         {
@@ -68,7 +73,8 @@
     "configId",
     "pageId",
     "pageSessionId",
-    "contextId"
+    "contextId",
+    "generation"
   ],
   "title": "PageSessionMetadata",
   "type": "object"

@@ -59,12 +59,21 @@ one-way and direct, with a recipient session. The runtime endpoint is
 | `binding_overlay_clear` | runtime to controller | `command` | [body.params](../contract/v1/schemas/deckr/action-runtime/binding-overlay-clear-body.v1.schema.json) | [Schema](../contract/v1/schemas/deckr/action-runtime/messages/binding-overlay-clear.v1.schema.json) |
 | `open_page` | runtime to controller | `command` | [body.params](../contract/v1/schemas/deckr/action-runtime/open-page-body.v1.schema.json) | [Schema](../contract/v1/schemas/deckr/action-runtime/messages/open-page.v1.schema.json) |
 | `replace_page` | runtime to controller | `command` | [body.params](../contract/v1/schemas/deckr/action-runtime/replace-page-body.v1.schema.json) | [Schema](../contract/v1/schemas/deckr/action-runtime/messages/replace-page.v1.schema.json) |
-| `close_page` | runtime to controller | `command` | [body.params](../contract/v1/schemas/deckr/action-runtime/empty-action-body.v1.schema.json) | [Schema](../contract/v1/schemas/deckr/action-runtime/messages/close-page.v1.schema.json) |
+| `close_page` | runtime to controller | `command` | [body.params](../contract/v1/schemas/deckr/action-runtime/close-page-body.v1.schema.json) | [Schema](../contract/v1/schemas/deckr/action-runtime/messages/close-page.v1.schema.json) |
 
 The [protocol declaration](../contract/v1/catalogs/action-runtime-protocol.v1.json)
 also publishes each payload's schema reference. Events have empty `params`;
 commands have no event payload. There are no reply/status/result/error payloads
-on these one-way operations. `close_page` has an empty params object.
+on these one-way operations. All page commands require an explicit target.
+`open_page` accepts a binding or page-session target. `replace_page` and
+`close_page` accept a page-session target. Each target includes its generation.
+The [page command rules](deckr-action-runtime.md#page-commands) define authority
+and lifecycle checks. `page_session_opened` reports metadata after both opening
+and replacement.
+
+All Action Runtime messages use the
+[service subject](../contract/v1/schemas/deckr/action-runtime/service-subject.v1.schema.json).
+Domain targets occur in their payloads.
 
 The [availability payload](../contract/v1/schemas/deckr/action-runtime/availability-payload.v1.schema.json)
 contains action descriptors. The [stored availability view](../contract/v1/schemas/deckr/action-runtime/availability-view.v1.schema.json)

@@ -64,6 +64,18 @@
         },
         "sender": {
           "pattern": "^controller:"
+        },
+        "subject": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/service-subject.v1.schema.json",
+          "properties": {
+            "identifiers": {
+              "properties": {
+                "name": {
+                  "const": "binding_attached"
+                }
+              }
+            }
+          }
         }
       },
       "required": [

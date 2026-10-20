@@ -1,0 +1,16 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/close-page-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Close the specified current page session.",
+  "properties": {
+    "target": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-command-target.v1.schema.json"
+    }
+  },
+  "required": [
+    "target"
+  ],
+  "title": "ClosePageBody",
+  "type": "object"
+}

@@ -1,0 +1,51 @@
+{
+  "body": {
+    "exchangePattern": "one_way",
+    "intent": "command",
+    "name": "open_page",
+    "params": {
+      "descriptor": {
+        "bindings": [
+          {
+            "controlId": "button-1",
+            "target": {
+              "kind": "self"
+            }
+          }
+        ],
+        "pageId": "page-1"
+      },
+      "target": {
+        "bindingId": "binding-1",
+        "generation": 0,
+        "kind": "binding"
+      }
+    },
+    "serviceNamespace": "dev.deckr.action_runtime.provider"
+  },
+  "contract": {
+    "contractId": "action-runtime-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "services",
+  "messageId": "fixture-action-runtime-action-instance-created",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "service:action-runtime.clock-main",
+  "senderSessionId": "service-session",
+  "subject": {
+    "identifiers": {
+      "name": "binding_output",
+      "namespace": "dev.deckr.action_runtime.provider",
+      "serviceId": "action-runtime.clock-main"
+    },
+    "kind": "service"
+  }
+}

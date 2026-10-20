@@ -10,5 +10,6 @@
   },
   "direction": "input",
   "family": "dev.deckr.input.button",
+  "requirementName": "activate",
   "type": "activation"
 }

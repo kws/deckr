@@ -114,7 +114,21 @@ jobs:
           for message in messages:
               assert message['schemaPath'] in schemas and message['payloadSchemaPath'] in schemas
 
-          semantic_cases = read(bundle / 'vectors/semantic-validation.v1.json')['cases']
+          semantic_cases = []
+          for artifact in artifacts:
+              if artifact['kind'] != 'vector' or not artifact.get('semantic'):
+                  continue
+              document = read(bundle / artifact['path'])
+              contexts = document.get('contexts', {})
+              for context in contexts.values():
+                  for field, schema_path in document.get('contextSchemas', {}).items():
+                      if field in context:
+                          validators[schema_path].validate(context[field])
+              for case in document['cases']:
+                  if 'contextRef' in case:
+                      assert 'context' not in case, (case['id'], 'ambiguous context')
+                      assert case['contextRef'] in contexts, (case['id'], 'missing context')
+                  semantic_cases.append(case)
           assert len({c['id'] for c in semantic_cases}) == len(semantic_cases)
           for case in semantic_cases:
               assert validators[case['schemaPath']].is_valid(case['instance']) == case['schemaValid'], case['id']

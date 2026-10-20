@@ -5,22 +5,26 @@
   "description": "A named action input, output, state, config, or diagnostic requirement.",
   "properties": {
     "commandTypes": {
+      "description": "All listed names must be supported, in addition to the selected preference's names.",
       "items": {
         "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
         "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
         "type": "string"
       },
       "title": "Commandtypes",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "eventTypes": {
+      "description": "All listed names must be supported, in addition to the selected preference's names.",
       "items": {
         "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
         "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
         "type": "string"
       },
       "title": "Eventtypes",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "name": {
       "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
@@ -28,6 +32,7 @@
       "type": "string"
     },
     "preferences": {
+      "description": "Ordered alternatives. Use the first selector with an eligible capability.",
       "items": {
         "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-requirement-selector.v1.schema.json"
       },
@@ -37,10 +42,12 @@
     },
     "required": {
       "default": true,
+      "description": "If absent, true. A required requirement without a match prevents binding attachment.",
       "title": "Required",
       "type": "boolean"
     },
     "views": {
+      "description": "Accept any listed view. Absent or empty permits all views. Views do not grant authority.",
       "items": {
         "enum": [
           "raw",
@@ -52,7 +59,8 @@
         "type": "string"
       },
       "title": "Views",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     }
   },
   "required": [

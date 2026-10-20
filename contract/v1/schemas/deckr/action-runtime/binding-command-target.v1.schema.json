@@ -1,0 +1,25 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-command-target.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An existing binding and its current outputGeneration, resolved in the authorized controller session.",
+  "properties": {
+    "bindingId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "generation": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "const": "binding"
+    }
+  },
+  "required": [
+    "kind",
+    "bindingId",
+    "generation"
+  ],
+  "title": "BindingCommandTarget",
+  "type": "object"
+}

@@ -1,0 +1,25 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-command-target.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An existing page session and its current generation, resolved in the authorized controller session.",
+  "properties": {
+    "generation": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "const": "page_session"
+    },
+    "pageSessionId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    }
+  },
+  "required": [
+    "kind",
+    "pageSessionId",
+    "generation"
+  ],
+  "title": "PageSessionCommandTarget",
+  "type": "object"
+}

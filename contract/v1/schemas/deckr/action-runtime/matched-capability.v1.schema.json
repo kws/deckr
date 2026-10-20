@@ -20,13 +20,15 @@
       ]
     },
     "commandTypes": {
+      "description": "The complete supported name set from the selected descriptor; order has no meaning.",
       "items": {
         "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
         "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
         "type": "string"
       },
       "title": "Commandtypes",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "direction": {
       "enum": [
@@ -39,13 +41,15 @@
       "type": "string"
     },
     "eventTypes": {
+      "description": "The complete supported name set from the selected descriptor; order has no meaning.",
       "items": {
         "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
         "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)*$",
         "type": "string"
       },
       "title": "Eventtypes",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "family": {
       "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
@@ -101,6 +105,7 @@
     },
     "provenance": {
       "default": "native",
+      "description": "Use projection or derivation when projection metadata exists. Otherwise use native for a core family and extension for an extension family.",
       "enum": [
         "native",
         "projection",
@@ -111,17 +116,8 @@
       "type": "string"
     },
     "requirementName": {
-      "anyOf": [
-        {
-          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Requirementname"
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json",
+      "description": "The unique declared requirement satisfied by this match."
     },
     "source": {
       "anyOf": [
@@ -145,7 +141,8 @@
     "capability",
     "family",
     "type",
-    "direction"
+    "direction",
+    "requirementName"
   ],
   "title": "MatchedCapability",
   "type": "object"
