@@ -191,11 +191,36 @@ If the winner loses authority, the client must do these actions:
 
 The client must not replay published commands under a different contract.
 
+The client must keep failures from cleanup of earlier agreements available as
+diagnostics. A failure from an earlier recovery must not, by itself, make a
+later successful client shutdown fail. Shutdown must report failures from
+cleanup that is still pending or starts during that shutdown.
+This reporting rule does not restore earlier authority or remove the
+[Concord cleanup requirements](concord.md#92-actions-after-a-heartbeat-failure).
+
 ## Managed service providers
 
 Service providers must follow the [managed lifecycle requirements](deckr-messaging.md#managed-lifecycle-boundaries).
 These requirements assign protocol operations to the managed lifecycle boundary.
 Application code supplies backend behavior and domain policy.
+
+### Startup with unresolved ownership
+
+Before advertisement publication, a managed provider must complete the
+[Concord owner bootstrap checks](concord.md#11-owner-bootstrap-and-competing-sessions).
+If ownership is unresolved, the provider must stay unavailable and retry those
+checks automatically. It must not publish its advertisement or accept new
+service-use agreements during this wait.
+
+The wait must not have a retry-count limit or an overall timeout. Each attempt
+must have a finite time limit. The runtime must wait between failed attempts or
+wait for a relevant source change. Cancellation or provider shutdown must stop
+the wait and prevent later publication.
+
+A token from an earlier session must not be treated as expired because the new
+provider started. After ownership is resolved, the provider must complete
+bootstrap before publication. It must not restore authority from the earlier
+session. These requirements also apply after a provider process restarts.
 
 ## Implementation guidance
 

@@ -778,6 +778,62 @@ Implementations without the recommended cleanup can report this scenario as `not
 
 **References:** [Deckr services: Watch visibility](docs/deckr-services.md#watch-visibility).
 
+### DIT-SVC-003: Provider restart waits for unresolved ownership
+
+**Setup**
+
+- Maintain an active service-use agreement and a valid provider token.
+- Use a provider policy that requires exclusive endpoint ownership.
+- Start a second provider with the same endpoint and a new session.
+
+**Actions**
+
+1. Hold the first provider's token valid across more than one bootstrap attempt.
+2. Observe the second provider's state, advertisements, and agreement admission.
+3. Stop the first provider without cleanup and allow its token to expire.
+4. Allow the second provider to complete bootstrap.
+5. Connect a consumer to the second provider.
+6. Repeat the contention, then close the waiting provider before token expiry.
+
+**Expected results**
+
+- The waiting provider stays unavailable. It does not advertise or accept new agreements.
+- It does not cancel valid participation merely because its session is different.
+- It retries automatically while ownership is unresolved.
+- After ownership is resolved, it completes bootstrap and publishes its advertisement.
+- New service-use authority uses the new session and a new contract ID.
+- Closure stops pending attempts and prevents later publication.
+
+**References:** [Deckr services: Startup with unresolved ownership](docs/deckr-services.md#startup-with-unresolved-ownership),
+[Concord: Owner bootstrap and competing sessions](docs/concord.md#11-owner-bootstrap-and-competing-sessions).
+
+### DIT-SVC-004: Earlier recovery cleanup failure does not fail later shutdown
+
+**Setup**
+
+- Maintain an active managed service client.
+- Permit a fault to prevent remote cleanup of its current agreement.
+
+**Actions**
+
+1. Cause permanent loss of the agreement's authority.
+2. Let the bounded remote cleanup attempt fail.
+3. Restore communication and complete successor negotiation.
+4. Use the successor for a protected operation.
+5. Close the client while its current cleanup can complete.
+6. Repeat with remote cleanup blocked during final shutdown.
+
+**Expected results**
+
+- The previous agreement immediately loses local authority.
+- A new contract ID is used after recovery.
+- The earlier cleanup failure remains available as diagnostic information.
+- Successful final cleanup reports successful shutdown.
+- A cleanup failure during final shutdown reports a shutdown failure.
+
+**References:** [Deckr services: Accepted agreements and recovery](docs/deckr-services.md#accepted-agreements-and-recovery),
+[Concord: Actions after a heartbeat failure](docs/concord.md#92-actions-after-a-heartbeat-failure).
+
 ## Operational tests
 
 ### DIT-OPS-001: Steady-state consumer count is bounded
