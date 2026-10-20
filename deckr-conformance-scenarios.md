@@ -6,6 +6,12 @@ These scenarios define language-neutral checks for implementations of the Deckr 
 They cover identity, discovery, agreement authority, state recovery, and broker resource use.
 Each consuming repository supplies its own test harness.
 
+The [project repository map](README.md#project-repositories) lists the language
+implementations and the cross-language integration harness. The integration
+harness exercises selected real-broker workloads. Its README states which
+behaviors it checks; a passing matrix does not imply coverage of every scenario
+in this document.
+
 Schema validation checks record structure.
 These scenarios also check behavior that depends on time, stored records, and independent participants.
 Passing structural validation alone does not establish protocol conformance.

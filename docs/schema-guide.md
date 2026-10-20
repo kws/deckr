@@ -118,6 +118,10 @@ Semantic fixtures distinguish `schemaValid` from `semanticValid`. CI checks the
 structural expectation; each consuming implementation must execute semantic
 rules and the distributed scenarios in [Deckr conformance scenarios](../deckr-conformance-scenarios.md).
 
+The [project repository map](../README.md#project-repositories) identifies the
+implementations and the cross-language integration harness. Their tests consume
+these reference artifacts. Test coverage and results belong in those repositories.
+
 Standards references: [schema identifiers and modular composition](https://json-schema.org/understanding-json-schema/structuring),
 [annotations and defaults](https://json-schema.org/understanding-json-schema/reference/annotations),
 [object composition](https://json-schema.org/understanding-json-schema/reference/object).

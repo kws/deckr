@@ -19,6 +19,21 @@ is to make those boundaries clear across implementation languages.
 The tables and diagrams describe logical responsibilities. They do not prescribe
 classes, interfaces in a particular language, or separate network services.
 
+## Repository responsibilities
+
+The [project repository map](../README.md#project-repositories) identifies the
+reference repository, three language cores, and the integration harness.
+This reference repository owns the contracts and this informative proposal.
+Each core owns its reusable implementation and its language-specific API.
+Application repositories own the controller, device drivers, action behavior,
+and external integrations.
+
+The integration harness uses the cores' public managed APIs in test applications.
+It checks selected cross-language workloads against a real broker. It does not
+replace the reference conformance scenarios or supply a production application.
+Each core documents its own implementation coverage; this proposal does not
+assert API or feature parity between languages.
+
 ## Terms and boundaries
 
 | Term | Meaning in this proposal |

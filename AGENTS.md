@@ -4,6 +4,10 @@ This is a contract-first, reference-only repository. Define contracts here befor
 implementing them in separate repositories. Read [README.md](README.md) and
 [schema guide](docs/schema-guide.md) before changing contracts.
 
+- Keep the [project repository map](README.md#project-repositories) current.
+  The three core repositories own their language APIs and implementation tests.
+  [deckr-integration-tests](https://github.com/kws/deckr-integration-tests)
+  owns cross-language test applications and runners.
 - Maintain authoritative JSON Schema Draft 2020-12 documents directly.
 - Keep all protocol schemas under `contract/v1/schemas/protocols/` independent
   of Deckr schemas. Beacon and Concord may depend on protocol-common definitions,
@@ -22,6 +26,9 @@ implementing them in separate repositories. Read [README.md](README.md) and
   identify contracts.
 - Document the current contracts and repository workflows. Local links must
   resolve to files in this reference checkout.
+- Use repository URLs for links to other projects. Keep architecture and
+  deployment guidance informative; distinguish contract requirements from
+  implementation coverage and recorded test results.
 - Use lowercase, hyphenated document filenames that identify the subject.
   Use `deckr-` for Deckr subjects and the protocol name for protocol subjects.
   Document titles identify the purpose and, for specifications, the wire version.

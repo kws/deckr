@@ -7,6 +7,13 @@ The [Deckr architecture proposal for v1](deckr-architecture.md) gives an optiona
 baseline for component boundaries and lifecycle ownership. It is informative,
 not normative.
 
+The [project repository map](../README.md#project-repositories) lists the
+reference, language cores, and integration harness. Choose a core for each host
+language and supply the application components described below. Core package
+boundaries do not require separate processes. The integration harness's Compose
+stack runs test applications; it is not an installation of the controller,
+hardware drivers, or Action Runtime applications.
+
 | Deployment | Responsibilities |
 | --- | --- |
 | Full installation | Host controllers, hardware managers and services; supply NATS and the shared protocol stores. |

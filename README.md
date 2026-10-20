@@ -11,6 +11,43 @@ workflow.
 The contracts are alpha. The current bundle version is `1.0.0-alpha.1` for
 wire protocol v1.
 
+## Project repositories
+
+Deckr separates contract definitions, language implementations, and integration
+tests into independent repositories.
+
+| Repository | Responsibility |
+| --- | --- |
+| [deckr](https://github.com/kws/deckr) (this repository) | Authoritative specifications, schemas, catalogs, fixtures, and conformance vectors and scenarios. |
+| [deckr-core-python](https://github.com/kws/deckr-core-python) | The `deckr` Python package: reusable protocol, runtime, hardware, service, and Action Runtime support. |
+| [deckr-core-rust](https://github.com/kws/deckr-core-rust) | The `deckr` Rust crate: reusable protocol, runtime, hardware, service, and Action Runtime support. |
+| [deckr-core-typescript](https://github.com/kws/deckr-core-typescript) | The `@deckr/core` TypeScript package: reusable protocol, runtime, hardware, service, and Action Runtime support. |
+| [deckr-integration-tests](https://github.com/kws/deckr-integration-tests) | Cross-language service tests with Docker Compose, recovery workloads, and a native Concord lifecycle runner. |
+
+The three cores implement the same contracts. Their APIs, package versions, and
+test coverage are independent. A shared specification pin does not establish
+equal implementation coverage.
+
+Application repositories own controller orchestration, routing, rendering,
+configuration policy, device drivers, and action or integration behavior.
+The cores supply reusable managed boundaries for those applications. The
+integration harness supplies test applications; it is not a Deckr launcher.
+See the [architecture proposal](docs/deckr-architecture.md) for these boundaries.
+
+For development across repositories, check them out as siblings:
+
+```text
+workspace/
+  deckr/
+  deckr-core-python/
+  deckr-core-rust/
+  deckr-core-typescript/
+  deckr-integration-tests/
+```
+
+Run commands from the relevant repository root. There is no shared root build or
+release. Each implementation README gives its dependencies and validation steps.
+
 ## Start here
 
 - [Schema guide](docs/schema-guide.md): choose an entry point,
@@ -83,6 +120,9 @@ deckr-conformance-scenarios.md
    commit or immutable bundle release.
 4. Update implementations in their own repositories against that pinned contract,
    and run the applicable structural, semantic and lifecycle conformance checks.
+5. Update the integration harness's source lock to the reviewed commits and run
+   the applicable cross-language workloads. Its three implementation pins must
+   select the same specification revision.
 
 Schemas define JSON structure; specifications define additional behavior and
 authority rules. Examples and vectors demonstrate those requirements. An
@@ -96,6 +136,20 @@ JSON Schema tooling. Run the same validation step from
 3.13 and `uv` when needed. Semantic and distributed lifecycle vectors must
 also be exercised by each consuming implementation; passing repository CI is not
 a claim of runtime protocol conformance.
+
+Validation has three separate scopes:
+
+| Scope | Owner and evidence |
+| --- | --- |
+| Reference validation | This repository checks schemas, fixtures, catalogs, vector structure, and documentation links. |
+| Implementation validation | Each core tests its APIs and lifecycle behavior, and reads the reference artifacts for its implemented conformance checks. |
+| Cross-language validation | The integration harness tests its declared workloads against real NATS. Its README states coverage and limits. |
+
+Python and TypeScript record their CI specification commit in
+`.deckr-spec-revision`; Rust uses `spec-revision`. The integration harness records
+all four source commits in `sources.lock.json`. Update these files in their owning
+repositories. Documentation links to `main` are navigation links; reproducible
+validation uses the recorded commits.
 
 ## Releases and reuse
 
