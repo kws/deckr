@@ -791,15 +791,17 @@ Implementations without the recommended cleanup can report this scenario as `not
 1. Hold the first provider's token valid across more than one bootstrap attempt.
 2. Observe the second provider's state, advertisements, and agreement admission.
 3. Stop the first provider without cleanup and allow its token to expire.
-4. Allow the second provider to complete bootstrap.
-5. Connect a consumer to the second provider.
-6. Repeat the contention, then close the waiting provider before token expiry.
+4. Before the first provider's advertisement expires, create consumer proposals that name its old session. Do not attach the first provider to these proposals.
+5. Allow the second provider to complete bootstrap.
+6. Connect a consumer to the second provider.
+7. Repeat the contention, then close the waiting provider before token expiry.
 
 **Expected results**
 
 - The waiting provider stays unavailable. It does not advertise or accept new agreements.
 - It does not cancel valid participation merely because its session is different.
 - It retries automatically while ownership is unresolved.
+- Consumer proposals that only name the old provider session do not block bootstrap after the provider's ownership ends. Bootstrap does not cancel these proposals solely because they name that session.
 - After ownership is resolved, it completes bootstrap and publishes its advertisement.
 - New service-use authority uses the new session and a new contract ID.
 - Closure stops pending attempts and prevents later publication.

@@ -433,6 +433,8 @@ A different session's token shows participation if that token passes the Concord
 
 A missing token does not prove process failure if the participant did not attach. Store unavailability also does not prove process failure. Apply these distinctions to pending, partial, attached, same-session, and previous-session records.
 
+A proposal's reference to a participant session does not establish that participant's ownership. If the participant never attached and has no valid token, this reference must not block its bootstrap, readiness, or Beacon publication. This rule also applies when another participant creates a proposal from an advertisement for an earlier session. Bootstrap must preserve the proposal unless separate evidence permits cancellation. A valid participant token still shows participation, including when other participants have not attached.
+
 Service admission, capacity, and deliberate replacement are profile policy. Bootstrap must not replace a live session without an explicit profile policy.
 
 If a profile needs exclusive ownership, unresolved contention must block these actions by the contender:
