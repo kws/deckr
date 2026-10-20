@@ -110,7 +110,7 @@ jobs:
 
           messages = read(bundle / 'catalogs/messages.v1.json')['messages']
           assert len([m for m in messages if m['lane'] == 'hardware_messages']) == 8
-          assert len([m for m in messages if m.get('serviceNamespace') == 'dev.deckr.action_runtime.provider']) == 14
+          assert len([m for m in messages if m.get('serviceNamespace') == 'dev.deckr.action_runtime.provider']) == 16
           for message in messages:
               assert message['schemaPath'] in schemas and message['payloadSchemaPath'] in schemas
 

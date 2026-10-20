@@ -1,0 +1,12 @@
+{
+  "code": "newer_output",
+  "requestMessageId": "render-message-42",
+  "requirementName": "display",
+  "stage": "controller",
+  "status": "superseded",
+  "target": {
+    "bindingId": "binding-17",
+    "generation": 3,
+    "kind": "binding"
+  }
+}

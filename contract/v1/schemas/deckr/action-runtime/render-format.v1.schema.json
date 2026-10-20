@@ -1,0 +1,73 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-format.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "dev.deckr.render.text.v1"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "const": "dev.deckr.render.image.v1"
+        },
+        "options": {
+          "additionalProperties": false,
+          "properties": {
+            "encodings": {
+              "contains": {
+                "const": "png"
+              },
+              "items": {
+                "enum": [
+                  "png",
+                  "jpeg"
+                ]
+              },
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "encodings"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "options"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^(?!dev\\.deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+\\.v[1-9][0-9]*$",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "RenderFormat"
+}

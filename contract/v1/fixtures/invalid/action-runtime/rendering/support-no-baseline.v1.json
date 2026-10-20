@@ -1,0 +1,23 @@
+{
+  "formats": [
+    {
+      "id": "dev.deckr.render.image.v1",
+      "options": {
+        "encodings": [
+          "png",
+          "jpeg"
+        ]
+      }
+    }
+  ],
+  "height": 72,
+  "limits": {
+    "maxImageBytes": 131072,
+    "maxImagePixels": 1048576,
+    "maxMessageBytes": 262144,
+    "maxRenderTimeMs": 2000,
+    "maxTextCodePoints": 1024
+  },
+  "requirementName": "display",
+  "width": 72
+}

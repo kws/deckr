@@ -1,0 +1,16 @@
+{
+  "content": {
+    "data": {
+      "background": "#000000",
+      "foreground": "#FFFFFF",
+      "text": "Kitchen"
+    },
+    "format": "dev.deckr.render.text.v1"
+  },
+  "requirementName": "display",
+  "target": {
+    "bindingId": "binding-17",
+    "generation": 3,
+    "kind": "binding"
+  }
+}

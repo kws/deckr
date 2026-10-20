@@ -1,0 +1,8 @@
+{
+  "id": "dev.deckr.render.image.v1",
+  "options": {
+    "encodings": [
+      "jpeg"
+    ]
+  }
+}

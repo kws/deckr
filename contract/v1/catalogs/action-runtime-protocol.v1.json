@@ -98,6 +98,30 @@
         "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-overlay-clear-body.v1.schema.json"
       }
     },
+    "binding_render": {
+      "direction": "service_to_consumer",
+      "exchangePattern": "one_way",
+      "intent": "command",
+      "operation": "binding_render",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-body.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-body.v1.schema.json"
+      }
+    },
+    "binding_render_result": {
+      "direction": "consumer_to_service",
+      "eventSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json"
+      },
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "operation": "binding_render_result"
+    },
     "capability_input": {
       "direction": "consumer_to_service",
       "eventSchema": {
@@ -181,6 +205,8 @@
     "binding_output": {},
     "binding_overlay": {},
     "binding_overlay_clear": {},
+    "binding_render": {},
+    "binding_render_result": {},
     "capability_input": {},
     "close_page": {},
     "open_page": {},

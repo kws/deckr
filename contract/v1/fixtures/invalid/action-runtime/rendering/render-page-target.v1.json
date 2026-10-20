@@ -1,0 +1,17 @@
+{
+  "content": {
+    "data": {
+      "background": "#000000",
+      "foreground": "#FFFFFF",
+      "text": "Kitchen"
+    },
+    "format": "dev.deckr.render.text.v1"
+  },
+  "operation": "set",
+  "requirementName": "display",
+  "target": {
+    "generation": 0,
+    "kind": "page_session",
+    "pageSessionId": "page-1"
+  }
+}

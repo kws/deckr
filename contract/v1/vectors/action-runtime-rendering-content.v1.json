@@ -1,0 +1,527 @@
+{
+  "cases": [
+    {
+      "expectedCode": null,
+      "expectedPixels": [
+        {
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "x": 2,
+          "y": 2
+        },
+        {
+          "rgb": [
+            0,
+            0,
+            0
+          ],
+          "x": 2,
+          "y": 0
+        }
+      ],
+      "height": 4,
+      "id": "render-content-contain",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "fit": "contain",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DwnwEJMCFzQGwAPycCArHCx8kAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": null,
+      "expectedPixels": [
+        {
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "x": 2,
+          "y": 2
+        },
+        {
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "x": 2,
+          "y": 0
+        }
+      ],
+      "height": 4,
+      "id": "render-content-cover",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "fit": "cover",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DwnwEJMCFzQGwAPycCArHCx8kAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": null,
+      "expectedPixels": [
+        {
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "x": 2,
+          "y": 2
+        },
+        {
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "x": 2,
+          "y": 0
+        }
+      ],
+      "height": 4,
+      "id": "render-content-stretch",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "fit": "stretch",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DwnwEJMCFzQGwAPycCArHCx8kAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": null,
+      "expectedPixels": [
+        {
+          "rgb": [
+            128,
+            0,
+            127
+          ],
+          "x": 2,
+          "y": 2
+        },
+        {
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "x": 2,
+          "y": 0
+        }
+      ],
+      "height": 4,
+      "id": "render-content-alpha",
+      "instance": {
+        "data": {
+          "background": "#0000FF",
+          "encoding": "png",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DQwIAEmJA5IDYAMEUBg7tm+xoAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": null,
+      "expectedPixels": [
+        {
+          "rgb": [
+            0,
+            0,
+            0
+          ],
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "height": 4,
+      "id": "render-content-empty-text",
+      "instance": {
+        "data": {
+          "text": ""
+        },
+        "format": "dev.deckr.render.text.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": null,
+      "expectedPixels": [
+        {
+          "rgb": [
+            17,
+            34,
+            51
+          ],
+          "x": 2,
+          "y": 2
+        }
+      ],
+      "height": 4,
+      "id": "render-content-text-background",
+      "instance": {
+        "data": {
+          "background": "#112233",
+          "text": ""
+        },
+        "format": "dev.deckr.render.text.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": null,
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-unicode-codepoints",
+      "instance": {
+        "data": {
+          "text": "\ud83d\ude00\ud83d\ude00"
+        },
+        "format": "dev.deckr.render.text.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 2
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": "limit_exceeded",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-unicode-limit",
+      "instance": {
+        "data": {
+          "text": "\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+        },
+        "format": "dev.deckr.render.text.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 2
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-url",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "image": "https://example.invalid/frame.png"
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-data-uri",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DwnwEJMCFzQGwAPycCArHCx8kAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-base64",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "image": "!@#="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-not-image",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "image": "bm90IGFuIGltYWdl"
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-truncated",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DwnwEJMCFzQGwA"
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-animation",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAACGFjVEwAAAACAAAAAPONk3AAAAAaZmNUTAAAAAAAAAAEAAAAAgAAAAAAAAAAAAEACgAAdYjXEwAAABRJREFUeJxj/M/A8J8BCTAhc0BsAD8nAgKxwsfJAAAAGmZjVEwAAAABAAAABAAAAAIAAAAAAAAAAAABAAoAAO77PccAAAAYZmRBVAAAAAJ4nGNkYPj/nwEJMCFzQGwAPSkCAhew50YAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-encoding-mismatch",
+      "instance": {
+        "data": {
+          "encoding": "jpeg",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DwnwEJMCFzQGwAPycCArHCx8kAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "limit_exceeded",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-pixel-limit",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DwnwEJMCFzQGwAPycCArHCx8kAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 4,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "limit_exceeded",
+      "expectedPixels": [],
+      "height": 4,
+      "id": "render-content-byte-limit",
+      "instance": {
+        "data": {
+          "encoding": "png",
+          "image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAFElEQVR4nGP8z8DwnwEJMCFzQGwAPycCArHCx8kAAAAASUVORK5CYII="
+        },
+        "format": "dev.deckr.render.image.v1"
+      },
+      "limits": {
+        "maxImageBytes": 1,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    }
+  ],
+  "description": "Baseline content decode and logical canvas cases. Expected pixels omit font-specific glyph assertions."
+}

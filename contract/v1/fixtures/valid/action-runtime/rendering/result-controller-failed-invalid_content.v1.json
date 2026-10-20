@@ -1,0 +1,12 @@
+{
+  "code": "invalid_content",
+  "requestMessageId": "render-message-42",
+  "requirementName": "display",
+  "stage": "controller",
+  "status": "failed",
+  "target": {
+    "bindingId": "binding-17",
+    "generation": 3,
+    "kind": "binding"
+  }
+}

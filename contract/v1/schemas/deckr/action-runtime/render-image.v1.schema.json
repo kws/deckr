@@ -1,0 +1,35 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-image.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "background": {
+      "pattern": "^#[0-9a-fA-F]{6}$",
+      "type": "string"
+    },
+    "encoding": {
+      "enum": [
+        "png",
+        "jpeg"
+      ]
+    },
+    "fit": {
+      "enum": [
+        "contain",
+        "cover",
+        "stretch"
+      ]
+    },
+    "image": {
+      "contentEncoding": "base64",
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "image",
+    "encoding"
+  ],
+  "title": "RenderImage",
+  "type": "object"
+}

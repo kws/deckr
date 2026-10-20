@@ -1,0 +1,64 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-target-support.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "formats": {
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "id": {
+                "const": "dev.deckr.render.text.v1"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "id": {
+                "const": "dev.deckr.render.image.v1"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      ],
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-format.v1.schema.json"
+      },
+      "minItems": 2,
+      "type": "array"
+    },
+    "height": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "limits": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-limits.v1.schema.json"
+    },
+    "requirementName": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "width": {
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "requirementName",
+    "width",
+    "height",
+    "formats",
+    "limits"
+  ],
+  "title": "RenderTargetSupport",
+  "type": "object"
+}

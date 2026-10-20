@@ -1,0 +1,12 @@
+{
+  "code": "busy",
+  "requestMessageId": "render-message-42",
+  "requirementName": "display",
+  "stage": "controller",
+  "status": "rejected",
+  "target": {
+    "bindingId": "binding-17",
+    "generation": 3,
+    "kind": "binding"
+  }
+}

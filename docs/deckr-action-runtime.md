@@ -226,8 +226,10 @@ Page-session metadata now requires `generation`. Each matched capability now
 requires a non-null `requirementName`. Name and view lists reject duplicates.
 Absent, null, and empty requirements no longer permit implicit matches.
 
-Rendering content is outside this change. The existing raster command contract
-continues to apply. A separate rendering proposal requires its own review.
+Bundle `1.0.0-alpha.3` adds the [rendering contract](deckr-action-runtime-rendering.md):
+optional support in binding attachment, `binding_render`, and `binding_render_result`.
+Old attachment schemas reject the new field. Coordinate specification revisions
+before using rendering. The hardware raster command remains an encoded frame.
 
 ## Messages and schemas
 

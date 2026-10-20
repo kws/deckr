@@ -1,0 +1,4113 @@
+{
+  "cases": [
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": null,
+      "id": "render-current",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": null,
+      "id": "render-clear",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "operation": "clear",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "target_not_current",
+      "id": "render-stale-generation",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 2,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "target_not_current",
+      "id": "render-future-generation",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 4,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "target_not_current",
+      "id": "render-unknown-binding",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "other",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": false,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "target_not_current",
+      "id": "render-hidden",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": false,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unauthorized",
+      "id": "render-no-service-authority",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": false,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "target_not_current",
+      "id": "render-no-hardware-authority",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unauthorized",
+      "id": "render-wrong-session",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "old",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unauthorized",
+      "id": "render-wrong-controller-session",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "old",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unauthorized",
+      "id": "render-old-agreement",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "old",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.other",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "target_not_current",
+      "id": "render-foreign-binding-owner",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 2
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "target_not_current",
+      "id": "render-retired-binding-agreement",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_target",
+      "id": "render-unknown-requirement",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "other",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": null,
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_target",
+      "id": "render-no-support",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_target",
+      "id": "render-no-match",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.input.button",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_target",
+      "id": "render-non-raster-match",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_target",
+      "id": "render-missing-clear-command",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "other",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_target",
+      "id": "render-wrong-control-match",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_format",
+      "id": "render-extension-not-advertised",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {},
+              "format": "org.example.render.graph.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_format",
+      "id": "render-jpeg-not-advertised",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "encoding": "jpeg",
+                "fit": "contain",
+                "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+              },
+              "format": "dev.deckr.render.image.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 300000,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "limit_exceeded",
+      "id": "render-message-limit",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "limit_exceeded",
+      "id": "render-text-limit",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": null,
+      "id": "render-unicode-codepoints",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "\ud83d\ude00"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "display",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                },
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "alias",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                },
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "alias",
+                  "width": 72
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": null,
+      "id": "render-admission-shared-capability-alias",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "alias",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "context": {
+        "bindings": {
+          "binding-17": {
+            "active": true,
+            "binding": {
+              "actionId": "example",
+              "actionInstanceId": "example",
+              "bindingId": "binding-17",
+              "configId": "example",
+              "contextId": "example",
+              "controlRef": {
+                "controlId": "example",
+                "deviceRef": {
+                  "deviceId": "deck-1",
+                  "fingerprint": "fingerprint:deck-1",
+                  "managerId": "mirabox-main"
+                }
+              },
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              },
+              "matchedCapabilities": [
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "display",
+                  "type": "bitmap"
+                },
+                {
+                  "capability": {
+                    "capabilityId": "raster",
+                    "controlId": "example",
+                    "deviceRef": {
+                      "deviceId": "deck-1",
+                      "fingerprint": "fingerprint:deck-1",
+                      "managerId": "mirabox-main"
+                    }
+                  },
+                  "commandTypes": [
+                    "set_frame",
+                    "clear"
+                  ],
+                  "direction": "output",
+                  "family": "dev.deckr.output.raster",
+                  "requirementName": "alias",
+                  "type": "bitmap"
+                }
+              ],
+              "outputGeneration": 3,
+              "providerId": "example",
+              "providerInstanceId": "clock-main"
+            },
+            "contract": {
+              "contractId": "action-runtime-contract-1",
+              "generation": 1
+            },
+            "rendering": {
+              "targets": [
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "display",
+                  "width": 72
+                },
+                {
+                  "formats": [
+                    {
+                      "id": "dev.deckr.render.text.v1"
+                    },
+                    {
+                      "id": "dev.deckr.render.image.v1",
+                      "options": {
+                        "encodings": [
+                          "png",
+                          "jpeg"
+                        ]
+                      }
+                    }
+                  ],
+                  "height": 72,
+                  "limits": {
+                    "maxImageBytes": 131072,
+                    "maxImagePixels": 1048576,
+                    "maxMessageBytes": 262144,
+                    "maxRenderTimeMs": 2000,
+                    "maxTextCodePoints": 1024
+                  },
+                  "requirementName": "alias",
+                  "width": 73
+                }
+              ],
+              "version": 1
+            },
+            "runtimeEndpoint": "service:action-runtime.clock-main",
+            "runtimeSessionId": "service-session"
+          }
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "controllerEndpoint": "controller:controller-main",
+        "controllerSessionId": "controller-session",
+        "hardwareAuthority": true,
+        "localAuthority": true,
+        "messageBytes": 1800,
+        "runtimeEndpoint": "service:action-runtime.clock-main",
+        "runtimeSessionId": "service-session"
+      },
+      "expectedCode": "unsupported_target",
+      "id": "render-admission-inconsistent-capability-alias",
+      "instance": {
+        "body": {
+          "exchangePattern": "one_way",
+          "intent": "command",
+          "name": "binding_render",
+          "params": {
+            "content": {
+              "data": {
+                "background": "#000000",
+                "foreground": "#FFFFFF",
+                "text": "Kitchen"
+              },
+              "format": "dev.deckr.render.text.v1"
+            },
+            "operation": "set",
+            "requirementName": "alias",
+            "target": {
+              "bindingId": "binding-17",
+              "generation": 3,
+              "kind": "binding"
+            }
+          },
+          "serviceNamespace": "dev.deckr.action_runtime.provider"
+        },
+        "contract": {
+          "contractId": "action-runtime-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "render-message-42",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "controller:controller-main",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "controller-session",
+        "schemaVersion": "1",
+        "sender": "service:action-runtime.clock-main",
+        "senderSessionId": "service-session",
+        "subject": {
+          "identifiers": {
+            "name": "binding_render",
+            "namespace": "dev.deckr.action_runtime.provider",
+            "serviceId": "action-runtime.clock-main"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    }
+  ],
+  "schema": "dev.deckr.action-runtime-rendering.v1"
+}

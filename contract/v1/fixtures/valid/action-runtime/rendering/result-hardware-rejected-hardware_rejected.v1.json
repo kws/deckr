@@ -1,0 +1,13 @@
+{
+  "code": "hardware_rejected",
+  "commandMessageId": "hardware-message-98",
+  "requestMessageId": "render-message-42",
+  "requirementName": "display",
+  "stage": "hardware",
+  "status": "rejected",
+  "target": {
+    "bindingId": "binding-17",
+    "generation": 3,
+    "kind": "binding"
+  }
+}

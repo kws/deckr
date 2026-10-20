@@ -46,7 +46,7 @@ The generic service schema deliberately accepts application-owned `params`,
 Use the application-specific entry point, selected by service namespace and
 message name, or validate against the service's declared payload schema.
 
-All eight hardware messages and all fourteen Action Runtime messages have
+All eight hardware messages and all sixteen Action Runtime messages have
 individual full-message entry points as well as family unions. The
 [Deckr message catalog](deckr-message-catalog.md) lists their payload locations and direction.
 

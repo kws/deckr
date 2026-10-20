@@ -1,0 +1,53 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "not": {
+          "required": [
+            "content"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "set"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "content"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "content": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-content.v1.schema.json"
+    },
+    "operation": {
+      "enum": [
+        "set",
+        "clear"
+      ]
+    },
+    "requirementName": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-command-target.v1.schema.json"
+    }
+  },
+  "required": [
+    "target",
+    "requirementName",
+    "operation"
+  ],
+  "title": "BindingRenderBody",
+  "type": "object"
+}

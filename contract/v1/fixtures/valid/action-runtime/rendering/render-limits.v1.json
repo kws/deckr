@@ -1,0 +1,7 @@
+{
+  "maxImageBytes": 131072,
+  "maxImagePixels": 1048576,
+  "maxMessageBytes": 262144,
+  "maxRenderTimeMs": 2000,
+  "maxTextCodePoints": 1024
+}

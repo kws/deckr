@@ -246,6 +246,342 @@
       "valid": false
     },
     {
+      "id": "fixtures/invalid/action-runtime/rendering/attachment-null-rendering.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/attachment-null-rendering.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-attached.v1.schema.json",
+      "title": "attachment-null-rendering",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding-render-body-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding-render-body-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "binding-render-body-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding-render-result-body-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding-render-result-body-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "binding-render-result-body-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding_render-missing-contract.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding_render-missing-contract.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "title": "binding_render-missing-contract",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding_render-missing-recipientSessionId.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding_render-missing-recipientSessionId.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "title": "binding_render-missing-recipientSessionId",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding_render-wrong-intent.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding_render-wrong-intent.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "title": "binding_render-wrong-intent",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding_render-wrong-subject.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding_render-wrong-subject.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "title": "binding_render-wrong-subject",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding_render_result-missing-contract.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding_render_result-missing-contract.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "title": "binding_render_result-missing-contract",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding_render_result-missing-recipientSessionId.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding_render_result-missing-recipientSessionId.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "title": "binding_render_result-missing-recipientSessionId",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding_render_result-wrong-intent.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding_render_result-wrong-intent.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "title": "binding_render_result-wrong-intent",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/binding_render_result-wrong-subject.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/binding_render_result-wrong-subject.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "title": "binding_render_result-wrong-subject",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/clear-with-content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/clear-with-content.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "clear-with-content",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/dispatched-no-command.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/dispatched-no-command.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "dispatched-no-command",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/dispatched-with-code.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/dispatched-with-code.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "dispatched-with-code",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/fractional-limit.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/fractional-limit.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-limits.v1.schema.json",
+      "title": "fractional-limit",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/hardware-success-invalid.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/hardware-success-invalid.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "hardware-success-invalid",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/image-duplicate-encoding.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/image-duplicate-encoding.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-format.v1.schema.json",
+      "title": "image-duplicate-encoding",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/image-invalid-fit.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/image-invalid-fit.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-image.v1.schema.json",
+      "title": "image-invalid-fit",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/image-no-png.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/image-no-png.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-format.v1.schema.json",
+      "title": "image-no-png",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/image-uri-encoding.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/image-uri-encoding.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-image.v1.schema.json",
+      "title": "image-uri-encoding",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/messages-binding-render-result-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/messages-binding-render-result-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "title": "messages-binding-render-result-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/messages-binding-render-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/messages-binding-render-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "title": "messages-binding-render-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-content-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-content-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "title": "render-content-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-format-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-format-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-format.v1.schema.json",
+      "title": "render-format-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-image-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-image-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-image.v1.schema.json",
+      "title": "render-image-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-limits-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-limits-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-limits.v1.schema.json",
+      "title": "render-limits-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-missing-content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-missing-content.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "render-missing-content",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-missing-operation.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-missing-operation.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "render-missing-operation",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-missing-requirementName.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-missing-requirementName.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "render-missing-requirementName",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-missing-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-missing-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "render-missing-target",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-null-content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-null-content.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "render-null-content",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-page-target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-page-target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "render-page-target",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-target-support-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-target-support-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-target-support.v1.schema.json",
+      "title": "render-target-support-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/render-text-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/render-text-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-text.v1.schema.json",
+      "title": "render-text-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/rendering-support-wrong-type.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/rendering-support-wrong-type.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+      "title": "rendering-support-wrong-type",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/support-no-baseline.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/support-no-baseline.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-target-support.v1.schema.json",
+      "title": "support-no-baseline",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/support-null-targets.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/support-null-targets.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+      "title": "support-null-targets",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/support-unknown-version.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/support-unknown-version.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+      "title": "support-unknown-version",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/text-invalid-color.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/text-invalid-color.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-text.v1.schema.json",
+      "title": "text-invalid-color",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/text-unknown-field.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/text-unknown-field.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-text.v1.schema.json",
+      "title": "text-unknown-field",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/unknown-core-format.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/unknown-core-format.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "title": "unknown-core-format",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/action-runtime/rendering/zero-limit.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/action-runtime/rendering/zero-limit.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-limits.v1.schema.json",
+      "title": "zero-limit",
+      "valid": false
+    },
+    {
       "id": "fixtures/invalid/action-runtime/replace-page-binding-target.v1.json",
       "kind": "fixture",
       "path": "fixtures/invalid/action-runtime/replace-page-binding-target.v1.json",
@@ -2246,6 +2582,254 @@
       "valid": true
     },
     {
+      "id": "fixtures/valid/action-runtime/rendering/attachment-with-rendering.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/attachment-with-rendering.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-attached.v1.schema.json",
+      "title": "attachment-with-rendering",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/binding-render-body.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/binding-render-body.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "binding-render-body",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/binding-render-result-body.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/binding-render-result-body.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "binding-render-result-body",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/clear.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/clear.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "clear",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/empty-support.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/empty-support.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+      "title": "empty-support",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/empty-text.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/empty-text.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-text.v1.schema.json",
+      "title": "empty-text",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/extension-content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/extension-content.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "title": "extension-content",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/image-content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/image-content.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "title": "image-content",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/messages-binding-render-result.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/messages-binding-render-result.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "title": "messages-binding-render-result",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/messages-binding-render.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/messages-binding-render.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "title": "messages-binding-render",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/render-content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/render-content.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "title": "render-content",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/render-format.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/render-format.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-format.v1.schema.json",
+      "title": "render-format",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/render-image.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/render-image.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-image.v1.schema.json",
+      "title": "render-image",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/render-limits.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/render-limits.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-limits.v1.schema.json",
+      "title": "render-limits",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/render-target-support.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/render-target-support.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-target-support.v1.schema.json",
+      "title": "render-target-support",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/render-text.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/render-text.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/render-text.v1.schema.json",
+      "title": "render-text",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/rendering-support.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/rendering-support.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+      "title": "rendering-support",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-failed-deadline_exceeded.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-failed-deadline_exceeded.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-failed-deadline_exceeded",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-failed-dispatch_failed.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-failed-dispatch_failed.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-failed-dispatch_failed",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-failed-invalid_content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-failed-invalid_content.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-failed-invalid_content",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-failed-limit_exceeded.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-failed-limit_exceeded.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-failed-limit_exceeded",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-failed-render_failed.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-failed-render_failed.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-failed-render_failed",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-rejected-busy.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-rejected-busy.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-rejected-busy",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-rejected-invalid_content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-rejected-invalid_content.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-rejected-invalid_content",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-rejected-limit_exceeded.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-rejected-limit_exceeded.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-rejected-limit_exceeded",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-rejected-target_not_current.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-rejected-target_not_current.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-rejected-target_not_current",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-rejected-unsupported_format.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-rejected-unsupported_format.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-rejected-unsupported_format",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-rejected-unsupported_target.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-rejected-unsupported_target.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-rejected-unsupported_target",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-superseded-newer_output.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-superseded-newer_output.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-superseded-newer_output",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-controller-superseded-target_not_current.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-controller-superseded-target_not_current.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-controller-superseded-target_not_current",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/action-runtime/rendering/result-hardware-rejected-hardware_rejected.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/action-runtime/rendering/result-hardware-rejected-hardware_rejected.v1.json",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "result-hardware-rejected-hardware_rejected",
+      "valid": true
+    },
+    {
       "id": "fixtures/valid/action-runtime/requirements-absent.v1.json",
       "kind": "fixture",
       "path": "fixtures/valid/action-runtime/requirements-absent.v1.json",
@@ -3583,6 +4167,22 @@
       "title": "BindingOverlayClearBody"
     },
     {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "title": "BindingRenderBody"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "title": "BindingRenderResultBody"
+    },
+    {
       "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/capability-input-body.v1.schema.json",
       "kind": "schema",
       "module": "deckr/action-runtime",
@@ -3719,6 +4319,22 @@
       "title": "Action Runtime binding_overlay"
     },
     {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "title": "Action Runtime binding_render_result"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "title": "Action Runtime binding_render"
+    },
+    {
       "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/capability-input.v1.schema.json",
       "kind": "schema",
       "module": "deckr/action-runtime",
@@ -3821,6 +4437,64 @@
       "path": "schemas/deckr/action-runtime/page-session-metadata.v1.schema.json",
       "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/page-session-metadata.v1.schema.json",
       "title": "PageSessionMetadata"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-content.v1.schema.json",
+      "title": "RenderContent"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-format.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/render-format.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-format.v1.schema.json",
+      "title": "RenderFormat"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-image.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/render-image.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-image.v1.schema.json",
+      "title": "RenderImage",
+      "wireSchemaId": "dev.deckr.render.image.v1"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-limits.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/render-limits.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-limits.v1.schema.json",
+      "title": "RenderLimits"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-target-support.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/render-target-support.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-target-support.v1.schema.json",
+      "title": "RenderTargetSupport"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-text.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/render-text.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-text.v1.schema.json",
+      "title": "RenderText",
+      "wireSchemaId": "dev.deckr.render.text.v1"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/action-runtime",
+      "path": "schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+      "title": "RenderingSupport"
     },
     {
       "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/replace-page-body.v1.schema.json",
@@ -4546,6 +5220,27 @@
       "title": "TokenObservation"
     },
     {
+      "id": "vectors/action-runtime-rendering-content.v1.json",
+      "kind": "vector",
+      "path": "vectors/action-runtime-rendering-content.v1.json",
+      "semantic": true,
+      "title": "Action Runtime rendering content"
+    },
+    {
+      "id": "vectors/action-runtime-rendering-ordering.v1.json",
+      "kind": "vector",
+      "path": "vectors/action-runtime-rendering-ordering.v1.json",
+      "semantic": true,
+      "title": "Action Runtime rendering ordering"
+    },
+    {
+      "id": "vectors/action-runtime-rendering.v1.json",
+      "kind": "vector",
+      "path": "vectors/action-runtime-rendering.v1.json",
+      "semantic": true,
+      "title": "Action Runtime rendering admission cases"
+    },
+    {
       "id": "vectors/action-runtime-semantics.v1.json",
       "kind": "vector",
       "path": "vectors/action-runtime-semantics.v1.json",
@@ -4597,7 +5292,7 @@
     }
   ],
   "bundle": "deckr-contract-v1",
-  "bundleVersion": "1.0.0-alpha.2",
+  "bundleVersion": "1.0.0-alpha.3",
   "contractVersion": "v1",
   "description": "Contract-first, language-neutral schemas, catalogs, fixtures and vectors. Implementations live in consuming repositories.",
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",

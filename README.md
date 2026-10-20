@@ -8,7 +8,7 @@ Define and review contracts here before consumers implement them. Author schemas
 directly in `contract/v1/schemas/` and validate them with the repository's CI
 workflow.
 
-The contracts are alpha. The current bundle version is `1.0.0-alpha.2` for
+The contracts are alpha. The current bundle version is `1.0.0-alpha.3` for
 wire protocol v1.
 
 ## Project repositories
@@ -99,6 +99,7 @@ deckr-conformance-scenarios.md
 - [Deckr hardware](docs/deckr-hardware.md): discovery, device claims and manager lifecycles.
 - [Deckr services](docs/deckr-services.md): service-use agreements, protected views and service lifecycles.
 - [Deckr Action Runtime](docs/deckr-action-runtime.md): service identity, availability and runtime messages.
+- [Deckr Action Runtime rendering](docs/deckr-action-runtime-rendering.md): content formats, support discovery, output ordering, and render results.
 - [Deckr messaging](docs/deckr-messaging.md): envelopes, routing, lane rules and shared lifecycle requirements.
 - [Deckr NATS binding](docs/deckr-nats-binding.md): lane subjects, KV keys, store policies and recovery.
 - [Deckr hardware capabilities](docs/deckr-hardware-capabilities.md): descriptors, values and commands.

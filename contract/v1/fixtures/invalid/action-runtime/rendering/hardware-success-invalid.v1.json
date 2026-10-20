@@ -1,0 +1,12 @@
+{
+  "commandMessageId": "hardware-message-98",
+  "requestMessageId": "render-message-42",
+  "requirementName": "display",
+  "stage": "hardware",
+  "status": "dispatched",
+  "target": {
+    "bindingId": "binding-17",
+    "generation": 3,
+    "kind": "binding"
+  }
+}

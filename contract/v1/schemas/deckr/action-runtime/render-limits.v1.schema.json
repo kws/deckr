@@ -1,0 +1,36 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-limits.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "maxImageBytes": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "maxImagePixels": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "maxMessageBytes": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "maxRenderTimeMs": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "maxTextCodePoints": {
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "maxMessageBytes",
+    "maxImageBytes",
+    "maxImagePixels",
+    "maxTextCodePoints",
+    "maxRenderTimeMs"
+  ],
+  "title": "RenderLimits",
+  "type": "object"
+}

@@ -1,0 +1,23 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-text.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "background": {
+      "pattern": "^#[0-9a-fA-F]{6}$",
+      "type": "string"
+    },
+    "foreground": {
+      "pattern": "^#[0-9a-fA-F]{6}$",
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "RenderText",
+  "type": "object"
+}

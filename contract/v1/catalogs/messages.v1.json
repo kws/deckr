@@ -230,6 +230,30 @@
       "payloadSchemaPath": "schemas/deckr/action-runtime/close-page-body.v1.schema.json",
       "schemaPath": "schemas/deckr/action-runtime/messages/close-page.v1.schema.json",
       "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "runtime_to_controller",
+      "exchangePattern": "one_way",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "binding_render",
+      "payloadLocation": "body.params",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "controller_to_runtime",
+      "exchangePattern": "one_way",
+      "intent": "event",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "binding_render_result",
+      "payloadLocation": "body.event",
+      "payloadSchemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+      "schemaPath": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+      "serviceNamespace": "dev.deckr.action_runtime.provider"
     }
   ]
 }

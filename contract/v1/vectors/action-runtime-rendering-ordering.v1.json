@@ -1,0 +1,239 @@
+{
+  "cases": [
+    {
+      "expectedCommandRequests": [
+        "B"
+      ],
+      "id": "render-order-reverse-completion",
+      "instance": {
+        "content": {
+          "data": {
+            "background": "#000000",
+            "foreground": "#FFFFFF",
+            "text": "Kitchen"
+          },
+          "format": "dev.deckr.render.text.v1"
+        },
+        "operation": "set",
+        "requirementName": "display",
+        "target": {
+          "bindingId": "binding-17",
+          "generation": 3,
+          "kind": "binding"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "steps": [
+        {
+          "send": "A",
+          "text": "A"
+        },
+        {
+          "waitRender": 1
+        },
+        {
+          "send": "B",
+          "text": "B"
+        },
+        {
+          "waitRender": 2
+        },
+        {
+          "completeRender": 2
+        },
+        {
+          "expectResult": "B",
+          "status": "dispatched"
+        },
+        {
+          "completeRender": 1
+        },
+        {
+          "drain": true
+        },
+        {
+          "code": "newer_output",
+          "expectResult": "A",
+          "status": "superseded"
+        }
+      ]
+    },
+    {
+      "expectedCommandRequests": [
+        "B"
+      ],
+      "id": "render-order-newer-clear",
+      "instance": {
+        "content": {
+          "data": {
+            "background": "#000000",
+            "foreground": "#FFFFFF",
+            "text": "Kitchen"
+          },
+          "format": "dev.deckr.render.text.v1"
+        },
+        "operation": "set",
+        "requirementName": "display",
+        "target": {
+          "bindingId": "binding-17",
+          "generation": 3,
+          "kind": "binding"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "steps": [
+        {
+          "send": "A",
+          "text": "A"
+        },
+        {
+          "waitRender": 1
+        },
+        {
+          "operation": "clear",
+          "send": "B"
+        },
+        {
+          "expectResult": "B",
+          "status": "dispatched"
+        },
+        {
+          "completeRender": 1
+        },
+        {
+          "drain": true
+        },
+        {
+          "code": "newer_output",
+          "expectResult": "A",
+          "status": "superseded"
+        }
+      ]
+    },
+    {
+      "expectedCommandRequests": [],
+      "id": "render-order-newer-failure",
+      "instance": {
+        "content": {
+          "data": {
+            "background": "#000000",
+            "foreground": "#FFFFFF",
+            "text": "Kitchen"
+          },
+          "format": "dev.deckr.render.text.v1"
+        },
+        "operation": "set",
+        "requirementName": "display",
+        "target": {
+          "bindingId": "binding-17",
+          "generation": 3,
+          "kind": "binding"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "steps": [
+        {
+          "send": "A",
+          "text": "A"
+        },
+        {
+          "waitRender": 1
+        },
+        {
+          "content": {
+            "data": {
+              "encoding": "png",
+              "image": "bm90IGFuIGltYWdl"
+            },
+            "format": "dev.deckr.render.image.v1"
+          },
+          "send": "B"
+        },
+        {
+          "code": "invalid_content",
+          "expectResult": "B",
+          "status": "failed"
+        },
+        {
+          "completeRender": 1
+        },
+        {
+          "drain": true
+        },
+        {
+          "code": "newer_output",
+          "expectResult": "A",
+          "status": "superseded"
+        }
+      ]
+    },
+    {
+      "expectedCommandRequests": [
+        "A"
+      ],
+      "id": "render-order-rejection-preserves-order",
+      "instance": {
+        "content": {
+          "data": {
+            "background": "#000000",
+            "foreground": "#FFFFFF",
+            "text": "Kitchen"
+          },
+          "format": "dev.deckr.render.text.v1"
+        },
+        "operation": "set",
+        "requirementName": "display",
+        "target": {
+          "bindingId": "binding-17",
+          "generation": 3,
+          "kind": "binding"
+        }
+      },
+      "rule": "SEM-ACT-006",
+      "schemaPath": "schemas/deckr/action-runtime/binding-render-body.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "steps": [
+        {
+          "send": "A",
+          "text": "A"
+        },
+        {
+          "waitRender": 1
+        },
+        {
+          "content": {
+            "data": {},
+            "format": "org.example.render.graph.v1"
+          },
+          "send": "B"
+        },
+        {
+          "code": "unsupported_format",
+          "expectResult": "B",
+          "status": "rejected"
+        },
+        {
+          "completeRender": 1
+        },
+        {
+          "drain": true
+        },
+        {
+          "expectResult": "A",
+          "status": "dispatched"
+        }
+      ]
+    }
+  ],
+  "description": "Steps use serialized admission, controlled render completion, and exact hardware command/request correlation. waitRender and completeRender use one-based worker invocation numbers. drain waits for all admitted workers."
+}

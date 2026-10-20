@@ -1,0 +1,171 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "not": {
+        "required": [
+          "code"
+        ]
+      },
+      "properties": {
+        "stage": {
+          "const": "controller"
+        },
+        "status": {
+          "const": "dispatched"
+        }
+      },
+      "required": [
+        "commandMessageId"
+      ]
+    },
+    {
+      "not": {
+        "required": [
+          "commandMessageId"
+        ]
+      },
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_content",
+            "unsupported_format",
+            "unsupported_target",
+            "target_not_current",
+            "limit_exceeded",
+            "busy"
+          ]
+        },
+        "stage": {
+          "const": "controller"
+        },
+        "status": {
+          "const": "rejected"
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    {
+      "not": {
+        "required": [
+          "commandMessageId"
+        ]
+      },
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_content",
+            "limit_exceeded",
+            "render_failed",
+            "deadline_exceeded",
+            "dispatch_failed"
+          ]
+        },
+        "stage": {
+          "const": "controller"
+        },
+        "status": {
+          "const": "failed"
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    {
+      "not": {
+        "required": [
+          "commandMessageId"
+        ]
+      },
+      "properties": {
+        "code": {
+          "enum": [
+            "newer_output",
+            "target_not_current"
+          ]
+        },
+        "stage": {
+          "const": "controller"
+        },
+        "status": {
+          "const": "superseded"
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    {
+      "properties": {
+        "code": {
+          "enum": [
+            "hardware_rejected"
+          ]
+        },
+        "stage": {
+          "const": "hardware"
+        },
+        "status": {
+          "const": "rejected"
+        }
+      },
+      "required": [
+        "code",
+        "commandMessageId"
+      ]
+    }
+  ],
+  "properties": {
+    "code": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "commandMessageId": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 512,
+      "type": "string"
+    },
+    "requestMessageId": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "requirementName": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "stage": {
+      "enum": [
+        "controller",
+        "hardware"
+      ]
+    },
+    "status": {
+      "enum": [
+        "dispatched",
+        "rejected",
+        "failed",
+        "superseded"
+      ]
+    },
+    "target": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-command-target.v1.schema.json"
+    }
+  },
+  "required": [
+    "requestMessageId",
+    "target",
+    "requirementName",
+    "stage",
+    "status"
+  ],
+  "title": "BindingRenderResultBody",
+  "type": "object"
+}

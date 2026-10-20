@@ -1080,3 +1080,23 @@ Example report:
 Use `not-applicable` only with an explanation of the excluded surface or optional behavior.
 Do not use it to excuse a required behavior within a claimed surface.
 The example report is a reporting convention, not an additional wire contract.
+
+## Action Runtime rendering
+
+Use the [rendering conformance matrix](docs/deckr-action-runtime-rendering.md#conformance-and-delivery)
+and [admission vectors](contract/v1/vectors/action-runtime-rendering.v1.json).
+
+Exercise two controlled render workers against one raster target. Admit A, then B.
+Complete B before A. Only B may dispatch. Repeat with B failing and with a later
+clear; A still must not dispatch. Repeat with a direct `binding_output` frame,
+overlay expiry, page hiding, detach, and a successor hardware claim.
+
+Hold the output lock while authority changes. Release it and verify no stale
+send. Change overlays during rendering and verify composition uses the current
+base and overlay. Inject decoder, worker, deadline, and dispatch failures; verify
+bounded work and no implicit clear. Deliver duplicate requests and delayed
+hardware rejection events; verify correlation without replay or rollback.
+
+Exchange support, commands, and results through managed service agreements.
+Verify loss of service authority prevents both later output and result emission.
+A locally dispatched command does not prove that the hardware displayed it.

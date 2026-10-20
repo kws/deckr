@@ -1,0 +1,22 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/rendering-support.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "targets": {
+      "items": {
+        "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-target-support.v1.schema.json"
+      },
+      "type": "array"
+    },
+    "version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "version",
+    "targets"
+  ],
+  "title": "RenderingSupport",
+  "type": "object"
+}

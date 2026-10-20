@@ -475,3 +475,34 @@ Structural validation cannot establish runtime authority.
 **References:** [Semantic validation vectors](../contract/v1/vectors/semantic-validation.v1.json),
 [Deckr conformance scenarios](../deckr-conformance-scenarios.md),
 [Schema guide: Versioning and acceptance](schema-guide.md#versioning-and-acceptance).
+
+### SEM-ACT-006: Rendering support, admission, and results
+
+**Checks**
+
+- Apply the [rendering specification](deckr-action-runtime-rendering.md).
+- Require unique requirement names in support and unique format IDs per target.
+- Check each support target against the binding's exact raster match and scope.
+- Require equal support for requirement aliases of one physical capability.
+- Check the service agreement, both sessions, active binding, and hardware authority.
+- Require the current output generation; do not use it as a per-frame sequence.
+- Require an advertised format and input encoding. Apply advertised size limits.
+- Decode inline image data and check its encoding, dimensions, static-image form,
+  and resource limits before full allocation. Structural base64 annotations do
+  not establish a valid image.
+- Serialize all base and composition output for the actual hardware target.
+- Recheck authority and revisions at final dispatch; discard obsolete work.
+- Preserve current output on failure. Clear must invalidate old pending work.
+- Match result causation to the request message ID. Enforce stage/status/code
+  combinations and hardware command correlation. Dispatch is not display success.
+- Do not replay commands under successor agreements or restore cached authority.
+
+**References:** [Rendering schemas](../contract/v1/schemas/deckr/action-runtime/binding-render-body.v1.schema.json),
+[rendering vectors](../contract/v1/vectors/action-runtime-rendering.v1.json).
+
+The [content vectors](../contract/v1/vectors/action-runtime-rendering-content.v1.json)
+define baseline decoding, limits, and canvas pixels. The
+[ordering vectors](../contract/v1/vectors/action-runtime-rendering-ordering.v1.json)
+define controlled completion sequences and exact hardware-command correlation.
+Consuming controller tests execute these cases. Schema validation alone does not
+establish their semantic results.

@@ -1,0 +1,12 @@
+{
+  "content": {
+    "data": {
+      "background": "#000000",
+      "foreground": "#FFFFFF",
+      "text": "Kitchen"
+    },
+    "format": "dev.deckr.render.text.v1"
+  },
+  "operation": "set",
+  "requirementName": "display"
+}

@@ -1,0 +1,46 @@
+{
+  "body": {
+    "exchangePattern": "one_way",
+    "intent": "command",
+    "name": "binding_render",
+    "params": {
+      "content": {
+        "data": {
+          "background": "#000000",
+          "foreground": "#FFFFFF",
+          "text": "Kitchen"
+        },
+        "format": "dev.deckr.render.text.v1"
+      },
+      "operation": "set",
+      "requirementName": "display",
+      "target": {
+        "bindingId": "binding-17",
+        "generation": 3,
+        "kind": "binding"
+      }
+    },
+    "serviceNamespace": "dev.deckr.action_runtime.provider"
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "services",
+  "messageId": "render-message-42",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "service:action-runtime.clock-main",
+  "senderSessionId": "service-session",
+  "subject": {
+    "identifiers": {
+      "name": "binding_render",
+      "namespace": "dev.deckr.action_runtime.provider",
+      "serviceId": "action-runtime.clock-main"
+    },
+    "kind": "service"
+  }
+}

@@ -21,7 +21,7 @@
           "managerId": "mirabox-main"
         },
         "providerId": "example",
-        "providerInstanceId": "example"
+        "providerInstanceId": "clock-main"
       }
     },
     "exchangePattern": "one_way",

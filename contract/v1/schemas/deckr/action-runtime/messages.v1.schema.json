@@ -43,6 +43,12 @@
     },
     {
       "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/close-page.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-render.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json"
     }
   ],
   "title": "Action Runtime service messages"

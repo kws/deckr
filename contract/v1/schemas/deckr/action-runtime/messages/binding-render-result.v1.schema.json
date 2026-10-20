@@ -1,0 +1,95 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/message.v1.schema.json"
+    },
+    {
+      "properties": {
+        "body": {
+          "properties": {
+            "error": {
+              "type": "null"
+            },
+            "event": {
+              "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json"
+            },
+            "exchangePattern": {
+              "const": "one_way"
+            },
+            "intent": {
+              "const": "event"
+            },
+            "name": {
+              "const": "binding_render_result"
+            },
+            "params": {
+              "maxProperties": 0,
+              "type": "object"
+            },
+            "result": {
+              "type": "null"
+            },
+            "serviceNamespace": {
+              "const": "dev.deckr.action_runtime.provider"
+            },
+            "status": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "serviceNamespace",
+            "name",
+            "intent",
+            "exchangePattern",
+            "event"
+          ]
+        },
+        "causationId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "inReplyTo": {
+          "type": "null"
+        },
+        "recipient": {
+          "properties": {
+            "endpoint": {
+              "pattern": "^service:action-runtime\\.[A-Za-z0-9][A-Za-z0-9._-]*$"
+            },
+            "targetType": {
+              "const": "endpoint"
+            }
+          },
+          "required": [
+            "endpoint"
+          ]
+        },
+        "recipientSessionId": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+        },
+        "sender": {
+          "pattern": "^controller:"
+        },
+        "subject": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/service-subject.v1.schema.json",
+          "properties": {
+            "identifiers": {
+              "properties": {
+                "name": {
+                  "const": "binding_render_result"
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "recipientSessionId",
+        "causationId"
+      ]
+    }
+  ],
+  "title": "Action Runtime binding_render_result"
+}

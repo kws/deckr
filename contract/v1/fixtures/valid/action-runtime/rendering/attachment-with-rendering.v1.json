@@ -1,0 +1,111 @@
+{
+  "body": {
+    "event": {
+      "binding": {
+        "actionId": "example",
+        "actionInstanceId": "example",
+        "bindingId": "binding-17",
+        "configId": "example",
+        "contextId": "example",
+        "controlRef": {
+          "controlId": "example",
+          "deviceRef": {
+            "deviceId": "deck-1",
+            "fingerprint": "fingerprint:deck-1",
+            "managerId": "mirabox-main"
+          }
+        },
+        "deviceRef": {
+          "deviceId": "deck-1",
+          "fingerprint": "fingerprint:deck-1",
+          "managerId": "mirabox-main"
+        },
+        "matchedCapabilities": [
+          {
+            "capability": {
+              "capabilityId": "raster",
+              "controlId": "example",
+              "deviceRef": {
+                "deviceId": "deck-1",
+                "fingerprint": "fingerprint:deck-1",
+                "managerId": "mirabox-main"
+              }
+            },
+            "commandTypes": [
+              "set_frame",
+              "clear"
+            ],
+            "direction": "output",
+            "family": "dev.deckr.output.raster",
+            "requirementName": "display",
+            "type": "bitmap"
+          }
+        ],
+        "outputGeneration": 3,
+        "providerId": "example",
+        "providerInstanceId": "clock-main"
+      },
+      "rendering": {
+        "targets": [
+          {
+            "formats": [
+              {
+                "id": "dev.deckr.render.text.v1"
+              },
+              {
+                "id": "dev.deckr.render.image.v1",
+                "options": {
+                  "encodings": [
+                    "png",
+                    "jpeg"
+                  ]
+                }
+              }
+            ],
+            "height": 72,
+            "limits": {
+              "maxImageBytes": 131072,
+              "maxImagePixels": 1048576,
+              "maxMessageBytes": 262144,
+              "maxRenderTimeMs": 2000,
+              "maxTextCodePoints": 1024
+            },
+            "requirementName": "display",
+            "width": 72
+          }
+        ],
+        "version": 1
+      }
+    },
+    "exchangePattern": "one_way",
+    "intent": "event",
+    "name": "binding_attached",
+    "params": {},
+    "serviceNamespace": "dev.deckr.action_runtime.provider"
+  },
+  "contract": {
+    "contractId": "action-runtime-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "services",
+  "messageId": "fixture-action-runtime-action-instance-created",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "service:action-runtime.clock-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "service-session",
+  "schemaVersion": "1",
+  "sender": "controller:controller-main",
+  "senderSessionId": "controller-session",
+  "subject": {
+    "identifiers": {
+      "name": "binding_attached",
+      "namespace": "dev.deckr.action_runtime.provider",
+      "serviceId": "action-runtime.clock-main"
+    },
+    "kind": "service"
+  }
+}

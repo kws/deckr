@@ -1,0 +1,59 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-content.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-text.v1.schema.json"
+        },
+        "format": {
+          "const": "dev.deckr.render.text.v1"
+        }
+      },
+      "required": [
+        "format",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/render-image.v1.schema.json"
+        },
+        "format": {
+          "const": "dev.deckr.render.image.v1"
+        }
+      },
+      "required": [
+        "format",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "additionalProperties": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
+          },
+          "type": "object"
+        },
+        "format": {
+          "pattern": "^(?!dev\\.deckr\\.)[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+\\.v[1-9][0-9]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "data"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "RenderContent"
+}

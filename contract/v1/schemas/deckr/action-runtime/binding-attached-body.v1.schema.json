@@ -13,6 +13,9 @@
       "title": "Internal",
       "type": "object"
     },
+    "rendering": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/rendering-support.v1.schema.json"
+    },
     "settings": {
       "additionalProperties": {
         "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/json-value.v1.schema.json"
