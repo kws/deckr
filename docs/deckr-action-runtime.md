@@ -219,17 +219,18 @@ API, device placement, or a tie-breaking algorithm for equally eligible candidat
 
 ## Alpha compatibility
 
-Bundle `1.0.0-alpha.2` changes the Action Runtime contract within wire v1.
-Consumers must pin the same reviewed revision before they use these changes.
-Earlier page command bodies and context subjects are no longer valid.
-Page-session metadata now requires `generation`. Each matched capability now
+The Action Runtime contract is in alpha development and has no release version.
+Consumers must pin the same reviewed revision to use the same contract.
+Page commands require explicit targets and the runtime service subject.
+Page-session metadata requires `generation`. Each matched capability
 requires a non-null `requirementName`. Name and view lists reject duplicates.
-Absent, null, and empty requirements no longer permit implicit matches.
+Absent, null, and empty requirements do not permit implicit matches.
 
-Bundle `1.0.0-alpha.3` adds the [rendering contract](deckr-action-runtime-rendering.md):
-optional support in binding attachment, `binding_render`, and `binding_render_result`.
-Old attachment schemas reject the new field. Coordinate specification revisions
-before using rendering. The hardware raster command remains an encoded frame.
+The [rendering contract](deckr-action-runtime-rendering.md) defines optional
+support in binding attachment, `binding_render`, and `binding_render_result`.
+Attachment schemas from revisions without rendering reject the support field.
+Coordinate specification revisions before using rendering. The hardware raster
+command remains an encoded frame.
 
 ## Messages and schemas
 

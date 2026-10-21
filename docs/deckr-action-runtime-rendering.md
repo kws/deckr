@@ -1,7 +1,7 @@
 # Deckr Action Runtime rendering v1 specification
 
-This specification defines Action Runtime rendering in contract bundle
-`1.0.0-alpha.3`. It supplements the [Action Runtime specification](deckr-action-runtime.md).
+This specification defines Action Runtime rendering during alpha development.
+It supplements the [Action Runtime specification](deckr-action-runtime.md).
 Schemas define structure. The requirements below define content, authority,
 ordering, and result semantics.
 
@@ -462,13 +462,13 @@ Do not place content, credentials, or full extension payloads in result diagnost
 
 ## Compatibility and ownership
 
-Bundle `1.0.0-alpha.3` adopts rendering within the alpha wire v1 family. Do not overwrite a published
-immutable bundle. Do not assume that an optional JSON field is compatible with
-older schemas: `binding_attached` currently rejects unknown fields.
+Rendering is part of the alpha wire v1 contract. Contract revisions are
+identified by Git commit. Do not assume that an optional JSON field is compatible
+with older schemas: `binding_attached` rejects unknown fields.
 
 Use a coordinated specification pin for the first implementation. Rendering
 support is discovered through attachment only after both peers adopt that
-protocol revision. It is not a substitute for protocol-version compatibility.
+contract revision. Support discovery does not establish contract compatibility.
 An updated controller can omit `rendering`; an updated provider then uses valid
 existing `binding_output` commands or controller fallback behavior.
 

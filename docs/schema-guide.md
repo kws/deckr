@@ -105,9 +105,10 @@ release. There is no catch-all 'all protocols' message envelope.
 
 ## Versioning and acceptance
 
-The v1 path is the wire-major family. `bundleVersion` identifies a reference
-release. Pin a Git revision or release asset; a branch URL is mutable. Published
-stable releases must be immutable. The current reference release is alpha.
+The v1 path identifies the wire family under development. The contracts are
+alpha and have no release versions yet. Contract changes can break compatibility
+while features and the standard are being defined. Pin a reviewed Git commit;
+a branch URL is mutable. Coordinate specification pins across consumers.
 
 For each new schema, add a positive fixture and a negative fixture with an
 explicit `schemaPath` and `valid` result in the manifest. The unconstrained JSON

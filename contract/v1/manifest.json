@@ -5292,7 +5292,6 @@
     }
   ],
   "bundle": "deckr-contract-v1",
-  "bundleVersion": "1.0.0-alpha.3",
   "contractVersion": "v1",
   "description": "Contract-first, language-neutral schemas, catalogs, fixtures and vectors. Implementations live in consuming repositories.",
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",

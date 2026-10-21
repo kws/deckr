@@ -8,8 +8,9 @@ Define and review contracts here before consumers implement them. Author schemas
 directly in `contract/v1/schemas/` and validate them with the repository's CI
 workflow.
 
-The contracts are alpha. The current bundle version is `1.0.0-alpha.3` for
-wire protocol v1.
+The project is in alpha development. The contracts have no release versions yet;
+features and the standard are still being defined. The existing `v1` schema and
+wire identifiers remain in use. Identify contract revisions by Git commit.
 
 ## Project repositories
 
@@ -116,9 +117,10 @@ deckr-conformance-scenarios.md
    a consuming implementation. Edit schemas directly and reuse definitions with
    `$ref`.
 2. Update the normative specifications, catalogs, manifest, examples and
-   conformance vectors together. Assess compatibility and version the contract.
-3. Validate and review the complete reference change, then publish a pinned
-   commit or immutable bundle release.
+   conformance vectors together. During alpha development, contracts can change
+   without a release version or backward compatibility.
+3. Validate and review the complete reference change, then share the reviewed
+   Git commit for consumers to pin.
 4. Update implementations in their own repositories against that pinned contract,
    and run the applicable structural, semantic and lifecycle conformance checks.
 5. Update the integration harness's source lock to the reviewed commits and run
@@ -152,13 +154,16 @@ all four source commits in `sources.lock.json`. Update these files in their owni
 repositories. Documentation links to `main` are navigation links; reproducible
 validation uses the recorded commits.
 
-## Releases and reuse
+## Reuse during alpha
 
-Pin a Git commit or an immutable `contracts-v<bundleVersion>` release. The bundle
-version lives in `contract/v1/manifest.json`; it is independent of the wire-major
-version. Publish the complete `contract/v1` directory as a release asset or static
-reference site. A new incompatible wire contract gets a new wire-major/schema ID;
-do not silently change a stable schema under an immutable release identifier.
+Pin a Git commit. The manifest inventories the contracts; it does not assign a
+release version. Do not add numbered alpha releases for feature changes.
+The `v1` paths and wire labels identify the contracts under development and do
+not promise backward compatibility. Coordinate contract changes with consumers
+through their specification pins.
+
+Use the complete `contract/v1` directory from the selected commit for offline
+validation or a static reference site.
 
 Schema IDs use `https://kws.github.io/deckr/contract/v1/schemas/` as their canonical
 namespace. These are identifiers, not a promise of a currently deployed website.
