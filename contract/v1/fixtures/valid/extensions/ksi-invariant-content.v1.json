@@ -1,0 +1,24 @@
+{
+  "data": {
+    "format": "invariant-graph",
+    "graph": {
+      "background": {
+        "deps": [],
+        "kind": "node",
+        "op_name": "gfx:create_solid",
+        "params": {
+          "color": "#ff0000",
+          "size": {
+            "$tuple": [
+              4,
+              2
+            ]
+          }
+        }
+      }
+    },
+    "output": "background",
+    "version": 1
+  },
+  "format": "com.k-si.deckr.render.invariant.v1"
+}

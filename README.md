@@ -101,6 +101,7 @@ deckr-conformance-scenarios.md
 - [Deckr services](docs/deckr-services.md): service-use agreements, protected views and service lifecycles.
 - [Deckr Action Runtime](docs/deckr-action-runtime.md): service identity, availability and runtime messages.
 - [Deckr Action Runtime rendering](docs/deckr-action-runtime-rendering.md): content formats, support discovery, output ordering, and render results.
+- [KSI Invariant rendering extension](docs/deckr-render-invariant-extension.md): bounded graph input and image downloads.
 - [Deckr messaging](docs/deckr-messaging.md): envelopes, routing, lane rules and shared lifecycle requirements.
 - [Deckr NATS binding](docs/deckr-nats-binding.md): lane subjects, KV keys, store policies and recovery.
 - [Deckr hardware capabilities](docs/deckr-hardware-capabilities.md): descriptors, values and commands.

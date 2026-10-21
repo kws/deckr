@@ -1,0 +1,19 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/ksi-invariant-content.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json"
+    },
+    "format": {
+      "const": "com.k-si.deckr.render.invariant.v1"
+    }
+  },
+  "required": [
+    "format",
+    "data"
+  ],
+  "title": "KSI Invariant render content v1",
+  "type": "object"
+}

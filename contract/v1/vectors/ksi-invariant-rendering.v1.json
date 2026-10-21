@@ -1,0 +1,333 @@
+{
+  "cases": [
+    {
+      "expectedCode": null,
+      "height": 4,
+      "id": "ksi-invariant-solid-contain",
+      "instance": {
+        "format": "invariant-graph",
+        "graph": {
+          "background": {
+            "deps": [],
+            "kind": "node",
+            "op_name": "gfx:create_solid",
+            "params": {
+              "color": "#ff0000",
+              "size": {
+                "$tuple": [
+                  4,
+                  2
+                ]
+              }
+            }
+          }
+        },
+        "output": "background",
+        "version": 1
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-KSI-001",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "height": 4,
+      "id": "ksi-invariant-cycle",
+      "instance": {
+        "format": "invariant-graph",
+        "graph": {
+          "background": {
+            "deps": [
+              "background"
+            ],
+            "kind": "node",
+            "op_name": "gfx:create_solid",
+            "params": {
+              "color": "#ff0000",
+              "size": {
+                "$tuple": [
+                  4,
+                  2
+                ]
+              }
+            }
+          }
+        },
+        "output": "background",
+        "version": 1
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-KSI-001",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "limit_exceeded",
+      "height": 4,
+      "id": "ksi-invariant-computed-size",
+      "instance": {
+        "format": "invariant-graph",
+        "graph": {
+          "background": {
+            "deps": [],
+            "kind": "node",
+            "op_name": "gfx:create_solid",
+            "params": {
+              "color": "#ff0000",
+              "size": {
+                "$tuple": [
+                  "${4096 * 4096}",
+                  2
+                ]
+              }
+            }
+          }
+        },
+        "output": "background",
+        "version": 1
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-KSI-001",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "height": 4,
+      "id": "ksi-invariant-forbidden-expression",
+      "instance": {
+        "format": "invariant-graph",
+        "graph": {
+          "background": {
+            "deps": [],
+            "kind": "node",
+            "op_name": "gfx:create_solid",
+            "params": {
+              "color": "#ff0000",
+              "size": {
+                "$tuple": [
+                  "${2 ** 20}",
+                  2
+                ]
+              }
+            }
+          }
+        },
+        "output": "background",
+        "version": 1
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-KSI-001",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    },
+    {
+      "expectedCode": "limit_exceeded",
+      "height": 4,
+      "id": "ksi-invariant-dependency-depth",
+      "instance": {
+        "format": "invariant-graph",
+        "graph": {
+          "background": {
+            "deps": [],
+            "kind": "node",
+            "op_name": "gfx:create_solid",
+            "params": {
+              "color": "#ff0000",
+              "size": {
+                "$tuple": [
+                  4,
+                  2
+                ]
+              }
+            }
+          },
+          "n0": {
+            "deps": [
+              "background"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n1": {
+            "deps": [
+              "n0"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n10": {
+            "deps": [
+              "n9"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n11": {
+            "deps": [
+              "n10"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n12": {
+            "deps": [
+              "n11"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n13": {
+            "deps": [
+              "n12"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n14": {
+            "deps": [
+              "n13"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n15": {
+            "deps": [
+              "n14"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n16": {
+            "deps": [
+              "n15"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n2": {
+            "deps": [
+              "n1"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n3": {
+            "deps": [
+              "n2"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n4": {
+            "deps": [
+              "n3"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n5": {
+            "deps": [
+              "n4"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n6": {
+            "deps": [
+              "n5"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n7": {
+            "deps": [
+              "n6"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n8": {
+            "deps": [
+              "n7"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          },
+          "n9": {
+            "deps": [
+              "n8"
+            ],
+            "kind": "node",
+            "op_name": "stdlib:make_dict",
+            "params": {}
+          }
+        },
+        "output": "background",
+        "version": 1
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-KSI-001",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
+    }
+  ],
+  "description": "KSI extension structural and execution cases. Apply the complete binding authority and rendering admission rules first."
+}

@@ -272,6 +272,9 @@ Extension schemas and executors belong to their owners. Language cores need
 only preserve the typed content envelope and JSON data. A controller may use
 Invariant internally for baseline rendering without exposing graph input.
 
+The [KSI Invariant extension](deckr-render-invariant-extension.md) defines
+`com.k-si.deckr.render.invariant.v1`. Its support is optional.
+
 ## Authority and output ordering
 
 ### Admission checks

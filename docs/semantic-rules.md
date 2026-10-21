@@ -506,3 +506,13 @@ define baseline decoding, limits, and canvas pixels. The
 define controlled completion sequences and exact hardware-command correlation.
 Consuming controller tests execute these cases. Schema validation alone does not
 establish their semantic results.
+
+
+## KSI rendering extension
+
+### SEM-KSI-001: Bounded Invariant graph execution
+
+For `com.k-si.deckr.render.invariant.v1`, apply all graph, operation, image,
+network and deadline rules in the [extension specification](deckr-render-invariant-extension.md).
+Structural validation does not establish binding authority or make graph execution safe.
+Use the normal Action Runtime render result codes.

@@ -1,0 +1,12 @@
+{
+  "formats": [
+    {
+      "id": "com.k-si.deckr.render.invariant.v1",
+      "options": {},
+      "owner": "com.k-si",
+      "payloadSchemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-content.v1.schema.json",
+      "specification": "../../../docs/deckr-render-invariant-extension.md"
+    }
+  ]
+}

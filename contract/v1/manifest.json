@@ -14,6 +14,12 @@
       "title": "messages.v1"
     },
     {
+      "id": "catalogs/render-extensions.v1.json",
+      "kind": "catalog",
+      "path": "catalogs/render-extensions.v1.json",
+      "title": "Optional render extension formats"
+    },
+    {
       "id": "fixtures/invalid/action-runtime/action-instance-created-missing-contract.v1.json",
       "kind": "fixture",
       "path": "fixtures/invalid/action-runtime/action-instance-created-missing-contract.v1.json",
@@ -2494,6 +2500,22 @@
       "valid": false
     },
     {
+      "id": "fixtures/invalid/extensions/ksi-invariant-content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/extensions/ksi-invariant-content.v1.json",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-content.v1.schema.json",
+      "title": "Invalid KSI Invariant content",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/extensions/ksi-invariant-graph.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/extensions/ksi-invariant-graph.v1.json",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "title": "Invalid KSI Invariant graph",
+      "valid": false
+    },
+    {
       "id": "fixtures/invalid/hardware/control-input-missing-device-ref.v1.json",
       "kind": "fixture",
       "path": "fixtures/invalid/hardware/control-input-missing-device-ref.v1.json",
@@ -3990,6 +4012,22 @@
       "valid": true
     },
     {
+      "id": "fixtures/valid/extensions/ksi-invariant-content.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/extensions/ksi-invariant-content.v1.json",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-content.v1.schema.json",
+      "title": "KSI Invariant content",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/extensions/ksi-invariant-graph.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/extensions/ksi-invariant-graph.v1.json",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "title": "KSI Invariant graph",
+      "valid": true
+    },
+    {
       "id": "fixtures/valid/hardware/control-input.v1.json",
       "kind": "fixture",
       "path": "fixtures/valid/hardware/control-input.v1.json",
@@ -4551,6 +4589,23 @@
       "path": "schemas/deckr/action-runtime/use-contract.v1.schema.json",
       "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/action-runtime/use-contract.v1.schema.json",
       "title": "Action Runtime service-use contract"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/ksi-invariant-content.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/extensions",
+      "path": "schemas/deckr/extensions/ksi-invariant-content.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/ksi-invariant-content.v1.schema.json",
+      "title": "KSI Invariant render content v1",
+      "wireSchemaId": "com.k-si.deckr.render.invariant.v1"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/extensions",
+      "path": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "title": "KSI Invariant graph v1"
     },
     {
       "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/advertisement-payload.v1.schema.json",
@@ -5264,6 +5319,13 @@
       "kind": "vector",
       "path": "vectors/key-tokens.v1.json",
       "title": "key-tokens.v1"
+    },
+    {
+      "id": "vectors/ksi-invariant-rendering.v1.json",
+      "kind": "vector",
+      "path": "vectors/ksi-invariant-rendering.v1.json",
+      "semantic": true,
+      "title": "KSI Invariant rendering"
     },
     {
       "id": "vectors/nats-lane.v1.json",

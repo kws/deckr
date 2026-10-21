@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "node": {
+      "additionalProperties": false,
+      "properties": {
+        "deps": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "kind": {
+          "const": "node"
+        },
+        "op_name": {
+          "enum": [
+            "gfx:create_solid",
+            "gfx:resolve_resource",
+            "gfx:render_svg",
+            "gfx:colorize",
+            "gfx:render_text",
+            "gfx:composite",
+            "gfx:resize",
+            "gfx:blob_to_image",
+            "gfx:packed_text",
+            "stdlib:make_dict",
+            "deckr:fetch_image_url"
+          ]
+        },
+        "params": {
+          "maxProperties": 64,
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "op_name",
+        "params",
+        "deps"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "invariant-graph"
+    },
+    "graph": {
+      "additionalProperties": {
+        "$ref": "#/$defs/node"
+      },
+      "maxProperties": 64,
+      "minProperties": 1,
+      "propertyNames": {
+        "minLength": 1,
+        "not": {
+          "const": "canvas"
+        },
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "output": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "format",
+    "version",
+    "output",
+    "graph"
+  ],
+  "title": "KSI Invariant graph v1",
+  "type": "object"
+}
