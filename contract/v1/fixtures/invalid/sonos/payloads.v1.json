@@ -1,0 +1,7 @@
+{
+  "name": "setZoneScope",
+  "payload": {
+    "subscriberId": true
+  },
+  "position": "params"
+}

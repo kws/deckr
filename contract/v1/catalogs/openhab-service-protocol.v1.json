@@ -1,0 +1,66 @@
+{
+  "advertisementProfile": "dev.deckr.openhab.service.advertisement.v1",
+  "featureId": "dev.deckr.openhab.service",
+  "messages": {
+    "sendCommand": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "sendCommand",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json#/$defs/sendCommandParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json#/$defs/sendCommandParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json#/$defs/sendCommandResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json#/$defs/sendCommandResult"
+      }
+    },
+    "setItemScope": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "setItemScope",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json#/$defs/setItemScopeParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json#/$defs/setItemScopeParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json#/$defs/setItemScopeResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json#/$defs/setItemScopeResult"
+      }
+    }
+  },
+  "namespace": "dev.deckr.openhab.service",
+  "operations": {
+    "sendCommand": {},
+    "setItemScope": {}
+  },
+  "useProfile": "dev.deckr.openhab.service_use.v1",
+  "viewFamilies": {
+    "items": {
+      "storeName": "deckr_openhab_service_view_v1",
+      "writer": "service"
+    }
+  }
+}

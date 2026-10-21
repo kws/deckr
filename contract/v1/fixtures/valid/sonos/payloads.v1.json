@@ -1,0 +1,10 @@
+{
+  "name": "setZoneScope",
+  "payload": {
+    "subscriberId": "sub-1",
+    "zones": [
+      "Kitchen"
+    ]
+  },
+  "position": "params"
+}

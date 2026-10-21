@@ -82,6 +82,32 @@ Each such message must meet these requirements:
 Authorization must also enforce any retained resource scope that the service protocol manages.
 The [Deckr message catalog](deckr-message-catalog.md#services-lane) describes the service message envelope and body.
 
+### Deferred operations and retained resources
+
+Request admission does not grant authority for later work. The provider must
+check the same agreement, request expiry, and retained resource scope before
+each backend operation. This includes an operation that waits for a connection,
+a lock, or worker-thread capacity. Authority loss must stop pending work.
+An operation already sent to an external system cannot always be cancelled.
+The provider must not replay that operation under a successor agreement.
+
+A retained resource scope belongs to the agreement pointer, consumer endpoint,
+consumer session, and subscriber ID. A scope replacement replaces the complete
+resource set for that subscriber. Removal must invalidate earlier pending work,
+including when a later replacement adds the same resource again.
+
+The managed provider boundary must reconcile its retained scopes against current
+agreement authority. A state watch can coalesce changes. Cleanup must not depend
+on observing the addition of each agreement. Failed cleanup must remain owned
+and be retried. Cleanup failure must not restore local operation authority.
+
+Scope replacement and view publication must preserve ordering. After a resource
+is removed, an earlier publication must not restore its view. A failed or
+cancelled scope mutation must revoke that scope and terminate its agreement.
+Backend connection attempts can run after scope acceptance. A missing backend
+resource does not, by itself, terminate the agreement. Its view must show no
+current value, and the provider can retry acquisition while the scope is retained.
+
 ## Protected service views
 
 ### Storage and fence fields
@@ -244,3 +270,35 @@ Include the following information:
 The [Action Runtime catalog](../contract/v1/catalogs/action-runtime-protocol.v1.json) is a complete example.
 The catalog is a reference declaration.
 It is not a new lane message.
+
+## openHAB and Sonos service profiles
+
+The [openHAB protocol catalog](../contract/v1/catalogs/openhab-service-protocol.v1.json)
+and [Sonos protocol catalog](../contract/v1/catalogs/sonos-service-protocol.v1.json)
+define the application operation names and payload references.
+Use the [openHAB message entry point](../contract/v1/schemas/deckr/openhab/messages.v1.schema.json)
+or [Sonos message entry point](../contract/v1/schemas/deckr/sonos/messages.v1.schema.json)
+for a complete request or reply. The generic service schema does not validate
+these application payloads.
+
+`setItemScope` and `setZoneScope` replace the complete resource set for one
+subscriber in one live service-use contract. An empty array removes the set.
+Each acknowledgement has an empty object result. The acknowledgement does not
+assert that the external resource is available. An unavailable resource has no
+current view. The service retains the desired set and can retry acquisition while
+the contract is valid.
+
+`sendCommand` requires the item in the same subscriber scope. Sonos operations
+with a `zone` require that zone in the same subscriber scope. `listZones` can omit
+both `zone` and `subscriberId`; if it has one, it must have both. Global music
+queries use the live service-use contract without a resource scope.
+Parameters reject unknown fields. Identifiers must not have leading or trailing
+whitespace. Integer fields must not contain booleans. Volume, delta, step, result
+limit and offset bounds are in the payload schemas. A playback reference must
+supply the metadata field for its format. Additional external music fields are
+permitted only in the result objects that the schema marks as open.
+
+The [openHAB view payload](../contract/v1/schemas/deckr/openhab/view-payload.v1.schema.json)
+and [Sonos view payload](../contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json)
+are application data. Stored views must also satisfy the protected service-view
+record schema and its authority rules. Payload validation does not grant authority.

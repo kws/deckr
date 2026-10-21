@@ -516,3 +516,22 @@ For `com.k-si.deckr.render.invariant.v1`, apply all graph, operation, image,
 network and deadline rules in the [extension specification](deckr-render-invariant-extension.md).
 Structural validation does not establish binding authority or make graph execution safe.
 Use the normal Action Runtime render result codes.
+
+## Deferred service operations and retained resources
+
+- **SVC-RESOURCE-1**: Admission does not grant future dispatch authority. Before an
+  external effect, the request must still have its original live contract and
+  retained resource scope. A removed scope cannot authorize an earlier command
+  after it is added again. Do not replay a command on a successor contract.
+- **SVC-RESOURCE-2**: A failed or cancelled scope mutation that changed local
+  state must revoke that scope and terminate its contract. The owner must retain
+  failed cleanup work for retry. It must reconcile owned scopes against current
+  authority, including changes absent from coalesced snapshots.
+- **SVC-RESOURCE-3**: Backend failure does not terminate service-use authority by
+  itself. Remove the affected view. Retain the desired scope and retry resource
+  acquisition while the contract is valid. A scope acknowledgement does not
+  assert backend availability.
+
+The [service resource vectors](../contract/v1/vectors/service-resource-lifecycle.v1.json)
+record structural and semantic expectations. [Service rules](deckr-services.md#deferred-operations-and-retained-resources)
+define operation and cleanup ordering.

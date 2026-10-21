@@ -1,0 +1,41 @@
+{
+  "body": {
+    "error": {
+      "code": "backend_unavailable",
+      "message": "Backend is unavailable"
+    },
+    "exchangePattern": "request_reply",
+    "intent": "command",
+    "name": "sendCommand",
+    "params": {},
+    "result": null,
+    "serviceNamespace": "dev.deckr.openhab.service",
+    "status": "unavailable"
+  },
+  "contract": {
+    "contractId": "service-use-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "inReplyTo": "fixture-service-message",
+  "lane": "services",
+  "messageId": "fixture-service-message",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "service:openhab-home",
+  "senderSessionId": "service-session",
+  "subject": {
+    "identifiers": {
+      "name": "sendCommand",
+      "namespace": "dev.deckr.openhab.service",
+      "serviceId": "openhab-home"
+    },
+    "kind": "service"
+  }
+}

@@ -1,0 +1,1837 @@
+{
+  "$defs": {
+    "adjustVolumeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "maximum": 100,
+          "minimum": -100,
+          "type": "integer"
+        },
+        "scope": {
+          "enum": [
+            "auto",
+            "local",
+            "group"
+          ]
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "adjustVolumeResult": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "maximum": 100,
+          "minimum": -100,
+          "type": "integer"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "browseMusicParams": {
+      "additionalProperties": false,
+      "properties": {
+        "browseRef": {
+          "type": "object"
+        },
+        "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "musicService": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "musicService"
+      ],
+      "type": "object"
+    },
+    "browseMusicResult": {
+      "additionalProperties": true,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "leaveGroupParams": {
+      "additionalProperties": false,
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "leaveGroupResult": {
+      "additionalProperties": false,
+      "properties": {
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zones": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "zone",
+        "zones"
+      ],
+      "type": "object"
+    },
+    "listMusicServicesParams": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "listMusicServicesResult": {
+      "additionalProperties": true,
+      "properties": {
+        "services": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "services"
+      ],
+      "type": "object"
+    },
+    "listZonesParams": {
+      "additionalProperties": false,
+      "dependentRequired": {
+        "subscriberId": [
+          "zone"
+        ],
+        "zone": [
+          "subscriberId"
+        ]
+      },
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "listZonesResult": {
+      "additionalProperties": false,
+      "properties": {
+        "zones": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "zones"
+      ],
+      "type": "object"
+    },
+    "nextTrackParams": {
+      "additionalProperties": false,
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "nextTrackResult": {
+      "additionalProperties": false,
+      "properties": {
+        "zone": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "zone"
+      ],
+      "type": "object"
+    },
+    "pauseParams": {
+      "additionalProperties": false,
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "pauseResult": {
+      "additionalProperties": false,
+      "properties": {
+        "zone": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "zone"
+      ],
+      "type": "object"
+    },
+    "playFavouriteParams": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone",
+        "query"
+      ],
+      "type": "object"
+    },
+    "playFavouriteResult": {
+      "additionalProperties": false,
+      "properties": {
+        "favourite": {
+          "additionalProperties": true,
+          "properties": {
+            "ambiguous": {
+              "type": "boolean"
+            },
+            "items": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "matched": {
+              "type": "boolean"
+            },
+            "selected": {
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "matched",
+            "ambiguous",
+            "items"
+          ],
+          "type": "object"
+        },
+        "playRef": {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "enum": [
+                "soco-didl-lite-v1",
+                "sonos-uri-meta-v1"
+              ]
+            },
+            "imageUri": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "uri": {
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "format",
+            "uri"
+          ],
+          "type": "object"
+        },
+        "queuePosition": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "zone": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "zone",
+        "playRef",
+        "favourite"
+      ],
+      "type": "object"
+    },
+    "playMusicItemParams": {
+      "additionalProperties": false,
+      "properties": {
+        "playRef": {
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "else": {
+                "not": {
+                  "required": [
+                    "didl"
+                  ]
+                },
+                "required": [
+                  "metadata"
+                ]
+              },
+              "if": {
+                "properties": {
+                  "format": {
+                    "const": "soco-didl-lite-v1"
+                  }
+                }
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "metadata"
+                  ]
+                },
+                "required": [
+                  "didl"
+                ]
+              }
+            }
+          ],
+          "properties": {
+            "didl": {
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            },
+            "format": {
+              "enum": [
+                "soco-didl-lite-v1",
+                "sonos-uri-meta-v1"
+              ]
+            },
+            "imageUri": {
+              "type": "string"
+            },
+            "itemId": {
+              "type": "string"
+            },
+            "itemType": {
+              "type": "string"
+            },
+            "metadata": {
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "musicService": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "uri": {
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "format",
+            "uri"
+          ],
+          "type": "object"
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone",
+        "playRef"
+      ],
+      "type": "object"
+    },
+    "playMusicItemResult": {
+      "additionalProperties": false,
+      "properties": {
+        "playRef": {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "enum": [
+                "soco-didl-lite-v1",
+                "sonos-uri-meta-v1"
+              ]
+            },
+            "imageUri": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "uri": {
+              "minLength": 1,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "format",
+            "uri"
+          ],
+          "type": "object"
+        },
+        "queuePosition": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "zone": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "zone",
+        "playRef"
+      ],
+      "type": "object"
+    },
+    "playParams": {
+      "additionalProperties": false,
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "playResult": {
+      "additionalProperties": false,
+      "properties": {
+        "zone": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "zone"
+      ],
+      "type": "object"
+    },
+    "previousTrackParams": {
+      "additionalProperties": false,
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "previousTrackResult": {
+      "additionalProperties": false,
+      "properties": {
+        "zone": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "zone"
+      ],
+      "type": "object"
+    },
+    "resolveFavouriteParams": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 25,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "query": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone",
+        "query"
+      ],
+      "type": "object"
+    },
+    "resolveFavouriteResult": {
+      "additionalProperties": true,
+      "properties": {
+        "ambiguous": {
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "matched": {
+          "type": "boolean"
+        },
+        "selected": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "matched",
+        "ambiguous",
+        "items"
+      ],
+      "type": "object"
+    },
+    "resolveMusicShortcutParams": {
+      "additionalProperties": false,
+      "properties": {
+        "shortcut": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone",
+        "shortcut"
+      ],
+      "type": "object"
+    },
+    "resolveMusicShortcutResult": {
+      "additionalProperties": true,
+      "properties": {
+        "ambiguous": {
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "matched": {
+          "type": "boolean"
+        },
+        "selected": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "matched",
+        "ambiguous",
+        "items"
+      ],
+      "type": "object"
+    },
+    "searchMusicParams": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "musicService": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "term": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "musicService",
+        "category"
+      ],
+      "type": "object"
+    },
+    "searchMusicResult": {
+      "additionalProperties": true,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "setVolumeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "enum": [
+            "auto",
+            "local",
+            "group"
+          ]
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "volume": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone",
+        "volume"
+      ],
+      "type": "object"
+    },
+    "setVolumeResult": {
+      "additionalProperties": false,
+      "properties": {
+        "volume": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone",
+        "volume"
+      ],
+      "type": "object"
+    },
+    "setZoneScopeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zones": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zones"
+      ],
+      "type": "object"
+    },
+    "setZoneScopeResult": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "stopParams": {
+      "additionalProperties": false,
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "stopResult": {
+      "additionalProperties": false,
+      "properties": {
+        "zone": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "zone"
+      ],
+      "type": "object"
+    },
+    "togglePlayParams": {
+      "additionalProperties": false,
+      "properties": {
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "togglePlayResult": {
+      "additionalProperties": false,
+      "properties": {
+        "zone": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json"
+        }
+      },
+      "required": [
+        "zone"
+      ],
+      "type": "object"
+    },
+    "volumeDownParams": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "enum": [
+            "auto",
+            "local",
+            "group"
+          ]
+        },
+        "step": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "volumeDownResult": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "maximum": 100,
+          "minimum": -100,
+          "type": "integer"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "volumeUpParams": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "enum": [
+            "auto",
+            "local",
+            "group"
+          ]
+        },
+        "step": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "zone"
+      ],
+      "type": "object"
+    },
+    "volumeUpResult": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "maximum": 100,
+          "minimum": -100,
+          "type": "integer"
+        },
+        "zone": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone",
+        "delta"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "setZoneScope"
+        },
+        "payload": {
+          "$ref": "#/$defs/setZoneScopeParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "setZoneScope"
+        },
+        "payload": {
+          "$ref": "#/$defs/setZoneScopeResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "listZones"
+        },
+        "payload": {
+          "$ref": "#/$defs/listZonesParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "listZones"
+        },
+        "payload": {
+          "$ref": "#/$defs/listZonesResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "setVolume"
+        },
+        "payload": {
+          "$ref": "#/$defs/setVolumeParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "setVolume"
+        },
+        "payload": {
+          "$ref": "#/$defs/setVolumeResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "adjustVolume"
+        },
+        "payload": {
+          "$ref": "#/$defs/adjustVolumeParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "adjustVolume"
+        },
+        "payload": {
+          "$ref": "#/$defs/adjustVolumeResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "leaveGroup"
+        },
+        "payload": {
+          "$ref": "#/$defs/leaveGroupParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "leaveGroup"
+        },
+        "payload": {
+          "$ref": "#/$defs/leaveGroupResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "play"
+        },
+        "payload": {
+          "$ref": "#/$defs/playParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "play"
+        },
+        "payload": {
+          "$ref": "#/$defs/playResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "pause"
+        },
+        "payload": {
+          "$ref": "#/$defs/pauseParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "pause"
+        },
+        "payload": {
+          "$ref": "#/$defs/pauseResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "stop"
+        },
+        "payload": {
+          "$ref": "#/$defs/stopParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "stop"
+        },
+        "payload": {
+          "$ref": "#/$defs/stopResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "togglePlay"
+        },
+        "payload": {
+          "$ref": "#/$defs/togglePlayParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "togglePlay"
+        },
+        "payload": {
+          "$ref": "#/$defs/togglePlayResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "nextTrack"
+        },
+        "payload": {
+          "$ref": "#/$defs/nextTrackParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "nextTrack"
+        },
+        "payload": {
+          "$ref": "#/$defs/nextTrackResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "previousTrack"
+        },
+        "payload": {
+          "$ref": "#/$defs/previousTrackParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "previousTrack"
+        },
+        "payload": {
+          "$ref": "#/$defs/previousTrackResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "volumeUp"
+        },
+        "payload": {
+          "$ref": "#/$defs/volumeUpParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "volumeUp"
+        },
+        "payload": {
+          "$ref": "#/$defs/volumeUpResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "volumeDown"
+        },
+        "payload": {
+          "$ref": "#/$defs/volumeDownParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "volumeDown"
+        },
+        "payload": {
+          "$ref": "#/$defs/volumeDownResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "resolveFavourite"
+        },
+        "payload": {
+          "$ref": "#/$defs/resolveFavouriteParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "resolveFavourite"
+        },
+        "payload": {
+          "$ref": "#/$defs/resolveFavouriteResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "resolveMusicShortcut"
+        },
+        "payload": {
+          "$ref": "#/$defs/resolveMusicShortcutParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "resolveMusicShortcut"
+        },
+        "payload": {
+          "$ref": "#/$defs/resolveMusicShortcutResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "playFavourite"
+        },
+        "payload": {
+          "$ref": "#/$defs/playFavouriteParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "playFavourite"
+        },
+        "payload": {
+          "$ref": "#/$defs/playFavouriteResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "playMusicItem"
+        },
+        "payload": {
+          "$ref": "#/$defs/playMusicItemParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "playMusicItem"
+        },
+        "payload": {
+          "$ref": "#/$defs/playMusicItemResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "listMusicServices"
+        },
+        "payload": {
+          "$ref": "#/$defs/listMusicServicesParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "listMusicServices"
+        },
+        "payload": {
+          "$ref": "#/$defs/listMusicServicesResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "searchMusic"
+        },
+        "payload": {
+          "$ref": "#/$defs/searchMusicParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "searchMusic"
+        },
+        "payload": {
+          "$ref": "#/$defs/searchMusicResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "browseMusic"
+        },
+        "payload": {
+          "$ref": "#/$defs/browseMusicParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "browseMusic"
+        },
+        "payload": {
+          "$ref": "#/$defs/browseMusicResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "sonos service payloads"
+}

@@ -1,0 +1,38 @@
+{
+  "body": {
+    "exchangePattern": "request_reply",
+    "intent": "command",
+    "name": "unknown",
+    "params": {
+      "command": "ON",
+      "item": "Lamp",
+      "subscriberId": "sub-1"
+    },
+    "serviceNamespace": "dev.deckr.openhab.service"
+  },
+  "contract": {
+    "contractId": "service-use-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "lane": "services",
+  "messageId": "fixture-service-message",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "service:openhab-home",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "service-session",
+  "schemaVersion": "1",
+  "sender": "controller:controller-main",
+  "senderSessionId": "controller-session",
+  "subject": {
+    "identifiers": {
+      "name": "sendCommand",
+      "namespace": "dev.deckr.openhab.service",
+      "serviceId": "openhab-home"
+    },
+    "kind": "service"
+  }
+}

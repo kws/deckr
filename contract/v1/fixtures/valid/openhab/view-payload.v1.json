@@ -1,0 +1,9 @@
+{
+  "item": "Lamp",
+  "serviceId": "openhab-home",
+  "serviceNamespace": "dev.deckr.openhab.service",
+  "sessionId": "service-session",
+  "source": "event",
+  "state": "ON",
+  "timestamp": "2026-04-29T10:00:00Z"
+}

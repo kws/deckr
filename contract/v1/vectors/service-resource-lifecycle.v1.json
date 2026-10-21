@@ -1,0 +1,208 @@
+{
+  "cases": [
+    {
+      "context": {
+        "admitted": true,
+        "contractValidAtDispatch": false,
+        "resourceRetainedAtDispatch": true
+      },
+      "id": "service-resource-1",
+      "instance": {
+        "body": {
+          "exchangePattern": "request_reply",
+          "intent": "command",
+          "name": "sendCommand",
+          "params": {
+            "command": "ON",
+            "item": "Lamp",
+            "subscriberId": "sub-1"
+          },
+          "serviceNamespace": "dev.deckr.openhab.service"
+        },
+        "contract": {
+          "contractId": "service-use-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "fixture-service-message",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "service:openhab-home",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "service-session",
+        "schemaVersion": "1",
+        "sender": "controller:controller-main",
+        "senderSessionId": "controller-session",
+        "subject": {
+          "identifiers": {
+            "name": "sendCommand",
+            "namespace": "dev.deckr.openhab.service",
+            "serviceId": "openhab-home"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SVC-RESOURCE-1",
+      "schemaPath": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "admitted": true,
+        "contractValidAtDispatch": true,
+        "scopeRemovedAndReaddedBeforeDispatch": true
+      },
+      "id": "service-resource-2",
+      "instance": {
+        "body": {
+          "exchangePattern": "request_reply",
+          "intent": "command",
+          "name": "setVolume",
+          "params": {
+            "subscriberId": "sub-1",
+            "volume": 20,
+            "zone": "Kitchen"
+          },
+          "serviceNamespace": "dev.deckr.sonos.service"
+        },
+        "contract": {
+          "contractId": "service-use-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "fixture-service-message",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "service:sonos-home",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "service-session",
+        "schemaVersion": "1",
+        "sender": "controller:controller-main",
+        "senderSessionId": "controller-session",
+        "subject": {
+          "identifiers": {
+            "name": "setVolume",
+            "namespace": "dev.deckr.sonos.service",
+            "serviceId": "sonos-home"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SVC-RESOURCE-1",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "contractValid": true,
+        "outcome": "cancel_contract",
+        "scopeMutationFailedAfterApply": true
+      },
+      "id": "service-resource-3",
+      "instance": {
+        "body": {
+          "exchangePattern": "request_reply",
+          "intent": "command",
+          "name": "setZoneScope",
+          "params": {
+            "subscriberId": "sub-1",
+            "zones": [
+              "Kitchen"
+            ]
+          },
+          "serviceNamespace": "dev.deckr.sonos.service"
+        },
+        "contract": {
+          "contractId": "service-use-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "fixture-service-message",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "service:sonos-home",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "service-session",
+        "schemaVersion": "1",
+        "sender": "controller:controller-main",
+        "senderSessionId": "controller-session",
+        "subject": {
+          "identifiers": {
+            "name": "setZoneScope",
+            "namespace": "dev.deckr.sonos.service",
+            "serviceId": "sonos-home"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SVC-RESOURCE-2",
+      "schemaPath": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "context": {
+        "backendAvailable": false,
+        "contractValid": true,
+        "retryAcquisition": true,
+        "viewPresent": false
+      },
+      "id": "service-resource-4",
+      "instance": {
+        "body": {
+          "exchangePattern": "request_reply",
+          "intent": "command",
+          "name": "setZoneScope",
+          "params": {
+            "subscriberId": "sub-1",
+            "zones": [
+              "Kitchen"
+            ]
+          },
+          "serviceNamespace": "dev.deckr.sonos.service"
+        },
+        "contract": {
+          "contractId": "service-use-contract-1",
+          "generation": 1
+        },
+        "createdAt": "2026-04-29T10:00:00Z",
+        "lane": "services",
+        "messageId": "fixture-service-message",
+        "messageType": "serviceMessage",
+        "protocolVersion": "1",
+        "recipient": {
+          "endpoint": "service:sonos-home",
+          "targetType": "endpoint"
+        },
+        "recipientSessionId": "service-session",
+        "schemaVersion": "1",
+        "sender": "controller:controller-main",
+        "senderSessionId": "controller-session",
+        "subject": {
+          "identifiers": {
+            "name": "setZoneScope",
+            "namespace": "dev.deckr.sonos.service",
+            "serviceId": "sonos-home"
+          },
+          "kind": "service"
+        }
+      },
+      "rule": "SVC-RESOURCE-3",
+      "schemaPath": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    }
+  ],
+  "title": "Service resource lifecycle"
+}

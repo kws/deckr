@@ -1,0 +1,13 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages/set-item-scope.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages/send-command.v1.schema.json"
+    }
+  ],
+  "title": "openhab service messages"
+}

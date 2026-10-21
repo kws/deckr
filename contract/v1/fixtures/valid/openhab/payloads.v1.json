@@ -1,0 +1,10 @@
+{
+  "name": "setItemScope",
+  "payload": {
+    "items": [
+      "Lamp"
+    ],
+    "subscriberId": "sub-1"
+  },
+  "position": "params"
+}

@@ -1,0 +1,516 @@
+{
+  "advertisementProfile": "dev.deckr.sonos.service.advertisement.v1",
+  "featureId": "dev.deckr.sonos.service",
+  "messages": {
+    "adjustVolume": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "adjustVolume",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/adjustVolumeParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/adjustVolumeParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/adjustVolumeResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/adjustVolumeResult"
+      }
+    },
+    "browseMusic": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "query",
+      "operation": "browseMusic",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/browseMusicParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/browseMusicParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/browseMusicResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/browseMusicResult"
+      }
+    },
+    "leaveGroup": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "leaveGroup",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/leaveGroupParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/leaveGroupParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/leaveGroupResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/leaveGroupResult"
+      }
+    },
+    "listMusicServices": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "query",
+      "operation": "listMusicServices",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/listMusicServicesParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/listMusicServicesParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/listMusicServicesResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/listMusicServicesResult"
+      }
+    },
+    "listZones": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "query",
+      "operation": "listZones",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/listZonesParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/listZonesParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/listZonesResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/listZonesResult"
+      }
+    },
+    "nextTrack": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "nextTrack",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/nextTrackParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/nextTrackParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/nextTrackResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/nextTrackResult"
+      }
+    },
+    "pause": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "pause",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/pauseParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/pauseParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/pauseResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/pauseResult"
+      }
+    },
+    "play": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "play",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playResult"
+      }
+    },
+    "playFavourite": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "playFavourite",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playFavouriteParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playFavouriteParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playFavouriteResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playFavouriteResult"
+      }
+    },
+    "playMusicItem": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "playMusicItem",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playMusicItemParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playMusicItemParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playMusicItemResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/playMusicItemResult"
+      }
+    },
+    "previousTrack": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "previousTrack",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/previousTrackParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/previousTrackParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/previousTrackResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/previousTrackResult"
+      }
+    },
+    "resolveFavourite": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "query",
+      "operation": "resolveFavourite",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/resolveFavouriteParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/resolveFavouriteParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/resolveFavouriteResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/resolveFavouriteResult"
+      }
+    },
+    "resolveMusicShortcut": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "query",
+      "operation": "resolveMusicShortcut",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/resolveMusicShortcutParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/resolveMusicShortcutParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/resolveMusicShortcutResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/resolveMusicShortcutResult"
+      }
+    },
+    "searchMusic": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "query",
+      "operation": "searchMusic",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/searchMusicParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/searchMusicParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/searchMusicResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/searchMusicResult"
+      }
+    },
+    "setVolume": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "setVolume",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setVolumeParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setVolumeParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setVolumeResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setVolumeResult"
+      }
+    },
+    "setZoneScope": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "setZoneScope",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setZoneScopeParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setZoneScopeParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setZoneScopeResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setZoneScopeResult"
+      }
+    },
+    "stop": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "stop",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/stopParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/stopParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/stopResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/stopResult"
+      }
+    },
+    "togglePlay": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "togglePlay",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/togglePlayParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/togglePlayParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/togglePlayResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/togglePlayResult"
+      }
+    },
+    "volumeDown": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "volumeDown",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/volumeDownParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/volumeDownParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/volumeDownResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/volumeDownResult"
+      }
+    },
+    "volumeUp": {
+      "direction": "consumer_to_service",
+      "errorSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+      },
+      "exchangePattern": "request_reply",
+      "intent": "command",
+      "operation": "volumeUp",
+      "paramsSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/volumeUpParams"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/volumeUpParams"
+      },
+      "resultSchema": {
+        "schema": {
+          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/volumeUpResult"
+        },
+        "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/volumeUpResult"
+      }
+    }
+  },
+  "namespace": "dev.deckr.sonos.service",
+  "operations": {
+    "adjustVolume": {},
+    "browseMusic": {},
+    "leaveGroup": {},
+    "listMusicServices": {},
+    "listZones": {},
+    "nextTrack": {},
+    "pause": {},
+    "play": {},
+    "playFavourite": {},
+    "playMusicItem": {},
+    "previousTrack": {},
+    "resolveFavourite": {},
+    "resolveMusicShortcut": {},
+    "searchMusic": {},
+    "setVolume": {},
+    "setZoneScope": {},
+    "stop": {},
+    "togglePlay": {},
+    "volumeDown": {},
+    "volumeUp": {}
+  },
+  "useProfile": "dev.deckr.sonos.service_use.v1",
+  "viewFamilies": {
+    "zones": {
+      "storeName": "deckr_sonos_service_view_v1",
+      "writer": "service"
+    }
+  }
+}

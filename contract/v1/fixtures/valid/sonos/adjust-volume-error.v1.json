@@ -1,0 +1,41 @@
+{
+  "body": {
+    "error": {
+      "code": "backend_unavailable",
+      "message": "Backend is unavailable"
+    },
+    "exchangePattern": "request_reply",
+    "intent": "command",
+    "name": "adjustVolume",
+    "params": {},
+    "result": null,
+    "serviceNamespace": "dev.deckr.sonos.service",
+    "status": "unavailable"
+  },
+  "contract": {
+    "contractId": "service-use-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "inReplyTo": "fixture-service-message",
+  "lane": "services",
+  "messageId": "fixture-service-message",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "service:sonos-home",
+  "senderSessionId": "service-session",
+  "subject": {
+    "identifiers": {
+      "name": "adjustVolume",
+      "namespace": "dev.deckr.sonos.service",
+      "serviceId": "sonos-home"
+    },
+    "kind": "service"
+  }
+}

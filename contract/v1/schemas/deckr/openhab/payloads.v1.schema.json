@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "sendCommandParams": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "item": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "item",
+        "command"
+      ],
+      "type": "object"
+    },
+    "sendCommandResult": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        "item": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "command"
+      ],
+      "type": "object"
+    },
+    "setItemScopeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subscriberId": {
+          "minLength": 1,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscriberId",
+        "items"
+      ],
+      "type": "object"
+    },
+    "setItemScopeResult": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "setItemScope"
+        },
+        "payload": {
+          "$ref": "#/$defs/setItemScopeParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "setItemScope"
+        },
+        "payload": {
+          "$ref": "#/$defs/setItemScopeResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "sendCommand"
+        },
+        "payload": {
+          "$ref": "#/$defs/sendCommandParams"
+        },
+        "position": {
+          "const": "params"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "sendCommand"
+        },
+        "payload": {
+          "$ref": "#/$defs/sendCommandResult"
+        },
+        "position": {
+          "const": "result"
+        }
+      },
+      "required": [
+        "name",
+        "position",
+        "payload"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "openhab service payloads"
+}

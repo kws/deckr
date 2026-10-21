@@ -1,0 +1,163 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "activeVolumeScope": {
+      "enum": [
+        "local",
+        "group"
+      ]
+    },
+    "current": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "albumArtUri": {
+              "type": "string"
+            },
+            "creator": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "group": {
+      "additionalProperties": false,
+      "properties": {
+        "coordinatorId": {
+          "type": "string"
+        },
+        "coordinatorZone": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "isCoordinator": {
+          "type": "boolean"
+        },
+        "isGrouped": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "memberIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "memberZones": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "shortLabel": {
+          "type": "string"
+        },
+        "volume": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "shortLabel",
+        "coordinatorZone",
+        "coordinatorId",
+        "memberZones",
+        "memberIds",
+        "isGrouped",
+        "isCoordinator",
+        "volume"
+      ],
+      "type": "object"
+    },
+    "groupVolume": {
+      "maximum": 100,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ipAddress": {
+      "type": "string"
+    },
+    "isPlaying": {
+      "type": "boolean"
+    },
+    "localVolume": {
+      "maximum": 100,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "playerName": {
+      "type": "string"
+    },
+    "serviceId": {
+      "minLength": 1,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+      "type": "string"
+    },
+    "serviceNamespace": {
+      "const": "dev.deckr.sonos.service"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+      "type": "string"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "transportState": {
+      "type": "string"
+    },
+    "volume": {
+      "maximum": 100,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "zone": {
+      "minLength": 1,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "serviceId",
+    "serviceNamespace",
+    "sessionId",
+    "timestamp",
+    "zone",
+    "ipAddress",
+    "playerName",
+    "transportState",
+    "isPlaying",
+    "volume",
+    "localVolume",
+    "groupVolume",
+    "activeVolumeScope",
+    "group",
+    "current"
+  ],
+  "title": "sonos current resource payload",
+  "type": "object"
+}

@@ -1,0 +1,124 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/message.v1.schema.json"
+    },
+    {
+      "properties": {
+        "body": {
+          "allOf": [
+            {
+              "else": {
+                "properties": {
+                  "error": {
+                    "type": "null"
+                  },
+                  "params": {
+                    "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setVolumeParams"
+                  },
+                  "result": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "params"
+                ]
+              },
+              "if": {
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "allOf": [
+                  {
+                    "else": {
+                      "properties": {
+                        "error": {
+                          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/services/service-error.v1.schema.json"
+                        },
+                        "result": {
+                          "type": "null"
+                        }
+                      },
+                      "required": [
+                        "error"
+                      ]
+                    },
+                    "if": {
+                      "properties": {
+                        "status": {
+                          "const": "ok"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "error": {
+                          "type": "null"
+                        },
+                        "result": {
+                          "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json#/$defs/setVolumeResult"
+                        }
+                      },
+                      "required": [
+                        "result"
+                      ]
+                    }
+                  }
+                ],
+                "properties": {
+                  "params": {
+                    "additionalProperties": false,
+                    "properties": {},
+                    "required": [],
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "event": {
+              "type": "null"
+            },
+            "exchangePattern": {
+              "const": "request_reply"
+            },
+            "intent": {
+              "const": "command"
+            },
+            "name": {
+              "const": "setVolume"
+            },
+            "serviceNamespace": {
+              "const": "dev.deckr.sonos.service"
+            }
+          }
+        },
+        "subject": {
+          "properties": {
+            "identifiers": {
+              "properties": {
+                "name": {
+                  "const": "setVolume"
+                },
+                "namespace": {
+                  "const": "dev.deckr.sonos.service"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "title": "sonos setVolume request and reply"
+}

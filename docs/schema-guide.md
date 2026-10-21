@@ -36,6 +36,8 @@ an on-wire `schema` or `profile` value with a document URL.
 | Deckr hardware advertisement including payload | [Hardware advertisement](../contract/v1/schemas/deckr/hardware/advertisement.v1.schema.json) |
 | Hardware claim including terms | [Hardware claim contract](../contract/v1/schemas/deckr/hardware/claim-contract.v1.schema.json) |
 | Any supported hardware lane message | [Hardware messages](../contract/v1/schemas/deckr/hardware/messages.v1.schema.json) |
+| openHAB requests and replies | [openHAB messages](../contract/v1/schemas/deckr/openhab/messages.v1.schema.json) |
+| Sonos requests and replies | [Sonos messages](../contract/v1/schemas/deckr/sonos/messages.v1.schema.json) |
 | Generic Deckr service lane message | [Service message](../contract/v1/schemas/deckr/services/message.v1.schema.json) |
 | Action Runtime service message, including typed event/params | [Action Runtime messages](../contract/v1/schemas/deckr/action-runtime/messages.v1.schema.json) |
 | Stored Action Runtime availability, including authority fields | [Availability view](../contract/v1/schemas/deckr/action-runtime/availability-view.v1.schema.json) |

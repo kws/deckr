@@ -1,0 +1,67 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/list-zones.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/set-volume.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/adjust-volume.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/leave-group.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/pause.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/stop.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/toggle-play.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/next-track.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/previous-track.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/volume-up.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/volume-down.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play-favourite.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play-music-item.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/list-music-services.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/search-music.v1.schema.json"
+    },
+    {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/browse-music.v1.schema.json"
+    }
+  ],
+  "title": "sonos service messages"
+}

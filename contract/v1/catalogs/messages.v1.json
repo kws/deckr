@@ -254,6 +254,248 @@
       "payloadSchemaPath": "schemas/deckr/action-runtime/binding-render-result-body.v1.schema.json",
       "schemaPath": "schemas/deckr/action-runtime/messages/binding-render-result.v1.schema.json",
       "serviceNamespace": "dev.deckr.action_runtime.provider"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "setItemScope",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/openhab/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "serviceNamespace": "dev.deckr.openhab.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "sendCommand",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/openhab/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "serviceNamespace": "dev.deckr.openhab.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "setZoneScope",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "query",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "listZones",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "setVolume",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "adjustVolume",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "leaveGroup",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "play",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "pause",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "stop",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "togglePlay",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "nextTrack",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "previousTrack",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "volumeUp",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "volumeDown",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "query",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "resolveFavourite",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "query",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "resolveMusicShortcut",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "playFavourite",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "command",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "playMusicItem",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "query",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "listMusicServices",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "query",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "searchMusic",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
+    },
+    {
+      "direction": "consumer_to_service",
+      "intent": "query",
+      "lane": "services",
+      "messageType": "serviceMessage",
+      "name": "browseMusic",
+      "payloadLocation": "body.params / body.result / body.error",
+      "payloadSchemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaPath": "schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "serviceNamespace": "dev.deckr.sonos.service"
     }
   ]
 }

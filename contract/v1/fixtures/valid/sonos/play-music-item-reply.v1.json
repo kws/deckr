@@ -1,0 +1,70 @@
+{
+  "body": {
+    "exchangePattern": "request_reply",
+    "intent": "command",
+    "name": "playMusicItem",
+    "params": {},
+    "result": {
+      "playRef": {
+        "format": "soco-didl-lite-v1",
+        "uri": "x-sonos-http:track"
+      },
+      "zone": {
+        "activeVolumeScope": "local",
+        "current": null,
+        "group": {
+          "coordinatorId": "",
+          "coordinatorZone": "",
+          "id": "",
+          "isCoordinator": true,
+          "isGrouped": false,
+          "label": "",
+          "memberIds": [],
+          "memberZones": [],
+          "shortLabel": "",
+          "volume": 10
+        },
+        "groupVolume": 10,
+        "ipAddress": "192.0.2.1",
+        "isPlaying": false,
+        "localVolume": 10,
+        "playerName": "Kitchen",
+        "serviceId": "sonos-home",
+        "serviceNamespace": "dev.deckr.sonos.service",
+        "sessionId": "service-session",
+        "timestamp": "2026-04-29T10:00:00Z",
+        "transportState": "STOPPED",
+        "volume": 10,
+        "zone": "Kitchen"
+      }
+    },
+    "serviceNamespace": "dev.deckr.sonos.service",
+    "status": "ok"
+  },
+  "contract": {
+    "contractId": "service-use-contract-1",
+    "generation": 1
+  },
+  "createdAt": "2026-04-29T10:00:00Z",
+  "inReplyTo": "fixture-service-message",
+  "lane": "services",
+  "messageId": "fixture-service-message",
+  "messageType": "serviceMessage",
+  "protocolVersion": "1",
+  "recipient": {
+    "endpoint": "controller:controller-main",
+    "targetType": "endpoint"
+  },
+  "recipientSessionId": "controller-session",
+  "schemaVersion": "1",
+  "sender": "service:sonos-home",
+  "senderSessionId": "service-session",
+  "subject": {
+    "identifiers": {
+      "name": "playMusicItem",
+      "namespace": "dev.deckr.sonos.service",
+      "serviceId": "sonos-home"
+    },
+    "kind": "service"
+  }
+}

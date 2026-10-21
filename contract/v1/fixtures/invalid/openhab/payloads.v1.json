@@ -1,0 +1,7 @@
+{
+  "name": "setItemScope",
+  "payload": {
+    "subscriberId": true
+  },
+  "position": "params"
+}

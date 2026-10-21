@@ -5351,6 +5351,1263 @@
       "kind": "vector",
       "path": "vectors/settings-target-keys.v1.json",
       "title": "settings-target-keys.v1"
+    },
+    {
+      "id": "catalogs/openhab-service-protocol.v1.json",
+      "kind": "catalog",
+      "path": "catalogs/openhab-service-protocol.v1.json",
+      "schemaPath": "schemas/deckr/services/protocol-definition.v1.schema.json",
+      "title": "openhab-service-protocol.v1.json"
+    },
+    {
+      "id": "catalogs/sonos-service-protocol.v1.json",
+      "kind": "catalog",
+      "path": "catalogs/sonos-service-protocol.v1.json",
+      "schemaPath": "schemas/deckr/services/protocol-definition.v1.schema.json",
+      "title": "sonos-service-protocol.v1.json"
+    },
+    {
+      "id": "fixtures/invalid/openhab/messages.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/messages.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages.v1.schema.json",
+      "title": "messages.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/openhab/numeric-item.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/numeric-item.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "title": "numeric-item.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/openhab/padded-item.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/padded-item.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "title": "padded-item.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/openhab/payloads.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/payloads.v1.json",
+      "schemaPath": "schemas/deckr/openhab/payloads.v1.schema.json",
+      "title": "payloads.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/openhab/send-command-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/send-command-reply.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "title": "send-command-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/openhab/send-command-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/send-command-request.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "title": "send-command-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/openhab/set-item-scope-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/set-item-scope-reply.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "title": "set-item-scope-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/openhab/set-item-scope-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/set-item-scope-request.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "title": "set-item-scope-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/openhab/view-payload.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/openhab/view-payload.v1.json",
+      "schemaPath": "schemas/deckr/openhab/view-payload.v1.schema.json",
+      "title": "view-payload.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/adjust-volume-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/adjust-volume-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "title": "adjust-volume-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/adjust-volume-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/adjust-volume-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "title": "adjust-volume-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/boolean-volume.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/boolean-volume.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "boolean-volume.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/browse-music-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/browse-music-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "title": "browse-music-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/browse-music-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/browse-music-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "title": "browse-music-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/leave-group-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/leave-group-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "title": "leave-group-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/leave-group-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/leave-group-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "title": "leave-group-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/list-music-services-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/list-music-services-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "title": "list-music-services-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/list-music-services-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/list-music-services-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "title": "list-music-services-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/list-zones-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/list-zones-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "title": "list-zones-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/list-zones-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/list-zones-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "title": "list-zones-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/messages.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/messages.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages.v1.schema.json",
+      "title": "messages.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/missing-subscriber.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/missing-subscriber.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "missing-subscriber.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/next-track-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/next-track-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "title": "next-track-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/next-track-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/next-track-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "title": "next-track-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/pause-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/pause-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "title": "pause-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/pause-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/pause-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "title": "pause-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/payloads.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/payloads.v1.json",
+      "schemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "title": "payloads.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/play-favourite-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/play-favourite-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "title": "play-favourite-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/play-favourite-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/play-favourite-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "title": "play-favourite-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/play-music-item-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/play-music-item-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "title": "play-music-item-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/play-music-item-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/play-music-item-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "title": "play-music-item-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/play-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/play-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play.v1.schema.json",
+      "title": "play-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/play-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/play-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play.v1.schema.json",
+      "title": "play-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/previous-track-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/previous-track-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "title": "previous-track-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/previous-track-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/previous-track-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "title": "previous-track-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/resolve-favourite-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/resolve-favourite-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "title": "resolve-favourite-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/resolve-favourite-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/resolve-favourite-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "title": "resolve-favourite-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/resolve-music-shortcut-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/resolve-music-shortcut-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "title": "resolve-music-shortcut-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/resolve-music-shortcut-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/resolve-music-shortcut-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "title": "resolve-music-shortcut-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/search-music-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/search-music-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "title": "search-music-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/search-music-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/search-music-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "title": "search-music-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/set-volume-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/set-volume-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "set-volume-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/set-volume-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/set-volume-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "set-volume-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/set-zone-scope-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/set-zone-scope-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "title": "set-zone-scope-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/set-zone-scope-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/set-zone-scope-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "title": "set-zone-scope-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/stop-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/stop-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "title": "stop-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/stop-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/stop-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "title": "stop-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/toggle-play-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/toggle-play-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "title": "toggle-play-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/toggle-play-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/toggle-play-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "title": "toggle-play-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/unpaired-zone.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/unpaired-zone.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "title": "unpaired-zone.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/view-payload.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/view-payload.v1.json",
+      "schemaPath": "schemas/deckr/sonos/view-payload.v1.schema.json",
+      "title": "view-payload.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/volume-down-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/volume-down-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "title": "volume-down-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/volume-down-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/volume-down-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "title": "volume-down-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/volume-overflow.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/volume-overflow.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "volume-overflow.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/volume-up-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/volume-up-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "title": "volume-up-reply.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/volume-up-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/volume-up-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "title": "volume-up-request.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/wrong-metadata.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/wrong-metadata.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "title": "wrong-metadata.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/invalid/sonos/zero-limit.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/sonos/zero-limit.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "title": "zero-limit.v1",
+      "valid": false
+    },
+    {
+      "id": "fixtures/valid/openhab/messages.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/messages.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages.v1.schema.json",
+      "title": "messages.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/openhab/payloads.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/payloads.v1.json",
+      "schemaPath": "schemas/deckr/openhab/payloads.v1.schema.json",
+      "title": "payloads.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/openhab/send-command-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/send-command-error.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "title": "send-command-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/openhab/send-command-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/send-command-reply.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "title": "send-command-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/openhab/send-command-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/send-command-request.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "title": "send-command-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/openhab/set-item-scope-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/set-item-scope-error.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "title": "set-item-scope-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/openhab/set-item-scope-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/set-item-scope-reply.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "title": "set-item-scope-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/openhab/set-item-scope-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/set-item-scope-request.v1.json",
+      "schemaPath": "schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "title": "set-item-scope-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/openhab/view-payload.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/openhab/view-payload.v1.json",
+      "schemaPath": "schemas/deckr/openhab/view-payload.v1.schema.json",
+      "title": "view-payload.v1",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/adjust-volume-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/adjust-volume-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "title": "adjust-volume-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/adjust-volume-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/adjust-volume-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "title": "adjust-volume-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/adjust-volume-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/adjust-volume-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "title": "adjust-volume-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/browse-music-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/browse-music-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "title": "browse-music-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/browse-music-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/browse-music-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "title": "browse-music-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/browse-music-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/browse-music-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "title": "browse-music-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/leave-group-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/leave-group-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "title": "leave-group-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/leave-group-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/leave-group-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "title": "leave-group-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/leave-group-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/leave-group-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "title": "leave-group-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/list-music-services-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/list-music-services-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "title": "list-music-services-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/list-music-services-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/list-music-services-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "title": "list-music-services-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/list-music-services-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/list-music-services-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "title": "list-music-services-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/list-zones-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/list-zones-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "title": "list-zones-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/list-zones-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/list-zones-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "title": "list-zones-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/list-zones-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/list-zones-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "title": "list-zones-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/messages.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/messages.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages.v1.schema.json",
+      "title": "messages.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/next-track-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/next-track-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "title": "next-track-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/next-track-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/next-track-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "title": "next-track-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/next-track-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/next-track-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "title": "next-track-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/pause-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/pause-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "title": "pause-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/pause-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/pause-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "title": "pause-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/pause-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/pause-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "title": "pause-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/payloads.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/payloads.v1.json",
+      "schemaPath": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "title": "payloads.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play.v1.schema.json",
+      "title": "play-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-favourite-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-favourite-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "title": "play-favourite-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-favourite-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-favourite-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "title": "play-favourite-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-favourite-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-favourite-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "title": "play-favourite-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-music-item-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-music-item-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "title": "play-music-item-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-music-item-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-music-item-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "title": "play-music-item-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-music-item-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-music-item-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "title": "play-music-item-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play.v1.schema.json",
+      "title": "play-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/play-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/play-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/play.v1.schema.json",
+      "title": "play-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/previous-track-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/previous-track-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "title": "previous-track-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/previous-track-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/previous-track-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "title": "previous-track-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/previous-track-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/previous-track-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "title": "previous-track-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/resolve-favourite-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/resolve-favourite-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "title": "resolve-favourite-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/resolve-favourite-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/resolve-favourite-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "title": "resolve-favourite-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/resolve-favourite-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/resolve-favourite-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "title": "resolve-favourite-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/resolve-music-shortcut-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/resolve-music-shortcut-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "title": "resolve-music-shortcut-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/resolve-music-shortcut-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/resolve-music-shortcut-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "title": "resolve-music-shortcut-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/resolve-music-shortcut-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/resolve-music-shortcut-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "title": "resolve-music-shortcut-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/search-music-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/search-music-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "title": "search-music-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/search-music-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/search-music-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "title": "search-music-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/search-music-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/search-music-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "title": "search-music-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/set-volume-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/set-volume-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "set-volume-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/set-volume-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/set-volume-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "set-volume-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/set-volume-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/set-volume-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "set-volume-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/set-zone-scope-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/set-zone-scope-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "title": "set-zone-scope-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/set-zone-scope-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/set-zone-scope-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "title": "set-zone-scope-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/set-zone-scope-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/set-zone-scope-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "title": "set-zone-scope-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/stop-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/stop-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "title": "stop-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/stop-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/stop-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "title": "stop-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/stop-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/stop-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "title": "stop-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/toggle-play-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/toggle-play-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "title": "toggle-play-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/toggle-play-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/toggle-play-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "title": "toggle-play-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/toggle-play-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/toggle-play-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "title": "toggle-play-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/view-payload.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/view-payload.v1.json",
+      "schemaPath": "schemas/deckr/sonos/view-payload.v1.schema.json",
+      "title": "view-payload.v1",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/volume-down-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/volume-down-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "title": "volume-down-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/volume-down-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/volume-down-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "title": "volume-down-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/volume-down-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/volume-down-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "title": "volume-down-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/volume-up-error.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/volume-up-error.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "title": "volume-up-error.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/volume-up-reply.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/volume-up-reply.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "title": "volume-up-reply.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/sonos/volume-up-request.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/sonos/volume-up-request.v1.json",
+      "schemaPath": "schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "title": "volume-up-request.v1.json",
+      "valid": true
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/openhab/messages.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages.v1.schema.json",
+      "title": "openhab service messages"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages/send-command.v1.schema.json",
+      "title": "openhab sendCommand request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/messages/set-item-scope.v1.schema.json",
+      "title": "openhab setItemScope request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/openhab/payloads.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/payloads.v1.schema.json",
+      "title": "openhab service payloads"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/view-payload.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/openhab/view-payload.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/openhab/view-payload.v1.schema.json",
+      "title": "openhab current resource payload"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages.v1.schema.json",
+      "title": "sonos service messages"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/adjust-volume.v1.schema.json",
+      "title": "sonos adjustVolume request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/browse-music.v1.schema.json",
+      "title": "sonos browseMusic request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/leave-group.v1.schema.json",
+      "title": "sonos leaveGroup request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/list-music-services.v1.schema.json",
+      "title": "sonos listMusicServices request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/list-zones.v1.schema.json",
+      "title": "sonos listZones request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/next-track.v1.schema.json",
+      "title": "sonos nextTrack request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/pause.v1.schema.json",
+      "title": "sonos pause request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play-favourite.v1.schema.json",
+      "title": "sonos playFavourite request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play-music-item.v1.schema.json",
+      "title": "sonos playMusicItem request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/play.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/play.v1.schema.json",
+      "title": "sonos play request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/previous-track.v1.schema.json",
+      "title": "sonos previousTrack request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/resolve-favourite.v1.schema.json",
+      "title": "sonos resolveFavourite request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/resolve-music-shortcut.v1.schema.json",
+      "title": "sonos resolveMusicShortcut request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/search-music.v1.schema.json",
+      "title": "sonos searchMusic request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/set-volume.v1.schema.json",
+      "title": "sonos setVolume request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/set-zone-scope.v1.schema.json",
+      "title": "sonos setZoneScope request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/stop.v1.schema.json",
+      "title": "sonos stop request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/toggle-play.v1.schema.json",
+      "title": "sonos togglePlay request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/volume-down.v1.schema.json",
+      "title": "sonos volumeDown request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/messages/volume-up.v1.schema.json",
+      "title": "sonos volumeUp request and reply"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/payloads.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/payloads.v1.schema.json",
+      "title": "sonos service payloads"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/sonos/view-payload.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/sonos/view-payload.v1.schema.json",
+      "title": "sonos current resource payload"
+    },
+    {
+      "id": "vectors/service-resource-lifecycle.v1.json",
+      "kind": "vector",
+      "path": "vectors/service-resource-lifecycle.v1.json",
+      "semantic": true,
+      "title": "Service resource lifecycle"
     }
   ],
   "bundle": "deckr-contract-v1",

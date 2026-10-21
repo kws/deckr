@@ -82,3 +82,13 @@ contains action descriptors. The [stored availability view](../contract/v1/schem
 also requires the service/consumer session and contract fences. Settings identities,
 settings snapshots, requirement selectors and page child bindings are reusable
 payload definitions; they do not imply additional core message names.
+
+## openHAB and Sonos services
+
+The [openHAB catalog](../contract/v1/catalogs/openhab-service-protocol.v1.json)
+defines two operations. The [Sonos catalog](../contract/v1/catalogs/sonos-service-protocol.v1.json)
+defines twenty operations. Each catalog declares parameters, results and errors.
+All operations use the `services` lane, `serviceMessage`, and `request_reply`.
+The [message catalog](../contract/v1/catalogs/messages.v1.json) lists the individual
+entry points. [Service profile rules](deckr-services.md#openhab-and-sonos-service-profiles)
+define subscriber scope and backend recovery behavior.
