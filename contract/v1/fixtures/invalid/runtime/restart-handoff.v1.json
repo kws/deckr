@@ -1,0 +1,11 @@
+{
+  "schema": "dev.deckr.runtime.restart_handoff.v1",
+  "instanceId": "provider-main",
+  "predecessors": [
+    {
+      "predecessorId": "container-abc:start-1",
+      "exitCode": 137,
+      "participants": []
+    }
+  ]
+}

@@ -458,6 +458,46 @@ Exact checks must show that required bootstrap cleanup is complete before these 
 
 Bootstrap must not use a previous token or contract as local authority.
 
+### 11.1 Verified process restart
+
+A trusted host supervisor can establish that one process has exited. It must
+identify the configured instance, the exact process lifetime, and the endpoint
+sessions that belonged to that lifetime. It must confirm process exit before it
+gives this evidence to a replacement. A signal request, a PID alone, a changed
+session, a stored file, and missing discovery are not confirmation of exit.
+
+The replacement must use fresh session IDs. The evidence must name only sessions
+of the exited process. It must not name a live competing instance. A host must
+reject evidence for a different configured instance. A handoff parser checks
+structure; it does not establish that a process has exited. The host must receive
+the handoff through a supervisor-controlled channel.
+
+Managed bootstrap must use this evidence before readiness, proposal commit, or
+advertisement publication. It must inspect all open contracts in which a named
+predecessor participated, including contracts created by another participant.
+An exact token observation must identify the named predecessor session. A
+proposal that only refers to that session, without its participation, is not
+permission to cancel it. Existing permanent-loss checks still apply when a token
+is missing or invalid.
+
+For a matching predecessor, bootstrap must cancel the exact contract through the
+normal identity and revision guards. It must confirm cancellation or absence with
+an exact read. It must repeat unresolved cleanup with bounded attempts and a wait
+between attempts. It must not report readiness while required cleanup is
+unconfirmed. Store failure must not convert a cleanup attempt into success.
+
+Evidence for an earlier lifetime does not permit cancellation of a later session
+or successor contract. Repeated cleanup must be safe. Neither evidence nor
+cleanup grants authority. Recovery still needs a new opaque contract ID and
+generation 1. Without verified evidence, the competing-session and token-expiry
+rules in this document remain applicable.
+
+After Concord cleanup, a host can remove advertisements that exact identity
+checks assign to the same exited sessions. It must use revision guards and
+preserve other sessions. This removes old discovery candidates; it does not
+establish or end Concord authority. The Deckr host handoff is specified in
+[deployment](deckr-deployment.md#verified-restart-handoff).
+
 ## 12 Contract validation
 
 ### 12.1 Conditions for authority

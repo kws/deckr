@@ -1100,3 +1100,41 @@ hardware rejection events; verify correlation without replay or rollback.
 Exchange support, commands, and results through managed service agreements.
 Verify loss of service authority prevents both later output and result emission.
 A locally dispatched command does not prove that the hardware displayed it.
+
+
+### DIT-CCD-010: Verified restart before token expiry
+
+**Setup**
+
+- Maintain a fully attached agreement with a 120-second token TTL.
+- Keep a second live instance at the same endpoint with a different session.
+- Keep the two instances under separate supervisor identities.
+- Exercise provider participation in a consumer-created contract and an owner-created contract.
+
+**Actions**
+
+1. Record exact endpoint sessions from the first process, kill it, and confirm exit.
+2. Give the replacement a trusted handoff for that configured instance.
+3. Start it with fresh sessions while the predecessor token is unexpired.
+4. Delay cancellation confirmation and check readiness and publication.
+5. Release confirmation and negotiate successor agreements.
+6. Repeat cleanup with the old handoff after successors exist.
+7. Repeat with a wrong instance ID, an unrelated predecessor session, no handoff,
+   a store failure, and a pending proposal that only names the old session.
+
+**Expected results**
+
+- Confirmed restart recovery completes before predecessor token expiry.
+- Required cancellation is exactly confirmed before readiness and publication.
+- Consumer-created and owner-created predecessor contracts are cancelled.
+- The replacement never attaches to predecessor contracts.
+- The other live instance retains its contracts, tokens, and advertisements.
+- Successors have new contract IDs, generation 1, and fresh sessions.
+- Repeated or old evidence does not cancel successors.
+- A wrong instance ID fails startup. An unrelated session gives no cleanup permission.
+- Missing evidence retains normal contention and expiry behavior.
+- Store failure blocks completion. A peer session reference alone gives no cancellation permission.
+- Discovery cleanup removes only exact advertisements from the exited sessions.
+
+**References:** [Verified process restart](docs/concord.md#111-verified-process-restart),
+[Verified restart handoff](docs/deckr-deployment.md#verified-restart-handoff).

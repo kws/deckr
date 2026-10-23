@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/runtime/restart-handoff.v1.schema.json",
+  "title": "Verified restart handoff",
+  "description": "Trusted supervisor input after confirmed process exit. Structural validation does not prove exit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "instanceId",
+    "predecessors"
+  ],
+  "properties": {
+    "schema": {
+      "const": "dev.deckr.runtime.restart_handoff.v1"
+    },
+    "instanceId": {
+      "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+    },
+    "predecessors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "predecessorId",
+          "exitCode",
+          "participants"
+        ],
+        "properties": {
+          "predecessorId": {
+            "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+          },
+          "exitCode": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "participants": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint",
+                "sessionId"
+              ],
+              "properties": {
+                "endpoint": {
+                  "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/endpoint-address.v1.schema.json"
+                },
+                "sessionId": {
+                  "$ref": "https://kws.github.io/deckr/contract/v1/schemas/protocols/common/non-empty-text.v1.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

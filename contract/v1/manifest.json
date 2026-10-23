@@ -6608,6 +6608,29 @@
       "path": "vectors/service-resource-lifecycle.v1.json",
       "semantic": true,
       "title": "Service resource lifecycle"
+    },
+    {
+      "id": "fixtures/invalid/runtime/restart-handoff.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/runtime/restart-handoff.v1.json",
+      "schemaPath": "schemas/deckr/runtime/restart-handoff.v1.schema.json",
+      "valid": false,
+      "title": "Verified restart handoff"
+    },
+    {
+      "id": "fixtures/valid/runtime/restart-handoff.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/runtime/restart-handoff.v1.json",
+      "schemaPath": "schemas/deckr/runtime/restart-handoff.v1.schema.json",
+      "valid": true,
+      "title": "Verified restart handoff"
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/runtime/restart-handoff.v1.schema.json",
+      "kind": "schema",
+      "path": "schemas/deckr/runtime/restart-handoff.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/runtime/restart-handoff.v1.schema.json",
+      "title": "Verified restart handoff"
     }
   ],
   "bundle": "deckr-contract-v1",
