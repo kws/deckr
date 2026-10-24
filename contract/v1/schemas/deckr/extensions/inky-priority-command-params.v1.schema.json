@@ -1,0 +1,6 @@
+{
+  "$id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+  "$ref": "https://kws.github.io/deckr/contract/v1/schemas/deckr/hardware/capabilities/raster-bitmap-command-params.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Inky priority bitmap command parameters"
+}

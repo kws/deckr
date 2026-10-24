@@ -1,0 +1,79 @@
+{
+  "cases": [
+    {
+      "context": {
+        "authorized": true,
+        "deadlineSeconds": 900,
+        "elapsedSeconds": 900,
+        "fault": false,
+        "idle": true
+      },
+      "id": "inky-ready",
+      "instance": {},
+      "rule": "SEM-INKY-001",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true
+    },
+    {
+      "context": {
+        "authorized": true,
+        "deadlineSeconds": 900,
+        "elapsedSeconds": 899,
+        "fault": false,
+        "idle": true
+      },
+      "id": "inky-cooling",
+      "instance": {},
+      "rule": "SEM-INKY-001",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "authorized": false,
+        "deadlineSeconds": 900,
+        "elapsedSeconds": 901,
+        "fault": false,
+        "idle": true
+      },
+      "id": "inky-revoked",
+      "instance": {},
+      "rule": "SEM-INKY-001",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "authorized": true,
+        "deadlineSeconds": 900,
+        "elapsedSeconds": 901,
+        "fault": false,
+        "idle": false
+      },
+      "id": "inky-busy",
+      "instance": {},
+      "rule": "SEM-INKY-001",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    },
+    {
+      "context": {
+        "authorized": true,
+        "deadlineSeconds": 900,
+        "elapsedSeconds": 901,
+        "fault": true,
+        "idle": true
+      },
+      "id": "inky-fault",
+      "instance": {},
+      "rule": "SEM-INKY-001",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false
+    }
+  ]
+}

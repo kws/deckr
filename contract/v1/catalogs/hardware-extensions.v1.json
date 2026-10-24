@@ -1,0 +1,14 @@
+{
+  "capabilities": [
+    {
+      "commands": [
+        "set_frame",
+        "clear"
+      ],
+      "family": "io.github.kws.inky.output.priority",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "specification": "../../../docs/deckr-inky-extension.md",
+      "type": "bitmap"
+    }
+  ]
+}

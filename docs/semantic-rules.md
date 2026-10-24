@@ -1,5 +1,12 @@
 # Semantic validation rules v1 specification
 
+## SEM-INKY-001 — Inky refresh authorization
+
+An Inky trigger requires current Concord command authority, an idle worker, no
+latched hardware fault, and expiration of the applicable refresh deadline. The
+priority deadline also includes its budget recovery time. A pending frame is
+not permission to trigger. Apply the [Inky extension](deckr-inky-extension.md).
+
 ## Purpose and scope
 
 These rules supplement JSON Schema validation for Beacon, Concord, and Deckr v1.

@@ -6631,6 +6631,52 @@
       "path": "schemas/deckr/runtime/restart-handoff.v1.schema.json",
       "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/runtime/restart-handoff.v1.schema.json",
       "title": "Verified restart handoff"
+    },
+    {
+      "id": "catalogs/hardware-extensions.v1.json",
+      "kind": "catalog",
+      "path": "catalogs/hardware-extensions.v1.json",
+      "title": "catalogs/hardware-extensions.v1.json"
+    },
+    {
+      "id": "fixtures/invalid/extensions/inky-priority-unsafe-flag.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/invalid/extensions/inky-priority-unsafe-flag.v1.json",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "title": "fixtures/invalid/extensions/inky-priority-unsafe-flag.v1.json",
+      "valid": false
+    },
+    {
+      "id": "fixtures/valid/extensions/inky-priority-clear.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/extensions/inky-priority-clear.v1.json",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "title": "fixtures/valid/extensions/inky-priority-clear.v1.json",
+      "valid": true
+    },
+    {
+      "id": "fixtures/valid/extensions/inky-priority-frame.v1.json",
+      "kind": "fixture",
+      "path": "fixtures/valid/extensions/inky-priority-frame.v1.json",
+      "schemaPath": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "title": "fixtures/valid/extensions/inky-priority-frame.v1.json",
+      "valid": true
+    },
+    {
+      "id": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "kind": "schema",
+      "module": "deckr/extensions",
+      "path": "schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "schemaId": "https://kws.github.io/deckr/contract/v1/schemas/deckr/extensions/inky-priority-command-params.v1.schema.json",
+      "title": "Inky priority bitmap command parameters",
+      "wireSchemaId": "io.github.kws.inky.command.priority.bitmap.v1"
+    },
+    {
+      "id": "vectors/inky-refresh-semantics.v1.json",
+      "kind": "vector",
+      "path": "vectors/inky-refresh-semantics.v1.json",
+      "semantic": true,
+      "title": "vectors/inky-refresh-semantics.v1.json"
     }
   ],
   "bundle": "deckr-contract-v1",
