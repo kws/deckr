@@ -140,8 +140,10 @@ before allocation. A fetched source can contain at most 4,194,304 pixels.
 Count source decoding against the total intermediate allocation budget. Reduce
 it to the 1024-pixel dimension and target `maxImagePixels` bounds before graph
 operations use it. Inline image limits do not change. Each network operation
-has a total timeout of at most one second, including response streaming. It
-cannot extend the total render deadline.
+has a total timeout of at most two seconds, including response streaming. Time
+in a resource queue counts against the advertised total render deadline. The
+network timeout cannot extend that deadline. The controller must set the
+advertised deadline to include resource queues, network access and rendering.
 
 ## Failure results
 
