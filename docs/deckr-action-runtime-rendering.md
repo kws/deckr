@@ -330,6 +330,23 @@ Retain the last base whose controller dispatch succeeded for overlay composition
 Replace it only when a newer base dispatch succeeds or a clear commits.
 Do not make a failed base current. This retained state does not prove device display.
 
+### Provisional loading output
+
+The controller can show temporary loading feedback while an admitted set request
+is pending. This output is controller-owned. It must not replace the accepted
+base, complete the request, or emit a `dispatched` result for that request.
+Use only the accepted base from the same current binding, or a neutral frame.
+Provider overlays take priority over automatic loading feedback.
+
+Apply the same current authority, base revision and ordered hardware handoff
+checks to provisional output. A queued loading frame must not overwrite a final
+frame. Stop loading work when the request completes, fails, expires or becomes
+obsolete. If provisional output was sent and the request fails, restore the
+accepted presentation while the same binding and base revision remain current.
+Never restore a retired binding's pixels. Loading feedback does not extend the
+render deadline or permit late publication. Its hardware sends have their own
+command identities; they do not change provider request-result correlation.
+
 ### Overlay composition and final dispatch
 
 Track overlay changes with a separate local composition revision. An overlay

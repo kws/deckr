@@ -327,6 +327,102 @@
       "schemaValid": true,
       "semanticValid": false,
       "width": 4
+    },
+    {
+      "expectedCode": null,
+      "height": 4,
+      "id": "ksi-invariant-unreachable-image-is-not-fetched",
+      "instance": {
+        "format": "invariant-graph",
+        "graph": {
+          "background": {
+            "deps": [],
+            "kind": "node",
+            "op_name": "gfx:create_solid",
+            "params": {
+              "color": "#ff0000",
+              "size": {
+                "$tuple": [
+                  4,
+                  2
+                ]
+              }
+            }
+          },
+          "unused": {
+            "kind": "node",
+            "op_name": "deckr:fetch_image_url",
+            "deps": [],
+            "params": {
+              "url": "https://unreachable.invalid/image.png"
+            }
+          }
+        },
+        "output": "background",
+        "version": 1
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-KSI-001",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": true,
+      "width": 4
+    },
+    {
+      "expectedCode": "invalid_content",
+      "height": 4,
+      "id": "ksi-invariant-image-url-must-be-literal",
+      "instance": {
+        "format": "invariant-graph",
+        "graph": {
+          "background": {
+            "deps": [],
+            "kind": "node",
+            "op_name": "gfx:create_solid",
+            "params": {
+              "color": "#ff0000",
+              "size": {
+                "$tuple": [
+                  4,
+                  2
+                ]
+              }
+            }
+          },
+          "unused": {
+            "kind": "node",
+            "op_name": "deckr:fetch_image_url",
+            "deps": [
+              "background"
+            ],
+            "params": {
+              "url": {
+                "$ref": "background"
+              }
+            }
+          }
+        },
+        "output": "background",
+        "version": 1
+      },
+      "limits": {
+        "maxImageBytes": 131072,
+        "maxImagePixels": 1048576,
+        "maxMessageBytes": 262144,
+        "maxRenderTimeMs": 2000,
+        "maxTextCodePoints": 1024
+      },
+      "rule": "SEM-KSI-001",
+      "schemaPath": "schemas/deckr/extensions/ksi-invariant-graph.v1.schema.json",
+      "schemaValid": true,
+      "semanticValid": false,
+      "width": 4
     }
   ],
   "description": "KSI extension structural and execution cases. Apply the complete binding authority and rendering admission rules first."

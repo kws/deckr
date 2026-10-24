@@ -88,18 +88,45 @@ its aspect ratio. Center it and composite transparency over black. The logical
 output is an opaque image at the target dimensions. Hardware encoding and
 orientation remain controller and hardware manager responsibilities.
 
-There is no persistent graph cache in this format. Execute jobs in an isolated
-worker that the controller can terminate at the render deadline. Limit the
-worker's operation registry, inputs and resource use. Cancellation or timeout
-must prevent later output dispatch.
+Execute raster operations in an isolated worker that the controller can
+terminate at the render deadline. A controller can acquire image resources
+asynchronously before raster execution. Network waits must not reserve raster
+execution capacity. Limit the operation registry, inputs and resource use.
+Cancel queued work when it becomes obsolete. Cancellation or timeout must prevent
+later output dispatch. Keep one absolute deadline for queues, acquisition,
+execution, composition and dispatch.
+
+The controller can memoise nodes within a job without a persistent graph cache.
+A cached artifact does not remove the current job's validation, allocation or
+authority checks.
 
 ## Image download policy
 
 Permit only absolute `http` and `https` URLs with a host. Reject user information
 and fragments. Do not follow redirects. Do not use controller credentials,
-cookies, environment proxy settings or a persistent download cache.
-Each job obtains a new response. Do not accept a cached response from a previous
-job as current content.
+cookies or environment proxy settings. Connection pooling is permitted.
+A fetch operation has exactly one parameter, `url`, containing a literal URL.
+Do not evaluate expressions or references to obtain the URL. Acquire only
+resources reachable through dependencies from the graph output. Independent
+resources can be acquired concurrently. Repeated URLs in one job can share a
+response. Limit connections globally and per origin. Bound the total retained
+resource bytes per job; the controller limit must not exceed 8,388,608 bytes.
+
+A controller can retain successful responses in a bounded memory cache. It must
+not retain responses marked `no-store` or `private`. A response is fresh only
+when it has an explicit nonnegative `max-age`; subtract its `Age` and elapsed
+local time. Cap local freshness at 60 seconds. `no-cache` requires revalidation.
+Do not infer freshness from the URL, including apparent version identifiers.
+An entry without explicit freshness is stale immediately. Do not publish stale
+bytes while refreshing or after a failed refresh.
+
+A stale entry can supply `ETag` or `Last-Modified` for conditional revalidation.
+A `304` response is valid only for the exact retained representation and its
+validator. Preserve or update the representation metadata and apply the same
+freshness rules. The current request's byte and pixel limits still apply.
+Cache entries contain content, never binding or hardware authority. Concurrent
+jobs can share fresh entries; each stale job must obtain or revalidate a response.
+Do not use a persistent disk cache for downloads.
 
 Local policy can permit private network hosts, including a local Sonos service.
 The controller must not advertise this extension when its policy prohibits the
@@ -108,9 +135,13 @@ a request. A URL never grants access to controller credentials or local files.
 
 Accept successful image responses with media type `image/png` or `image/jpeg`.
 Reject redirects, other media types, invalid image data and encoding mismatches.
-Check decoded file bytes against `maxImageBytes`, then image dimensions and
-`maxImagePixels` before image allocation. Each network operation has a timeout
-of at most one second and cannot extend the total render deadline.
+Check decoded file bytes against `maxImageBytes`. Inspect raster dimensions
+before allocation. A fetched source can contain at most 4,194,304 pixels.
+Count source decoding against the total intermediate allocation budget. Reduce
+it to the 1024-pixel dimension and target `maxImagePixels` bounds before graph
+operations use it. Inline image limits do not change. Each network operation
+has a total timeout of at most one second, including response streaming. It
+cannot extend the total render deadline.
 
 ## Failure results
 
