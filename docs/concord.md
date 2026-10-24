@@ -537,6 +537,13 @@ After observations are collected, evaluation performs no I/O and makes no mutati
 
 Cached validation is the usual runtime path. It gets raw cached entries by their canonical exact keys from ready, current materialized sources.
 
+An implementation can reuse a parsed observation or evaluation result only while
+all its inputs are unchanged. Each use must check source currentness and source
+generations, the current contract and token entries, and session assertions.
+A changed or deleted entry must invalidate reuse before semantic watch delivery.
+Cache retention must be bounded. Reuse must not extend token lifetime or restore
+local authority after source discontinuity.
+
 Exact validation gets the same observations through exact KV reads. This path is available for maintenance, recovery, diagnostics, and operations that must bypass the cache.
 
 The observations cannot change during evaluation.

@@ -336,7 +336,10 @@ The controller can show temporary loading feedback while an admitted set request
 is pending. This output is controller-owned. It must not replace the accepted
 base, complete the request, or emit a `dispatched` result for that request.
 Use only the accepted base from the same current binding, or a neutral frame.
-Provider overlays take priority over automatic loading feedback.
+Provider overlays take priority over automatic loading feedback. Keep an accepted
+frame visible during a replacement request instead of adding a neutral loading
+frame over it. This includes accepted provider loading content. A new binding
+must not retain the previous binding's presentation as its accepted frame.
 
 Apply the same current authority, base revision and ordered hardware handoff
 checks to provisional output. A queued loading frame must not overwrite a final
@@ -358,6 +361,11 @@ Base set and clear operations do not remove overlays. Existing overlay commands
 retain their binding-generation and overlay-identity checks. When one binding
 has multiple raster targets, an accepted binding-wide overlay applies to each
 target through its own output coordinator. Cross-target atomicity is not promised.
+
+An implementation can validate immutable request content once at admission and
+reuse that parsed content. This does not retain permission to send output. Each
+later check must use current authority, endpoint sessions, binding generation,
+target support and limits.
 
 Immediately before dispatch, check authority, scope, binding generation, base
 revision, and composition revision again. Serialize this decision and hardware
